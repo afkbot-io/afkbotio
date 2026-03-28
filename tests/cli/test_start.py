@@ -1,0 +1,283 @@
+"""Tests for unified runtime `afk start` command."""
+
+from __future__ import annotations
+
+from afkbot.services.upgrade import UpgradeApplyReport, UpgradeStepReport
+from typer.testing import CliRunner
+
+from afkbot.cli.main import app
+from afkbot.settings import get_settings
+from tests.cli._rendering import invoke_plain_help
+
+
+async def _no_pending_upgrades(settings):  # type: ignore[no-untyped-def]
+    del settings
+    return UpgradeApplyReport(changed=False, steps=())
+
+
+def test_start_rejects_identical_ports(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Start command should reject same runtime/api port."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["start", "--runtime-port", "8080", "--api-port", "8080"],
+    )
+    assert result.exit_code != 0
+    assert "must be different ports" in result.stderr
+    get_settings.cache_clear()
+
+
+def test_start_invokes_full_stack(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Start command should call unified async stack launcher with resolved params."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[str, int, int, bool, tuple[str, ...], bool, str]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        calls.append(
+            (
+                host,
+                runtime_port,
+                api_port,
+                start_channels,
+                channel_ids,
+                strict_channels,
+                str(settings.root_dir),
+            )
+        )
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["start", "--host", "127.0.0.1", "--runtime-port", "18080", "--api-port", "18081"],
+    )
+    assert result.exit_code == 0
+    assert calls == [("127.0.0.1", 18080, 18081, True, (), False, str(get_settings().root_dir))]
+    assert "runtime daemon: http://127.0.0.1:18080" in result.stdout
+    assert "chat api/ws: http://127.0.0.1:18081" in result.stdout
+    get_settings.cache_clear()
+
+
+def test_start_runtime_port_override_updates_default_api_port(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """When only runtime port is overridden, API default should follow runtime+1."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[str, int, int, bool, tuple[str, ...]]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        del settings, strict_channels
+        calls.append((host, runtime_port, api_port, start_channels, channel_ids))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["start", "--runtime-port", "19000"],
+    )
+    assert result.exit_code == 0
+    assert calls
+    _, runtime_port, api_port, start_channels, channel_ids = calls[0]
+    assert runtime_port == 19000
+    assert api_port == 19001
+    assert start_channels is True
+    assert channel_ids == ()
+    get_settings.cache_clear()
+
+
+def test_start_can_disable_external_channels(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CLI flag should disable external channel adapters."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[bool, tuple[str, ...]]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        del host, runtime_port, api_port, settings, strict_channels
+        calls.append((start_channels, channel_ids))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(app, ["start", "--no-channels"])
+    assert result.exit_code == 0
+    assert calls == [(False, ())]
+    get_settings.cache_clear()
+
+
+def test_start_rejects_pending_upgrades_by_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Start should fail closed when persisted-state upgrades are still pending."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    async def _fake_inspect_pending_upgrades(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return UpgradeApplyReport(
+            changed=True,
+            steps=(
+                UpgradeStepReport(
+                    name="setup_state",
+                    changed=True,
+                    details="setup marker needs canonical rewrite or legacy-marker cleanup",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    runner = CliRunner()
+    result = runner.invoke(app, ["start"])
+    assert result.exit_code != 0
+    assert "Run `afk upgrade apply` first" in result.stderr
+    get_settings.cache_clear()
+
+
+def test_start_can_bypass_pending_upgrade_guard(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Explicit override should allow startup when the operator accepts pending upgrades."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[str, int, int, bool, tuple[str, ...]]] = []
+
+    async def _fake_inspect_pending_upgrades(settings):  # type: ignore[no-untyped-def]
+        del settings
+        return UpgradeApplyReport(
+            changed=True,
+            steps=(UpgradeStepReport(name="setup_state", changed=True, details="pending"),),
+        )
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        del settings, strict_channels
+        calls.append((host, runtime_port, api_port, start_channels, channel_ids))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(app, ["start", "--allow-pending-upgrades"])
+    assert result.exit_code == 0
+    assert calls
+    get_settings.cache_clear()
+
+
+def test_start_can_select_specific_channels(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CLI should pass selected channel endpoint ids to the runtime launcher."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[bool, tuple[str, ...]]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        del host, runtime_port, api_port, settings, strict_channels
+        calls.append((start_channels, channel_ids))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(app, ["start", "--channel", "support-bot", "--channel", "sales-bot"])
+    assert result.exit_code == 0
+    assert calls == [(True, ("support-bot", "sales-bot"))]
+    get_settings.cache_clear()
+
+
+def test_start_formats_bind_conflicts_as_usage_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Port conflicts should surface a short operator-facing CLI error instead of a traceback."""
+
+    # Arrange
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        settings,
+    ) -> None:
+        del host, runtime_port, api_port, start_channels, channel_ids, strict_channels, settings
+        raise OSError(48, "address already in use")
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+
+    # Act
+    result = runner.invoke(app, ["start", "--runtime-port", "18080", "--api-port", "18081"])
+
+    # Assert
+    assert result.exit_code != 0
+    assert "Runtime failed to bind a local port." in result.stderr
+    assert "runtime_port=18080" in result.stderr
+    assert "Choose free ports or stop the conflicting listener." in result.stderr
+    get_settings.cache_clear()
+
+
+def test_start_help_mentions_full_stack(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Help text should describe start as the single full-stack launcher."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    runner = CliRunner()
+    result, output = invoke_plain_help(runner, app, ["start"])
+    assert result.exit_code == 0
+    assert "Start the full AFKBOT stack" in output
+    assert "webhook" in output
+    assert "ingress" in output
+    assert "Chat API/WS port" in output
+    assert "--channel" in output
+    assert "--allow-pending-" in output
+    get_settings.cache_clear()

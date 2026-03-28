@@ -1,0 +1,71 @@
+"""Runtime context overrides for one agent turn."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from afkbot.services.agent_loop.planning_policy import ChatPlanningMode
+from afkbot.services.agent_loop.thinking import PlanningMode, ToolAccessMode, combine_prompt_overlays
+from afkbot.services.llm.reasoning import ThinkingLevel
+
+
+@dataclass(frozen=True, slots=True)
+class TurnContextOverrides:
+    """Turn-scoped context additions supplied by ingress/routing layers."""
+
+    runtime_metadata: dict[str, object] | None = None
+    prompt_overlay: str | None = None
+    planning_mode: PlanningMode = "off"
+    execution_planning_mode: ChatPlanningMode | None = None
+    thinking_level: ThinkingLevel | None = None
+    tool_access_mode: ToolAccessMode | None = None
+
+
+def merge_turn_context_overrides(
+    *parts: TurnContextOverrides | None,
+) -> TurnContextOverrides | None:
+    """Merge trusted turn overrides from multiple ingress/runtime sources."""
+
+    merged_metadata: dict[str, object] = {}
+    merged_prompt: str | None = None
+    planning_mode: PlanningMode = "off"
+    execution_planning_mode: ChatPlanningMode | None = None
+    thinking_level: ThinkingLevel | None = None
+    tool_access_mode: ToolAccessMode | None = None
+    saw_value = False
+
+    for part in parts:
+        if part is None:
+            continue
+        saw_value = True
+        if part.runtime_metadata:
+            merged_metadata.update(part.runtime_metadata)
+        merged_prompt = combine_prompt_overlays(merged_prompt, part.prompt_overlay)
+        if part.planning_mode != "off":
+            planning_mode = part.planning_mode
+        if part.execution_planning_mode is not None:
+            execution_planning_mode = part.execution_planning_mode
+        if part.thinking_level is not None:
+            thinking_level = part.thinking_level
+        if part.tool_access_mode is not None:
+            tool_access_mode = part.tool_access_mode
+
+    if not saw_value:
+        return None
+    if (
+        not merged_metadata
+        and merged_prompt is None
+        and planning_mode == "off"
+        and execution_planning_mode is None
+        and thinking_level is None
+        and tool_access_mode is None
+    ):
+        return None
+    return TurnContextOverrides(
+        runtime_metadata=merged_metadata or None,
+        prompt_overlay=merged_prompt,
+        planning_mode=planning_mode,
+        execution_planning_mode=execution_planning_mode,
+        thinking_level=thinking_level,
+        tool_access_mode=tool_access_mode,
+    )

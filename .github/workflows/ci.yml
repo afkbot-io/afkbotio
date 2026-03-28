@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff
+        run: uv run ruff check afkbot tests
+
+      - name: Mypy
+        run: uv run mypy afkbot tests
+
+      - name: Pytest
+        run: uv run pytest -q
+
+  local-runtime-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Start local mock LLM
+        run: |
+          cat >/tmp/afkbot_mock_llm.py <<'PY'
+          import json
+          import time
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, format, *args):
+                  return
+
+              def _write_json(self, code, payload):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(code)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path == "/v1/models":
+                      self._write_json(
+                          200,
+                          {"object": "list", "data": [{"id": "smoke-model", "object": "model"}]},
+                      )
+                      return
+                  self._write_json(404, {"error": {"message": "not found"}})
+
+              def do_POST(self):
+                  length = int(self.headers.get("Content-Length", "0"))
+                  payload = json.loads(self.rfile.read(length) or b"{}")
+                  if self.path == "/v1/chat/completions":
+                      messages = payload.get("messages", [])
+                      user_messages = [
+                          item.get("content", "")
+                          for item in messages
+                          if isinstance(item, dict) and item.get("role") == "user"
+                      ]
+                      content = (
+                          f"mock-reply|message_count={len(messages)}|"
+                          f"user_count={len(user_messages)}|"
+                          f"last_user={user_messages[-1] if user_messages else ''}"
+                      )
+                      self._write_json(
+                          200,
+                          {
+                              "id": "chatcmpl-mock",
+                              "object": "chat.completion",
+                              "created": int(time.time()),
+                              "model": payload.get("model", "smoke-model"),
+                              "choices": [
+                                  {
+                                      "index": 0,
+                                      "message": {"role": "assistant", "content": content},
+                                      "finish_reason": "stop",
+                                  }
+                              ],
+                              "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                          },
+                      )
+                      return
+                  self._write_json(404, {"error": {"message": "not found"}})
+
+
+          if __name__ == "__main__":
+              ThreadingHTTPServer(("127.0.0.1", 18091), Handler).serve_forever()
+          PY
+          python /tmp/afkbot_mock_llm.py >/tmp/afkbot_mock_llm.log 2>&1 &
+          echo $! >/tmp/afkbot_mock_llm.pid
+
+      - name: Manual source setup smoke
+        env:
+          AFKBOT_ROOT_DIR: ${{ runner.temp }}/afkbot-root
+          AFKBOT_DB_URL: sqlite+aiosqlite:///${{ runner.temp }}/afkbot-root/afkbot.db
+          AFKBOT_RUNTIME_HOST: 127.0.0.1
+          AFKBOT_RUNTIME_PORT: 18080
+        run: |
+          mkdir -p "$AFKBOT_ROOT_DIR"
+          printf 'smoke-key\n' >/tmp/afkbot-smoke-key.txt
+          uv run afk setup --yes --accept-risk --llm-provider custom --chat-model smoke-model --custom-interface openai --llm-base-url http://127.0.0.1:18091/v1 --llm-api-key-file /tmp/afkbot-smoke-key.txt --policy-enabled --policy-preset simple
+          uv run afk doctor --probe
+          uv run afk chat --session smoke --plan off --message "hello smoke"
+
+      - name: Stop local mock LLM
+        if: always()
+        run: |
+          if [ -f /tmp/afkbot_mock_llm.pid ]; then
+            kill "$(cat /tmp/afkbot_mock_llm.pid)" || true
+          fi
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: shellcheck scripts/install.sh scripts/uninstall.sh
+
+      - name: Run shell installer dry-run
+        run: |
+          scripts/install.sh --dry-run --install-dir "${RUNNER_TEMP}/afkbot-managed" --repo-url "file://${GITHUB_WORKSPACE}" --git-ref local-dry-run --skip-setup
+          scripts/uninstall.sh --dry-run --install-dir "${RUNNER_TEMP}/afkbot-managed" --yes
+
+      - name: Parse PowerShell installers
+        run: |
+          pwsh -NoProfile -Command '$tokens=$null;$errors=$null;[System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1",[ref]$tokens,[ref]$errors)|Out-Null;if($errors){$errors|ForEach-Object{Write-Error $_};exit 1}'
+          pwsh -NoProfile -Command '$tokens=$null;$errors=$null;[System.Management.Automation.Language.Parser]::ParseFile("scripts/uninstall.ps1",[ref]$tokens,[ref]$errors)|Out-Null;if($errors){$errors|ForEach-Object{Write-Error $_};exit 1}'
+
+      - name: Run PowerShell installer dry-run
+        run: |
+          pwsh -NoProfile -File scripts/install.ps1 -DryRun -InstallDir "${RUNNER_TEMP}/afkbot-managed-windows"
+          pwsh -NoProfile -File scripts/uninstall.ps1 -DryRun -InstallDir "${RUNNER_TEMP}/afkbot-managed-windows" -Yes

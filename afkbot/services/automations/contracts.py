@@ -1,0 +1,75 @@
+"""Pydantic contracts for automation service responses."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from afkbot.services.channels.contracts import ChannelDeliveryTarget
+
+WEBHOOK_INGRESS_PATH = "/v1/automations/webhook"
+AutomationDeliveryMode = Literal["target", "tool", "none"]
+
+
+class AutomationCronMetadata(BaseModel):
+    """Cron trigger metadata attached to one automation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cron_expr: str
+    timezone: str
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+
+
+class AutomationWebhookMetadata(BaseModel):
+    """Webhook trigger metadata attached to one automation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    webhook_token: str | None = None
+    webhook_path: str | None = None
+    webhook_token_masked: str
+    last_received_at: datetime | None
+
+
+class AutomationMetadata(BaseModel):
+    """Public metadata for one automation descriptor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    profile_id: str
+    name: str
+    prompt: str
+    trigger_type: Literal["cron", "webhook"]
+    status: Literal["active", "paused", "deleted"]
+    delivery_mode: AutomationDeliveryMode
+    created_at: datetime
+    updated_at: datetime
+    cron: AutomationCronMetadata | None = None
+    webhook: AutomationWebhookMetadata | None = None
+    delivery_target: ChannelDeliveryTarget | None = None
+
+
+class AutomationWebhookTriggerResult(BaseModel):
+    """Result returned after webhook trigger processing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    automation_id: int
+    profile_id: str
+    session_id: str
+    payload: dict[str, Any]
+    deduplicated: bool = False
+
+
+class AutomationCronTickResult(BaseModel):
+    """Cron tick summary result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    triggered_ids: list[int]
+    failed_ids: list[int]

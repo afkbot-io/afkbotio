@@ -1,0 +1,33 @@
+manifest_version = 1
+name = "browser-control"
+description = "Real browser automation via `browser.control`. Use when a task needs navigation, clicking, typing, screenshots, or page content from a live browser rather than plain HTTP."
+execution_mode = "executable"
+always_on = false
+aliases = ["browser", "playwright"]
+triggers = [
+  "browser",
+  "playwright",
+  "через браузер",
+  "в браузере",
+  "зайди на сайт",
+  "открой сайт",
+  "посмотри сайт",
+  "site review",
+  "website review",
+]
+tool_names = ["browser.control"]
+app_names = []
+preferred_tool_order = ["browser.control"]
+
+[requires]
+bins = []
+env = []
+python_packages = ["playwright"]
+
+[suggested]
+bins = []
+
+[source]
+kind = ""
+id = ""
+url = ""

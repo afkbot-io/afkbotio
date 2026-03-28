@@ -1,0 +1,193 @@
+"""Tests for transport-agnostic chat turn orchestration."""
+
+from __future__ import annotations
+
+import pytest
+
+from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.chat_session.turn_flow import run_chat_turn_with_optional_planning
+
+
+async def test_run_chat_turn_with_optional_planning_keeps_default_execution_when_mode_missing() -> None:
+    """Turn orchestration should not invent planning overrides when callers omit them."""
+
+    # Arrange
+    seen_overrides: TurnContextOverrides | None = None
+
+    async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        progress_sink=None,
+        allow_secure_prompt: bool,
+        turn_overrides=None,
+    ):
+        nonlocal seen_overrides
+        _ = progress_sink, allow_secure_prompt
+        assert message == "hello"
+        assert profile_id == "default"
+        assert session_id == "s-turn-flow-default"
+        seen_overrides = turn_overrides
+        return TurnResult(
+            run_id=1,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    # Act
+    outcome = await run_chat_turn_with_optional_planning(
+        message="hello",
+        profile_id="default",
+        session_id="s-turn-flow-default",
+        progress_sink=None,
+        allow_secure_prompt=False,
+        run_turn_with_secure_resolution=_fake_run_turn_with_secure_resolution,
+        planning_mode=None,
+        thinking_level=None,
+    )
+
+    # Assert
+    assert outcome.result.envelope.message == "done"
+    assert outcome.final_output == "assistant"
+    assert seen_overrides is None
+
+
+async def test_run_chat_turn_with_optional_planning_presents_and_records_plan_before_stop() -> None:
+    """Plan-first orchestration should capture one plan snapshot before returning a stop outcome."""
+
+    # Arrange
+    recorded_plan_steps: list[int] = []
+    presented_blocks: list[str] = []
+    seen_calls: list[TurnContextOverrides | None] = []
+
+    async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        progress_sink=None,
+        allow_secure_prompt: bool,
+        turn_overrides=None,
+    ):
+        _ = progress_sink
+        assert message == "Implement the feature."
+        assert profile_id == "default"
+        assert session_id == "s-turn-flow-plan"
+        seen_calls.append(turn_overrides)
+        if allow_secure_prompt is False:
+            return TurnResult(
+                run_id=11,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(
+                    action="finalize",
+                    message="1. Inspect\n2. Implement\n3. Verify",
+                ),
+            )
+        return TurnResult(
+            run_id=12,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    # Act
+    outcome = await run_chat_turn_with_optional_planning(
+        message="Implement the feature.",
+        profile_id="default",
+        session_id="s-turn-flow-plan",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_turn_with_secure_resolution=_fake_run_turn_with_secure_resolution,
+        planning_mode="on",
+        thinking_level=None,
+        prompt_to_plan_first=None,
+        confirm_plan_execution=lambda: False,
+        present_plan=lambda plan_result, plan_snapshot: presented_blocks.append(
+            plan_result.envelope.message if plan_snapshot is None else str(plan_snapshot.step_count)
+        ),
+        record_plan=lambda snapshot: recorded_plan_steps.append(snapshot.step_count),
+    )
+
+    # Assert
+    assert outcome.result.envelope.message == "1. Inspect\n2. Implement\n3. Verify"
+    assert outcome.final_output == "none"
+    assert outcome.plan_snapshot is not None
+    assert outcome.plan_snapshot.step_count == 3
+    assert len(seen_calls) == 1
+    assert recorded_plan_steps == [3]
+    assert presented_blocks == ["3"]
+
+
+async def test_run_chat_turn_with_optional_planning_auto_mode_can_plan_then_execute_without_prompts() -> None:
+    """Auto mode should still run a plan-only pass when the heuristic says to plan first."""
+
+    # Arrange
+    seen_calls: list[tuple[bool, TurnContextOverrides | None]] = []
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "afkbot.services.chat_session.turn_flow.should_offer_plan",
+        lambda *, message: True,
+    )
+
+    async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        progress_sink=None,
+        allow_secure_prompt: bool,
+        turn_overrides=None,
+    ):
+        _ = progress_sink
+        assert message == "Implement the feature."
+        assert profile_id == "default"
+        assert session_id == "s-turn-flow-auto"
+        seen_calls.append((allow_secure_prompt, turn_overrides))
+        if allow_secure_prompt is False:
+            return TurnResult(
+                run_id=21,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(
+                    action="finalize",
+                    message="1. Inspect\n2. Implement\n3. Verify",
+                ),
+            )
+        return TurnResult(
+            run_id=22,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    # Act
+    try:
+        outcome = await run_chat_turn_with_optional_planning(
+            message="Implement the feature.",
+            profile_id="default",
+            session_id="s-turn-flow-auto",
+            progress_sink=None,
+            allow_secure_prompt=True,
+            run_turn_with_secure_resolution=_fake_run_turn_with_secure_resolution,
+            planning_mode="auto",
+            thinking_level=None,
+            prompt_to_plan_first=lambda: True,
+            confirm_plan_execution=lambda: True,
+            present_plan=None,
+            record_plan=None,
+        )
+    finally:
+        monkeypatch.undo()
+
+    # Assert
+    assert outcome.result.envelope.message == "done"
+    assert outcome.final_output == "assistant"
+    assert outcome.plan_snapshot is not None
+    assert outcome.plan_snapshot.step_count == 3
+    assert len(seen_calls) == 2
+    assert seen_calls[0][0] is False
+    assert seen_calls[1][0] is True

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security reports
+    url: mailto:security@afkbot.io
+    about: Report vulnerabilities privately instead of opening a public issue.
+  - name: Documentation
+    url: https://afkbot.io/docs
+    about: Check the public docs and installation guides first.

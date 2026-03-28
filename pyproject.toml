@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "afkbotio"
+version = "1.0.0"
+description = "Source-available local AI runtime and CLI for AFKBOT"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "LicenseRef-AFKBOT-Sustainable-Use-1.0"
+license-files = ["LICENSE"]
+keywords = ["ai", "agent", "automation", "cli", "mcp"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+  "sqlalchemy>=2.0",
+  "greenlet>=3.0",
+  "aiosqlite>=0.20",
+  "cryptography>=42.0",
+  "pydantic-settings>=2.2",
+  "qrcode>=8.2",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "socksio>=1.0",
+  "telethon>=1.42,<2",
+  "uvicorn>=0.30",
+  "websockets>=12.0",
+  "typer>=0.12",
+  "prompt-toolkit>=3.0",
+  "jsonschema>=4.26",
+  "mcp>=1.26,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.4",
+  "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://afkbot.io"
+Documentation = "https://afkbot.io/docs"
+Repository = "https://github.com/afkbot-io/afkbotio"
+Issues = "https://github.com/afkbot-io/afkbotio/issues"
+License = "https://github.com/afkbot-io/afkbotio/blob/main/LICENSE"
+
+[project.scripts]
+afk = "afkbot.cli.main:run"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["afkbot*"]
+
+[tool.setuptools.package-data]
+afkbot = ["bootstrap/*.md", "skills/*/SKILL.md", "subagents/*.md"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+filterwarnings = [
+  "ignore:The 'app' shortcut is now deprecated\\. Use the explicit style 'transport=WSGITransport\\(app=\\.\\.\\.\\)' instead\\.:DeprecationWarning:httpx\\._client",
+]
+markers = [
+  "live: integration tests requiring real credentials/network and explicit AFKBOT_LIVE_ENABLE=1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "playwright.*"
+ignore_missing_imports = true

@@ -1,0 +1,74 @@
+"""Shared support helpers for the fullscreen chat workspace runtime."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable, Coroutine
+from contextlib import suppress
+from typing import Any, Literal
+
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
+from afkbot.services.chat_session.session_state import ChatReplSessionState
+from afkbot.services.chat_session.turn_flow import (
+    ChatTurnInteractiveOptions,
+    PlanPresentationFn,
+)
+
+
+class FullscreenChatWorkspaceUX:
+    """Minimal no-stdout UX adapter for fullscreen workspace sessions."""
+
+    def begin_agent_turn(self) -> None:
+        """A fullscreen workspace updates state in-place instead of using stdout spinners."""
+
+    def on_progress(self, event: ProgressEvent) -> None:
+        """Progress events are handled through panel state updates elsewhere."""
+
+        _ = event
+
+    def stop_progress(self) -> None:
+        """Fullscreen workspace keeps no spinner-specific state."""
+
+
+def interrupt_action(
+    *,
+    overlay_active: bool,
+    active_turn: bool,
+    session_running: bool,
+) -> Literal["dismiss_overlay", "cancel_turn", "exit_session"]:
+    """Resolve one deterministic fullscreen interrupt action from current session state."""
+
+    if overlay_active:
+        return "dismiss_overlay"
+    if active_turn and session_running:
+        return "cancel_turn"
+    return "exit_session"
+
+
+async def cancel_background_task(task: asyncio.Task[object] | None) -> None:
+    """Cancel and await one workspace background task when it is still pending."""
+
+    if task is None or task.done():
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+def build_workspace_turn_options(
+    state: ChatReplSessionState,
+    turn_options: ChatTurnInteractiveOptions,
+    *,
+    confirm_plan_execution: Callable[[], Coroutine[Any, Any, bool]],
+    present_plan: PlanPresentationFn,
+) -> ChatTurnInteractiveOptions:
+    """Attach only the fullscreen callbacks that differ from the default REPL wiring."""
+
+    if state.planning_mode != "on":
+        return turn_options
+    return ChatTurnInteractiveOptions(
+        interactive_confirm=turn_options.interactive_confirm,
+        prompt_to_plan_first=turn_options.prompt_to_plan_first,
+        confirm_plan_execution=confirm_plan_execution,
+        present_plan=present_plan,
+    )

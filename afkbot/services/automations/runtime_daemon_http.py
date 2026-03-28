@@ -1,0 +1,171 @@
+"""HTTP ingress helpers for automation runtime daemon."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
+
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from afkbot.db.session import session_scope
+from afkbot.repositories.automation_repo import AutomationRepository
+from afkbot.services.automations.runtime_http import (
+    HttpReadError,
+    HttpRequest,
+    extract_webhook_token,
+    match_webhook_path,
+    parse_webhook_payload,
+    read_request,
+)
+from afkbot.services.automations.webhook_tokens import hash_webhook_token
+from afkbot.services.channels import ChannelDeliveryTarget
+from afkbot.settings import Settings
+
+WebhookTokenValidator = Callable[[str], Awaitable[bool]]
+
+
+class RuntimeDaemonHttpRuntime:
+    """HTTP parsing, routing, and webhook validation for runtime daemon."""
+
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        enqueue_task: Callable[[Any], bool],
+        is_ready: Callable[[], bool],
+        is_shutting_down: Callable[[], bool],
+        webhook_token_validator: WebhookTokenValidator | None,
+        validation_session_factory_getter: Callable[[], async_sessionmaker[AsyncSession] | None],
+        queue_task_factory: Callable[[str, Mapping[str, object], ChannelDeliveryTarget | None], Any],
+    ) -> None:
+        self._settings = settings
+        self._enqueue_task = enqueue_task
+        self._is_ready = is_ready
+        self._is_shutting_down = is_shutting_down
+        self._webhook_token_validator = webhook_token_validator
+        self._validation_session_factory_getter = validation_session_factory_getter
+        self._queue_task_factory = queue_task_factory
+
+    async def route_request(self, request: HttpRequest) -> tuple[int, Mapping[str, object]]:
+        """Route one parsed HTTP request to health/readiness/webhook handlers."""
+
+        if request.method == "GET" and request.path == "/healthz":
+            return 200, {"ok": True}
+        if request.method == "GET" and request.path == "/readyz":
+            if self._is_ready():
+                return 200, {"ok": True}
+            return 503, {"ok": False, "error_code": "not_ready", "reason": "Runtime is not ready"}
+        if request.method == "POST":
+            matches_webhook, _ = match_webhook_path(request.path)
+            if matches_webhook:
+                return await self._handle_webhook_request(
+                    request,
+                    token=extract_webhook_token(request.headers),
+                )
+        return 404, {"ok": False, "error_code": "not_found", "reason": "Not found"}
+
+    async def read_request(
+        self,
+        reader: asyncio.StreamReader,
+    ) -> HttpRequest | HttpReadError:
+        """Read one HTTP request from stream with daemon runtime limits."""
+
+        return await read_request(
+            reader,
+            read_timeout_sec=max(self._settings.runtime_read_timeout_sec, 0.1),
+            max_header_bytes=max(self._settings.runtime_max_header_bytes, 256),
+            max_body_bytes=max(self._settings.runtime_max_body_bytes, 1),
+        )
+
+    async def _handle_webhook_request(
+        self,
+        request: HttpRequest,
+        *,
+        token: str | None,
+    ) -> tuple[int, Mapping[str, object]]:
+        if self._is_shutting_down():
+            return 503, {
+                "ok": False,
+                "error_code": "runtime_shutting_down",
+                "reason": "Runtime is shutting down",
+            }
+        if not token:
+            return 401, {
+                "ok": False,
+                "error_code": "invalid_webhook_token",
+                "reason": "Missing or invalid webhook token",
+            }
+        if not await self._is_valid_webhook_token(token):
+            return 401, {
+                "ok": False,
+                "error_code": "invalid_webhook_token",
+                "reason": "Missing or invalid webhook token",
+            }
+        try:
+            payload = parse_webhook_payload(request.body)
+        except ValueError:
+            return 400, {
+                "ok": False,
+                "error_code": "invalid_payload",
+                "reason": "Payload must be a JSON object",
+            }
+        try:
+            delivery_target = self._parse_delivery_target(request.headers)
+        except ValueError as exc:
+            return 400, {
+                "ok": False,
+                "error_code": "invalid_delivery_target",
+                "reason": str(exc),
+            }
+        if not self._enqueue_task(self._queue_task_factory(token, payload, delivery_target)):
+            return 429, {"ok": False, "error_code": "queue_full", "reason": "Runtime queue is full"}
+        return 202, {"accepted": True}
+
+    async def _is_valid_webhook_token(self, token: str) -> bool:
+        if self._webhook_token_validator is not None:
+            return await self._webhook_token_validator(token)
+        session_factory = self._validation_session_factory_getter()
+        if session_factory is None:
+            return False
+        token_hash = hash_webhook_token(token)
+        async with session_scope(session_factory) as session:
+            repo = AutomationRepository(session)
+            row = await repo.find_webhook_by_token(token_hash=token_hash)
+            return row is not None
+
+    def _parse_delivery_target(
+        self,
+        headers: Mapping[str, str],
+    ) -> ChannelDeliveryTarget | None:
+        """Parse optional outbound delivery target headers into a validated contract."""
+
+        transport = (headers.get("x-afk-delivery-transport") or "").strip() or None
+        binding_id = (headers.get("x-afk-delivery-binding-id") or "").strip() or None
+        account_id = (headers.get("x-afk-delivery-account-id") or "").strip() or None
+        peer_id = (headers.get("x-afk-delivery-peer-id") or "").strip() or None
+        thread_id = (headers.get("x-afk-delivery-thread-id") or "").strip() or None
+        user_id = (headers.get("x-afk-delivery-user-id") or "").strip() or None
+        address = (headers.get("x-afk-delivery-address") or "").strip() or None
+        subject = (headers.get("x-afk-delivery-subject") or "").strip() or None
+        if not any((transport, binding_id, account_id, peer_id, thread_id, user_id, address, subject)):
+            return None
+        if transport is None:
+            raise ValueError(
+                "x-afk-delivery-transport is required when delivery target headers are provided",
+            )
+        try:
+            return ChannelDeliveryTarget(
+                transport=transport,
+                binding_id=binding_id,
+                account_id=account_id,
+                peer_id=peer_id,
+                thread_id=thread_id,
+                user_id=user_id,
+                address=address,
+                subject=subject,
+            )
+        except ValidationError as exc:
+            first_error = exc.errors()[0]
+            raise ValueError(str(first_error.get("msg") or "Invalid delivery target headers")) from exc
