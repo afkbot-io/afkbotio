@@ -392,7 +392,10 @@ ensure_path_block() {
 
 select_cli_alias_path() {
   local venv_python="${VENV_DIR}/bin/python"
-  [[ "${DRY_RUN}" == "true" || -x "${venv_python}" ]] || fail "virtualenv python not found: ${venv_python}"
+  if [[ ! -x "${venv_python}" ]]; then
+    [[ "${DRY_RUN}" == "true" ]] && return 0
+    fail "virtualenv python not found: ${venv_python}"
+  fi
   AFK_SELECT_LAUNCHER_PATH="${AFK_LAUNCHER_PATH}" \
   AFK_SELECT_PATH_ENV="${ORIGINAL_PATH}" \
   "${venv_python}" - <<'PY'

@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 
 import pytest
@@ -224,6 +225,41 @@ def test_pick_convenience_launcher_path_reuses_broken_symlink_slot(tmp_path: Pat
 
     # Assert
     assert result == path_dir / "afk"
+
+
+def test_shell_installer_dry_run_skips_alias_probe_without_venv(tmp_path: Path) -> None:
+    """Shell installer dry-run should not require a created virtualenv for alias probing."""
+
+    # Arrange
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    install_dir = tmp_path / "managed-install"
+
+    # Act
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--dry-run",
+            "--install-dir",
+            str(install_dir),
+            "--repo-url",
+            f"file://{repo_root}",
+            "--git-ref",
+            "local-dry-run",
+            "--skip-setup",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        text=True,
+    )
+
+    # Assert
+    output = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0
+    assert "virtualenv python not found" not in output
+    assert "[dry-run] write" in output
 
 
 def test_render_windows_launcher_uses_single_newlines_before_windows_translation() -> None:
