@@ -39,18 +39,18 @@ afk setup
 afk chat
 ```
 
-Local installer from a source checkout:
+Hosted installer for Windows PowerShell:
 
-```bash
-bash scripts/install.sh --repo-url "file://$PWD"
+```powershell
+powershell -c "irm https://afkbot.io/install.ps1 | iex"
 afk setup
 afk chat
 ```
 
-Windows PowerShell installer from a source checkout:
+Local installer from a source checkout:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -RepoUrl $PWD
+```bash
+bash scripts/install.sh --repo-url "file://$PWD"
 afk setup
 afk chat
 ```
