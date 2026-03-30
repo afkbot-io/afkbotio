@@ -20,7 +20,7 @@ from afkbot.services.managed_install import (
     MANAGED_SOURCE_URL_ENV,
 )
 from afkbot.services.setup.runtime_store import write_runtime_config
-from afkbot.services.update_runtime import _wait_for_local_health
+from afkbot.services.update_runtime import _resolve_uv_tool_afk_executable, _wait_for_local_health
 from afkbot.services.update_runtime import UpdateRuntimeError, run_update
 from afkbot.settings import get_settings
 
@@ -330,6 +330,94 @@ def test_run_update_uses_checkout_root_when_runtime_root_is_separate(
     assert result.source_updated is False
     assert ["git", "-C", str(checkout_root), "fetch", "--depth", "1", "--no-tags", "origin", "main"] in commands
     assert all(str(runtime_root) not in " ".join(command) for command in commands if command and command[0] == "git")
+
+
+def test_run_update_upgrades_uv_tool_install(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Installed uv-tool mode should upgrade the tool, then run maintenance via the fresh executable."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool")
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+
+    result = run_update(settings)
+
+    assert result.install_mode == "uv-tool"
+    assert result.source_updated is True
+    assert result.maintenance_applied is True
+    assert result.runtime_restarted is False
+    assert [str(uv_executable), "tool", "upgrade", "afkbotio", "--reinstall"] in commands
+    assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
+    assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
+
+
+def test_resolve_uv_tool_afk_executable_prefers_windows_exe(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Windows uv-tool resolution should prefer the generated .exe launcher."""
+
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / "uv.exe"
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / "afk.exe"
+    afk_executable.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
+
+    result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+
+    assert result == afk_executable
+
+
+def test_resolve_uv_tool_afk_executable_falls_back_to_windows_cmd(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Windows uv-tool resolution should tolerate legacy .cmd launchers as a fallback."""
+
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / "uv.exe"
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / "afk.cmd"
+    afk_executable.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
+
+    result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+
+    assert result == afk_executable
 
 
 def test_run_update_cleans_staged_source_when_parent_creation_fails(

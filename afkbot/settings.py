@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 import os
 from pathlib import Path
+import sys
 from typing import Literal
 from collections.abc import Mapping
 
@@ -21,13 +22,47 @@ from afkbot.services.llm_timeout_policy import (
 )
 
 
+def _package_root() -> Path:
+    """Return the package/application root that contains the bundled AFKBOT assets."""
+
+    return Path(__file__).resolve().parents[1]
+
+
+def _looks_like_source_checkout(path: Path) -> bool:
+    """Return whether one directory looks like the editable source checkout."""
+
+    return (path / ".git").exists() and (path / "pyproject.toml").exists()
+
+
+def _default_runtime_root() -> Path:
+    """Return the runtime data root for the active execution mode."""
+
+    package_root = _package_root()
+    if _looks_like_source_checkout(package_root):
+        return package_root
+    if os.name == "nt":
+        base = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        return base / "AFKBOT"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "AFKBOT"
+    data_home = Path(os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    return data_home / "afkbot"
+
+
+def _default_app_root() -> Path:
+    """Return the packaged application root used for bundled assets."""
+
+    return _package_root()
+
+
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(env_prefix="AFKBOT_", extra="ignore")
 
     db_url: str = "sqlite+aiosqlite:///./afkbot.db"
-    root_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[1])
+    root_dir: Path = Field(default_factory=_default_runtime_root)
+    app_dir: Path = Field(default_factory=_default_app_root)
     tool_workspace_root: Path | None = None
     bootstrap_dir_name: str = "afkbot/bootstrap"
     skills_dir_name: str = "afkbot/skills"
@@ -380,6 +415,30 @@ class Settings(BaseSettings):
             )
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_root_and_app_dirs(cls, value: object) -> object:
+        """Resolve runtime and application roots before field validation."""
+
+        if value is None:
+            data: dict[str, object] = {}
+        elif isinstance(value, Mapping):
+            data = dict(value)
+        else:
+            return value
+
+        root_dir = data.get("root_dir")
+        app_dir = data.get("app_dir")
+        root_is_configured = root_dir not in {None, ""}
+        app_is_configured = app_dir not in {None, ""}
+
+        # Preserve source-checkout semantics for tests and local development:
+        # when callers relocate the runtime root inside a checkout, bundled
+        # assets are still expected under that same tree.
+        if root_is_configured and not app_is_configured and _looks_like_source_checkout(_package_root()):
+            data["app_dir"] = root_dir
+        return data
+
     @field_validator("runtime_cron_interval_sec", "runtime_read_timeout_sec", "llm_request_timeout_sec")
     @classmethod
     def _validate_positive_float(cls, value: float) -> float:
@@ -426,19 +485,19 @@ class Settings(BaseSettings):
     def bootstrap_dir(self) -> Path:
         """Return absolute bootstrap directory path."""
 
-        return self.root_dir / self.bootstrap_dir_name
+        return self.app_dir / self.bootstrap_dir_name
 
     @property
     def skills_dir(self) -> Path:
         """Return absolute core skills directory path."""
 
-        return self.root_dir / self.skills_dir_name
+        return self.app_dir / self.skills_dir_name
 
     @property
     def subagents_dir(self) -> Path:
         """Return absolute core subagents directory path."""
 
-        return self.root_dir / self.subagents_dir_name
+        return self.app_dir / self.subagents_dir_name
 
     @property
     def profiles_dir(self) -> Path:

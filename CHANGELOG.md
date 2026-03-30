@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-03-30
+
+### Added
+
+- `uv` tool-based hosted install/update/uninstall flow documentation and advanced command examples.
+- Regression coverage for uv-tool installs, runtime/app path resolution, and safer installer migration behavior.
+
+### Changed
+
+- Hosted installers on macOS, Linux, and Windows now install AFKBOT through `uv tool install` instead of the previous managed snapshot/virtualenv flow.
+- `afk update` now detects uv-tool installs and upgrades them through `uv tool upgrade afkbotio --reinstall`.
+- Installed-tool runtime state now lives in user-local data directories while bundled bootstrap, skills, and subagent assets continue to resolve from the packaged app.
+- Unix installers now use `--reinstall`, defer legacy PATH cleanup until the new install/bootstrap succeeds, and keep legacy wiring intact when bootstrap fails.
+- Unix uninstall now tolerates missing uv-tool state and continues cleaning legacy PATH blocks, symlinks, and install roots.
+- Windows PowerShell installer and uninstaller now fail correctly on non-zero native command exits instead of printing false success.
+
+### Removed
+
+- Hosted installer support for the legacy managed `--install-dir` workflow.
+
 ## [1.0.0] - 2026-03-25
 
 ### Added

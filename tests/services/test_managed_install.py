@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -28,6 +29,17 @@ from afkbot.services.managed_install import (
     stage_source_snapshot,
     write_managed_launcher,
 )
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _legacy_unix_install_dir(home_dir: Path) -> Path:
+    if sys.platform == "darwin":
+        return home_dir / "Library" / "Application Support" / "AFKBOT"
+    return home_dir / ".local" / "share" / "afkbot"
 
 
 def test_resolve_managed_install_context_requires_complete_env(monkeypatch: MonkeyPatch) -> None:
@@ -227,22 +239,17 @@ def test_pick_convenience_launcher_path_reuses_broken_symlink_slot(tmp_path: Pat
     assert result == path_dir / "afk"
 
 
-def test_shell_installer_dry_run_skips_alias_probe_without_venv(tmp_path: Path) -> None:
-    """Shell installer dry-run should not require a created virtualenv for alias probing."""
+def test_shell_installer_dry_run_uses_uv_tool_install(tmp_path: Path) -> None:
+    """Shell installer dry-run should emit uv-tool operations without managed-venv steps."""
 
     # Arrange
     repo_root = Path(__file__).resolve().parents[2]
     script_path = repo_root / "scripts" / "install.sh"
-    install_dir = tmp_path / "managed-install"
-
-    # Act
     result = subprocess.run(
         [
             "/bin/bash",
             str(script_path),
             "--dry-run",
-            "--install-dir",
-            str(install_dir),
             "--repo-url",
             f"file://{repo_root}",
             "--git-ref",
@@ -259,7 +266,130 @@ def test_shell_installer_dry_run_skips_alias_probe_without_venv(tmp_path: Path) 
     output = f"{result.stdout}\n{result.stderr}"
     assert result.returncode == 0
     assert "virtualenv python not found" not in output
-    assert "[dry-run] write" in output
+    assert "tool install --python 3.12 --reinstall --editable" in output
+    assert "tool update-shell" in output
+
+
+def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:
+    """Shell installer should not remove legacy PATH wiring before the new tool install succeeds."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    home_dir = tmp_path / "home"
+    user_bin_dir = tmp_path / "bin"
+    home_dir.mkdir(parents=True, exist_ok=True)
+    user_bin_dir.mkdir(parents=True, exist_ok=True)
+    legacy_profile = home_dir / ".zprofile"
+    legacy_profile.write_text(
+        "# >>> AFKBOT PATH >>>\nexport PATH=\"/legacy/afk:$PATH\"\n# <<< AFKBOT PATH <<<\n",
+        encoding="utf-8",
+    )
+    uv_log = tmp_path / "uv-install.log"
+    _write_executable(
+        user_bin_dir / "uv",
+        f"""#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >> "{uv_log}"
+if [[ "${{1:-}}" == "tool" && "${{2:-}}" == "install" ]]; then
+  exit 42
+fi
+if [[ "${{1:-}}" == "tool" && "${{2:-}}" == "update-shell" ]]; then
+  exit 0
+fi
+if [[ "${{1:-}}" == "tool" && "${{2:-}}" == "dir" && "${{3:-}}" == "--bin" ]]; then
+  printf '%s\\n' "{user_bin_dir}"
+  exit 0
+fi
+exit 0
+""",
+    )
+
+    env = dict(os.environ)
+    env["HOME"] = str(home_dir)
+    env["XDG_BIN_HOME"] = str(user_bin_dir)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--repo-url",
+            f"file://{repo_root}",
+            "--git-ref",
+            "local-failure",
+            "--skip-setup",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "# >>> AFKBOT PATH >>>" in legacy_profile.read_text(encoding="utf-8")
+    assert "tool install" in uv_log.read_text(encoding="utf-8")
+
+
+def test_shell_uninstaller_continues_legacy_cleanup_when_uv_tool_is_missing(tmp_path: Path) -> None:
+    """Shell uninstaller should keep cleaning legacy state when uv tool uninstall fails."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "uninstall.sh"
+    home_dir = tmp_path / "home"
+    user_bin_dir = tmp_path / "bin"
+    home_dir.mkdir(parents=True, exist_ok=True)
+    user_bin_dir.mkdir(parents=True, exist_ok=True)
+    legacy_profile = home_dir / ".zprofile"
+    legacy_profile.write_text(
+        "# >>> AFKBOT PATH >>>\nexport PATH=\"/legacy/afk:$PATH\"\n# <<< AFKBOT PATH <<<\n",
+        encoding="utf-8",
+    )
+    legacy_install_dir = _legacy_unix_install_dir(home_dir)
+    (legacy_install_dir / "bin").mkdir(parents=True, exist_ok=True)
+    (legacy_install_dir / "bin" / "afk").write_text("#!/bin/sh\n", encoding="utf-8")
+    legacy_alias = home_dir / ".local" / "bin" / "afk"
+    legacy_alias.parent.mkdir(parents=True, exist_ok=True)
+    legacy_alias.symlink_to(legacy_install_dir / "bin" / "afk")
+    uv_log = tmp_path / "uv-uninstall.log"
+    _write_executable(
+        user_bin_dir / "uv",
+        f"""#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >> "{uv_log}"
+if [[ "${{1:-}}" == "tool" && "${{2:-}}" == "dir" && "${{3:-}}" == "--bin" ]]; then
+  printf '%s\\n' "{user_bin_dir}"
+  exit 0
+fi
+if [[ "${{1:-}}" == "tool" && "${{2:-}}" == "uninstall" ]]; then
+  exit 2
+fi
+exit 0
+""",
+    )
+
+    env = dict(os.environ)
+    env["HOME"] = str(home_dir)
+    env["XDG_BIN_HOME"] = str(user_bin_dir)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--yes",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "# >>> AFKBOT PATH >>>" not in legacy_profile.read_text(encoding="utf-8")
+    assert not legacy_alias.exists()
+    assert not legacy_alias.is_symlink()
+    assert not legacy_install_dir.exists()
+    assert "tool uninstall afkbotio" in uv_log.read_text(encoding="utf-8")
 
 
 def test_render_windows_launcher_uses_single_newlines_before_windows_translation() -> None:
