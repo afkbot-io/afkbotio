@@ -44,7 +44,7 @@ function Invoke-NativeCommand {
     $result = & $Script
     $exitCode = $global:LASTEXITCODE
     if ($exitCode -ne 0) {
-        throw "Command failed with exit code $exitCode: $Description"
+        throw ("Command failed with exit code {0}: {1}" -f $exitCode, $Description)
     }
     return $result
 }
@@ -71,6 +71,15 @@ function Get-ToolBinDir([string]$UvExe) {
     return $output.Trim()
 }
 
+function Get-AfkToolPath([string]$ToolBinDir) {
+    $exePath = Join-Path $ToolBinDir "afk.exe"
+    if (Test-Path $exePath) {
+        return $exePath
+    }
+    $cmdPath = Join-Path $ToolBinDir "afk.cmd"
+    return $cmdPath
+}
+
 function Remove-UserPathEntry([string]$Entry) {
     $current = [Environment]::GetEnvironmentVariable("Path", "User")
     if ([string]::IsNullOrWhiteSpace($current)) {
@@ -95,7 +104,7 @@ $legacyInstallDir = Join-Path $env:LOCALAPPDATA "AFKBOT"
 $legacyManagedBin = Join-Path $legacyInstallDir "bin"
 $uvExe = Get-UvExePath
 $toolBinDir = Get-ToolBinDir -UvExe $uvExe
-$afkCmd = Join-Path $toolBinDir "afk.cmd"
+$afkCmd = Get-AfkToolPath -ToolBinDir $toolBinDir
 $hadWarnings = $false
 
 if (Test-Path $afkCmd) {

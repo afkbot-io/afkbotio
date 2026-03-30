@@ -46,7 +46,7 @@ function Invoke-NativeCommand {
     $result = & $Script
     $exitCode = $global:LASTEXITCODE
     if ($exitCode -ne 0) {
-        throw "Command failed with exit code $exitCode: $Description"
+        throw ("Command failed with exit code {0}: {1}" -f $exitCode, $Description)
     }
     return $result
 }
@@ -159,6 +159,15 @@ function Get-ToolBinDir([string]$UvExe) {
     return $output.Trim()
 }
 
+function Get-AfkToolPath([string]$ToolBinDir) {
+    $exePath = Join-Path $ToolBinDir "afk.exe"
+    if (Test-Path $exePath) {
+        return $exePath
+    }
+    $cmdPath = Join-Path $ToolBinDir "afk.cmd"
+    return $cmdPath
+}
+
 function Install-AfkTool([string]$UvExe, [hashtable]$ToolSource) {
     if ($ToolSource.Mode -eq "editable") {
         [void](Invoke-NativeCommand -Description "$UvExe tool install --python 3.12 --reinstall --editable $($ToolSource.Value)" -Script {
@@ -193,7 +202,7 @@ Install-AfkTool -UvExe $uvExe -ToolSource $toolSource
 Update-ToolShell -UvExe $uvExe
 
 $toolBinDir = Get-ToolBinDir -UvExe $uvExe
-$afkCmd = Join-Path $toolBinDir "afk.cmd"
+$afkCmd = Get-AfkToolPath -ToolBinDir $toolBinDir
 $env:Path = "$toolBinDir;$env:Path"
 
 if (-not $SkipSetup) {
@@ -218,4 +227,4 @@ Write-Host "  afk setup"
 Write-Host "  afk doctor"
 Write-Host "  afk chat"
 Write-Host ""
-Write-Host "To update later, run `afk update` or `uv tool upgrade afkbotio --reinstall`."
+Write-Host 'To update later, run `afk update` or `uv tool upgrade afkbotio --reinstall`.'

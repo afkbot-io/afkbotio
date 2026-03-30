@@ -362,12 +362,20 @@ def _resolve_uv_tool_afk_executable(*, uv_executable: Path) -> Path:
     """Return the installed AFKBOT executable inside the uv tool bin directory."""
 
     bin_dir = _resolve_uv_tool_bin_dir(uv_executable=uv_executable)
-    candidate = bin_dir / ("afk.cmd" if os.name == "nt" else "afk")
-    if candidate.exists():
-        return candidate
+    candidates = (
+        (bin_dir / "afk.exe", bin_dir / "afk.cmd")
+        if os.name == "nt"
+        else (bin_dir / "afk",)
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     raise UpdateRuntimeError(
         error_code="update_failed",
-        reason=f"AFKBOT executable not found in uv tool bin directory: {candidate}",
+        reason=(
+            "AFKBOT executable not found in uv tool bin directory: "
+            + ", ".join(str(candidate) for candidate in candidates)
+        ),
     )
 
 

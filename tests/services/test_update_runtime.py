@@ -20,7 +20,7 @@ from afkbot.services.managed_install import (
     MANAGED_SOURCE_URL_ENV,
 )
 from afkbot.services.setup.runtime_store import write_runtime_config
-from afkbot.services.update_runtime import _wait_for_local_health
+from afkbot.services.update_runtime import _resolve_uv_tool_afk_executable, _wait_for_local_health
 from afkbot.services.update_runtime import UpdateRuntimeError, run_update
 from afkbot.settings import get_settings
 
@@ -343,7 +343,7 @@ def test_run_update_upgrades_uv_tool_install(
     tool_bin.mkdir(parents=True, exist_ok=True)
     uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
     uv_executable.write_text("", encoding="utf-8")
-    afk_executable = tool_bin / ("afk.cmd" if os.name == "nt" else "afk")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
     afk_executable.write_text("", encoding="utf-8")
     commands: list[list[str]] = []
 
@@ -376,6 +376,48 @@ def test_run_update_upgrades_uv_tool_install(
     assert [str(uv_executable), "tool", "upgrade", "afkbotio", "--reinstall"] in commands
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
+
+
+def test_resolve_uv_tool_afk_executable_prefers_windows_exe(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Windows uv-tool resolution should prefer the generated .exe launcher."""
+
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / "uv.exe"
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / "afk.exe"
+    afk_executable.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
+
+    result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+
+    assert result == afk_executable
+
+
+def test_resolve_uv_tool_afk_executable_falls_back_to_windows_cmd(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Windows uv-tool resolution should tolerate legacy .cmd launchers as a fallback."""
+
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / "uv.exe"
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / "afk.cmd"
+    afk_executable.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
+
+    result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+
+    assert result == afk_executable
 
 
 def test_run_update_cleans_staged_source_when_parent_creation_fails(
