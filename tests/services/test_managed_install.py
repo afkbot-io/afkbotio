@@ -299,6 +299,48 @@ def test_shell_installer_dry_run_uses_github_archive_source_for_remote_repo() ->
     assert "tool install --python 3.12 --reinstall" in output
 
 
+def test_shell_installer_dry_run_warns_when_current_shell_path_will_still_miss_afk(
+    tmp_path: Path,
+) -> None:
+    """Shell installer should warn when PATH changes only apply after the shell reloads."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    home_dir = tmp_path / "home"
+    home_dir.mkdir(parents=True, exist_ok=True)
+
+    env = dict(os.environ)
+    env["HOME"] = str(home_dir)
+    env["PATH"] = "/usr/bin:/bin"
+    env.pop("XDG_BIN_HOME", None)
+    env.pop("XDG_DATA_HOME", None)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--dry-run",
+            "--repo-url",
+            f"file://{repo_root}",
+            "--git-ref",
+            "local-dry-run",
+            "--skip-setup",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    output = f"{result.stdout}\n{result.stderr}"
+    expected_bin_dir = home_dir / ".local" / "bin"
+
+    assert result.returncode == 0
+    assert "If `afk` is not visible in the current shell yet" in output
+    assert f'export PATH="{expected_bin_dir}:$PATH"' in output
+
+
 def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:
     """Shell installer should not remove legacy PATH wiring before the new tool install succeeds."""
 

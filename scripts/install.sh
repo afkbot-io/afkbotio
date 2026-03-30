@@ -12,6 +12,7 @@ DRY_RUN="false"
 SKIP_SETUP="false"
 REPO_URL="${DEFAULT_REPO_URL}"
 GIT_REF="${DEFAULT_GIT_REF}"
+ORIGINAL_PATH="${PATH:-}"
 UV_BIN_DIR=""
 UV_BIN=""
 AFK_BIN_DIR=""
@@ -299,8 +300,10 @@ run_bootstrap_setup() {
 }
 
 path_contains() {
-  case ":${PATH:-}:" in
-    *":$1:"*) return 0 ;;
+  local target="$1"
+  local path_env="${2:-${PATH:-}}"
+  case ":${path_env}:" in
+    *":${target}:"*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -312,7 +315,7 @@ print_success() {
   log "uv: ${UV_BIN}"
   log "CLI: ${AFK_BIN}"
   log ""
-  if ! path_contains "${AFK_BIN_DIR}"; then
+  if ! path_contains "${AFK_BIN_DIR}" "${ORIGINAL_PATH}"; then
     log "If \`afk\` is not visible in the current shell yet, reopen the terminal or run:"
     log "  export PATH=\"${AFK_BIN_DIR}:\$PATH\""
     log ""
