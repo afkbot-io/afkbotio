@@ -193,13 +193,22 @@ build_tool_source() {
     git@github.com:*)
       normalized="https://github.com/${normalized#git@github.com:}"
       ;;
+    http://github.com/*)
+      normalized="https://github.com/${normalized#http://github.com/}"
+      ;;
+    https://www.github.com/*)
+      normalized="https://github.com/${normalized#https://www.github.com/}"
+      ;;
+    http://www.github.com/*)
+      normalized="https://github.com/${normalized#http://www.github.com/}"
+      ;;
   esac
   normalized="${normalized%.git}"
   normalized="${normalized%/}"
   case "${normalized}" in
-    https://github.com/*|http://github.com/*|https://www.github.com/*|http://www.github.com/*)
-      TOOL_INSTALL_MODE="git"
-      TOOL_SOURCE="git+${normalized}.git@${GIT_REF}"
+    https://github.com/*)
+      TOOL_INSTALL_MODE="archive"
+      TOOL_SOURCE="${normalized}/archive/${GIT_REF}.tar.gz"
       return 0
       ;;
   esac

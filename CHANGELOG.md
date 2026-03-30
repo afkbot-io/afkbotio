@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Hosted installers on macOS, Linux, and Windows now install AFKBOT through `uv tool install` instead of the previous managed snapshot/virtualenv flow.
+- Hosted installers now resolve GitHub sources through source archives instead of `git+...`, so default installs no longer require a system Git executable.
 - `afk update` now detects uv-tool installs and upgrades them through `uv tool upgrade afkbotio --reinstall`.
 - Installed-tool runtime state now lives in user-local data directories while bundled bootstrap, skills, and subagent assets continue to resolve from the packaged app.
 - Unix installers now use `--reinstall`, defer legacy PATH cleanup until the new install/bootstrap succeeds, and keep legacy wiring intact when bootstrap fails.

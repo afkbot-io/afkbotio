@@ -270,6 +270,35 @@ def test_shell_installer_dry_run_uses_uv_tool_install(tmp_path: Path) -> None:
     assert "tool update-shell" in output
 
 
+def test_shell_installer_dry_run_uses_github_archive_source_for_remote_repo() -> None:
+    """Shell installer should use a GitHub archive URL so hosted installs do not depend on Git."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--dry-run",
+            "--repo-url",
+            "https://github.com/afkbot-io/afkbotio.git",
+            "--git-ref",
+            "main",
+            "--skip-setup",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        text=True,
+    )
+
+    output = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0
+    assert "git+https://github.com/afkbot-io/afkbotio.git@main" not in output
+    assert "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz" in output
+    assert "tool install --python 3.12 --reinstall" in output
+
+
 def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:
     """Shell installer should not remove legacy PATH wiring before the new tool install succeeds."""
 
