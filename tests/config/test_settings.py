@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 from pytest import MonkeyPatch
@@ -27,6 +28,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     settings = get_settings()
 
     # Assert
+    assert settings.app_dir == tmp_path
     assert settings.bootstrap_dir == tmp_path / "afkbot/bootstrap"
     assert settings.skills_dir == tmp_path / "afkbot/skills"
     assert settings.profiles_dir == tmp_path / "profiles"
@@ -156,6 +158,55 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.session_compaction_max_chars == 4000
     assert settings.session_compaction_prune_raw_turns is False
     get_settings.cache_clear()
+
+
+def test_settings_installed_tool_layout_uses_user_runtime_root_and_package_assets(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Installed tool mode should separate runtime state from bundled application assets."""
+
+    package_root = tmp_path / "tool-install"
+    monkeypatch.delenv("AFKBOT_ROOT_DIR", raising=False)
+    monkeypatch.delenv("AFKBOT_APP_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("afkbot.settings._package_root", lambda: package_root)
+    get_settings.cache_clear()
+
+    settings = Settings()
+
+    if sys.platform == "darwin":
+        expected_root = tmp_path / "Library" / "Application Support" / "AFKBOT"
+    elif sys.platform == "win32":
+        expected_root = Path.home() / "AppData" / "Local" / "AFKBOT"
+    else:
+        expected_root = tmp_path / ".local" / "share" / "afkbot"
+
+    assert settings.root_dir == expected_root
+    assert settings.app_dir == package_root
+    assert settings.bootstrap_dir == package_root / "afkbot/bootstrap"
+    assert settings.skills_dir == package_root / "afkbot/skills"
+    assert settings.profiles_dir == expected_root / "profiles"
+
+
+def test_settings_installed_tool_explicit_runtime_root_keeps_package_assets(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Installed tool mode should not redirect packaged assets when only root_dir is overridden."""
+
+    package_root = tmp_path / "tool-install"
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setattr("afkbot.settings._package_root", lambda: package_root)
+
+    settings = Settings(root_dir=runtime_root)
+
+    assert settings.root_dir == runtime_root
+    assert settings.app_dir == package_root
+    assert settings.bootstrap_dir == package_root / "afkbot/bootstrap"
+    assert settings.skills_dir == package_root / "afkbot/skills"
+    assert settings.profiles_dir == runtime_root / "profiles"
 
 
 def test_settings_runtime_limits_validation() -> None:

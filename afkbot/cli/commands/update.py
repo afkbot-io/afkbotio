@@ -1,4 +1,4 @@
-"""Managed runtime update command."""
+"""AFKBOT install update command."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def register(app: typer.Typer) -> None:
 
     @app.command("update")
     def update() -> None:
-        """Refresh the local AFKBOT source checkout and apply runtime maintenance."""
+        """Refresh the active AFKBOT install and apply runtime maintenance."""
 
         settings = get_settings()
         try:

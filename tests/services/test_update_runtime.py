@@ -332,6 +332,52 @@ def test_run_update_uses_checkout_root_when_runtime_root_is_separate(
     assert all(str(runtime_root) not in " ".join(command) for command in commands if command and command[0] == "git")
 
 
+def test_run_update_upgrades_uv_tool_install(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Installed uv-tool mode should upgrade the tool, then run maintenance via the fresh executable."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.cmd" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool")
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+
+    result = run_update(settings)
+
+    assert result.install_mode == "uv-tool"
+    assert result.source_updated is True
+    assert result.maintenance_applied is True
+    assert result.runtime_restarted is False
+    assert [str(uv_executable), "tool", "upgrade", "afkbotio", "--reinstall"] in commands
+    assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
+    assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
+
+
 def test_run_update_cleans_staged_source_when_parent_creation_fails(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

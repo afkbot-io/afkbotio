@@ -5,25 +5,21 @@ PROGRAM_NAME="AFKBOT"
 DEFAULT_REPO_URL="${AFKBOT_INSTALL_REPO_URL:-https://github.com/afkbot-io/afkbotio.git}"
 DEFAULT_GIT_REF="${AFKBOT_INSTALL_GIT_REF:-main}"
 UV_INSTALL_URL="${AFKBOT_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
-PATH_BLOCK_START="# >>> AFKBOT PATH >>>"
-PATH_BLOCK_END="# <<< AFKBOT PATH <<<"
+LEGACY_PATH_BLOCK_START="# >>> AFKBOT PATH >>>"
+LEGACY_PATH_BLOCK_END="# <<< AFKBOT PATH <<<"
 
 DRY_RUN="false"
 SKIP_SETUP="false"
 REPO_URL="${DEFAULT_REPO_URL}"
 GIT_REF="${DEFAULT_GIT_REF}"
-INSTALL_DIR=""
 PLATFORM=""
-APP_ROOT_DIR=""
-RUNTIME_DIR=""
-VENV_DIR=""
+UV_BIN_DIR=""
 UV_BIN=""
-BIN_DIR=""
-AFK_LAUNCHER_PATH=""
-CURRENT_APP_DIR=""
-ORIGINAL_PATH="${PATH:-}"
-PROFILE_PATH=""
-CLI_ALIAS_PATH=""
+AFK_BIN_DIR=""
+AFK_BIN=""
+TOOL_SOURCE=""
+TOOL_INSTALL_MODE=""
+LEGACY_INSTALL_DIR=""
 
 log() {
   printf '%s\n' "$1"
@@ -39,16 +35,17 @@ usage() {
 Usage: scripts/install.sh [options]
 
 Options:
-  --install-dir <path>  Install root. Defaults to a user-local AFKBOT directory.
   --repo-url <url>      GitHub repo URL or local source path to install.
   --git-ref <ref>       Branch or tag to install from a remote repo. Default: main.
   --skip-setup          Skip `afk setup --bootstrap-only --yes`.
   --dry-run             Print actions without changing the machine.
   -h, --help            Show this help.
 
-The installer is idempotent:
-- first run installs uv, Python 3.12, a managed source snapshot, and a venv;
-- later runs stage a fresh source snapshot, reinstall the CLI, and keep runtime state in place.
+This installer:
+- bootstraps uv into the user-local executable directory if needed;
+- installs AFKBOT as an isolated uv tool;
+- asks uv to add the tool bin directory to your shell PATH;
+- seeds the runtime root with `afk setup --bootstrap-only --yes`.
 USAGE
 }
 
@@ -69,11 +66,6 @@ run() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --install-dir)
-        [[ $# -ge 2 ]] || fail "--install-dir requires a value"
-        INSTALL_DIR="$2"
-        shift 2
-        ;;
       --repo-url)
         [[ $# -ge 2 ]] || fail "--repo-url requires a value"
         REPO_URL="$2"
@@ -92,6 +84,9 @@ parse_args() {
         DRY_RUN="true"
         shift
         ;;
+      --install-dir)
+        fail "--install-dir is not supported by the uv tool installer"
+        ;;
       -h|--help)
         usage
         exit 0
@@ -103,27 +98,34 @@ parse_args() {
   done
 }
 
+default_user_bin_dir() {
+  if [[ -n "${XDG_BIN_HOME:-}" ]]; then
+    printf '%s\n' "${XDG_BIN_HOME}"
+    return 0
+  fi
+  if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s\n' "${XDG_DATA_HOME}/../bin"
+    return 0
+  fi
+  printf '%s\n' "${HOME}/.local/bin"
+}
+
 detect_platform() {
   case "$(uname -s)" in
     Darwin)
       PLATFORM="macos"
-      [[ -n "${INSTALL_DIR}" ]] || INSTALL_DIR="${HOME}/Library/Application Support/AFKBOT"
+      LEGACY_INSTALL_DIR="${HOME}/Library/Application Support/AFKBOT"
       ;;
     Linux)
       PLATFORM="linux"
-      [[ -n "${INSTALL_DIR}" ]] || INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/afkbot"
+      LEGACY_INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/afkbot"
       ;;
     *)
       fail "unsupported platform: $(uname -s)"
       ;;
   esac
-
-  APP_ROOT_DIR="${INSTALL_DIR}/app"
-  RUNTIME_DIR="${INSTALL_DIR}/runtime"
-  VENV_DIR="${INSTALL_DIR}/venv"
-  UV_BIN="${INSTALL_DIR}/.uv/uv"
-  BIN_DIR="${INSTALL_DIR}/bin"
-  AFK_LAUNCHER_PATH="${BIN_DIR}/afk"
+  UV_BIN_DIR="$(default_user_bin_dir)"
+  UV_BIN="${UV_BIN_DIR}/uv"
 }
 
 require_downloader() {
@@ -148,31 +150,17 @@ ensure_uv() {
   if [[ -x "${UV_BIN}" ]]; then
     return 0
   fi
-  require_downloader
-  run mkdir -p "$(dirname "${UV_BIN}")"
+  run mkdir -p "${UV_BIN_DIR}"
   if [[ "${DRY_RUN}" == "true" ]]; then
-    log "[dry-run] install uv to ${INSTALL_DIR}/.uv"
+    log "[dry-run] install uv to ${UV_BIN_DIR}"
     return 0
   fi
   local temp_script
   temp_script="$(mktemp "${TMPDIR:-/tmp}/afkbot-uv.XXXXXX")"
   download_to_file "${UV_INSTALL_URL}" "${temp_script}"
-  env UV_UNMANAGED_INSTALL="$(dirname "${UV_BIN}")" sh "${temp_script}"
+  env UV_UNMANAGED_INSTALL="${UV_BIN_DIR}" sh "${temp_script}"
   rm -f "${temp_script}"
   [[ -x "${UV_BIN}" ]] || fail "uv installation completed but ${UV_BIN} was not created"
-}
-
-run_uv() {
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    run "${UV_BIN}" "$@"
-    return 0
-  fi
-  "${UV_BIN}" "$@"
-}
-
-ensure_python_runtime() {
-  run_uv python install 3.12
-  run_uv venv --seed --allow-existing --python 3.12 "${VENV_DIR}"
 }
 
 resolve_local_source_path() {
@@ -189,8 +177,15 @@ resolve_local_source_path() {
   return 1
 }
 
-build_archive_url() {
-  local normalized="${REPO_URL}"
+build_tool_source() {
+  local local_source="" normalized=""
+  if local_source="$(resolve_local_source_path)"; then
+    TOOL_INSTALL_MODE="editable"
+    TOOL_SOURCE="${local_source}"
+    return 0
+  fi
+
+  normalized="${REPO_URL}"
   case "${normalized}" in
     git@github.com:*)
       normalized="https://github.com/${normalized#git@github.com:}"
@@ -200,131 +195,95 @@ build_archive_url() {
   normalized="${normalized%/}"
   case "${normalized}" in
     https://github.com/*|http://github.com/*|https://www.github.com/*|http://www.github.com/*)
-      printf '%s/archive/%s.tar.gz\n' "${normalized}" "${GIT_REF}"
+      TOOL_INSTALL_MODE="git"
+      TOOL_SOURCE="git+${normalized}.git@${GIT_REF}"
       return 0
       ;;
   esac
-  fail "remote managed installs require a GitHub repository URL or a local source path"
+  fail "installer supports a local source path or a GitHub repository URL"
 }
 
-build_release_id() {
-  date -u +"%Y%m%d%H%M%S-$$"
-}
-
-install_source_snapshot() {
-  local local_source="" release_id="" archive_url="" venv_python=""
-  release_id="$(build_release_id)"
-  CURRENT_APP_DIR="${APP_ROOT_DIR}/${release_id}"
-  run mkdir -p "${APP_ROOT_DIR}"
-
-  if local_source="$(resolve_local_source_path)"; then
-    if [[ "${DRY_RUN}" == "true" ]]; then
-      log "[dry-run] copy local source ${local_source} -> ${CURRENT_APP_DIR}"
-      return 0
-    fi
-    run mkdir -p "${CURRENT_APP_DIR}"
-    run cp -a "${local_source}/." "${CURRENT_APP_DIR}/"
-    run rm -rf "${CURRENT_APP_DIR}/.git" "${CURRENT_APP_DIR}/.venv" "${CURRENT_APP_DIR}/.pytest_cache" \
-      "${CURRENT_APP_DIR}/.ruff_cache" "${CURRENT_APP_DIR}/.mypy_cache" "${CURRENT_APP_DIR}/build" \
-      "${CURRENT_APP_DIR}/dist"
-  else
-    archive_url="$(build_archive_url)"
-    venv_python="${VENV_DIR}/bin/python"
-    if [[ "${DRY_RUN}" == "true" ]]; then
-      log "[dry-run] download ${archive_url}"
-      log "[dry-run] extract remote source into ${CURRENT_APP_DIR}"
-      return 0
-    fi
-    [[ -x "${venv_python}" ]] || fail "virtualenv python not found: ${venv_python}"
-    AFK_INSTALL_ARCHIVE_URL="${archive_url}" \
-    AFK_INSTALL_TARGET_DIR="${CURRENT_APP_DIR}" \
-    "${venv_python}" - <<'PY'
-import os
-import shutil
-import tarfile
-import tempfile
-from pathlib import Path
-from urllib.request import urlopen
-
-archive_url = os.environ["AFK_INSTALL_ARCHIVE_URL"]
-target_dir = Path(os.environ["AFK_INSTALL_TARGET_DIR"]).resolve(strict=False)
-temp_dir = Path(tempfile.mkdtemp(prefix="afkbot-source-")).resolve(strict=False)
-archive_path = temp_dir / "source.tar.gz"
-extract_dir = temp_dir / "extract"
-extract_dir.mkdir(parents=True, exist_ok=True)
-try:
-    with urlopen(archive_url, timeout=30) as response, archive_path.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-    with tarfile.open(archive_path, "r:gz") as archive:
-        root = extract_dir.resolve(strict=False)
-        for member in archive.getmembers():
-            resolved_target = (extract_dir / member.name).resolve(strict=False)
-            if root not in resolved_target.parents and resolved_target != root:
-                raise SystemExit(f"Remote archive contains unsafe path: {member.name}")
-        archive.extractall(extract_dir)
-    entries = [item for item in extract_dir.iterdir() if item.is_dir()]
-    if len(entries) != 1:
-        raise SystemExit("Remote archive did not contain one source directory.")
-    extracted_root = entries[0]
-    if not (extracted_root / "pyproject.toml").exists():
-        raise SystemExit("Remote archive is missing pyproject.toml.")
-    if not (extracted_root / "afkbot").exists():
-        raise SystemExit("Remote archive is missing the afkbot package.")
-    target_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(extracted_root), str(target_dir))
-finally:
-    shutil.rmtree(temp_dir, ignore_errors=True)
-PY
-  fi
-
-  [[ "${DRY_RUN}" == "true" || -f "${CURRENT_APP_DIR}/pyproject.toml" ]] || fail "pyproject.toml missing in ${CURRENT_APP_DIR}"
-  [[ "${DRY_RUN}" == "true" || -d "${CURRENT_APP_DIR}/afkbot" ]] || fail "afkbot package missing in ${CURRENT_APP_DIR}"
-}
-
-install_python_package() {
-  local venv_python="${VENV_DIR}/bin/python"
-  [[ "${DRY_RUN}" == "true" || -x "${venv_python}" ]] || fail "virtualenv python not found: ${venv_python}"
-  run "${venv_python}" -m pip install --upgrade pip
-  run "${venv_python}" -m pip install --upgrade -e "${CURRENT_APP_DIR}"
-}
-
-escaped_double_quotes() {
-  printf '%s' "$1" | sed 's/"/\\"/g'
-}
-
-write_cli_launcher() {
-  local venv_python="${VENV_DIR}/bin/python"
-  [[ "${DRY_RUN}" == "true" || -x "${venv_python}" ]] || fail "virtualenv python not found: ${venv_python}"
-  run mkdir -p "${BIN_DIR}"
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    log "[dry-run] write ${AFK_LAUNCHER_PATH}"
+remove_path_block_from_file() {
+  local target="$1"
+  [[ -f "${target}" ]] || return 0
+  if ! grep -Fq "${LEGACY_PATH_BLOCK_START}" "${target}"; then
     return 0
   fi
-  AFK_WRITE_INSTALL_DIR="${INSTALL_DIR}" \
-  AFK_WRITE_RUNTIME_DIR="${RUNTIME_DIR}" \
-  AFK_WRITE_APP_DIR="${CURRENT_APP_DIR}" \
-  AFK_WRITE_SOURCE_URL="${REPO_URL}" \
-  AFK_WRITE_SOURCE_REF="${GIT_REF}" \
-  AFK_WRITE_PYTHON="${venv_python}" \
-  "${venv_python}" - <<'PY'
-import os
-from pathlib import Path
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    log "[dry-run] remove legacy AFKBOT PATH block from ${target}"
+    return 0
+  fi
+  local temp_file
+  temp_file="$(mktemp "${TMPDIR:-/tmp}/afkbot-install.XXXXXX")"
+  awk -v start="${LEGACY_PATH_BLOCK_START}" -v end="${LEGACY_PATH_BLOCK_END}" '
+    $0 == start {skip=1; next}
+    $0 == end {skip=0; next}
+    skip != 1 {print}
+  ' "${target}" >"${temp_file}"
+  mv "${temp_file}" "${target}"
+}
 
-from afkbot.services.managed_install import ManagedInstallContext, write_managed_launcher
+remove_legacy_path_blocks() {
+  remove_path_block_from_file "${HOME}/.profile"
+  remove_path_block_from_file "${HOME}/.bashrc"
+  remove_path_block_from_file "${HOME}/.bash_profile"
+  remove_path_block_from_file "${HOME}/.zshrc"
+  remove_path_block_from_file "${HOME}/.zprofile"
+}
 
-context = ManagedInstallContext(
-    install_dir=Path(os.environ["AFK_WRITE_INSTALL_DIR"]),
-    runtime_dir=Path(os.environ["AFK_WRITE_RUNTIME_DIR"]),
-    app_dir=Path(os.environ["AFK_WRITE_APP_DIR"]),
-    source_url=os.environ["AFK_WRITE_SOURCE_URL"],
-    source_ref=os.environ["AFK_WRITE_SOURCE_REF"],
-)
-write_managed_launcher(
-    context=context,
-    python_executable=Path(os.environ["AFK_WRITE_PYTHON"]),
-    app_dir=Path(os.environ["AFK_WRITE_APP_DIR"]),
-)
-PY
+remove_legacy_cli_aliases() {
+  local candidate="" dir="" target=""
+  local -a path_dirs=()
+  local -a extra_dirs=("${HOME}/.local/bin" "${HOME}/bin" "/usr/local/bin" "/opt/homebrew/bin")
+  IFS=':' read -r -a path_dirs <<< "${PATH:-}"
+  for dir in "${path_dirs[@]}" "${extra_dirs[@]}"; do
+    [[ -n "${dir}" ]] || continue
+    candidate="${dir}/afk"
+    [[ -L "${candidate}" ]] || continue
+    target="$(readlink "${candidate}" 2>/dev/null || true)"
+    if [[ "${target}" != "${LEGACY_INSTALL_DIR}/bin/afk" ]]; then
+      continue
+    fi
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      log "[dry-run] remove legacy AFKBOT alias ${candidate}"
+      continue
+    fi
+    rm -f "${candidate}"
+  done
+}
+
+install_tool() {
+  if [[ "${TOOL_INSTALL_MODE}" == "editable" ]]; then
+    run "${UV_BIN}" tool install --python 3.12 --reinstall --editable "${TOOL_SOURCE}"
+    return 0
+  fi
+  run "${UV_BIN}" tool install --python 3.12 --reinstall "${TOOL_SOURCE}"
+}
+
+resolve_afk_bin_dir() {
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    printf '%s\n' "${UV_BIN_DIR}"
+    return 0
+  fi
+  "${UV_BIN}" tool dir --bin
+}
+
+ensure_shell_integration() {
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    log "[dry-run] ${UV_BIN} tool update-shell"
+    return 0
+  fi
+  if "${UV_BIN}" tool update-shell; then
+    return 0
+  fi
+  log "WARNING uv tool update-shell failed; reopen your shell after install if \`afk\` is not yet visible."
+}
+
+run_bootstrap_setup() {
+  if [[ "${SKIP_SETUP}" == "true" ]]; then
+    return 0
+  fi
+  run "${AFK_BIN}" setup --bootstrap-only --yes
 }
 
 path_contains() {
@@ -334,133 +293,16 @@ path_contains() {
   esac
 }
 
-path_value_contains() {
-  local path_value="$1"
-  local path_entry="$2"
-  case ":${path_value}:" in
-    *":${path_entry}:"*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-resolve_profile_path() {
-  local shell_name
-  shell_name="$(basename "${SHELL:-}")"
-  case "${shell_name}" in
-    zsh)
-      if [[ -f "${HOME}/.zprofile" ]]; then
-        printf '%s\n' "${HOME}/.zprofile"
-      else
-        printf '%s\n' "${HOME}/.zshrc"
-      fi
-      ;;
-    bash)
-      if [[ "${PLATFORM}" == "macos" ]]; then
-        printf '%s\n' "${HOME}/.bash_profile"
-      else
-        printf '%s\n' "${HOME}/.bashrc"
-      fi
-      ;;
-    *)
-      printf '%s\n' "${HOME}/.profile"
-      ;;
-  esac
-}
-
-ensure_path_block() {
-  local profile_path escaped_bin
-  profile_path="$(resolve_profile_path)"
-  PROFILE_PATH="${profile_path}"
-  escaped_bin="$(escaped_double_quotes "${BIN_DIR}")"
-  if ! path_contains "${BIN_DIR}"; then
-    export PATH="${BIN_DIR}:${PATH:-}"
-  fi
-  if [[ -f "${profile_path}" ]] && grep -Fq "${PATH_BLOCK_START}" "${profile_path}"; then
-    return 0
-  fi
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    log "[dry-run] append ${BIN_DIR} to PATH in ${profile_path}"
-    return 0
-  fi
-  touch "${profile_path}"
-  {
-    printf '\n%s\n' "${PATH_BLOCK_START}"
-    printf "export PATH=\"%s:\\\$PATH\"\n" "${escaped_bin}"
-    printf '%s\n' "${PATH_BLOCK_END}"
-  } >>"${profile_path}"
-}
-
-select_cli_alias_path() {
-  local venv_python="${VENV_DIR}/bin/python"
-  if [[ ! -x "${venv_python}" ]]; then
-    [[ "${DRY_RUN}" == "true" ]] && return 0
-    fail "virtualenv python not found: ${venv_python}"
-  fi
-  AFK_SELECT_LAUNCHER_PATH="${AFK_LAUNCHER_PATH}" \
-  AFK_SELECT_PATH_ENV="${ORIGINAL_PATH}" \
-  "${venv_python}" - <<'PY'
-import os
-from pathlib import Path
-
-from afkbot.services.managed_install import pick_convenience_launcher_path
-
-candidate = pick_convenience_launcher_path(
-    launcher_path=Path(os.environ["AFK_SELECT_LAUNCHER_PATH"]),
-    path_env=os.environ.get("AFK_SELECT_PATH_ENV", ""),
-)
-print("" if candidate is None else str(candidate))
-PY
-}
-
-install_cli_alias() {
-  local alias_path=""
-  alias_path="$(select_cli_alias_path)"
-  [[ -n "${alias_path}" ]] || return 0
-  CLI_ALIAS_PATH="${alias_path}"
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    log "[dry-run] symlink ${CLI_ALIAS_PATH} -> ${AFK_LAUNCHER_PATH}"
-    return 0
-  fi
-  ln -sfn "${AFK_LAUNCHER_PATH}" "${CLI_ALIAS_PATH}"
-}
-
-run_bootstrap_setup() {
-  if [[ "${SKIP_SETUP}" == "true" ]]; then
-    return 0
-  fi
-  run "${AFK_LAUNCHER_PATH}" setup --bootstrap-only --yes
-}
-
-prune_old_app_dirs() {
-  local candidate=""
-  [[ -d "${APP_ROOT_DIR}" ]] || return 0
-  shopt -s nullglob
-  for candidate in "${APP_ROOT_DIR}"/*; do
-    [[ -d "${candidate}" ]] || continue
-    [[ "${candidate}" == "${CURRENT_APP_DIR}" ]] && continue
-    run rm -rf "${candidate}"
-  done
-  shopt -u nullglob
-}
-
 print_success() {
   log ""
   log "${PROGRAM_NAME} install complete."
-  log "Install root: ${INSTALL_DIR}"
-  log "Runtime root: ${RUNTIME_DIR}"
-  log "App source: ${CURRENT_APP_DIR}"
-  log "CLI: ${AFK_LAUNCHER_PATH}"
-  if [[ -n "${CLI_ALIAS_PATH}" ]]; then
-    log "CLI alias: ${CLI_ALIAS_PATH}"
-  fi
+  log "Tool source: ${TOOL_SOURCE}"
+  log "uv: ${UV_BIN}"
+  log "CLI: ${AFK_BIN}"
   log ""
-  if [[ -z "${CLI_ALIAS_PATH}" ]] && ! path_value_contains "${ORIGINAL_PATH}" "${BIN_DIR}"; then
-    log "Current shell:"
-    log "  export PATH=\"${BIN_DIR}:\$PATH\""
-    if [[ -n "${PROFILE_PATH}" ]]; then
-      log "Future shells:"
-      log "  source \"${PROFILE_PATH}\""
-    fi
+  if ! path_contains "${AFK_BIN_DIR}"; then
+    log "If \`afk\` is not visible in the current shell yet, reopen the terminal or run:"
+    log "  export PATH=\"${AFK_BIN_DIR}:\$PATH\""
     log ""
   fi
   log "Next steps:"
@@ -468,22 +310,22 @@ print_success() {
   log "  afk doctor"
   log "  afk chat"
   log ""
-  log "To update later, rerun this installer or use \`afk update\`."
+  log "To update later, run \`afk update\` or \`uv tool upgrade afkbotio --reinstall\`."
 }
 
 main() {
   parse_args "$@"
   detect_platform
   ensure_uv
-  ensure_python_runtime
-  install_source_snapshot
-  install_python_package
-  run mkdir -p "${RUNTIME_DIR}"
-  write_cli_launcher
-  install_cli_alias
-  ensure_path_block
+  build_tool_source
+  install_tool
+  ensure_shell_integration
+  AFK_BIN_DIR="$(resolve_afk_bin_dir)"
+  AFK_BIN="${AFK_BIN_DIR}/afk"
+  export PATH="${AFK_BIN_DIR}:${UV_BIN_DIR}:${PATH:-}"
   run_bootstrap_setup
-  prune_old_app_dirs
+  remove_legacy_path_blocks
+  remove_legacy_cli_aliases
   print_success
 }
 

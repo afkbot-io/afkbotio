@@ -31,7 +31,7 @@ app = typer.Typer(
         "AFKBOT command-line interface.\n\n"
         "Use `afk start` to run the full local stack, `afk chat` for interactive or one-shot "
         "chat turns, `afk doctor` to verify local readiness, `afk bootstrap` to edit global "
-        "system-prompt files, `afk update` to refresh managed installs, `afk automation` to "
+        "system-prompt files, `afk update` to refresh the active AFKBOT install, `afk automation` to "
         "manage scheduled tasks, `afk channel` to operate external adapters, `afk memory` to "
         "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, and `afk browser install` "

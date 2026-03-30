@@ -27,7 +27,7 @@ Use the docs site for setup, configuration, MCP, automations, and command refere
 - Python 3.12 or newer for manual source installs
 - `uv` recommended for local development
 - SQLite is the default runtime database for AFKBOT
-- The managed installers install Python 3.12 automatically and keep runtime state outside the app source tree
+- The hosted installers bootstrap `uv`, install AFKBOT as an isolated uv tool, and keep runtime state outside the app source tree
 
 ## Install
 
@@ -55,7 +55,7 @@ afk setup
 afk chat
 ```
 
-The installer is idempotent. Rerun it to refresh the installed app files in place, or use `afk update`.
+The installer is idempotent. Rerun it to refresh the installed tool in place, or use `afk update`.
 
 Manual local source setup with `uv`:
 
@@ -112,6 +112,14 @@ bash scripts/uninstall.sh --yes
 ```powershell
 afk update
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1 -Yes
+```
+
+Hosted installers use `uv tool install` under the hood. Advanced equivalents:
+
+```bash
+uv tool install --python 3.12 --reinstall git+https://github.com/afkbot-io/afkbotio.git@main
+uv tool upgrade afkbotio --reinstall
+uv tool uninstall afkbotio
 ```
 
 ## Configuration

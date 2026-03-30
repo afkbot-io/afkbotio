@@ -1,7 +1,6 @@
 # AFKBOT uninstaller for Windows
 [CmdletBinding()]
 param(
-    [string]$InstallDir = "",
     [switch]$Yes,
     [switch]$DryRun
 )
@@ -23,10 +22,48 @@ function Invoke-Action {
     & $Script
 }
 
-function Refresh-ProcessPath {
-    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = @($machinePath, $userPath) -join ";"
+function Invoke-NativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Script,
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    if ($DryRun) {
+        Write-Host "[dry-run] $Description"
+        return $null
+    }
+
+    $global:LASTEXITCODE = 0
+    $result = & $Script
+    $exitCode = $global:LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code $exitCode: $Description"
+    }
+    return $result
+}
+
+function Get-UvExePath {
+    $userBinDir = if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
+        $env:XDG_BIN_HOME
+    } else {
+        Join-Path $env:USERPROFILE ".local\bin"
+    }
+    return Join-Path $userBinDir "uv.exe"
+}
+
+function Get-ToolBinDir([string]$UvExe) {
+    if ($DryRun -or -not (Test-Path $UvExe)) {
+        return Split-Path -Parent $UvExe
+    }
+    $output = Invoke-NativeCommand -Description "$UvExe tool dir --bin" -Script {
+        & $UvExe tool dir --bin
+    }
+    if ([string]::IsNullOrWhiteSpace($output)) {
+        throw "uv did not report a tool executable directory."
+    }
+    return $output.Trim()
 }
 
 function Remove-UserPathEntry([string]$Entry) {
@@ -40,39 +77,54 @@ function Remove-UserPathEntry([string]$Entry) {
         return
     }
     [Environment]::SetEnvironmentVariable("Path", ($parts -join ";"), "User")
-    Refresh-ProcessPath
-}
-
-if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    $InstallDir = Join-Path $env:LOCALAPPDATA "AFKBOT"
 }
 
 if (-not $Yes) {
-    $answer = Read-Host "Remove AFKBOT install at $InstallDir? [y/N]"
+    $answer = Read-Host "Remove AFKBOT tool install and local runtime state? [y/N]"
     if ($answer -notin @("y", "Y", "yes", "YES")) {
         throw "Uninstall cancelled."
     }
 }
 
-$ShimPath = Join-Path $InstallDir "bin\afk.cmd"
-$BinDir = Join-Path $InstallDir "bin"
+$legacyInstallDir = Join-Path $env:LOCALAPPDATA "AFKBOT"
+$legacyManagedBin = Join-Path $legacyInstallDir "bin"
+$uvExe = Get-UvExePath
+$toolBinDir = Get-ToolBinDir -UvExe $uvExe
+$afkCmd = Join-Path $toolBinDir "afk.cmd"
+$hadWarnings = $false
 
-if (Test-Path $ShimPath) {
-    Invoke-Action -Description "$ShimPath uninstall --yes" -Script {
-        try {
-            & $ShimPath "uninstall" "--yes"
-        } catch {
-            Write-Warning "Managed uninstall helper failed; continuing with filesystem cleanup."
-        }
+if (Test-Path $afkCmd) {
+    try {
+        [void](Invoke-NativeCommand -Description "$afkCmd uninstall --yes" -Script {
+            & $afkCmd "uninstall" "--yes"
+        })
+    } catch {
+        $hadWarnings = $true
+        Write-Warning "AFKBOT runtime cleanup failed; continuing with tool uninstall."
     }
 }
 
-Remove-UserPathEntry -Entry $BinDir
-
-if (Test-Path $InstallDir) {
-    Invoke-Action -Description "remove $InstallDir" -Script {
-        Remove-Item -Recurse -Force $InstallDir
+if (Test-Path $uvExe) {
+    try {
+        [void](Invoke-NativeCommand -Description "$uvExe tool uninstall afkbotio" -Script {
+            & $uvExe tool uninstall afkbotio
+        })
+    } catch {
+        $hadWarnings = $true
+        Write-Warning "uv tool uninstall failed; continuing with legacy cleanup."
     }
 }
 
-Write-Host "AFKBOT uninstall complete."
+Remove-UserPathEntry -Entry $legacyManagedBin
+
+if (Test-Path $legacyInstallDir) {
+    Invoke-Action -Description "remove $legacyInstallDir" -Script {
+        Remove-Item -Recurse -Force $legacyInstallDir
+    }
+}
+
+if ($hadWarnings) {
+    Write-Host "AFKBOT uninstall complete with warnings."
+} else {
+    Write-Host "AFKBOT uninstall complete."
+}

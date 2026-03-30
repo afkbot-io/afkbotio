@@ -1,8 +1,9 @@
-"""Managed runtime update helpers for local source and managed self-hosted installs."""
+"""Update helpers for source checkouts, legacy managed installs, and uv tool installs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -29,6 +30,7 @@ _SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
 _LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
 _DEFAULT_API_PORT_OFFSET = 1
 _CODE_CHECKOUT_ROOT = Path(__file__).resolve(strict=False).parents[2]
+_UV_TOOL_PACKAGE = "afkbotio"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +59,9 @@ def run_update(settings: Settings) -> UpdateResult:
     managed_context = resolve_managed_install_context()
     if managed_context is not None:
         return _run_managed_update(settings=settings, context=managed_context)
-    return _run_host_update(settings=settings)
+    if _is_source_checkout_install():
+        return _run_host_update(settings=settings)
+    return _run_uv_tool_update(settings=settings)
 
 
 def format_update_success(result: UpdateResult) -> str:
@@ -198,6 +202,49 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
     )
 
 
+def _run_uv_tool_update(*, settings: Settings) -> UpdateResult:
+    """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
+
+    uv_executable = _resolve_uv_executable()
+    _run_checked(
+        [str(uv_executable), "tool", "upgrade", _UV_TOOL_PACKAGE, "--reinstall"],
+        error_code="update_failed",
+        fallback="failed to upgrade AFKBOT via uv tool",
+    )
+    afk_executable = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+    _run_afk_executable(
+        executable=afk_executable,
+        settings=settings,
+        args=("upgrade", "apply", "--quiet"),
+    )
+    _run_afk_executable(
+        executable=afk_executable,
+        settings=settings,
+        args=("doctor", "--no-integrations", "--no-upgrades"),
+    )
+
+    runtime_restarted = _restart_managed_host_runtime_service()
+    details = [
+        f"Tool package: {_UV_TOOL_PACKAGE}",
+        f"Tool executable: {afk_executable}",
+        (
+            "Runtime health: ok"
+            if (runtime_restarted and _wait_for_local_health(settings=settings))
+            else ""
+        ),
+        "Managed host service not found; restart manually with `afk start`"
+        if not runtime_restarted
+        else "",
+    ]
+    return UpdateResult(
+        install_mode="uv-tool",
+        source_updated=True,
+        runtime_restarted=runtime_restarted,
+        maintenance_applied=True,
+        details=tuple(detail for detail in details if detail),
+    )
+
+
 def _resolve_host_checkout_root(settings: Settings) -> Path:
     """Return the git checkout root for source-based updates."""
 
@@ -213,6 +260,13 @@ def _resolve_host_checkout_root(settings: Settings) -> Path:
         if (candidate / ".git").exists() and (candidate / "pyproject.toml").exists():
             return candidate
     return settings.root_dir.resolve(strict=False)
+
+
+def _is_source_checkout_install() -> bool:
+    """Return whether the active AFKBOT command is running from the source checkout."""
+
+    root = _CODE_CHECKOUT_ROOT.resolve(strict=False)
+    return (root / ".git").exists() and (root / "pyproject.toml").exists()
 
 
 def _assert_host_git_checkout(project_root: Path) -> None:
@@ -259,6 +313,64 @@ def _git_has_origin(project_root: Path) -> bool:
     return result.returncode == 0
 
 
+def _resolve_uv_executable() -> Path:
+    """Return the uv executable used to manage tool installs."""
+
+    discovered = shutil.which("uv")
+    if discovered:
+        return Path(discovered).resolve(strict=False)
+    user_bin_dir = _default_user_bin_dir()
+    suffix = "uv.exe" if os.name == "nt" else "uv"
+    candidate = user_bin_dir / suffix
+    if candidate.exists():
+        return candidate.resolve(strict=False)
+    raise UpdateRuntimeError(
+        error_code="update_prereq_failed",
+        reason="uv is required to update this AFKBOT install; reinstall with the hosted installer or install uv first",
+    )
+
+
+def _default_user_bin_dir() -> Path:
+    """Return the expected user-local executable directory used by uv."""
+
+    xdg_bin_home = os.getenv("XDG_BIN_HOME")
+    if xdg_bin_home:
+        return Path(xdg_bin_home).expanduser()
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return (Path(xdg_data_home).expanduser() / ".." / "bin").resolve(strict=False)
+    return (Path.home() / ".local" / "bin").resolve(strict=False)
+
+
+def _resolve_uv_tool_bin_dir(*, uv_executable: Path) -> Path:
+    """Return the uv tool executable directory."""
+
+    output = _run_checked(
+        [str(uv_executable), "tool", "dir", "--bin"],
+        error_code="update_failed",
+        fallback="failed to locate uv tool executable directory",
+    ).stdout.strip()
+    if not output:
+        raise UpdateRuntimeError(
+            error_code="update_failed",
+            reason="uv did not report a tool executable directory",
+        )
+    return Path(output).resolve(strict=False)
+
+
+def _resolve_uv_tool_afk_executable(*, uv_executable: Path) -> Path:
+    """Return the installed AFKBOT executable inside the uv tool bin directory."""
+
+    bin_dir = _resolve_uv_tool_bin_dir(uv_executable=uv_executable)
+    candidate = bin_dir / ("afk.cmd" if os.name == "nt" else "afk")
+    if candidate.exists():
+        return candidate
+    raise UpdateRuntimeError(
+        error_code="update_failed",
+        reason=f"AFKBOT executable not found in uv tool bin directory: {candidate}",
+    )
+
+
 def _git_stdout(project_root: Path, *args: str) -> str:
     result = _run_command(["git", "-C", str(project_root), *args], cwd=project_root)
     if result.returncode != 0:
@@ -297,6 +409,15 @@ def _git_is_ancestor(project_root: Path, *, ancestor: str, descendant: str) -> b
 def _run_afk_subcommand(*, settings: Settings, args: tuple[str, ...]) -> None:
     _run_checked(
         [sys.executable, "-m", "afkbot.cli.main", *args],
+        cwd=settings.root_dir,
+        error_code="update_failed",
+        fallback=f"failed to run AFKBOT command: {' '.join(args)}",
+    )
+
+
+def _run_afk_executable(*, executable: Path, settings: Settings, args: tuple[str, ...]) -> None:
+    _run_checked(
+        [str(executable), *args],
         cwd=settings.root_dir,
         error_code="update_failed",
         fallback=f"failed to run AFKBOT command: {' '.join(args)}",
