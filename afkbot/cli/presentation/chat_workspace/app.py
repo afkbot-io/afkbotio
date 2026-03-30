@@ -296,6 +296,11 @@ class ChatWorkspaceApp:
 
         self._surface_runtime.refresh()
 
+    def clear_scrollback(self) -> None:
+        """Best-effort clear terminal scrollback before fullscreen rendering starts."""
+
+        self._application_runtime.clear_scrollback()
+
     def transcript_docked(self) -> bool:
         """Return whether the transcript currently uses the docked viewport layout."""
 

@@ -14,6 +14,7 @@ from afkbot.services.browser_runtime import BrowserRuntimeStatus
 from afkbot.services.setup.runtime_store import write_runtime_secrets
 from afkbot.services.update_runtime import UpdateResult
 from afkbot.settings import get_settings
+from afkbot.version import CliVersionInfo
 
 
 def _prepare_guard_context(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -101,6 +102,25 @@ def test_cli_allows_upgrade_commands_before_setup(tmp_path: Path, monkeypatch: M
 
     # Assert
     assert result.exit_code == 0
+
+
+def test_cli_allows_version_command_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """Version command should stay available before setup marker exists."""
+
+    # Arrange
+    _prepare_guard_context(tmp_path, monkeypatch)
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "afkbot.cli.commands.version.load_cli_version_info",
+        lambda: CliVersionInfo(version="1.2.3", git_sha="abc1234"),
+    )
+
+    # Act
+    result = runner.invoke(app, ["version"])
+
+    # Assert
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "afk 1.2.3 (git abc1234)"
 
 
 def test_cli_allows_update_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

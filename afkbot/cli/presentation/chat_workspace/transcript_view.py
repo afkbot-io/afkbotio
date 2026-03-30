@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from prompt_toolkit.formatted_text.base import StyleAndTextTuples
-from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.margins import ScrollbarMargin
 from prompt_toolkit.layout import Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 
 from afkbot.cli.presentation.chat_workspace.transcript import (
     ChatWorkspaceRenderedTranscript,
@@ -32,23 +31,18 @@ class ChatWorkspaceTranscriptView:
         self._fragments: StyleAndTextTuples = []
         self._line_count = 0
         self._docked = False
-        self._has_status_text = False
-        self._has_queue_text = False
 
         self.compact_window = Window(
             content=FormattedTextControl(lambda: self._fragments),
             wrap_lines=True,
             dont_extend_height=True,
             always_hide_cursor=True,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
             style="class:workspace.transcript",
         )
         self.docked_window = Window(
             content=FormattedTextControl(lambda: self._fragments),
             wrap_lines=True,
             always_hide_cursor=True,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
-            get_vertical_scroll=self.vertical_scroll,
             style="class:workspace.transcript",
         )
 
@@ -91,33 +85,39 @@ class ChatWorkspaceTranscriptView:
     ) -> None:
         """Refresh the rendered transcript using the current stacked surface rows."""
 
-        rendered = self._transcript.render(width=self._content_width(docked=False))
-        dock_transcript = self._should_dock(
-            rendered.line_count,
+        full_rendered = self._transcript.render(width=self._content_width(docked=False))
+        visible_height = self.visible_height(
+            has_transcript_content=full_rendered.line_count > 0,
             has_status_text=has_status_text,
             has_queue_text=has_queue_text,
         )
-        if dock_transcript:
-            rendered = self._transcript.render(width=self._content_width(docked=True))
-        self._has_status_text = has_status_text
-        self._has_queue_text = has_queue_text
-        self._apply(
-            rendered,
+        dock_transcript = self._should_dock(
+            full_rendered.line_count,
+            has_transcript_content=full_rendered.line_count > 0,
             has_status_text=has_status_text,
             has_queue_text=has_queue_text,
+        )
+        rendered = full_rendered
+        if dock_transcript:
+            rendered = self._transcript.render(
+                width=self._content_width(docked=True),
+                max_lines=visible_height,
+            )
+        self._apply(
+            rendered,
+            docked=dock_transcript,
         )
 
     def vertical_scroll(self, window: Window) -> int:
-        """Keep the docked transcript anchored to the newest visible lines."""
+        """Docked transcripts render only the visible tail and no longer scroll."""
 
-        visible_height = self._window_height(window)
-        if visible_height <= 0:
-            return 0
-        return max(0, self._line_count - visible_height)
+        _ = window
+        return 0
 
     def visible_height(
         self,
         *,
+        has_transcript_content: bool | None = None,
         has_status_text: bool,
         has_queue_text: bool,
     ) -> int:
@@ -125,7 +125,7 @@ class ChatWorkspaceTranscriptView:
 
         _columns, rows = self._terminal_size_getter()
         reserved_rows = 4
-        if self.has_content():
+        if self.has_content() if has_transcript_content is None else has_transcript_content:
             reserved_rows += 1
         if has_status_text:
             reserved_rows += 1
@@ -137,43 +137,30 @@ class ChatWorkspaceTranscriptView:
         self,
         rendered: ChatWorkspaceRenderedTranscript,
         *,
-        has_status_text: bool,
-        has_queue_text: bool,
+        docked: bool,
     ) -> None:
         self._plain_text = rendered.plain_text
         self._fragments = rendered.fragments
         self._line_count = rendered.line_count
-        self._docked = self._should_dock(
-            rendered.line_count,
-            has_status_text=has_status_text,
-            has_queue_text=has_queue_text,
-        )
+        self._docked = docked
 
     def _content_width(self, *, docked: bool) -> int:
         columns, _rows = self._terminal_size_getter()
-        scrollbar_width = 1 if docked else 0
-        return max(_MIN_TRANSCRIPT_WIDTH, columns - scrollbar_width)
+        _ = docked
+        return max(_MIN_TRANSCRIPT_WIDTH, columns)
 
     def _should_dock(
         self,
         line_count: int,
         *,
+        has_transcript_content: bool,
         has_status_text: bool,
         has_queue_text: bool,
     ) -> bool:
         if line_count <= 0:
             return False
         return line_count > self.visible_height(
+            has_transcript_content=has_transcript_content,
             has_status_text=has_status_text,
             has_queue_text=has_queue_text,
-        )
-
-    def _window_height(self, window: Window) -> int:
-        render_info = getattr(window, "render_info", None)
-        window_height = getattr(render_info, "window_height", 0) if render_info is not None else 0
-        if isinstance(window_height, int) and window_height > 0:
-            return window_height
-        return self.visible_height(
-            has_status_text=self._has_status_text,
-            has_queue_text=self._has_queue_text,
         )

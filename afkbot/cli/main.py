@@ -23,6 +23,7 @@ from afkbot.cli.commands.subagent import register as register_subagent
 from afkbot.cli.commands.uninstall import register as register_uninstall
 from afkbot.cli.commands.update import register as register_update
 from afkbot.cli.commands.upgrade import register as register_upgrade
+from afkbot.cli.commands.version import register as register_version
 from afkbot.services.setup.state import setup_is_complete
 from afkbot.settings import get_settings
 
@@ -58,6 +59,7 @@ register_skill(app)
 register_start(app)
 register_subagent(app)
 register_upgrade(app)
+register_version(app)
 
 
 @app.callback(invoke_without_command=True)
@@ -69,7 +71,7 @@ def _guard_setup(ctx: typer.Context) -> None:
     command = ctx.invoked_subcommand
     if command is None:
         return
-    if command in {"setup", "uninstall", "update", "browser", "bootstrap", "upgrade", "mcp"}:
+    if command in {"setup", "uninstall", "update", "browser", "bootstrap", "upgrade", "mcp", "version"}:
         return
 
     settings = get_settings()

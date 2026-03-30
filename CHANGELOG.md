@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2] - 2026-03-31
+
+### Added
+
+- New `afk version` command for quickly verifying the active local checkout, package version, and git revision during manual testing.
+- Regression coverage for fullscreen transcript tail rendering, setup-guard access to `afk version`, and local checkout version resolution.
+
+### Changed
+
+- Fullscreen chat transcript now renders only the newest visible lines in docked mode instead of relying on an internal scrollable transcript pane.
+- Fullscreen chat startup now clears terminal scrollback before handing off to the alternate-screen workspace, reducing false right-side scrollbar carry-over from the shell host.
+- API application version metadata now matches the packaged release version `1.0.2`.
+
 ## [1.0.1] - 2026-03-30
 
 ### Added

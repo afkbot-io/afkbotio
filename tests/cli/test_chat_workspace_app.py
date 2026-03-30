@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-
 import pytest
 from prompt_toolkit.buffer import CompletionState
 from prompt_toolkit.completion import Completion
@@ -146,8 +145,8 @@ def test_chat_workspace_app_docks_long_transcripts_to_fill_the_viewport() -> Non
     assert docked is True
 
 
-def test_chat_workspace_app_tracks_tail_scroll_for_docked_transcripts() -> None:
-    """Docked transcripts should auto-follow the newest visible lines."""
+def test_chat_workspace_app_renders_only_visible_tail_for_docked_transcripts() -> None:
+    """Docked transcripts should render only the newest messages that fit the viewport."""
 
     # Arrange
     workspace = ChatWorkspaceApp()
@@ -164,14 +163,21 @@ def test_chat_workspace_app_tracks_tail_scroll_for_docked_transcripts() -> None:
     scroll = workspace._docked_transcript_vertical_scroll(  # type: ignore[attr-defined]
         workspace._transcript_docked_window  # type: ignore[attr-defined]
     )
+    snapshot = workspace.snapshot()
 
     # Assert
     assert workspace.transcript_docked() is True
-    assert scroll == 20
+    assert scroll == 0
+    assert snapshot.transcript_text == (
+        "Assistant message number 10.\n\n"
+        "Assistant message number 11.\n\n"
+        "Assistant message number 12.\n\n"
+        "Assistant message number 13."
+    )
 
 
-def test_chat_workspace_app_prefers_real_window_height_for_tail_scroll() -> None:
-    """Docked tail-follow should use the actual rendered window height when available."""
+def test_chat_workspace_app_keeps_zero_scroll_when_docked_window_reports_height() -> None:
+    """Docked transcript surfaces should keep the scroll offset pinned at zero."""
 
     # Arrange
     workspace = ChatWorkspaceApp()
@@ -183,7 +189,6 @@ def test_chat_workspace_app_prefers_real_window_height_for_tail_scroll() -> None
                 text=f"Assistant message number {index}.",
             )
         )
-    workspace._transcript_docked_window.render_info = SimpleNamespace(window_height=8)  # type: ignore[attr-defined]
 
     # Act
     scroll = workspace._docked_transcript_vertical_scroll(  # type: ignore[attr-defined]
@@ -191,7 +196,7 @@ def test_chat_workspace_app_prefers_real_window_height_for_tail_scroll() -> None
     )
 
     # Assert
-    assert scroll == 19
+    assert scroll == 0
 
 
 def test_chat_workspace_app_can_request_exit_without_running_application() -> None:
@@ -205,6 +210,26 @@ def test_chat_workspace_app_can_request_exit_without_running_application() -> No
 
     # Assert
     assert workspace.exit_requested is True
+
+
+def test_chat_workspace_app_can_clear_scrollback_before_fullscreen_run() -> None:
+    """Workspace should best-effort clear terminal scrollback before fullscreen draw."""
+
+    # Arrange
+    writes: list[str] = []
+    workspace = ChatWorkspaceApp()
+    workspace._application_runtime._application = SimpleNamespace(  # type: ignore[attr-defined]
+        output=SimpleNamespace(
+            write_raw=lambda value: writes.append(value),
+            flush=lambda: writes.append("flush"),
+        )
+    )
+
+    # Act
+    workspace.clear_scrollback()
+
+    # Assert
+    assert writes == ["\x1b[3J\x1b[H\x1b[2J", "flush"]
 
 
 def test_chat_workspace_app_completion_helpers_do_not_consume_tab_outside_composer(

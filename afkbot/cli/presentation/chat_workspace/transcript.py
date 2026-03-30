@@ -70,10 +70,15 @@ class ChatWorkspaceTranscript:
 
         self.entries.clear()
 
-    def render(self, *, width: int) -> ChatWorkspaceRenderedTranscript:
+    def render(
+        self,
+        *,
+        width: int,
+        max_lines: int | None = None,
+    ) -> ChatWorkspaceRenderedTranscript:
         """Render the transcript into styled fragments for the active viewport width."""
 
-        return render_chat_workspace_transcript(self.entries, width=width)
+        return render_chat_workspace_transcript(self.entries, width=width, max_lines=max_lines)
 
     def render_text(self) -> str:
         """Render the transcript as plain text for a read-only text area."""
@@ -85,6 +90,7 @@ def render_chat_workspace_transcript(
     entries: tuple[ChatWorkspaceTranscriptEntry, ...] | list[ChatWorkspaceTranscriptEntry],
     *,
     width: int,
+    max_lines: int | None = None,
 ) -> ChatWorkspaceRenderedTranscript:
     """Render transcript entries into styled prompt-toolkit fragments."""
 
@@ -92,34 +98,28 @@ def render_chat_workspace_transcript(
         return ChatWorkspaceRenderedTranscript(plain_text="", fragments=[], line_count=0)
 
     safe_width = max(_MIN_WRAP_WIDTH, width)
+    visual_lines = _build_visual_lines(entries, width=safe_width)
+    if max_lines is not None:
+        if max_lines <= 0:
+            visual_lines = ()
+        else:
+            visual_lines = visual_lines[-max_lines:]
+
     fragments: StyleAndTextTuples = []
-    plain_blocks: list[str] = []
-    visual_lines = 0
+    plain_lines: list[str] = []
+    line_count = len(visual_lines)
 
-    for index, entry in enumerate(entries):
-        block_lines = _render_entry_lines(entry, width=safe_width)
-        if index > 0:
-            if entry.spacing_before == "tight":
-                fragments.append(("", "\n"))
-            else:
-                fragments.append(("", "\n\n"))
-                visual_lines += 1
-        for line_index, rendered_line in enumerate(block_lines):
-            fragments.extend(rendered_line.fragments)
-            if rendered_line.plain_text is not None:
-                plain_blocks.append(rendered_line.plain_text)
-            visual_lines += 1
-            is_last_line = line_index == len(block_lines) - 1
-            if not is_last_line:
-                fragments.append(("", "\n"))
-        if index != len(entries) - 1 and entries[index + 1].spacing_before != "tight":
-            plain_blocks.append("")
+    for index, rendered_line in enumerate(visual_lines):
+        fragments.extend(rendered_line.fragments)
+        plain_lines.append(rendered_line.plain_text)
+        if index != line_count - 1:
+            fragments.append(("", "\n"))
 
-    plain_text = "\n".join(plain_blocks)
+    plain_text = "\n".join(plain_lines)
     return ChatWorkspaceRenderedTranscript(
         plain_text=plain_text,
         fragments=fragments,
-        line_count=visual_lines,
+        line_count=line_count,
     )
 
 
@@ -135,8 +135,23 @@ def render_chat_workspace_transcript_text(
 class _RenderedTranscriptLine:
     """One rendered transcript line with both plain and styled forms."""
 
-    plain_text: str | None
+    plain_text: str
     fragments: StyleAndTextTuples
+
+
+def _build_visual_lines(
+    entries: tuple[ChatWorkspaceTranscriptEntry, ...] | list[ChatWorkspaceTranscriptEntry],
+    *,
+    width: int,
+) -> tuple[_RenderedTranscriptLine, ...]:
+    visual_lines: list[_RenderedTranscriptLine] = []
+
+    for index, entry in enumerate(entries):
+        if index > 0 and entry.spacing_before != "tight":
+            visual_lines.append(_RenderedTranscriptLine(plain_text="", fragments=[]))
+        visual_lines.extend(_render_entry_lines(entry, width=width))
+
+    return tuple(visual_lines)
 
 
 def _render_entry_lines(
