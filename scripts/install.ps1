@@ -55,7 +55,32 @@ function Get-UserBinDir {
     if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
         return $env:XDG_BIN_HOME
     }
-    return Join-Path $env:USERPROFILE ".local\bin"
+    return Join-Path (Get-HomeDir) ".local\bin"
+}
+
+function Get-HomeDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        return $env:USERPROFILE
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:HOME)) {
+        return $env:HOME
+    }
+    $profilePath = [Environment]::GetFolderPath("UserProfile")
+    if (-not [string]::IsNullOrWhiteSpace($profilePath)) {
+        return $profilePath
+    }
+    throw "Could not determine the user home directory."
+}
+
+function Get-LegacyInstallDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return (Join-Path $env:LOCALAPPDATA "AFKBOT")
+    }
+    $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+    if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+        return (Join-Path $localAppData "AFKBOT")
+    }
+    return (Join-Path (Get-HomeDir) ".local/share/afkbot")
 }
 
 function Get-UvExePath {
@@ -211,7 +236,7 @@ if (-not $SkipSetup) {
     })
 }
 
-$legacyManagedBin = Join-Path $env:LOCALAPPDATA "AFKBOT\bin"
+$legacyManagedBin = Join-Path (Get-LegacyInstallDir) "bin"
 Remove-UserPathEntry -Entry $legacyManagedBin
 
 Write-Host ""

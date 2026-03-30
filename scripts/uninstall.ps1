@@ -50,12 +50,39 @@ function Invoke-NativeCommand {
 }
 
 function Get-UvExePath {
-    $userBinDir = if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
-        $env:XDG_BIN_HOME
-    } else {
-        Join-Path $env:USERPROFILE ".local\bin"
+    return Join-Path (Get-UserBinDir) "uv.exe"
+}
+
+function Get-HomeDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        return $env:USERPROFILE
     }
-    return Join-Path $userBinDir "uv.exe"
+    if (-not [string]::IsNullOrWhiteSpace($env:HOME)) {
+        return $env:HOME
+    }
+    $profilePath = [Environment]::GetFolderPath("UserProfile")
+    if (-not [string]::IsNullOrWhiteSpace($profilePath)) {
+        return $profilePath
+    }
+    throw "Could not determine the user home directory."
+}
+
+function Get-UserBinDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
+        return $env:XDG_BIN_HOME
+    }
+    return Join-Path (Get-HomeDir) ".local\bin"
+}
+
+function Get-LegacyInstallDir {
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return (Join-Path $env:LOCALAPPDATA "AFKBOT")
+    }
+    $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+    if (-not [string]::IsNullOrWhiteSpace($localAppData)) {
+        return (Join-Path $localAppData "AFKBOT")
+    }
+    return (Join-Path (Get-HomeDir) ".local/share/afkbot")
 }
 
 function Get-ToolBinDir([string]$UvExe) {
@@ -100,7 +127,7 @@ if (-not $Yes) {
     }
 }
 
-$legacyInstallDir = Join-Path $env:LOCALAPPDATA "AFKBOT"
+$legacyInstallDir = Get-LegacyInstallDir
 $legacyManagedBin = Join-Path $legacyInstallDir "bin"
 $uvExe = Get-UvExePath
 $toolBinDir = Get-ToolBinDir -UvExe $uvExe
