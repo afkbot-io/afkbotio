@@ -166,5 +166,5 @@ jobs:
 
       - name: Run PowerShell installer dry-run
         run: |
-          pwsh -NoProfile -File scripts/install.ps1 -DryRun -RepoUrl "file://${env:GITHUB_WORKSPACE}" -GitRef local-dry-run -SkipSetup
+          pwsh -NoProfile -File scripts/install.ps1 -DryRun -RepoUrl "file://${GITHUB_WORKSPACE}" -GitRef local-dry-run -SkipSetup
           pwsh -NoProfile -File scripts/uninstall.ps1 -DryRun -Yes
