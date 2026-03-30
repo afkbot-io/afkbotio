@@ -36,6 +36,24 @@ class ChatWorkspaceApplicationRuntime:
 
         self._application = application
 
+    def clear_scrollback(self) -> None:
+        """Best-effort clear terminal scrollback before fullscreen workspace handoff."""
+
+        application = self._application
+        if application is None:
+            return
+        output = getattr(application, "output", None)
+        write_raw = getattr(output, "write_raw", None)
+        flush = getattr(output, "flush", None)
+        if not callable(write_raw):
+            return
+        try:
+            write_raw("\x1b[3J\x1b[H\x1b[2J")
+            if callable(flush):
+                flush()
+        except RuntimeError:
+            return
+
     def request_exit(self) -> None:
         """Mark the workspace for exit and stop the application when active."""
 

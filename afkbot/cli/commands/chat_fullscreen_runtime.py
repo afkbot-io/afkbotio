@@ -217,6 +217,7 @@ async def run_fullscreen_chat_workspace_session(
 
     def _pre_run() -> None:
         nonlocal heartbeat_task, session_task
+        workspace.clear_scrollback()
         session_task = workspace.application.create_background_task(_run_session())
         heartbeat_task = workspace.application.create_background_task(_run_heartbeat())
 

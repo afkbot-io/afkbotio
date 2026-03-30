@@ -121,3 +121,21 @@ def test_render_chat_workspace_transcript_styles_user_entries_as_classic_prompt_
         ("class:workspace.user-separator", " > "),
         ("class:workspace.user-text", "hello"),
     ]
+
+
+def test_render_chat_workspace_transcript_can_crop_to_visible_tail_lines() -> None:
+    """Tail rendering should keep only the newest visual lines when capped."""
+
+    # Arrange
+    entries = [
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="First"),
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="Second"),
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="Third"),
+    ]
+
+    # Act
+    rendered = render_chat_workspace_transcript(entries, width=24, max_lines=3)
+
+    # Assert
+    assert rendered.plain_text == "Second\n\nThird"
+    assert rendered.line_count == 3

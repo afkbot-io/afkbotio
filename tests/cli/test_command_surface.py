@@ -51,6 +51,7 @@ def test_legacy_groups_are_not_exposed() -> None:
     assert "start" in output
     assert "automation" in output
     assert "subagent" in output
+    assert "version" in output
     assert re.search(r"^\s*llm-set-provider\s", output, re.MULTILINE) is None
     assert re.search(r"^\s*llm-set-models\s", output, re.MULTILINE) is None
     assert re.search(r"^\s*migrate\s", output, re.MULTILINE) is None
