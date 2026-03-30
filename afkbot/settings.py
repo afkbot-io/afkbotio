@@ -49,6 +49,12 @@ def _default_runtime_root() -> Path:
     return data_home / "afkbot"
 
 
+def _default_app_root() -> Path:
+    """Return the packaged application root used for bundled assets."""
+
+    return _package_root()
+
+
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
@@ -56,7 +62,7 @@ class Settings(BaseSettings):
 
     db_url: str = "sqlite+aiosqlite:///./afkbot.db"
     root_dir: Path = Field(default_factory=_default_runtime_root)
-    app_dir: Path = Field(default_factory=_package_root)
+    app_dir: Path = Field(default_factory=_default_app_root)
     tool_workspace_root: Path | None = None
     bootstrap_dir_name: str = "afkbot/bootstrap"
     skills_dir_name: str = "afkbot/skills"

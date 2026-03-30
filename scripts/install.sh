@@ -12,7 +12,6 @@ DRY_RUN="false"
 SKIP_SETUP="false"
 REPO_URL="${DEFAULT_REPO_URL}"
 GIT_REF="${DEFAULT_GIT_REF}"
-PLATFORM=""
 UV_BIN_DIR=""
 UV_BIN=""
 AFK_BIN_DIR=""
@@ -113,11 +112,9 @@ default_user_bin_dir() {
 detect_platform() {
   case "$(uname -s)" in
     Darwin)
-      PLATFORM="macos"
       LEGACY_INSTALL_DIR="${HOME}/Library/Application Support/AFKBOT"
       ;;
     Linux)
-      PLATFORM="linux"
       LEGACY_INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/afkbot"
       ;;
     *)

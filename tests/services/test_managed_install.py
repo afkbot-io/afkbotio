@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -33,6 +34,12 @@ from afkbot.services.managed_install import (
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _legacy_unix_install_dir(home_dir: Path) -> Path:
+    if sys.platform == "darwin":
+        return home_dir / "Library" / "Application Support" / "AFKBOT"
+    return home_dir / ".local" / "share" / "afkbot"
 
 
 def test_resolve_managed_install_context_requires_complete_env(monkeypatch: MonkeyPatch) -> None:
@@ -337,7 +344,7 @@ def test_shell_uninstaller_continues_legacy_cleanup_when_uv_tool_is_missing(tmp_
         "# >>> AFKBOT PATH >>>\nexport PATH=\"/legacy/afk:$PATH\"\n# <<< AFKBOT PATH <<<\n",
         encoding="utf-8",
     )
-    legacy_install_dir = home_dir / "Library" / "Application Support" / "AFKBOT"
+    legacy_install_dir = _legacy_unix_install_dir(home_dir)
     (legacy_install_dir / "bin").mkdir(parents=True, exist_ok=True)
     (legacy_install_dir / "bin" / "afk").write_text("#!/bin/sh\n", encoding="utf-8")
     legacy_alias = home_dir / ".local" / "bin" / "afk"

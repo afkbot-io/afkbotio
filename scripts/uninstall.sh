@@ -6,7 +6,6 @@ LEGACY_PATH_BLOCK_END="# <<< AFKBOT PATH <<<"
 
 DRY_RUN="false"
 YES="false"
-PLATFORM=""
 UV_BIN_DIR=""
 UV_BIN=""
 AFK_BIN_DIR=""
@@ -83,11 +82,9 @@ default_user_bin_dir() {
 detect_platform() {
   case "$(uname -s)" in
     Darwin)
-      PLATFORM="macos"
       LEGACY_INSTALL_DIR="${HOME}/Library/Application Support/AFKBOT"
       ;;
     Linux)
-      PLATFORM="linux"
       LEGACY_INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/afkbot"
       ;;
     *)
