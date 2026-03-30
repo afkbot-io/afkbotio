@@ -316,8 +316,10 @@ print_success() {
   log "CLI: ${AFK_BIN}"
   log ""
   if ! path_contains "${AFK_BIN_DIR}" "${ORIGINAL_PATH}"; then
-    log "If \`afk\` is not visible in the current shell yet, reopen the terminal or run:"
-    log "  export PATH=\"${AFK_BIN_DIR}:\$PATH\""
+    log "To use \`afk\` in this terminal immediately, run:"
+    log "  export PATH=\"${AFK_BIN_DIR}:\$PATH\" && hash -r"
+    log ""
+    log "Or reopen the terminal to pick up the updated shell profile."
     log ""
   fi
   log "Next steps:"

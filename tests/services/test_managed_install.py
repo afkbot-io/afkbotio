@@ -302,7 +302,7 @@ def test_shell_installer_dry_run_uses_github_archive_source_for_remote_repo() ->
 def test_shell_installer_dry_run_warns_when_current_shell_path_will_still_miss_afk(
     tmp_path: Path,
 ) -> None:
-    """Shell installer should warn when PATH changes only apply after the shell reloads."""
+    """Shell installer should print the one-liner needed to use afk immediately."""
 
     repo_root = Path(__file__).resolve().parents[2]
     script_path = repo_root / "scripts" / "install.sh"
@@ -337,8 +337,9 @@ def test_shell_installer_dry_run_warns_when_current_shell_path_will_still_miss_a
     expected_bin_dir = home_dir / ".local" / "bin"
 
     assert result.returncode == 0
-    assert "If `afk` is not visible in the current shell yet" in output
-    assert f'export PATH="{expected_bin_dir}:$PATH"' in output
+    assert "To use `afk` in this terminal immediately, run:" in output
+    assert f'export PATH="{expected_bin_dir}:$PATH" && hash -r' in output
+    assert "Or reopen the terminal to pick up the updated shell profile." in output
 
 
 def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:
