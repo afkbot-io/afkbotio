@@ -1,6 +1,7 @@
 # AFKBOT installer for Windows
 [CmdletBinding()]
 param(
+    [string]$InstallDir = "",
     [string]$RepoUrl = "https://github.com/afkbot-io/afkbotio.git",
     [string]$GitRef = "main",
     [switch]$SkipSetup,
@@ -8,6 +9,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+    Write-Warning "-InstallDir is ignored by the uv tool installer."
+}
 
 function Invoke-Action {
     param(

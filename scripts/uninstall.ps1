@@ -1,11 +1,16 @@
 # AFKBOT uninstaller for Windows
 [CmdletBinding()]
 param(
+    [string]$InstallDir = "",
     [switch]$Yes,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+    Write-Warning "-InstallDir is ignored by the uv tool uninstaller."
+}
 
 function Invoke-Action {
     param(

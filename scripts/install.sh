@@ -24,6 +24,10 @@ log() {
   printf '%s\n' "$1"
 }
 
+warn() {
+  printf 'WARNING %s\n' "$1" >&2
+}
+
 fail() {
   printf 'ERROR [install_failed] %s\n' "$1" >&2
   exit 1
@@ -84,7 +88,9 @@ parse_args() {
         shift
         ;;
       --install-dir)
-        fail "--install-dir is not supported by the uv tool installer"
+        [[ $# -ge 2 ]] || fail "--install-dir requires a value"
+        warn "--install-dir is ignored by the uv tool installer"
+        shift 2
         ;;
       -h|--help)
         usage
