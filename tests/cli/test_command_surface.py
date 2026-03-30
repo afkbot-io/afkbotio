@@ -9,6 +9,18 @@ from typer.testing import CliRunner
 from afkbot.cli.main import app
 
 
+def _normalize_text(value: str) -> str:
+    """Collapse CLI help text into one stable whitespace-normalized line."""
+
+    return " ".join(value.split())
+
+
+def _strip_ansi(value: str) -> str:
+    """Remove ANSI color/style escape sequences from CLI output."""
+
+    return re.sub(r"\x1b\[[0-9;]*m", "", value)
+
+
 def test_legacy_groups_are_not_exposed() -> None:
     """Root help should not expose removed legacy command groups."""
 
@@ -54,10 +66,10 @@ def test_root_help_explains_primary_entrypoints() -> None:
 
     # Act
     result = runner.invoke(app, ["--help"])
+    output = _normalize_text(_strip_ansi(result.stdout))
 
     # Assert
     assert result.exit_code == 0
-    output = " ".join(result.stdout.split())
     assert "Use `afk start` to run the full local stack" in output
     assert "`afk bootstrap`" in output
     assert "`afk update`" in output
