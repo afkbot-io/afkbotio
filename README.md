@@ -117,7 +117,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1 -Yes
 Hosted installers use `uv tool install` under the hood. Advanced equivalents:
 
 ```bash
-uv tool install --python 3.12 --reinstall git+https://github.com/afkbot-io/afkbotio.git@main
+uv tool install --python 3.12 --reinstall https://github.com/afkbot-io/afkbotio/archive/main.tar.gz
 uv tool upgrade afkbotio --reinstall
 uv tool uninstall afkbotio
 ```
