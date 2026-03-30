@@ -110,19 +110,23 @@ function Get-ToolSource {
     if ($normalized.StartsWith("git@github.com:")) {
         $normalized = "https://github.com/" + $normalized.Substring("git@github.com:".Length)
     }
+    if ($normalized.StartsWith("http://github.com/")) {
+        $normalized = "https://github.com/" + $normalized.Substring("http://github.com/".Length)
+    }
+    if ($normalized.StartsWith("https://www.github.com/")) {
+        $normalized = "https://github.com/" + $normalized.Substring("https://www.github.com/".Length)
+    }
+    if ($normalized.StartsWith("http://www.github.com/")) {
+        $normalized = "https://github.com/" + $normalized.Substring("http://www.github.com/".Length)
+    }
     if ($normalized.EndsWith(".git")) {
         $normalized = $normalized.Substring(0, $normalized.Length - 4)
     }
     $normalized = $normalized.TrimEnd("/")
-    if (
-        $normalized.StartsWith("https://github.com/") -or
-        $normalized.StartsWith("http://github.com/") -or
-        $normalized.StartsWith("https://www.github.com/") -or
-        $normalized.StartsWith("http://www.github.com/")
-    ) {
+    if ($normalized.StartsWith("https://github.com/")) {
         return @{
-            Mode = "git"
-            Value = "git+$normalized.git@$GitRef"
+            Mode = "archive"
+            Value = "$normalized/archive/$GitRef.tar.gz"
         }
     }
 
