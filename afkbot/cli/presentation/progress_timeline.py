@@ -109,6 +109,14 @@ def reduce_progress_event(
         pending_separator=pending_separator,
         active_spinner_label=None,
     )
+    if next_state == state:
+        return state, ProgressRenderFrame(
+            separator_before=separator_before,
+            color=color,
+            status_line=status_line,
+            detail_line=detail_line,
+            stop_spinner=state.active_spinner_label is not None,
+        )
     return next_state, ProgressRenderFrame(
         separator_before=separator_before,
         color=color,
@@ -132,4 +140,8 @@ def _is_spinner_event(event: ProgressEvent) -> bool:
     # Only synthetic turn.progress stages own the long-lived spinner line.
     # `llm.call.*` events are rendered as regular status/detail frames so
     # heartbeat/timeout information remains visible in the transcript.
-    return event.event_type == "turn.progress" and event.stage in _SPINNER_LABELS
+    return (
+        event.event_type == "turn.progress"
+        and event.stage in _SPINNER_LABELS
+        and event.iteration is not None
+    )

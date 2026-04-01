@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from afkbot.services.agent_loop.pending_envelopes import (
+    TOOL_NOT_ALLOWED_QUESTION_KIND,
     PROFILE_SELECTION_QUESTION_KIND,
     PendingEnvelopeBuilder,
 )
@@ -183,4 +184,39 @@ def test_build_profile_selection_envelope_handles_single_available_profile() -> 
         "credential_name": "api_key",
         "available_profile_keys": ["default"],
         "error_code": "credential_profile_required",
+    }
+
+
+def test_build_tool_not_allowed_envelope_asks_for_explicit_execution() -> None:
+    """tool_not_allowed_in_turn should convert to explicit interactive ask_question."""
+
+    builder = PendingEnvelopeBuilder(params_normalizer=dict)
+    tool_calls = [
+        ToolCall(
+            name="bash.exec",
+            params={"cmd": "ls -la", "cwd": "."},
+        )
+    ]
+    tool_results = [
+        ToolResult.error(
+            error_code="tool_not_allowed_in_turn",
+            reason="Tool not available in current turn: bash.exec",
+        )
+    ]
+
+    envelope = builder.build_tool_not_allowed_envelope(
+        tool_calls=tool_calls,
+        tool_results=tool_results,
+    )
+
+    assert envelope is not None
+    assert envelope.action == "ask_question"
+    assert envelope.message.startswith("Tool not available in current turn: bash.exec")
+    assert envelope.question_id is not None
+    assert envelope.spec_patch == {
+        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+        "tool_name": "bash.exec",
+        "tool_params": {"cmd": "ls -la", "cwd": "."},
+        "tool_not_allowed_reason": "Tool not available in current turn: bash.exec",
+        "error_code": "tool_not_allowed_in_turn",
     }

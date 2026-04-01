@@ -922,10 +922,10 @@ async def test_llm_tool_calls_respect_profile_policy(tmp_path: Path) -> None:
             [event for event in events if event.event_type == "tool.result"][0].payload_json
         )
         assert result_payload["result"]["error_code"] == "tool_not_allowed_in_turn"
-        assert (
-            result.envelope.message
-            == "The requested operation could not run because tool `debug.echo` is not available in the current turn. Stay within the visible tool surface or widen it before retrying."
-        )
+        assert result.envelope.action == "ask_question"
+        assert result.envelope.spec_patch is not None
+        assert result.envelope.spec_patch["tool_name"] == "debug.echo"
+        assert result.envelope.spec_patch["question_kind"] == "tool_not_allowed_in_turn"
 
     assert len(scripted.requests) == 1
     await engine.dispose()

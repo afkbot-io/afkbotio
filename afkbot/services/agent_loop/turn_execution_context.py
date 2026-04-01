@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.planning_policy import (
@@ -82,22 +80,10 @@ def resolve_turn_execution_context(
             planning_mode=execution_planning_mode,
         )
     )
-    base_runtime_metadata = (
+    effective_runtime_metadata = (
         None
         if context_overrides is None or not context_overrides.runtime_metadata
         else context_overrides.runtime_metadata
-    )
-    merged_runtime_metadata = _merge_runtime_metadata(
-        base_runtime_metadata,
-        {
-            "planning": {
-                "chat_mode": execution_planning_mode,
-                "execution_enabled": execution_planning_enabled,
-            }
-        },
-    )
-    effective_runtime_metadata = (
-        None if not merged_runtime_metadata else merged_runtime_metadata
     )
     effective_overrides = TurnContextOverrides(
         runtime_metadata=effective_runtime_metadata,
@@ -117,20 +103,3 @@ def resolve_turn_execution_context(
         execution_planning_enabled=execution_planning_enabled,
         effective_overrides=effective_overrides,
     )
-
-
-def _merge_runtime_metadata(
-    base: dict[str, object] | None,
-    extra: dict[str, object],
-) -> dict[str, object]:
-    """Merge runtime metadata dictionaries one level deep for nested planning payloads."""
-
-    merged = dict(base or {})
-    for key, value in extra.items():
-        if key in merged and isinstance(merged[key], Mapping) and isinstance(value, Mapping):
-            nested = dict(cast(Mapping[str, object], merged[key]))
-            nested.update(cast(Mapping[str, object], value))
-            merged[key] = nested
-        else:
-            merged[key] = value
-    return merged

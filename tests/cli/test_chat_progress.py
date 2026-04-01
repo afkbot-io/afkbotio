@@ -141,7 +141,7 @@ def test_chat_progress_detail_for_bash_tool_call() -> None:
         }
     )
 
-    assert render_progress_detail(event) == "cmd=pwd cwd=."
+    assert render_progress_detail(event) == "params: cmd=pwd cwd=."
 
 
 def test_chat_progress_detail_for_bash_tool_call_without_cwd() -> None:
@@ -157,7 +157,7 @@ def test_chat_progress_detail_for_bash_tool_call_without_cwd() -> None:
     )
     event.attach_tool_details(tool_call_params={"cmd": "pwd"})
 
-    assert render_progress_detail(event) == "cmd=pwd"
+    assert render_progress_detail(event) == "params: cmd=pwd"
 
 
 def test_chat_progress_detail_for_bash_session_poll_call() -> None:
@@ -178,7 +178,7 @@ def test_chat_progress_detail_for_bash_session_poll_call() -> None:
         }
     )
 
-    assert render_progress_detail(event) == "session_id=bash-abc123 chars=y"
+    assert render_progress_detail(event) == "params: session_id=bash-abc123 chars=y"
 
 
 def test_chat_progress_detail_for_tool_progress_preview_lines() -> None:

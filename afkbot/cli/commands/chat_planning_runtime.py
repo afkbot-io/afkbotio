@@ -8,7 +8,7 @@ from collections.abc import Callable
 from afkbot.cli.commands.chat_planning import ChatPlanningMode
 from afkbot.cli.presentation.chat_plan_renderer import render_chat_plan
 from afkbot.cli.presentation.chat_renderer import render_chat_result
-from afkbot.cli.presentation.inline_select import confirm_space
+from afkbot.cli.presentation.inline_select import run_inline_single_select_async
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
 from afkbot.services.chat_session.turn_flow import PlanDecisionFn, PlanPresentationFn
@@ -56,16 +56,16 @@ PLAN_EXECUTION_PROMPT = ChatPlanningPrompt(
 )
 
 
-def confirm_chat_plan_first() -> bool:
+async def confirm_chat_plan_first() -> bool:
     """Ask whether one multi-step turn should begin with planning."""
 
-    return _confirm_prompt(PLAN_FIRST_PROMPT)
+    return await _confirm_prompt(PLAN_FIRST_PROMPT)
 
 
-def confirm_chat_plan_execution() -> bool:
+async def confirm_chat_plan_execution() -> bool:
     """Ask whether one captured plan should continue into execution."""
 
-    return _confirm_prompt(PLAN_EXECUTION_PROMPT)
+    return await _confirm_prompt(PLAN_EXECUTION_PROMPT)
 
 
 def render_captured_plan(
@@ -114,16 +114,16 @@ def build_repl_planning_callbacks(
     elif planning_mode == "on":
         if interactive_confirm:
             confirm_plan_execution = confirm_chat_plan_execution
-
-        def _present_plan(plan_result: TurnResult, plan_snapshot: ChatPlanSnapshot | None) -> None:
-            print_intermediate(
-                render_captured_plan(
-                    plan_result=plan_result,
-                    plan_snapshot=plan_snapshot,
+            def _present_plan(plan_result: TurnResult, plan_snapshot: ChatPlanSnapshot | None) -> None:
+                print_intermediate(
+                    render_captured_plan(
+                        plan_result=plan_result,
+                        plan_snapshot=plan_snapshot,
+                    )
                 )
-            )
-
-        present_plan = _present_plan
+            present_plan = _present_plan
+        else:
+            confirm_plan_execution = accept_plan_automatically
 
     return ChatReplPlanningCallbacks(
         prompt_to_plan_first=prompt_to_plan_first,
@@ -138,14 +138,19 @@ def accept_plan_automatically() -> bool:
     return True
 
 
-def _confirm_prompt(prompt: ChatPlanningPrompt) -> bool:
+async def _confirm_prompt(prompt: ChatPlanningPrompt) -> bool:
     """Render one inline confirm prompt from shared copy."""
 
-    return confirm_space(
-        question=prompt.question,
-        default=prompt.default,
+    selected = await run_inline_single_select_async(
         title=prompt.title,
-        yes_label=prompt.yes_label,
-        no_label=prompt.no_label,
+        text=prompt.question,
+        options=[
+            ("yes", prompt.yes_label),
+            ("no", prompt.no_label),
+        ],
+        default_value="yes" if prompt.default else "no",
         hint_text=prompt.hint_text,
     )
+    if selected is None:
+        return prompt.default
+    return selected == "yes"

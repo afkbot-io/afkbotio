@@ -123,6 +123,146 @@ def run_inline_single_select(
     return str(result) if isinstance(result, str) else None
 
 
+async def run_inline_single_select_async(
+    *,
+    title: str,
+    text: str,
+    options: list[tuple[str, str]],
+    default_value: str,
+    hint_text: str | None = None,
+) -> str | None:
+    """Async single-select variant used from async contexts."""
+
+    if not options:
+        return None
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return None
+    if _has_running_event_loop():
+        return await _run_inline_single_select_async(
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+    return _run_inline_single_select_text(
+        title=title,
+        text=text,
+        options=options,
+        default_value=default_value,
+        hint_text=hint_text,
+    )
+
+
+async def _run_inline_single_select_async(
+    *,
+    title: str,
+    text: str,
+    options: list[tuple[str, str]],
+    default_value: str,
+    hint_text: str | None,
+) -> str | None:
+    """Async prompt-toolkit single-select implementation with async event loop."""
+
+    values = [value for value, _label in options]
+    default_index = values.index(default_value) if default_value in values else 0
+    state: dict[str, int] = {"cursor": default_index}
+
+    try:
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return await asyncio.to_thread(
+            _run_inline_single_select_text,
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+
+    style = Style.from_dict(
+        {
+            "title": "bold",
+            "hint": "ansigray",
+            "focused": "ansicyan bold",
+        }
+    )
+
+    def _render() -> list[tuple[str, str]]:
+        lines: list[tuple[str, str]] = [
+            ("class:title", f"{title}\n"),
+            ("", f"{text}\n\n"),
+        ]
+        for index, (_value, label) in enumerate(options):
+            is_focused = index == state["cursor"]
+            is_selected = index == state["cursor"]
+            pointer = "> " if is_focused else "  "
+            mark = "[x]" if is_selected else "[ ]"
+            style_name = "class:focused" if is_focused else ""
+            lines.append((style_name, f"{pointer}{mark} {label}\n"))
+        lines.append(("class:hint", f"\n{hint_text or _HINT_TEXT}"))
+        return lines
+
+    body = Window(
+        content=FormattedTextControl(_render),
+        always_hide_cursor=True,
+        dont_extend_height=True,
+    )
+    root = HSplit([body])
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _up(_event: object) -> None:
+        state["cursor"] = (state["cursor"] - 1) % len(options)
+
+    @kb.add("down")
+    def _down(_event: object) -> None:
+        state["cursor"] = (state["cursor"] + 1) % len(options)
+
+    @kb.add(" ")
+    def _space(_event: object) -> None:
+        return None
+
+    @kb.add("enter")
+    def _enter(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=values[state["cursor"]])
+
+    @kb.add("escape")
+    def _escape(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=None)
+
+    @kb.add("c-c")
+    def _ctrl_c(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=None)
+
+    app: Any = Application(
+        layout=Layout(root),
+        key_bindings=kb,
+        full_screen=False,
+        style=style,
+        mouse_support=False,
+    )
+    try:
+        result = await app.run_async()
+    except Exception:
+        return await asyncio.to_thread(
+            _run_inline_single_select_text,
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+    return str(result) if isinstance(result, str) else None
+
+
 def select_option_dialog(
     *,
     title: str,

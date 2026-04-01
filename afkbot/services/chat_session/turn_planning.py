@@ -25,7 +25,6 @@ def build_plan_only_overrides(
             execution_planning_mode="off",
             thinking_level=minimum_plan_level,
             tool_access_mode="read_only",
-            runtime_metadata={"planning": {"mode": "plan_only"}},
         ),
     )
     assert merged is not None
@@ -57,11 +56,6 @@ def build_execution_overrides_from_plan(
             prompt_overlay=execution_overlay,
             execution_planning_mode="off",
             thinking_level=thinking_level,
-            runtime_metadata=(
-                None
-                if not plan_text
-                else {"planning": {"mode": "execution", "plan_attached": True}}
-            ),
         ),
     )
 

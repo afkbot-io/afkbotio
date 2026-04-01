@@ -1,156 +1,146 @@
-"""Tests for the fullscreen chat workspace application shell."""
+"""Tests for the prompt-session chat workspace application."""
 
 from __future__ import annotations
 
-import asyncio
-from types import SimpleNamespace
 import pytest
-from prompt_toolkit.buffer import CompletionState
-from prompt_toolkit.completion import Completion
 
+import afkbot.cli.presentation.chat_workspace.app as workspace_app_module
 from afkbot.cli.presentation.chat_workspace.app import ChatWorkspaceApp
-from afkbot.cli.presentation.chat_workspace.composer import ChatPromptCompleter
 from afkbot.cli.presentation.chat_workspace.layout import ChatWorkspaceSurfaceState
-from afkbot.cli.presentation.chat_workspace.overlays import ChatWorkspaceOverlay
 from afkbot.cli.presentation.chat_workspace.toolbar import DEFAULT_CHAT_WORKSPACE_FOOTER
 from afkbot.cli.presentation.chat_workspace.transcript import ChatWorkspaceTranscriptEntry
-from afkbot.services.chat_session.input_catalog import ChatInputCatalog
 
 
-def test_chat_workspace_app_snapshots_transcript_surface_and_overlay() -> None:
-    """The workspace app should mirror transcript, stacked surfaces, and overlay state."""
+def test_chat_workspace_app_snapshots_transcript_and_surface_state() -> None:
+    """The workspace snapshot should expose transcript, status, queue, and footer text."""
 
-    # Arrange
     workspace = ChatWorkspaceApp(
         surface_state=ChatWorkspaceSurfaceState(
             status_lines=("• Working... · tool: bash.exec",),
             queue_lines=("◦ Queued 1 message for the next turn.",),
-        )
+        ),
+        emit_output=False,
     )
     workspace.append_transcript_entry(
         ChatWorkspaceTranscriptEntry(kind="assistant", text="Ready to help.")
     )
     workspace.set_toolbar_text("/ commands · $ capabilities · @ files")
-    workspace.set_overlay(
-        ChatWorkspaceOverlay(
-            title="Execution",
-            body_lines=("Execute the task using this plan?",),
-        )
-    )
 
-    # Act
     snapshot = workspace.snapshot()
 
-    # Assert
     assert snapshot.transcript_text == "Ready to help."
     assert snapshot.status_text == "• Working... · tool: bash.exec"
     assert snapshot.queue_text == "◦ Queued 1 message for the next turn."
     assert snapshot.footer_text == "/ commands · $ capabilities · @ files"
-    assert snapshot.overlay_title == "Execution"
-
-
-def test_chat_workspace_app_submits_draft_and_records_user_entry() -> None:
-    """Submitting the composer draft should queue the message and clear the draft."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace.set_draft_text("run tests")
-
-    # Act
-    submitted = workspace.submit_draft()
-    next_message = workspace.pop_next_message()
-    snapshot = workspace.snapshot()
-
-    # Assert
-    assert submitted == "run tests"
-    assert next_message == "run tests"
+    assert snapshot.overlay_title is None
     assert snapshot.draft_text == ""
-    assert snapshot.transcript_text == ""
 
 
-def test_chat_workspace_app_auto_submits_selected_slash_completion() -> None:
-    """Submitting `/` with one selected slash completion should apply and queue the command."""
+def test_chat_workspace_app_keeps_user_entry_in_state_without_echo() -> None:
+    """User messages should remain in transcript state even when terminal echo is suppressed."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp(
-        composer_completer=ChatPromptCompleter(
-            catalog_getter=lambda: ChatInputCatalog(),
-            local_commands=("/status", "//status"),
-        )
-    )
-    workspace.set_draft_text("/")
-    workspace.composer_buffer.complete_state = CompletionState(
-        original_document=workspace.composer_buffer.document,
-        completions=[Completion(text="/status", start_position=-1)],
+    workspace = ChatWorkspaceApp(emit_output=False)
+
+    workspace.append_transcript_entry(
+        ChatWorkspaceTranscriptEntry(kind="user", text="run tests"),
+        echo=False,
     )
 
-    # Act
-    workspace.submit_current_input()
-    queued = workspace.pop_next_message()
+    assert workspace.snapshot().transcript_text == "you > run tests"
 
-    # Assert
-    assert queued == "/status"
-    assert workspace.composer_buffer.text == ""
+
+def test_chat_workspace_app_emits_formatted_terminal_output_without_raw_ansi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal transcript output should use formatted text instead of raw ANSI codes."""
+
+    captured: list[tuple[tuple[tuple[str, str], ...], str]] = []
+
+    def _fake_print_formatted_text(value, *, style, end, flush):  # noqa: ANN001
+        _ = style, flush
+        captured.append((tuple(value), end))
+
+    monkeypatch.setattr(workspace_app_module, "print_formatted_text", _fake_print_formatted_text)
+
+    workspace = ChatWorkspaceApp(emit_output=True)
+    workspace.append_transcript_entry(
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="Ready to help."),
+    )
+
+    assert captured
+    rendered_text = "".join(fragment for _style, fragment in captured[0][0])
+    assert "\x1b" not in rendered_text
+    assert rendered_text == "Ready to help.\n\n"
+
+
+def test_chat_workspace_app_collapses_blank_paragraph_rows_in_assistant_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assistant output should avoid extra visual empty rows between paragraphs."""
+
+    captured: list[tuple[tuple[tuple[str, str], ...], str]] = []
+
+    def _fake_print_formatted_text(value, *, style, end, flush):  # noqa: ANN001
+        _ = style, flush
+        captured.append((tuple(value), end))
+
+    monkeypatch.setattr(workspace_app_module, "print_formatted_text", _fake_print_formatted_text)
+
+    workspace = ChatWorkspaceApp(emit_output=True)
+    workspace.append_transcript_entry(
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="First line.\n\nSecond line."),
+    )
+
+    assert captured
+    rendered_text = "".join(fragment for _style, fragment in captured[0][0])
+    assert rendered_text == "First line.\nSecond line.\n\n"
+
+
+def test_chat_workspace_app_avoids_extra_leading_gap_after_user_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assistant final text should not add an extra blank row after a user prompt line."""
+
+    captured: list[tuple[tuple[tuple[str, str], ...], str]] = []
+
+    def _fake_print_formatted_text(value, *, style, end, flush):  # noqa: ANN001
+        _ = style, flush
+        captured.append((tuple(value), end))
+
+    monkeypatch.setattr(workspace_app_module, "print_formatted_text", _fake_print_formatted_text)
+
+    workspace = ChatWorkspaceApp(emit_output=True)
+    workspace.append_transcript_entry(
+        ChatWorkspaceTranscriptEntry(kind="user", text="вы"),
+        echo=False,
+    )
+    workspace.append_transcript_entry(
+        ChatWorkspaceTranscriptEntry(kind="assistant", text="Да? Что хотел спросить?"),
+    )
+
+    assert captured
+    rendered_text = "".join(fragment for _style, fragment in captured[0][0])
+    assert rendered_text.startswith("Да? Что хотел спросить?")
+    assert not rendered_text.startswith("\n")
+    assert rendered_text.endswith("\n\n")
 
 
 def test_chat_workspace_app_omits_status_and_queue_rows_without_surface_lines() -> None:
-    """Idle workspaces should keep only the transcript, composer, and footer surfaces."""
+    """Idle workspaces should keep an empty status/queue state."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
+    workspace = ChatWorkspaceApp(emit_output=False)
 
-    # Act
     snapshot = workspace.snapshot()
 
-    # Assert
     assert snapshot.status_text == ""
     assert snapshot.queue_text == ""
     assert snapshot.footer_text == DEFAULT_CHAT_WORKSPACE_FOOTER
 
 
-def test_chat_workspace_app_keeps_short_transcripts_in_attached_mode() -> None:
-    """Short transcripts should keep the composer visually attached below the transcript."""
+def test_chat_workspace_app_keeps_full_transcript_for_long_histories() -> None:
+    """Long transcripts should remain intact instead of clipping to a viewport."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace.append_transcript_entry(
-        ChatWorkspaceTranscriptEntry(kind="assistant", text="Ready to help.")
-    )
-
-    # Act
-    docked = workspace.transcript_docked()
-
-    # Assert
-    assert docked is False
-
-
-def test_chat_workspace_app_docks_long_transcripts_to_fill_the_viewport() -> None:
-    """Long transcripts should switch to the docked transcript viewport."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace._terminal_size = lambda: (80, 16)  # type: ignore[method-assign]
-    for index in range(18):
-        workspace.append_transcript_entry(
-            ChatWorkspaceTranscriptEntry(
-                kind="assistant",
-                text=f"Assistant message number {index} with enough text to wrap a little.",
-            )
-        )
-
-    # Act
-    docked = workspace.transcript_docked()
-
-    # Assert
-    assert docked is True
-
-
-def test_chat_workspace_app_renders_only_visible_tail_for_docked_transcripts() -> None:
-    """Docked transcripts should render only the newest messages that fit the viewport."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace._terminal_size = lambda: (80, 12)  # type: ignore[method-assign]
+    workspace = ChatWorkspaceApp(emit_output=False)
     for index in range(14):
         workspace.append_transcript_entry(
             ChatWorkspaceTranscriptEntry(
@@ -159,237 +149,126 @@ def test_chat_workspace_app_renders_only_visible_tail_for_docked_transcripts() -
             )
         )
 
-    # Act
-    scroll = workspace._docked_transcript_vertical_scroll(  # type: ignore[attr-defined]
-        workspace._transcript_docked_window  # type: ignore[attr-defined]
-    )
     snapshot = workspace.snapshot()
 
-    # Assert
-    assert workspace.transcript_docked() is True
-    assert scroll == 0
-    assert snapshot.transcript_text == (
-        "Assistant message number 10.\n\n"
-        "Assistant message number 11.\n\n"
-        "Assistant message number 12.\n\n"
-        "Assistant message number 13."
+    assert snapshot.transcript_text.startswith("Assistant message number 0.")
+    assert snapshot.transcript_text.endswith("Assistant message number 13.")
+    assert snapshot.transcript_text.count("Assistant message number") == 14
+
+
+def test_chat_workspace_prompt_message_includes_status_queue_and_prompt_prefix() -> None:
+    """The dynamic prompt message should render stacked status lines above `you >`."""
+
+    workspace = ChatWorkspaceApp(
+        surface_state=ChatWorkspaceSurfaceState(
+            status_lines=("• Working (3s • esc to interrupt) · thinking...",),
+            queue_lines=("◦ Queued 1 message for the next turn.",),
+        ),
+        emit_output=False,
     )
 
+    fragments = workspace._prompt_message()  # type: ignore[attr-defined]
 
-def test_chat_workspace_app_keeps_zero_scroll_when_docked_window_reports_height() -> None:
-    """Docked transcript surfaces should keep the scroll offset pinned at zero."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace._terminal_size = lambda: (80, 40)  # type: ignore[method-assign]
-    for index in range(14):
-        workspace.append_transcript_entry(
-            ChatWorkspaceTranscriptEntry(
-                kind="assistant",
-                text=f"Assistant message number {index}.",
-            )
-        )
-
-    # Act
-    scroll = workspace._docked_transcript_vertical_scroll(  # type: ignore[attr-defined]
-        workspace._transcript_docked_window  # type: ignore[attr-defined]
-    )
-
-    # Assert
-    assert scroll == 0
+    assert fragments == [
+        ("class:workspace.status-line", "• Working (3s • esc to interrupt) · thinking..."),
+        ("", "\n"),
+        ("class:workspace.queue-line", "◦ Queued 1 message for the next turn."),
+        ("", "\n"),
+        ("class:workspace.user-label", "you"),
+        ("class:workspace.user-separator", " > "),
+    ]
 
 
-def test_chat_workspace_app_can_request_exit_without_running_application() -> None:
-    """Requesting exit should set the local shutdown flag even before app.run()."""
+def test_chat_workspace_bottom_toolbar_uses_current_footer_text() -> None:
+    """The bottom toolbar should mirror the current footer/help text."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
+    workspace = ChatWorkspaceApp(emit_output=False)
+    workspace.set_toolbar_text("/ commands · $ capabilities · @ files · plan=on")
 
-    # Act
+    assert workspace._bottom_toolbar() == [  # type: ignore[attr-defined]
+        ("class:workspace.footer-line", " / commands · $ capabilities · @ files · plan=on")
+    ]
+
+
+def test_chat_workspace_app_can_request_exit_without_running_prompt() -> None:
+    """Requesting exit should set the local shutdown flag."""
+
+    workspace = ChatWorkspaceApp(emit_output=False)
+
     workspace.request_exit()
 
-    # Assert
     assert workspace.exit_requested is True
 
 
-def test_chat_workspace_app_can_clear_scrollback_before_fullscreen_run() -> None:
-    """Workspace should best-effort clear terminal scrollback before fullscreen draw."""
-
-    # Arrange
-    writes: list[str] = []
-    workspace = ChatWorkspaceApp()
-    workspace._application_runtime._application = SimpleNamespace(  # type: ignore[attr-defined]
-        output=SimpleNamespace(
-            write_raw=lambda value: writes.append(value),
-            flush=lambda: writes.append("flush"),
-        )
-    )
-
-    # Act
-    workspace.clear_scrollback()
-
-    # Assert
-    assert writes == ["\x1b[3J\x1b[H\x1b[2J", "flush"]
-
-
-def test_chat_workspace_app_completion_helpers_do_not_consume_tab_outside_composer(
+@pytest.mark.asyncio
+async def test_chat_workspace_app_choose_option_accepts_numeric_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Completion helpers should fall back when the composer does not own focus."""
+    """Choice prompts should accept numeric option input."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    monkeypatch.setattr(workspace, "_has_focus", lambda _target: False)
+    workspace = ChatWorkspaceApp(emit_output=False)
 
-    # Act
-    handled = workspace.next_completion()
+    async def _fake_prompt_choice_input(*, message, footer):  # noqa: ANN001
+        _ = message, footer
+        return "2"
 
-    # Assert
-    assert handled is False
+    monkeypatch.setattr(workspace, "_prompt_choice_input", _fake_prompt_choice_input)
 
-
-def test_chat_workspace_app_completion_helpers_navigate_inline_popup() -> None:
-    """Arrow-like completion helpers should move selection inside the inline popup."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace.set_draft_text("$")
-    workspace.composer_buffer.complete_state = CompletionState(
-        original_document=workspace.composer_buffer.document,
-        completions=[
-            Completion(text="$one", start_position=-1),
-            Completion(text="$two", start_position=-1),
-        ],
+    selected = await workspace.choose_option(
+        title="Execution",
+        prompt="Execute the task using this plan?",
+        options=(("yes", "Execute"), ("no", "Stop")),
+        default_value="yes",
     )
 
-    # Act
-    next_handled = workspace.next_completion()
-    second_handled = workspace.next_completion()
-    previous_handled = workspace.previous_completion()
-    current_completion = workspace.composer_buffer.complete_state.current_completion
-
-    # Assert
-    assert next_handled is True
-    assert second_handled is True
-    assert previous_handled is True
-    assert current_completion is not None
-    assert current_completion.text == "$one"
-
-
-def test_chat_workspace_app_dismiss_context_clears_completion_state() -> None:
-    """Escape handling should close the active completion menu when no overlay is open."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-    workspace.composer_buffer.complete_state = CompletionState(
-        original_document=workspace.composer_buffer.document,
-        completions=[Completion(text="//status")],
-    )
-
-    # Act
-    workspace.dismiss_context()
-
-    # Assert
-    assert workspace.composer_buffer.complete_state is None
-
-
-def test_chat_workspace_app_dismiss_context_reports_when_nothing_closed() -> None:
-    """Dismiss-context should return `False` when neither an overlay nor popup is active."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-
-    # Act
-    handled = workspace.dismiss_context()
-
-    # Assert
-    assert handled is False
-
-
-@pytest.mark.asyncio
-async def test_chat_workspace_app_can_resolve_overlay_choice() -> None:
-    """Choice overlays should resolve to the currently selected option."""
-
-    # Arrange
-    workspace = ChatWorkspaceApp()
-
-    async def _choose() -> str | None:
-        return await workspace.choose_option(
-            title="Execution",
-            prompt="Execute the task using this plan?",
-            options=(
-                ("yes", "Execute"),
-                ("no", "Stop"),
-            ),
-            default_value="yes",
-        )
-
-    task = asyncio.create_task(_choose())
-
-    # Act
-    await asyncio.sleep(0)
-    workspace.next_choice()
-    workspace.accept_current_choice()
-    selected = await task
-
-    # Assert
     assert selected == "no"
-    assert workspace.snapshot().overlay_title is None
 
 
 @pytest.mark.asyncio
-async def test_chat_workspace_app_choice_overlay_marks_composer_read_only() -> None:
-    """Modal choice overlays should freeze composer edits until the overlay closes."""
+async def test_chat_workspace_app_choose_option_uses_default_for_blank_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blank choice input should resolve to the configured default option."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
+    workspace = ChatWorkspaceApp(emit_output=False)
 
-    async def _choose() -> str | None:
-        return await workspace.choose_option(
-            title="Confirm",
-            prompt="Proceed?",
-            options=(("yes", "Yes"), ("no", "No")),
-            default_value="yes",
-        )
+    async def _fake_prompt_choice_input(*, message, footer):  # noqa: ANN001
+        _ = message, footer
+        return ""
 
-    task = asyncio.create_task(_choose())
+    monkeypatch.setattr(workspace, "_prompt_choice_input", _fake_prompt_choice_input)
 
-    # Act
-    await asyncio.sleep(0)
-    read_only_during_overlay = workspace.composer_buffer.read_only()
-    workspace.clear_overlay()
-    selected = await task
-    read_only_after_overlay = workspace.composer_buffer.read_only()
+    selected = await workspace.choose_option(
+        title="Execution",
+        prompt="Execute the task using this plan?",
+        options=(("yes", "Execute"), ("no", "Stop")),
+        default_value="no",
+    )
 
-    # Assert
-    assert read_only_during_overlay is True
-    assert selected is None
-    assert read_only_after_overlay is False
+    assert selected == "no"
 
 
 @pytest.mark.asyncio
-async def test_chat_workspace_app_confirm_can_return_cancel_result() -> None:
-    """Escaped confirm overlays should respect the explicit cancel result."""
+async def test_chat_workspace_app_confirm_can_return_cancel_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelled confirm prompts should respect the explicit cancel result."""
 
-    # Arrange
-    workspace = ChatWorkspaceApp()
+    workspace = ChatWorkspaceApp(emit_output=False)
 
-    async def _confirm() -> bool:
-        return await workspace.confirm(
-            title="Execution",
-            question="Execute the task using this plan?",
-            default=True,
-            yes_label="Execute",
-            no_label="Stop",
-            cancel_result=False,
-        )
+    async def _cancel_prompt(*, message, footer):  # noqa: ANN001
+        _ = message, footer
+        return None
 
-    task = asyncio.create_task(_confirm())
+    monkeypatch.setattr(workspace, "_prompt_choice_input", _cancel_prompt)
 
-    # Act
-    await asyncio.sleep(0)
-    workspace.clear_overlay()
-    confirmed = await task
+    confirmed = await workspace.confirm(
+        title="Execution",
+        question="Execute the task using this plan?",
+        default=True,
+        yes_label="Execute",
+        no_label="Stop",
+        cancel_result=False,
+    )
 
-    # Assert
     assert confirmed is False

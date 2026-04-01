@@ -1,4 +1,4 @@
-"""Tests for fullscreen chat workspace transcript helpers."""
+"""Tests for chat workspace transcript helpers."""
 
 from __future__ import annotations
 
@@ -123,8 +123,8 @@ def test_render_chat_workspace_transcript_styles_user_entries_as_classic_prompt_
     ]
 
 
-def test_render_chat_workspace_transcript_can_crop_to_visible_tail_lines() -> None:
-    """Tail rendering should keep only the newest visual lines when capped."""
+def test_render_chat_workspace_transcript_keeps_complete_history() -> None:
+    """Transcript rendering should keep the complete history in order."""
 
     # Arrange
     entries = [
@@ -134,8 +134,8 @@ def test_render_chat_workspace_transcript_can_crop_to_visible_tail_lines() -> No
     ]
 
     # Act
-    rendered = render_chat_workspace_transcript(entries, width=24, max_lines=3)
+    rendered = render_chat_workspace_transcript(entries, width=24)
 
     # Assert
-    assert rendered.plain_text == "Second\n\nThird"
-    assert rendered.line_count == 3
+    assert rendered.plain_text == "First\n\nSecond\n\nThird"
+    assert rendered.line_count == 5

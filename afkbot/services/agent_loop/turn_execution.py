@@ -235,6 +235,24 @@ class TurnExecutionRuntime:
                 )
 
             pending_envelope: ActionEnvelope | None = None
+            available_tool_names = {tool.name for tool in available_tools}
+            visible_tool_names_for_planned_execution = (
+                available_tool_names
+                if self._llm_provider_enabled
+                else {
+                    tool_name.strip()
+                    for tool_name in (call.name for call in planned_tool_calls or ())
+                    if tool_name.strip()
+                }
+            )
+            effective_allowed_tool_names = self._resolve_allowed_tool_names(
+                visible_tool_names=visible_tool_names_for_planned_execution
+                if planned_tool_calls
+                else available_tool_names,
+                runtime_metadata=(
+                    None if effective_overrides is None else effective_overrides.runtime_metadata
+                )
+            )
 
             if unavailable_explicit_skill_message is not None and not planned_tool_calls:
                 assistant_message = unavailable_explicit_skill_message
@@ -259,11 +277,17 @@ class TurnExecutionRuntime:
                     runtime_metadata=(
                         None if effective_overrides is None else effective_overrides.runtime_metadata
                     ),
+                    allowed_tool_names=effective_allowed_tool_names,
                 )
-                pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+                pending_envelope = self._pending_envelopes.build_tool_not_allowed_envelope(
                     tool_calls=planned_tool_calls,
                     tool_results=results,
                 )
+                if pending_envelope is None:
+                    pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+                        tool_calls=planned_tool_calls,
+                        tool_results=results,
+                    )
                 if pending_envelope is None:
                     pending_envelope = self._pending_envelopes.build_secure_envelope(
                         tool_calls=planned_tool_calls,
@@ -404,3 +428,31 @@ class TurnExecutionRuntime:
             },
         )
         return blocked_reason, "block", sanitized_message
+
+    @staticmethod
+    def _resolve_allowed_tool_names(
+        *,
+        visible_tool_names: set[str],
+        runtime_metadata: dict[str, object] | None,
+    ) -> set[str]:
+        """Return tool names allowed for execution including per-session overrides."""
+
+        if not runtime_metadata:
+            return visible_tool_names
+        raw_allowed = runtime_metadata.get("session_allowed_tool_names")
+        if raw_allowed is None:
+            return visible_tool_names
+        allowed: set[str] = set()
+        if isinstance(raw_allowed, (list, tuple, set)):
+            for raw_name in raw_allowed:
+                tool_name = str(raw_name).strip()
+                if tool_name:
+                    allowed.add(tool_name)
+        elif isinstance(raw_allowed, str):
+            for raw_name in raw_allowed.split(","):
+                tool_name = raw_name.strip()
+                if tool_name:
+                    allowed.add(tool_name)
+        if not allowed:
+            return visible_tool_names
+        return visible_tool_names | allowed

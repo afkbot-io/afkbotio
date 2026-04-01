@@ -266,8 +266,34 @@ class ContextBuilder:
 
         if not runtime_metadata:
             return "# Runtime Metadata (untrusted)\n{}"
-        payload = json.dumps(runtime_metadata, ensure_ascii=True, sort_keys=True)
+        sanitized_runtime_metadata = ContextBuilder._sanitize_runtime_metadata_for_model(
+            runtime_metadata,
+        )
+        if not sanitized_runtime_metadata:
+            return "# Runtime Metadata (untrusted)\n{}"
+        payload = json.dumps(
+            sanitized_runtime_metadata,
+            ensure_ascii=True,
+            sort_keys=True,
+        )
         return f"# Runtime Metadata (untrusted)\n{payload}"
+
+    @staticmethod
+    def _sanitize_runtime_metadata_for_model(
+        runtime_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Strip internal control metadata that should not be shown to the LLM."""
+
+        excluded_keys = {
+            "session_allowed_tool_names",
+            "planning",
+            "subagent_task",
+        }
+        return {
+            str(key): value
+            for key, value in runtime_metadata.items()
+            if key not in excluded_keys
+        }
 
     @staticmethod
     def _skills_summary_block(

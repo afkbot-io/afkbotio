@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope
-from afkbot.services.agent_loop.pending_envelopes import PROFILE_SELECTION_QUESTION_KIND
+from afkbot.services.agent_loop.pending_envelopes import (
+    PROFILE_SELECTION_QUESTION_KIND,
+    TOOL_NOT_ALLOWED_QUESTION_KIND,
+)
 from afkbot.services.agent_loop.safety_policy import CONFIRM_ACK_PARAM, CONFIRM_QID_PARAM
 from afkbot.services.tools.base import ToolCall
 
@@ -14,6 +17,14 @@ def is_credential_profile_question(envelope: ActionEnvelope) -> bool:
     patch = envelope.spec_patch or {}
     question_kind = str(patch.get("question_kind") or "").strip().lower()
     return question_kind == PROFILE_SELECTION_QUESTION_KIND
+
+
+def is_tool_not_allowed_question(envelope: ActionEnvelope) -> bool:
+    """Return true when one ask-question envelope asks to run non-visible tool."""
+
+    patch = envelope.spec_patch or {}
+    question_kind = str(patch.get("question_kind") or "").strip().lower()
+    return question_kind == TOOL_NOT_ALLOWED_QUESTION_KIND
 
 
 def available_profile_choices(envelope: ActionEnvelope) -> list[str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from time import monotonic
 
 from afkbot.services.chat_session.activity_state import ChatActivitySnapshot
@@ -10,7 +11,11 @@ from afkbot.services.chat_session.session_state import ChatReplSessionState
 DEFAULT_CHAT_WORKSPACE_FOOTER = "/ commands · $ capabilities · @ files"
 
 
-def build_chat_workspace_status_line(state: ChatReplSessionState) -> str:
+def build_chat_workspace_status_line(
+    state: ChatReplSessionState,
+    *,
+    status_marker: str | None = None,
+) -> str:
     """Render the compact working/idle strip above the composer."""
 
     if state.active_turn:
@@ -20,8 +25,11 @@ def build_chat_workspace_status_line(state: ChatReplSessionState) -> str:
             line += f" ({elapsed} • esc to interrupt)"
         else:
             line += " (esc to interrupt)"
-        activity = activity_line_for_chat_workspace(state.latest_activity)
-        if activity is not None:
+        snapshot = state.latest_activity
+        activity = activity_line_for_chat_workspace(snapshot)
+        if status_marker is not None and activity is not None:
+            line += f" · {status_marker} {activity}"
+        elif activity is not None:
             line += f" · {activity}"
         if state.queued_messages > 0:
             noun = "message" if state.queued_messages == 1 else "messages"
@@ -43,6 +51,12 @@ def build_chat_workspace_footer(state: ChatReplSessionState) -> str:
     """Build the compact footer text for the current workspace mode."""
 
     mode_tokens: list[str] = []
+    try:
+        cwd = os.getcwd().strip()
+    except OSError:
+        cwd = ""
+    if cwd:
+        mode_tokens.append(f"cwd={cwd}")
     if state.planning_mode != state.default_planning_mode:
         mode_tokens.append(f"plan={state.planning_mode}")
     if state.thinking_level != state.default_thinking_level:

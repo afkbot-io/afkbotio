@@ -1,4 +1,4 @@
-"""Tests for fullscreen workspace runtime helpers."""
+"""Tests for interactive workspace runtime helpers."""
 
 from __future__ import annotations
 
@@ -74,36 +74,27 @@ def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -
     assert resolved.present_plan is _present_plan
 
 
-def test_interrupt_action_prefers_overlay_dismissal_even_during_active_turns() -> None:
-    """Planning overlays should close before the active turn is cancelled."""
-
-    # Arrange
-
-    # Act
-    action = interrupt_action(
-        overlay_active=True,
-        active_turn=True,
-        session_running=True,
-    )
-
-    # Assert
-    assert action == "dismiss_overlay"
-
-
 def test_interrupt_action_cancels_active_turn_before_exit() -> None:
     """Active turns should consume the first Ctrl-C as cancellation."""
 
-    # Arrange
-
-    # Act
     action = interrupt_action(
-        overlay_active=False,
         active_turn=True,
         session_running=True,
     )
 
     # Assert
     assert action == "cancel_turn"
+
+
+def test_interrupt_action_exits_when_no_turn_is_running() -> None:
+    """Idle sessions should resolve escape/interrupt requests as session exit."""
+
+    action = interrupt_action(
+        active_turn=False,
+        session_running=True,
+    )
+
+    assert action == "exit_session"
 
 
 async def test_cancel_background_task_cleans_up_pending_task() -> None:

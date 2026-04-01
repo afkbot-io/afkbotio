@@ -107,7 +107,7 @@ async def run_chat_turn_with_optional_planning(
     plan_snapshot = capture_chat_plan(plan_result.envelope.message)
     if plan_snapshot is not None and record_plan is not None:
         record_plan(plan_snapshot)
-    if explicit_plan_request or confirm_plan_execution is None:
+    if explicit_plan_request:
         return ChatTurnOutcome(
             result=plan_result,
             plan_snapshot=plan_snapshot,
@@ -119,6 +119,23 @@ async def run_chat_turn_with_optional_planning(
             plan_result=plan_result,
             plan_snapshot=plan_snapshot,
         )
+    if confirm_plan_execution is None:
+        return ChatTurnOutcome(
+            result=await run_turn_with_secure_resolution(
+                message=message,
+                profile_id=profile_id,
+                session_id=session_id,
+                progress_sink=progress_sink,
+                allow_secure_prompt=allow_secure_prompt,
+                turn_overrides=build_execution_overrides_from_plan(
+                    base_overrides=execution_overrides,
+                    approved_plan=plan_result.envelope.message,
+                    thinking_level=thinking_level,
+                ),
+            ),
+            plan_snapshot=plan_snapshot,
+        )
+
     if not await _resolve_plan_decision(confirm_plan_execution):
         return ChatTurnOutcome(
             result=plan_result,

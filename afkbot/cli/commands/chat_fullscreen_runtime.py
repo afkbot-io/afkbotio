@@ -1,4 +1,4 @@
-"""CLI runtime glue for interactive fullscreen chat workspace sessions."""
+"""CLI runtime glue for interactive prompt-session chat workspace sessions."""
 
 from __future__ import annotations
 
@@ -61,20 +61,16 @@ async def run_fullscreen_chat_workspace_session(
     refresh_catalog: RefreshCatalogFn,
     run_turn: RunReplTurnFn,
 ) -> None:
-    """Run the interactive chat session inside the fullscreen workspace app."""
+    """Run the interactive chat session inside the prompt-session workspace."""
 
     session_task: asyncio.Task[None] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
 
     def _interrupt() -> None:
         action = interrupt_action(
-            overlay_active=workspace.overlay_active(),
             active_turn=repl_state.active_turn,
             session_running=session_task is not None and not session_task.done(),
         )
-        if action == "dismiss_overlay":
-            workspace.clear_overlay()
-            return
         if action == "cancel_turn" and session_task is not None:
             session_task.cancel()
             return
@@ -92,9 +88,40 @@ async def run_fullscreen_chat_workspace_session(
     ux = FullscreenChatWorkspaceUX()
     progress_timeline_state = ProgressTimelineState()
     progress_entries_emitted = False
+    spinner_frames = ("◌", "◉", "◍", "◉")
+    spinner_position = 0
+
+    def _status_mode_icon() -> str | None:
+        activity = repl_state.latest_activity
+        if activity is None or not activity.running:
+            return None
+        if activity.stage == "thinking":
+            return "◇"
+        if activity.stage == "planning":
+            return "◈"
+        if activity.stage == "tool_call":
+            return "⚙"
+        if activity.stage == "subagent_wait":
+            return "↻"
+        return None
+
+    def _build_status_marker(*, animate: bool) -> str | None:
+        nonlocal spinner_position
+        icon = _status_mode_icon()
+        if icon is None:
+            return None
+        marker = f"{spinner_frames[spinner_position]} {icon}"
+        if animate:
+            spinner_position = (spinner_position + 1) % len(spinner_frames)
+        return marker
 
     def _sync_workspace_from_state() -> None:
-        workspace.replace_surface_state(build_chat_workspace_surface_state(repl_state))
+        workspace.replace_surface_state(
+            build_chat_workspace_surface_state(
+                repl_state,
+                status_marker=_build_status_marker(animate=False),
+            )
+        )
         workspace.set_toolbar_text(build_chat_workspace_toolbar_text(repl_state))
 
     async def _read_input() -> str:
@@ -113,7 +140,8 @@ async def run_fullscreen_chat_workspace_session(
         )
         if outcome.queued_message:
             workspace.append_transcript_entry(
-                build_chat_workspace_user_entry(outcome.queued_message)
+                build_chat_workspace_user_entry(outcome.queued_message),
+                echo=False,
             )
         return outcome
 
@@ -212,17 +240,19 @@ async def run_fullscreen_chat_workspace_session(
     async def _run_heartbeat() -> None:
         while not workspace.exit_requested:
             if repl_state.active_turn:
-                _sync_workspace_from_state()
+                workspace.replace_surface_state(
+                    build_chat_workspace_surface_state(
+                        repl_state,
+                        status_marker=_build_status_marker(animate=True),
+                    )
+                )
             await asyncio.sleep(1)
 
-    def _pre_run() -> None:
-        nonlocal heartbeat_task, session_task
-        workspace.clear_scrollback()
-        session_task = workspace.application.create_background_task(_run_session())
-        heartbeat_task = workspace.application.create_background_task(_run_heartbeat())
-
+    session_task = asyncio.create_task(_run_session())
+    heartbeat_task = asyncio.create_task(_run_heartbeat())
     try:
-        await workspace.application.run_async(pre_run=_pre_run)
+        await session_task
     finally:
+        workspace.request_exit()
         await cancel_background_task(session_task)
         await cancel_background_task(heartbeat_task)

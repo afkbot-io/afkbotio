@@ -93,6 +93,10 @@ class LLMIterationRuntime:
         """Execute one iterative LLM loop with sequential guarded tool calls."""
 
         visible_tool_names = {tool.name for tool in available_tools}
+        effective_allowed_tool_names = self._resolve_allowed_tool_names(
+            visible_tool_names=visible_tool_names,
+            runtime_metadata=runtime_metadata,
+        )
         consecutive_missing_file_reads = 0
         started_at = time.monotonic()
         deadline = started_at + max(0.01, float(wall_clock_budget_sec))
@@ -170,7 +174,7 @@ class LLMIterationRuntime:
                 explicit_subagent_requests=explicit_subagent_requests,
                 allow_confirmation_markers=False,
                 runtime_metadata=runtime_metadata,
-                allowed_tool_names=visible_tool_names,
+                allowed_tool_names=effective_allowed_tool_names,
             )
             pending_envelope = self._build_pending_envelope(
                 tool_calls=tool_calls,
@@ -247,10 +251,15 @@ class LLMIterationRuntime:
     ) -> ActionEnvelope | None:
         """Convert tool failures into pending user-interaction envelopes."""
 
-        pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+        pending_envelope = self._pending_envelopes.build_tool_not_allowed_envelope(
             tool_calls=tool_calls,
             tool_results=tool_results,
         )
+        if pending_envelope is None:
+            pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            )
         if pending_envelope is None:
             pending_envelope = self._pending_envelopes.build_secure_envelope(
                 tool_calls=tool_calls,
@@ -262,6 +271,36 @@ class LLMIterationRuntime:
                 tool_results=tool_results,
             )
         return pending_envelope
+
+    @staticmethod
+    def _resolve_allowed_tool_names(
+        *,
+        visible_tool_names: set[str],
+        runtime_metadata: dict[str, object] | None,
+    ) -> set[str]:
+        """Return execution guard allowlist merged with session-explicit tool access."""
+
+        if not runtime_metadata:
+            return visible_tool_names
+        raw_allowed = runtime_metadata.get("session_allowed_tool_names")
+        if raw_allowed is None:
+            return visible_tool_names
+
+        session_allowed: set[str] = set()
+        if isinstance(raw_allowed, (list, tuple, set)):
+            for raw_name in raw_allowed:
+                tool_name = str(raw_name).strip()
+                if tool_name:
+                    session_allowed.add(tool_name)
+        elif isinstance(raw_allowed, str):
+            for raw_name in raw_allowed.split(","):
+                tool_name = raw_name.strip()
+                if tool_name:
+                    session_allowed.add(tool_name)
+
+        if not session_allowed:
+            return visible_tool_names
+        return visible_tool_names | session_allowed
 
     def _append_tool_call_history(
         self,

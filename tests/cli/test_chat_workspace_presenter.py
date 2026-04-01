@@ -9,8 +9,8 @@ from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 
 
-def test_build_chat_workspace_progress_entries_renders_thinking_spinner_line() -> None:
-    """Thinking progress should become one transcript activity entry."""
+def test_build_chat_workspace_progress_entries_keeps_thinking_spinner_out_of_transcript() -> None:
+    """Thinking progress should stay in status strips, not transcript rows."""
 
     # Arrange
     state = ProgressTimelineState()
@@ -32,11 +32,7 @@ def test_build_chat_workspace_progress_entries_renders_thinking_spinner_line() -
 
     # Assert
     assert next_state.active_spinner_label == "[iter 2] thinking"
-    assert len(entries) == 1
-    assert entries[0].kind == "assistant"
-    assert entries[0].text == "[iter 2] thinking..."
-    assert entries[0].accent == "thinking"
-    assert entries[0].spacing_before == "normal"
+    assert entries == ()
 
 
 def test_build_chat_workspace_progress_entries_skips_pre_iteration_thinking_noise() -> None:
@@ -132,15 +128,19 @@ def test_build_chat_workspace_progress_entries_renders_tool_status_and_detail() 
     # Assert
     assert len(call_entries) == 1
     assert call_entries[0].kind == "assistant"
-    assert call_entries[0].text == "[iter 1] [#1] calling tool: bash.exec"
+    assert call_entries[0].text == "• [#1] calling tool: bash.exec"
     assert call_entries[0].accent == "tool"
     assert call_entries[0].spacing_before == "normal"
-    assert len(progress_entries) == 2
+    assert len(progress_entries) == 3
     assert progress_entries[0].kind == "assistant"
-    assert progress_entries[0].text == "[iter 1] [#1] tool running: bash.exec"
+    assert progress_entries[0].text == "[#1] tool running: bash.exec"
     assert progress_entries[0].accent == "tool"
     assert progress_entries[0].spacing_before == "tight"
     assert progress_entries[1].kind == "assistant"
-    assert progress_entries[1].text == "stdout | two"
+    assert progress_entries[1].text == "  stdout | one"
     assert progress_entries[1].accent == "detail"
     assert progress_entries[1].spacing_before == "tight"
+    assert progress_entries[2].kind == "assistant"
+    assert progress_entries[2].text == "  stdout | two"
+    assert progress_entries[2].accent == "detail"
+    assert progress_entries[2].spacing_before == "tight"

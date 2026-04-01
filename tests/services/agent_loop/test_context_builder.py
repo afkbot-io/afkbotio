@@ -86,6 +86,32 @@ async def test_context_builder_includes_untrusted_runtime_metadata(tmp_path: Pat
     assert '{"source": "cli"}' in context
 
 
+async def test_context_builder_strips_internal_runtime_metadata_from_untrusted_block(tmp_path: Path) -> None:
+    """Internal runtime control keys should not be rendered for model-visible metadata."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
+
+    settings = Settings(root_dir=tmp_path, bootstrap_files=("AGENTS.md",))
+    builder = ContextBuilder(settings, SkillLoader(settings))
+    context = await builder.build(
+        profile_id="default",
+        runtime_metadata={
+            "source": "cli",
+            "planning": {"chat_mode": "auto", "execution_enabled": False},
+            "session_allowed_tool_names": ("bash.exec",),
+            "subagent_task": {"name": "researcher"},
+        },
+    )
+
+    assert "Runtime Metadata (untrusted)" in context
+    assert '"source": "cli"' in context
+    assert '"planning": {' not in context
+    assert "session_allowed_tool_names" not in context
+    assert "subagent_task" not in context
+
+
 async def test_context_builder_renders_trusted_runtime_notes_separately(tmp_path: Path) -> None:
     """Trusted runtime notes should render in their own block apart from untrusted metadata."""
 

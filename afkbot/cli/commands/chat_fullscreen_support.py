@@ -1,4 +1,4 @@
-"""Shared support helpers for the fullscreen chat workspace runtime."""
+"""Shared support helpers for the interactive chat workspace runtime."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from afkbot.services.chat_session.turn_flow import (
 
 
 class FullscreenChatWorkspaceUX:
-    """Minimal no-stdout UX adapter for fullscreen workspace sessions."""
+    """Minimal no-stdout UX adapter for prompt-session workspace sessions."""
 
     def begin_agent_turn(self) -> None:
         """A fullscreen workspace updates state in-place instead of using stdout spinners."""
@@ -32,14 +32,11 @@ class FullscreenChatWorkspaceUX:
 
 def interrupt_action(
     *,
-    overlay_active: bool,
     active_turn: bool,
     session_running: bool,
-) -> Literal["dismiss_overlay", "cancel_turn", "exit_session"]:
-    """Resolve one deterministic fullscreen interrupt action from current session state."""
+) -> Literal["cancel_turn", "exit_session"]:
+    """Resolve one deterministic interrupt action from current session state."""
 
-    if overlay_active:
-        return "dismiss_overlay"
     if active_turn and session_running:
         return "cancel_turn"
     return "exit_session"
@@ -62,7 +59,7 @@ def build_workspace_turn_options(
     confirm_plan_execution: Callable[[], Coroutine[Any, Any, bool]],
     present_plan: PlanPresentationFn,
 ) -> ChatTurnInteractiveOptions:
-    """Attach only the fullscreen callbacks that differ from the default REPL wiring."""
+    """Attach only the workspace callbacks that differ from the default REPL wiring."""
 
     if state.planning_mode != "on":
         return turn_options

@@ -20,6 +20,8 @@ _HIDDEN_PARAM_KEYS = frozenset(
 )
 _PRIORITY_PARAM_KEYS: tuple[str, ...] = (
     "cmd",
+    "command",
+    "args",
     "cwd",
     "path",
     "query",
@@ -158,7 +160,7 @@ def _render_tool_call_details(event: ProgressEvent) -> str | None:
         if chars:
             bash_parts.append(f"chars={chars}")
         if bash_parts:
-            return " ".join(bash_parts)
+            return "params: " + " ".join(bash_parts)
         return None
 
     ordered_keys: list[str] = []
@@ -170,7 +172,7 @@ def _render_tool_call_details(event: ProgressEvent) -> str | None:
             continue
         ordered_keys.append(key)
     parts: list[str] = []
-    for key in ordered_keys[:4]:
+    for key in ordered_keys[:8]:
         parts.append(f"{key}={_fmt_value(params.get(key))}")
     if not parts:
         return None

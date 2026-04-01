@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from afkbot.cli.presentation.progress_renderer import render_progress_detail_lines
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState, reduce_progress_event
 from afkbot.cli.presentation.chat_plan_renderer import render_chat_plan
 from afkbot.cli.presentation.chat_workspace.layout import ChatWorkspaceSurfaceState
@@ -22,10 +23,15 @@ from afkbot.services.chat_session.turn_flow import ChatTurnOutcome
 
 def build_chat_workspace_surface_state(
     state: ChatReplSessionState,
+    *,
+    status_marker: str | None = None,
 ) -> ChatWorkspaceSurfaceState:
     """Project session state into Codex-like stacked workspace surfaces."""
 
-    status_line = build_chat_workspace_status_line(state)
+    status_line = build_chat_workspace_status_line(
+        state,
+        status_marker=status_marker,
+    )
     return ChatWorkspaceSurfaceState(
         status_lines=((status_line,) if status_line else ()),
         queue_lines=build_chat_workspace_queue_lines(state),
@@ -58,9 +64,11 @@ def build_chat_workspace_progress_entries(
 ) -> tuple[ProgressTimelineState, tuple[ChatWorkspaceTranscriptEntry, ...]]:
     """Convert one progress event into zero or more transcript entries."""
 
+    if event.stage == "thinking":
+        next_state, _ = reduce_progress_event(state, event)
+        return next_state, ()
+
     if event.event_type.startswith("llm.call."):
-        return state, ()
-    if event.stage == "thinking" and (event.iteration is None or event.iteration <= 0):
         return state, ()
 
     next_state, frame = reduce_progress_event(state, event)
@@ -68,10 +76,28 @@ def build_chat_workspace_progress_entries(
         return next_state, ()
 
     entries: list[ChatWorkspaceTranscriptEntry] = []
+    is_tool_event = event.stage in {"tool_call", "subagent_wait"}
+    is_tool_call = event.stage == "tool_call" and event.event_type == "tool.call"
+
     first_spacing: ChatWorkspaceSpacing = (
         "normal" if first_progress_entry or frame.separator_before else "tight"
     )
-    if frame.spinner_label is not None:
+    cleaned_status_line = (
+        _strip_progress_iteration_prefix(frame.status_line)
+        if frame.status_line is not None
+        else None
+    )
+
+    if is_tool_call and cleaned_status_line is not None:
+        entries.append(
+            ChatWorkspaceTranscriptEntry(
+                kind="assistant",
+                text=f"• {cleaned_status_line}",
+                accent=_accent_for_stage(event.stage),
+                spacing_before=first_spacing,
+            )
+        )
+    if frame.spinner_label is not None and event.stage not in {"thinking", "planning"}:
         entries.append(
             ChatWorkspaceTranscriptEntry(
                 kind="assistant",
@@ -80,16 +106,26 @@ def build_chat_workspace_progress_entries(
                 spacing_before=first_spacing,
             )
         )
-    if frame.status_line is not None:
+    if cleaned_status_line is not None and not is_tool_call:
         entries.append(
             ChatWorkspaceTranscriptEntry(
                 kind="assistant",
-                text=frame.status_line,
+                text=cleaned_status_line,
                 accent=_accent_for_stage(event.stage, final_event=event.event_type == "tool.result"),
                 spacing_before=first_spacing if not entries else "tight",
             )
         )
-    if frame.detail_line is not None:
+    if is_tool_event:
+        for detail_line in render_progress_detail_lines(event):
+            entries.append(
+                ChatWorkspaceTranscriptEntry(
+                    kind="assistant",
+                    text=f"  {detail_line}",
+                    accent="detail",
+                    spacing_before="tight",
+                )
+            )
+    elif frame.detail_line is not None:
         entries.append(
             ChatWorkspaceTranscriptEntry(
                 kind="assistant",
@@ -99,6 +135,23 @@ def build_chat_workspace_progress_entries(
             )
         )
     return next_state, tuple(entries)
+
+
+def _strip_progress_iteration_prefix(value: str) -> str:
+    """Remove `[iter N] ` prefix so transcript stays compact."""
+
+    if not value.startswith("[iter "):
+        return value
+    close = value.find("] ")
+    if close == -1:
+        return value
+    prefix = value[1:close]
+    if not prefix.startswith("iter "):
+        return value
+    iteration = prefix[len("iter ") :]
+    if not iteration.isdigit():
+        return value
+    return value[close + 2 :]
 
 
 def build_chat_workspace_outcome_entry(
