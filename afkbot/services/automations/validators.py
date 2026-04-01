@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Literal, cast
+from typing import Literal
 
 from afkbot.services.automations.errors import AutomationsServiceError
 
@@ -19,40 +19,10 @@ def validate_create_payload(*, name: str, prompt: str) -> None:
 
 def normalize_automation_prompt(
     prompt: str,
-    *,
-    delivery_mode: Literal["target", "tool", "none"],
 ) -> str:
-    """Return one stable automation prompt with delivery-mode execution hints."""
+    """Return one stable automation prompt for persisted automation tasks."""
 
-    normalized = _strip_managed_execution_hints(prompt.strip())
-    if delivery_mode != "tool":
-        return normalized
-    hint_lines = [
-        "Execution hints:",
-        "- Use available tools directly to perform the requested side effects.",
-        "- Do not rely on a platform delivery target unless one is explicitly configured.",
-    ]
-    prompt_lower = normalized.lower()
-    if _mentions_any(prompt_lower, ("telegram", "телеграм")):
-        hint_lines.append(
-            "- Use app.run with the Telegram app for sending messages or actions; if the task does not specify chat_id explicitly, use the configured default Telegram credentials."
-        )
-    if _mentions_any(prompt_lower, ("smtp", "email", "почт", "mail")):
-        hint_lines.append(
-            "- Use app.run with the SMTP app for outbound email delivery when email is part of the task."
-        )
-    if _mentions_any(prompt_lower, ("imap", "почт", "mail", "email")):
-        hint_lines.append(
-            "- Use app.run with the IMAP app when the task requires reading mailbox contents."
-        )
-    if _mentions_any(prompt_lower, ("api", "http", "https", "webhook", "post ", "get ", "patch ", "put ", "delete ")):
-        hint_lines.append("- Use http.request for external HTTP or webhook calls.")
-    if _mentions_any(prompt_lower, ("bash", "shell", "command", "script", "скрипт", "команд")):
-        hint_lines.append("- Use bash.exec for shell command execution when the task needs it.")
-    hint_block = "\n".join(hint_lines)
-    if hint_block in normalized:
-        return normalized
-    return f"{normalized}\n\n{hint_block}"
+    return prompt.strip()
 
 
 def normalize_update_status(status: str) -> Literal["active", "paused"]:
@@ -86,45 +56,6 @@ def normalize_timezone_name(timezone_name: str) -> str:
     """Normalize one timezone name for persisted cron metadata."""
 
     return timezone_name.strip() or "UTC"
-
-
-def normalize_delivery_mode(
-    delivery_mode: str | None,
-    *,
-    has_delivery_target: bool,
-) -> Literal["target", "tool", "none"]:
-    """Normalize automation delivery mode with target-aware defaults."""
-
-    if delivery_mode is None:
-        return "target" if has_delivery_target else "tool"
-    normalized = delivery_mode.strip().lower()
-    if normalized not in {"target", "tool", "none"}:
-        raise AutomationsServiceError(
-            error_code="invalid_delivery_mode",
-            reason="delivery_mode must be target, tool, or none",
-        )
-    if normalized == "target" and not has_delivery_target:
-        raise AutomationsServiceError(
-            error_code="invalid_delivery_mode",
-            reason="delivery_mode=target requires delivery_target",
-        )
-    return cast(Literal["target", "tool", "none"], normalized)
-
-
-def _mentions_any(text: str, needles: tuple[str, ...]) -> bool:
-    """Return whether one lowercase text contains any lowercase needle."""
-
-    return any(needle in text for needle in needles)
-
-
-def _strip_managed_execution_hints(prompt: str) -> str:
-    """Remove one previously appended managed execution-hints block from prompt tail."""
-
-    marker = "\n\nExecution hints:"
-    index = prompt.rfind(marker)
-    if index == -1:
-        return prompt
-    return prompt[:index].rstrip()
 
 
 def compute_next_run_at(cron_expr: str, now_utc: datetime) -> datetime:

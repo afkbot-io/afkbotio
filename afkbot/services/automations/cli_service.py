@@ -11,7 +11,6 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.automations.service import AutomationsServiceError, get_automations_service
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.settings import get_settings
 
 
@@ -23,8 +22,6 @@ async def create_automation_payload(
     trigger_type: str,
     cron_expr: str | None,
     timezone_name: str,
-    delivery_mode: str | None = None,
-    delivery_target: ChannelDeliveryTarget | None = None,
 ) -> str:
     """Create one automation and return deterministic JSON payload."""
 
@@ -48,8 +45,6 @@ async def create_automation_payload(
                 prompt=prompt,
                 cron_expr=cron_expr,
                 timezone_name=timezone_name,
-                delivery_mode=delivery_mode,
-                delivery_target=delivery_target,
             )
             return json.dumps({"automation": item.model_dump(mode="json")}, ensure_ascii=True)
         if normalized_type == "webhook":
@@ -57,8 +52,6 @@ async def create_automation_payload(
                 profile_id=profile_id,
                 name=name,
                 prompt=prompt,
-                delivery_mode=delivery_mode,
-                delivery_target=delivery_target,
             )
             return json.dumps({"automation": item.model_dump(mode="json")}, ensure_ascii=True)
         return _error_json(
@@ -120,9 +113,6 @@ async def update_automation_payload(
     cron_expr: str | None,
     timezone_name: str | None,
     rotate_webhook_token: bool,
-    delivery_mode: str | None,
-    delivery_target: ChannelDeliveryTarget | None,
-    clear_delivery_target: bool,
 ) -> str:
     """Update automation metadata and return JSON payload."""
 
@@ -142,9 +132,6 @@ async def update_automation_payload(
             cron_expr=cron_expr,
             timezone_name=timezone_name,
             rotate_webhook_token=rotate_webhook_token,
-            delivery_mode=delivery_mode,
-            delivery_target=delivery_target,
-            clear_delivery_target=clear_delivery_target,
         )
         return json.dumps({"automation": item.model_dump(mode="json")}, ensure_ascii=True)
     except AutomationsServiceError as exc:

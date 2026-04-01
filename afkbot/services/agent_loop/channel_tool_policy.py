@@ -7,6 +7,9 @@ from afkbot.services.channels.tool_profiles import (
     allowed_tool_names_for_channel_profile,
     normalize_channel_tool_profile,
 )
+from afkbot.services.ingress.policy_overlay import (
+    resolve_tool_profile_policy_overlay_value,
+)
 from afkbot.services.tools.base import ToolResult
 
 
@@ -64,7 +67,7 @@ def _resolve_channel_tool_profile(
 ) -> ChannelToolProfile:
     if not isinstance(runtime_metadata, dict):
         return "inherit"
-    raw_value = runtime_metadata.get("channel_tool_profile")
+    raw_value = resolve_tool_profile_policy_overlay_value(runtime_metadata=runtime_metadata)
     try:
         return normalize_channel_tool_profile(raw_value)
     except ValueError:

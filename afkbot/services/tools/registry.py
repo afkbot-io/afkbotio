@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 import logging
 
-from afkbot.services.mcp_runtime.tool_bridge import build_mcp_runtime_tools
 from afkbot.services.tools.base import ToolBase
 from afkbot.services.tools.plugins import create_tool_from_plugin
 from afkbot.settings import Settings
@@ -17,6 +16,8 @@ class ToolRegistry:
     """In-memory catalog of enabled tools keyed by canonical tool name."""
 
     def __init__(self, tools: Iterable[ToolBase] | None = None) -> None:
+        """Initialize registry and optionally preload provided tool instances."""
+
         self._tools: dict[str, ToolBase] = {}
         if tools is not None:
             for tool in tools:
@@ -53,6 +54,8 @@ class ToolRegistry:
 
         registry = cls.from_settings(settings)
         try:
+            from afkbot.services.mcp_runtime.tool_bridge import build_mcp_runtime_tools
+
             for tool in build_mcp_runtime_tools(settings=settings, profile_id=profile_id):
                 registry.register(tool)
         except Exception as exc:

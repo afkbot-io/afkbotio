@@ -8,12 +8,10 @@ from afkbot.models.automation import Automation
 from afkbot.models.automation_trigger_cron import AutomationTriggerCron
 from afkbot.models.automation_trigger_webhook import AutomationTriggerWebhook
 from afkbot.services.automations.contracts import (
-    AutomationDeliveryMode,
     AutomationCronMetadata,
     AutomationMetadata,
     AutomationWebhookMetadata,
 )
-from afkbot.services.automations.delivery_target_codec import decode_delivery_target
 from afkbot.services.automations.errors import AutomationsServiceError
 from afkbot.services.automations.webhook_tokens import build_webhook_path, mask_webhook_token
 
@@ -36,10 +34,8 @@ def to_metadata(
         prompt=automation.prompt,
         trigger_type=trigger_type,
         status=status,
-        delivery_mode=as_delivery_mode(automation.delivery_mode),
         created_at=automation.created_at,
         updated_at=automation.updated_at,
-        delivery_target=decode_delivery_target(automation.delivery_target_json),
         cron=None
         if cron is None
         else AutomationCronMetadata(
@@ -84,19 +80,4 @@ def as_status(value: str) -> Literal["active", "paused", "deleted"]:
     raise AutomationsServiceError(
         error_code="invalid_status",
         reason=f"Unsupported automation status: {value}",
-    )
-
-
-def as_delivery_mode(value: str) -> AutomationDeliveryMode:
-    """Normalize persisted automation delivery mode for API contracts."""
-
-    if value == "target":
-        return "target"
-    if value == "tool":
-        return "tool"
-    if value == "none":
-        return "none"
-    raise AutomationsServiceError(
-        error_code="invalid_delivery_mode",
-        reason=f"Unsupported automation delivery mode: {value}",
     )

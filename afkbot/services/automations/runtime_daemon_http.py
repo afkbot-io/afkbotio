@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
@@ -20,7 +19,6 @@ from afkbot.services.automations.runtime_http import (
     read_request,
 )
 from afkbot.services.automations.webhook_tokens import hash_webhook_token
-from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.settings import Settings
 
 WebhookTokenValidator = Callable[[str], Awaitable[bool]]
@@ -38,8 +36,10 @@ class RuntimeDaemonHttpRuntime:
         is_shutting_down: Callable[[], bool],
         webhook_token_validator: WebhookTokenValidator | None,
         validation_session_factory_getter: Callable[[], async_sessionmaker[AsyncSession] | None],
-        queue_task_factory: Callable[[str, Mapping[str, object], ChannelDeliveryTarget | None], Any],
+        queue_task_factory: Callable[[str, Mapping[str, object]], Any],
     ) -> None:
+        """Bind routing dependencies used by the runtime daemon HTTP ingress."""
+
         self._settings = settings
         self._enqueue_task = enqueue_task
         self._is_ready = is_ready
@@ -111,15 +111,7 @@ class RuntimeDaemonHttpRuntime:
                 "error_code": "invalid_payload",
                 "reason": "Payload must be a JSON object",
             }
-        try:
-            delivery_target = self._parse_delivery_target(request.headers)
-        except ValueError as exc:
-            return 400, {
-                "ok": False,
-                "error_code": "invalid_delivery_target",
-                "reason": str(exc),
-            }
-        if not self._enqueue_task(self._queue_task_factory(token, payload, delivery_target)):
+        if not self._enqueue_task(self._queue_task_factory(token, payload)):
             return 429, {"ok": False, "error_code": "queue_full", "reason": "Runtime queue is full"}
         return 202, {"accepted": True}
 
@@ -134,38 +126,3 @@ class RuntimeDaemonHttpRuntime:
             repo = AutomationRepository(session)
             row = await repo.find_webhook_by_token(token_hash=token_hash)
             return row is not None
-
-    def _parse_delivery_target(
-        self,
-        headers: Mapping[str, str],
-    ) -> ChannelDeliveryTarget | None:
-        """Parse optional outbound delivery target headers into a validated contract."""
-
-        transport = (headers.get("x-afk-delivery-transport") or "").strip() or None
-        binding_id = (headers.get("x-afk-delivery-binding-id") or "").strip() or None
-        account_id = (headers.get("x-afk-delivery-account-id") or "").strip() or None
-        peer_id = (headers.get("x-afk-delivery-peer-id") or "").strip() or None
-        thread_id = (headers.get("x-afk-delivery-thread-id") or "").strip() or None
-        user_id = (headers.get("x-afk-delivery-user-id") or "").strip() or None
-        address = (headers.get("x-afk-delivery-address") or "").strip() or None
-        subject = (headers.get("x-afk-delivery-subject") or "").strip() or None
-        if not any((transport, binding_id, account_id, peer_id, thread_id, user_id, address, subject)):
-            return None
-        if transport is None:
-            raise ValueError(
-                "x-afk-delivery-transport is required when delivery target headers are provided",
-            )
-        try:
-            return ChannelDeliveryTarget(
-                transport=transport,
-                binding_id=binding_id,
-                account_id=account_id,
-                peer_id=peer_id,
-                thread_id=thread_id,
-                user_id=user_id,
-                address=address,
-                subject=subject,
-            )
-        except ValidationError as exc:
-            first_error = exc.errors()[0]
-            raise ValueError(str(first_error.get("msg") or "Invalid delivery target headers")) from exc

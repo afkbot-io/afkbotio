@@ -4,17 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Literal, cast
+from typing import Literal
 
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationMetadata
 from afkbot.services.automations.errors import AutomationsServiceError
-from afkbot.services.automations.runtime_contracts import WithAutomationRepo
 from afkbot.services.automations.repository_support import ensure_profile_exists
-from afkbot.services.automations.validators import (
-    normalize_automation_prompt,
-    normalize_delivery_mode,
-)
+from afkbot.services.automations.runtime_contracts import WithAutomationRepo
+from afkbot.services.automations.validators import normalize_automation_prompt
 
 
 async def apply_automation_update(
@@ -30,10 +27,6 @@ async def apply_automation_update(
     normalized_status: Literal["active", "paused"] | None,
     normalized_cron: str | None,
     normalized_timezone: str | None,
-    requested_delivery_mode: str | None,
-    has_delivery_mode_update: bool,
-    has_delivery_target_update: bool,
-    normalized_delivery_target_json: str | None,
     issued_webhook_token: str | None,
     to_metadata: Callable[..., AutomationMetadata],
     compute_next_run_at: Callable[[str, datetime], datetime],
@@ -78,44 +71,20 @@ async def apply_automation_update(
                 reason=f"Unsupported trigger type: {automation.trigger_type}",
             )
 
-        effective_delivery_target_json = (
-            normalized_delivery_target_json
-            if has_delivery_target_update
-            else automation.delivery_target_json
-        )
-        normalized_delivery_mode = (
-            normalize_delivery_mode(
-                requested_delivery_mode,
-                has_delivery_target=effective_delivery_target_json is not None,
-            )
-            if has_delivery_mode_update or has_delivery_target_update
-            else None
-        )
-        effective_delivery_mode = cast(
-            Literal["target", "tool", "none"],
-            normalized_delivery_mode or automation.delivery_mode,
-        )
         effective_prompt = normalize_automation_prompt(
-            normalized_prompt if normalized_prompt is not None else automation.prompt,
-            delivery_mode=effective_delivery_mode,
+            normalized_prompt if normalized_prompt is not None else automation.prompt
         )
-        has_effective_prompt_update = normalized_prompt is not None or effective_prompt != automation.prompt
+        has_effective_prompt_update = (
+            normalized_prompt is not None or effective_prompt != automation.prompt
+        )
 
-        if (
-            has_base_updates
-            or has_delivery_target_update
-            or has_delivery_mode_update
-            or has_effective_prompt_update
-        ):
+        if has_base_updates or has_effective_prompt_update:
             updated_automation = await repo.update_automation(
                 profile_id=profile_id,
                 automation_id=automation_id,
                 name=normalized_name,
                 prompt=effective_prompt if has_effective_prompt_update else None,
                 status=normalized_status,
-                delivery_mode=effective_delivery_mode,
-                has_delivery_target_update=has_delivery_target_update,
-                delivery_target_json=normalized_delivery_target_json,
             )
             if updated_automation is None:
                 raise AutomationsServiceError(

@@ -10,7 +10,9 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.automations.runtime_daemon import RuntimeDaemon
+from afkbot.services.automations.runtime_daemon_http import RuntimeDaemonHttpRuntime
 from afkbot.services.automations.runtime_http import (
+    HttpRequest,
     WEBHOOK_TOKEN_HEADER,
     extract_webhook_token,
     match_webhook_path,
@@ -39,6 +41,31 @@ def test_extract_webhook_token_contract() -> None:
     assert extract_webhook_token({}) is None
     assert extract_webhook_token({WEBHOOK_TOKEN_HEADER: ""}) is None
     assert extract_webhook_token({WEBHOOK_TOKEN_HEADER: "  token-valid  "}) == "token-valid"
+
+
+async def test_runtime_http_returns_queue_full_when_enqueue_rejects(tmp_path: Path) -> None:
+    """Webhook ingress should surface backpressure when runtime queue rejects a task."""
+
+    settings = build_settings(tmp_path)
+    runtime = RuntimeDaemonHttpRuntime(
+        settings=settings,
+        enqueue_task=lambda _task: False,
+        is_ready=lambda: True,
+        is_shutting_down=lambda: False,
+        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        validation_session_factory_getter=lambda: None,
+        queue_task_factory=lambda token, payload: (token, payload),
+    )
+    status, payload = await runtime.route_request(
+        HttpRequest(
+            method="POST",
+            path=webhook_path(),
+            headers={WEBHOOK_TOKEN_HEADER: "token-valid"},
+            body=b'{"event_id":"evt-full"}',
+        )
+    )
+    assert status == 429
+    assert payload["error_code"] == "queue_full"
 
 
 async def test_runtime_daemon_webhook_endpoints(tmp_path: Path) -> None:
@@ -118,7 +145,7 @@ async def test_runtime_daemon_webhook_endpoints(tmp_path: Path) -> None:
             if service.webhook_calls:
                 break
             await asyncio.sleep(0.01)
-        assert service.webhook_calls == [("token-valid", {"event_id": "evt-2"}, None)]
+        assert service.webhook_calls == [("token-valid", {"event_id": "evt-2"})]
 
         daemon.begin_shutdown()
         status, payload = await request_json(
@@ -131,134 +158,6 @@ async def test_runtime_daemon_webhook_endpoints(tmp_path: Path) -> None:
         )
         assert status == 503
         assert payload["error_code"] == "runtime_shutting_down"
-    finally:
-        await daemon.stop()
-
-
-async def test_runtime_daemon_webhook_accepts_explicit_delivery_target_headers(tmp_path: Path) -> None:
-    """Webhook ingress should parse delivery-target headers and pass them to service runtime."""
-
-    service = FakeRuntimeService()
-    settings = build_settings(tmp_path)
-    daemon = RuntimeDaemon(
-        settings=settings,
-        service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
-    )
-    await daemon.start()
-    try:
-        status, payload = await request_json(
-            host=settings.runtime_host,
-            port=daemon.bound_port,
-            method="POST",
-            path=webhook_path(),
-            headers={
-                "X-AFK-Webhook-Token": "token-valid",
-                "X-AFK-Delivery-Transport": "telegram",
-                "X-AFK-Delivery-Peer-Id": "42",
-                "X-AFK-Delivery-Thread-Id": "9001",
-            },
-            body='{"event_id":"evt-with-target"}',
-        )
-        assert status == 202
-        assert payload == {"accepted": True}
-
-        for _ in range(20):
-            if service.webhook_calls:
-                break
-            await asyncio.sleep(0.01)
-
-        assert service.webhook_calls == [
-            (
-                "token-valid",
-                {"event_id": "evt-with-target"},
-                {
-                    "transport": "telegram",
-                    "peer_id": "42",
-                    "thread_id": "9001",
-                },
-            )
-        ]
-    finally:
-        await daemon.stop()
-
-
-async def test_runtime_daemon_webhook_rejects_invalid_delivery_target_headers(tmp_path: Path) -> None:
-    """Webhook ingress should return deterministic 400 for invalid delivery target headers."""
-
-    service = FakeRuntimeService()
-    settings = build_settings(tmp_path)
-    daemon = RuntimeDaemon(
-        settings=settings,
-        service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
-    )
-    await daemon.start()
-    try:
-        status, payload = await request_json(
-            host=settings.runtime_host,
-            port=daemon.bound_port,
-            method="POST",
-            path=webhook_path(),
-            headers={
-                "X-AFK-Webhook-Token": "token-valid",
-                "X-AFK-Delivery-Peer-Id": "42",
-            },
-            body='{"event_id":"evt-invalid-target"}',
-        )
-        assert status == 400
-        assert payload["ok"] is False
-        assert payload["error_code"] == "invalid_delivery_target"
-        assert "x-afk-delivery-transport is required" in str(payload["reason"])
-        assert service.webhook_calls == []
-    finally:
-        await daemon.stop()
-
-
-async def test_runtime_daemon_webhook_accepts_smtp_delivery_target_headers(tmp_path: Path) -> None:
-    """Webhook ingress should parse SMTP delivery headers into one delivery target."""
-
-    service = FakeRuntimeService()
-    settings = build_settings(tmp_path)
-    daemon = RuntimeDaemon(
-        settings=settings,
-        service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
-    )
-    await daemon.start()
-    try:
-        status, payload = await request_json(
-            host=settings.runtime_host,
-            port=daemon.bound_port,
-            method="POST",
-            path=webhook_path(),
-            headers={
-                "X-AFK-Webhook-Token": "token-valid",
-                "X-AFK-Delivery-Transport": "smtp",
-                "X-AFK-Delivery-Address": "ops@example.com",
-                "X-AFK-Delivery-Subject": "Daemon result",
-            },
-            body='{"event_id":"evt-with-smtp-target"}',
-        )
-        assert status == 202
-        assert payload == {"accepted": True}
-
-        for _ in range(20):
-            if service.webhook_calls:
-                break
-            await asyncio.sleep(0.01)
-
-        assert service.webhook_calls == [
-            (
-                "token-valid",
-                {"event_id": "evt-with-smtp-target"},
-                {
-                    "transport": "smtp",
-                    "address": "ops@example.com",
-                    "subject": "Daemon result",
-                },
-            )
-        ]
     finally:
         await daemon.stop()
 

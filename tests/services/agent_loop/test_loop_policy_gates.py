@@ -518,7 +518,7 @@ async def test_channel_tool_profile_filters_llm_visible_tools(tmp_path: Path) ->
             policy,
             profile_id="default",
             automation_intent=True,
-            runtime_metadata={"channel_tool_profile": "support_readonly"},
+            runtime_metadata={"policy_overlay": {"tool_profile": "support_readonly"}},
         )
         tool_names = {item.name for item in tools}
 
@@ -557,7 +557,7 @@ async def test_channel_tool_profile_blocks_manual_tool_execution(tmp_path: Path)
             message="echo",
             planned_tool_calls=[ToolCall(name="debug.echo", params={"message": "x"})],
             context_overrides=TurnContextOverrides(
-                runtime_metadata={"channel_tool_profile": "chat_minimal"},
+                runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}},
             ),
         )
 
@@ -612,7 +612,7 @@ async def test_channel_tool_profile_blocks_app_run_in_user_channels(tmp_path: Pa
                 )
             ],
             context_overrides=TurnContextOverrides(
-                runtime_metadata={"channel_tool_profile": "messaging_safe"},
+                runtime_metadata={"policy_overlay": {"tool_profile": "messaging_safe"}},
             ),
         )
 

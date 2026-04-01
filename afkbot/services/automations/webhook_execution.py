@@ -13,24 +13,17 @@ from afkbot.db.session import session_scope
 from afkbot.models.automation import Automation
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
-from afkbot.services.automations.delivery_runtime import deliver_automation_turn_best_effort
-from afkbot.services.automations.delivery_target_codec import decode_delivery_target
 from afkbot.services.automations.errors import AutomationsServiceError
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
 from afkbot.services.automations.loop_factory import AgentLoopLike, build_automation_agent_loop
 from afkbot.services.automations.message_factory import (
     compose_webhook_message,
-    load_trigger_subagent_markdown,
     webhook_session_id,
 )
 from afkbot.services.automations.payloads import resolve_webhook_event_hash, sanitize_payload
 from afkbot.services.automations.runtime_contracts import WithAutomationRepo
 from afkbot.services.automations.runtime_target import build_automation_runtime_target
-from afkbot.services.automations.metadata import as_delivery_mode
 from afkbot.services.automations.webhook_tokens import hash_webhook_token
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
-from afkbot.services.channels.service import ChannelDeliveryService
-from afkbot.services.subagents.loader import SubagentLoader
 
 WEBHOOK_CLAIM_TTL = timedelta(minutes=15)
 
@@ -39,12 +32,9 @@ async def trigger_webhook_automation(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     with_repo: WithAutomationRepo,
-    subagent_loader: SubagentLoader | None,
     token: str,
     payload: Mapping[str, object],
     agent_loop_factory: Callable[..., AgentLoopLike],
-    delivery_target: ChannelDeliveryTarget | None = None,
-    delivery_service: ChannelDeliveryService | None = None,
 ) -> AutomationWebhookTriggerResult:
     """Trigger one webhook automation and run its prompt through AgentLoop."""
 
@@ -73,13 +63,6 @@ async def trigger_webhook_automation(
         return (automation, accepted)
 
     automation, accepted = await with_repo(_claim_op)
-    normalized_delivery_mode = as_delivery_mode(automation.delivery_mode)
-    effective_delivery_target = (
-        delivery_target
-        if delivery_target is not None
-        else decode_delivery_target(automation.delivery_target_json)
-    )
-    effective_delivery_mode = "target" if delivery_target is not None else normalized_delivery_mode
     session_id = webhook_session_id(
         automation_id=automation.id,
         event_hash=event_hash,
@@ -99,26 +82,17 @@ async def trigger_webhook_automation(
             session=session,
             profile_id=automation.profile_id,
         )
-        subagent_markdown = await load_trigger_subagent_markdown(
-            loader=subagent_loader,
-            profile_id=automation.profile_id,
-            trigger_type="webhook",
-        )
         message = compose_webhook_message(
             automation.prompt,
             sanitized_payload,
-            subagent_markdown=subagent_markdown,
         )
         runtime_target = build_automation_runtime_target(
             profile_id=automation.profile_id,
             session_id=session_id,
             automation_id=automation.id,
             trigger_type="webhook",
-            subagent_markdown=subagent_markdown,
             event_hash=event_hash,
             payload=sanitized_payload,
-            delivery_mode=effective_delivery_mode,
-            delivery_target=effective_delivery_target,
         )
 
         async def _refresh_webhook_lease() -> bool:
@@ -148,7 +122,7 @@ async def trigger_webhook_automation(
 
         completed = False
         try:
-            turn_result = await run_with_lease_refresh(
+            await run_with_lease_refresh(
                 run=lambda: loop.run_turn(
                     profile_id=runtime_target.profile_id,
                     session_id=runtime_target.session_id,
@@ -158,18 +132,6 @@ async def trigger_webhook_automation(
                 refresh=_refresh_webhook_lease,
                 ttl=WEBHOOK_CLAIM_TTL,
             )
-            if (
-                effective_delivery_mode == "target"
-                and effective_delivery_target is not None
-                and delivery_service is not None
-            ):
-                await deliver_automation_turn_best_effort(
-                    delivery_service=delivery_service,
-                    turn_result=turn_result,
-                    delivery_target=effective_delivery_target,
-                    automation_id=automation.id,
-                    trigger_type="webhook",
-                )
             completed = await with_repo(_complete)
         except asyncio.CancelledError as exc:
             released = await with_repo(_release)

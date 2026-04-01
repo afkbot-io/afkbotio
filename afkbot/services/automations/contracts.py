@@ -7,10 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
-
 WEBHOOK_INGRESS_PATH = "/v1/automations/webhook"
-AutomationDeliveryMode = Literal["target", "tool", "none"]
 
 
 class AutomationCronMetadata(BaseModel):
@@ -46,12 +43,10 @@ class AutomationMetadata(BaseModel):
     prompt: str
     trigger_type: Literal["cron", "webhook"]
     status: Literal["active", "paused", "deleted"]
-    delivery_mode: AutomationDeliveryMode
     created_at: datetime
     updated_at: datetime
     cron: AutomationCronMetadata | None = None
     webhook: AutomationWebhookMetadata | None = None
-    delivery_target: ChannelDeliveryTarget | None = None
 
 
 class AutomationWebhookTriggerResult(BaseModel):

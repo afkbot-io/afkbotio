@@ -5,7 +5,6 @@ from __future__ import annotations
 from pydantic import Field
 
 from afkbot.services.automations import AutomationsServiceError, get_automations_service
-from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.settings import Settings
@@ -21,15 +20,6 @@ class AutomationUpdateParams(ToolParameters):
     cron_expr: str | None = Field(default=None, max_length=64)
     timezone: str | None = Field(default=None, max_length=64)
     rotate_webhook_token: bool = False
-    delivery_mode: str | None = Field(default=None, max_length=16)
-    delivery_target: ChannelDeliveryTarget | None = Field(
-        default=None,
-        description=(
-            "Optional explicit outbound sink. Set it only when the user explicitly supplied "
-            "binding_id or exact delivery coordinates. Use this together with delivery_mode=target."
-        ),
-    )
-    clear_delivery_target: bool = False
 
 
 class AutomationUpdateTool(ToolBase):
@@ -41,9 +31,13 @@ class AutomationUpdateTool(ToolBase):
     requires_automation_intent = True
 
     def __init__(self, settings: Settings) -> None:
+        """Store application settings used to resolve the automation service."""
+
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        """Validate parameters and update one automation for the active profile."""
+
         payload = AutomationUpdateParams.model_validate(params.model_dump())
         if payload.profile_key != ctx.profile_id:
             return ToolResult.error(error_code="profile_not_found", reason="Profile not found")
@@ -59,9 +53,6 @@ class AutomationUpdateTool(ToolBase):
                 cron_expr=payload.cron_expr,
                 timezone_name=payload.timezone,
                 rotate_webhook_token=payload.rotate_webhook_token,
-                delivery_mode=payload.delivery_mode,
-                delivery_target=payload.delivery_target,
-                clear_delivery_target=payload.clear_delivery_target,
             )
             return ToolResult(ok=True, payload={"automation": item.model_dump(mode="json")})
         except AutomationsServiceError as exc:

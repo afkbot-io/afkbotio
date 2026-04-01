@@ -32,7 +32,6 @@ async def test_repository_create_list_get_delete(tmp_path: Path) -> None:
                 profile_id="default",
                 name="each minute",
                 prompt="run cron task",
-                delivery_mode="tool",
                 cron_expr="* * * * *",
                 timezone="UTC",
                 next_run_at=datetime.now(timezone.utc),
@@ -41,7 +40,6 @@ async def test_repository_create_list_get_delete(tmp_path: Path) -> None:
                 profile_id="other",
                 name="incoming webhook",
                 prompt="handle webhook",
-                delivery_mode="tool",
                 webhook_token_hash=sha256("tok_abc".encode("utf-8")).hexdigest(),
             )
 
@@ -96,7 +94,6 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="due",
                 prompt="due prompt",
-                delivery_mode="tool",
                 cron_expr="* * * * *",
                 timezone="UTC",
                 next_run_at=now - timedelta(minutes=1),
@@ -105,7 +102,6 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="fallback",
                 prompt="fallback prompt",
-                delivery_mode="tool",
                 cron_expr="0 * * * *",
                 timezone="UTC",
                 next_run_at=now - timedelta(minutes=1),
@@ -114,7 +110,6 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="future",
                 prompt="future prompt",
-                delivery_mode="tool",
                 cron_expr="* * * * *",
                 timezone="UTC",
                 next_run_at=now + timedelta(hours=1),
@@ -123,7 +118,6 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="deleted-cron",
                 prompt="deleted cron",
-                delivery_mode="tool",
                 cron_expr="* * * * *",
                 timezone="UTC",
                 next_run_at=now - timedelta(minutes=1),
@@ -132,14 +126,12 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="hook",
                 prompt="hook prompt",
-                delivery_mode="tool",
                 webhook_token_hash=sha256("tok_lookup".encode("utf-8")).hexdigest(),
             )
             deleted_webhook, _ = await repo.create_webhook_automation(
                 profile_id="default",
                 name="deleted-hook",
                 prompt="deleted hook",
-                delivery_mode="tool",
                 webhook_token_hash=sha256("tok_deleted".encode("utf-8")).hexdigest(),
             )
 
@@ -310,7 +302,6 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 profile_id="default",
                 name="cron-original",
                 prompt="cron prompt",
-                delivery_mode="tool",
                 cron_expr="* * * * *",
                 timezone="UTC",
                 next_run_at=now + timedelta(minutes=1),
@@ -319,7 +310,6 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 profile_id="default",
                 name="webhook-original",
                 prompt="webhook prompt",
-                delivery_mode="tool",
                 webhook_token_hash=sha256("tok_old".encode("utf-8")).hexdigest(),
             )
 
@@ -401,7 +391,6 @@ async def test_repository_list_due_cron_respects_limit(tmp_path: Path) -> None:
                     profile_id="default",
                     name=f"batch-{index}",
                     prompt="due prompt",
-                    delivery_mode="tool",
                     cron_expr="* * * * *",
                     timezone="UTC",
                     next_run_at=now - timedelta(minutes=1),

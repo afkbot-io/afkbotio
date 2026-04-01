@@ -8,7 +8,6 @@ import pytest
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
-from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.services.automations import AutomationsServiceError
 from afkbot.services.automations.webhook_tokens import hash_webhook_token
 from tests.services.automations._harness import FakeLoop, prepare_service
@@ -35,11 +34,6 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             status="paused",
             cron_expr="0 * * * *",
             timezone_name="Europe/Berlin",
-            delivery_target=ChannelDeliveryTarget(
-                transport="smtp",
-                address="alerts@example.com",
-                subject="Updated cron",
-            ),
         )
         assert updated_cron.name == "cron-new"
         assert updated_cron.prompt == "cron new prompt"
@@ -48,12 +42,6 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert updated_cron.cron.cron_expr == "0 * * * *"
         assert updated_cron.cron.timezone == "Europe/Berlin"
         assert updated_cron.cron.next_run_at is not None
-        assert updated_cron.delivery_target is not None
-        assert updated_cron.delivery_target.model_dump(exclude_none=True) == {
-            "transport": "smtp",
-            "address": "alerts@example.com",
-            "subject": "Updated cron",
-        }
 
         created_webhook = await service.create_webhook(
             profile_id="default",
@@ -74,13 +62,6 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert new_token is not None
         assert new_token != old_token
         assert rotated_webhook.webhook.webhook_path == "/v1/automations/webhook"
-
-        cleared_cron = await service.update(
-            profile_id="default",
-            automation_id=created_cron.id,
-            clear_delivery_target=True,
-        )
-        assert cleared_cron.delivery_target is None
 
         fake_loop = FakeLoop()
 
@@ -164,28 +145,13 @@ async def test_service_update_validation_errors(tmp_path: Path) -> None:
             )
         assert deleted_exc.value.error_code == "invalid_status"
 
-        with pytest.raises(AutomationsServiceError) as delivery_conflict_exc:
+        with pytest.raises(AutomationsServiceError) as invalid_prompt_exc:
             await service.update(
                 profile_id="default",
                 automation_id=created_webhook.id,
-                delivery_target=ChannelDeliveryTarget(
-                    transport="telegram",
-                    peer_id="42",
-                ),
-                clear_delivery_target=True,
+                prompt="   ",
             )
-        assert delivery_conflict_exc.value.error_code == "invalid_update_payload"
-
-        with pytest.raises(AutomationsServiceError) as invalid_target_exc:
-            await service.update(
-                profile_id="default",
-                automation_id=created_webhook.id,
-                delivery_target=ChannelDeliveryTarget(
-                    transport="telegram",
-                    user_id="123456789",
-                ),
-            )
-        assert invalid_target_exc.value.error_code == "channel_delivery_target_incomplete"
+        assert invalid_prompt_exc.value.error_code == "invalid_prompt"
     finally:
         await engine.dispose()
 

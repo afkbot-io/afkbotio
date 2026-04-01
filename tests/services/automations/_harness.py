@@ -107,10 +107,6 @@ async def prepare_service(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
         root_dir=tmp_path,
     )
-    subagents_dir = tmp_path / "afkbot/subagents"
-    subagents_dir.mkdir(parents=True, exist_ok=True)
-    (subagents_dir / "webhook.md").write_text("# webhook\nwebhook instructions", encoding="utf-8")
-    (subagents_dir / "cron.md").write_text("# cron\ncron instructions", encoding="utf-8")
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)

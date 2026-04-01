@@ -5,17 +5,18 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
-from afkbot.services.agent_loop.loop import AgentLoop
-from afkbot.services.agent_loop.runtime_factory import build_profile_agent_loop
 from afkbot.services.automations.loop_factory import AgentLoopLike
 from afkbot.services.automations.service import AutomationsServiceError, get_automations_service
 from afkbot.settings import Settings, get_settings
+
+if TYPE_CHECKING:
+    from afkbot.services.agent_loop.loop import AgentLoop
 
 
 async def trigger_webhook_payload(*, token: str, payload_json: str) -> str:
@@ -80,8 +81,10 @@ def build_runtime_agent_loop(
     *,
     profile_id: str,
     settings: Settings | None = None,
-) -> AgentLoop:
+) -> "AgentLoop":
     """Build AgentLoop instance used by automation runtime execution paths."""
+
+    from afkbot.services.agent_loop.runtime_factory import build_profile_agent_loop
 
     effective_settings = settings or get_settings()
     return build_profile_agent_loop(
