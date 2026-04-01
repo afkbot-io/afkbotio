@@ -905,6 +905,65 @@ async def test_tool_not_allowed_question_with_stable_signature_blocks_retries_fo
     assert call_count == 2
 
 
+async def test_tool_not_allowed_question_allow_once_applies_one_time_runtime_allowlist() -> None:
+    """Allow once should pass temporary allowlist metadata even without session allowlist."""
+
+    calls: list[tuple[str, list[str] | None]] = []
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        runtime_allowed_tools: list[str] | None = None
+        if context_overrides is not None and context_overrides.runtime_metadata:
+            raw_allowed = context_overrides.runtime_metadata.get("session_allowed_tool_names")
+            if isinstance(raw_allowed, (list, tuple, set)):
+                runtime_allowed_tools = sorted(str(item).strip() for item in raw_allowed if str(item).strip())
+        calls.append((message, runtime_allowed_tools))
+
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="tool not allowed",
+                    question_id="tool_not_allowed-1",
+                    spec_patch={
+                        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                        "tool_name": "bash.exec",
+                        "tool_params": {"cmd": "echo ok", "cwd": "."},
+                    },
+                ),
+            )
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_once",
+    )
+
+    assert result.envelope.action == "finalize"
+    assert calls[0][1] is None
+    assert calls[1][1] == ["bash.exec"]
+
+
 async def test_tool_not_allowed_question_allow_once_executes_without_session_allowlist_change(
     monkeypatch: MonkeyPatch,
 ) -> None:

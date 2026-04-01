@@ -67,23 +67,24 @@ async def run_turn_with_secure_resolution(
     interaction_steps = 0
     current_message = message
     planned_tool_calls: list[ToolCall] | None = None
+    runtime_one_time_allowlist: set[str] = set()
     seen_question_signatures: set[str] = set()
     while True:
         session_override: TurnContextOverrides | None = None
-        if session_tool_allowlist is not None:
-            normalized_session_tools = sorted(
-                {
-                    str(item).strip()
-                    for item in session_tool_allowlist
-                    if str(item).strip()
+        merged_allowlist = set(
+            str(item).strip()
+            for item in (session_tool_allowlist or set())
+            if str(item).strip()
+        )
+        if runtime_one_time_allowlist:
+            merged_allowlist.update(runtime_one_time_allowlist)
+        normalized_session_tools = sorted(merged_allowlist)
+        if normalized_session_tools:
+            session_override = TurnContextOverrides(
+                runtime_metadata={
+                    _SESSION_ALLOWED_TOOL_METADATA_KEY: normalized_session_tools,
                 }
             )
-            if normalized_session_tools:
-                session_override = TurnContextOverrides(
-                    runtime_metadata={
-                        _SESSION_ALLOWED_TOOL_METADATA_KEY: normalized_session_tools,
-                    }
-                )
         merged_overrides = merge_turn_context_overrides(
             runtime_overrides,
             session_override,
@@ -106,6 +107,7 @@ async def run_turn_with_secure_resolution(
                 progress_sink=progress_sink,
                 context_overrides=merged_overrides,
             )
+        runtime_one_time_allowlist.clear()
         if result.envelope.action == "request_secure_field" and allow_secure_prompt:
             if interaction_steps >= max_interaction_steps:
                 return TurnResult(
@@ -202,6 +204,7 @@ async def run_turn_with_secure_resolution(
                         )
                     interaction_steps += 1
                     typer.echo(f"  Executing once: {resume_call.name}")
+                    runtime_one_time_allowlist.add(resume_call.name)
                     current_message = f"tool_not_allowed_resume:{resume_call.name}"
                     planned_tool_calls = [resume_call]
                     continue
