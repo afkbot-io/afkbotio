@@ -60,11 +60,10 @@ def run_inline_single_select(
         lines: list[tuple[str, str]] = [("class:title", f"{title}\n"), ("", f"{text}\n\n")]
         for index, (_value, label) in enumerate(options):
             is_focused = index == state["cursor"]
-            is_selected = index == state["cursor"]
             pointer = "> " if is_focused else "  "
-            mark = "[x]" if is_selected else "[ ]"
+            mark = "◉ " if is_focused else "○ "
             style_name = "class:focused" if is_focused else ""
-            lines.append((style_name, f"{pointer}{mark} {label}\n"))
+            lines.append((style_name, f"{pointer}{mark}{label}\n"))
         lines.append(("class:hint", f"\n{hint_text or _HINT_TEXT}"))
         return lines
 
@@ -199,11 +198,10 @@ async def _run_inline_single_select_async(
         ]
         for index, (_value, label) in enumerate(options):
             is_focused = index == state["cursor"]
-            is_selected = index == state["cursor"]
             pointer = "> " if is_focused else "  "
-            mark = "[x]" if is_selected else "[ ]"
+            mark = "◉ " if is_focused else "○ "
             style_name = "class:focused" if is_focused else ""
-            lines.append((style_name, f"{pointer}{mark} {label}\n"))
+            lines.append((style_name, f"{pointer}{mark}{label}\n"))
         lines.append(("class:hint", f"\n{hint_text or _HINT_TEXT}"))
         return lines
 

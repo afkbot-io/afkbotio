@@ -857,6 +857,54 @@ async def test_tool_not_allowed_question_allow_session_updates_session_allowlist
     assert session_allowlist == {"bash.exec"}
 
 
+async def test_tool_not_allowed_question_with_stable_signature_blocks_retries_for_same_tool_params() -> None:
+    """Tool-not-allowed prompt should not loop indefinitely when tool is still rejected."""
+
+    call_count = 0
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        del message, profile_id, session_id, progress_sink, context_overrides, planned_tool_calls
+        nonlocal call_count
+        call_count += 1
+        return TurnResult(
+            run_id=call_count,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(
+                action="ask_question",
+                message="tool not allowed",
+                question_id=f"tool_not_allowed-{call_count}",
+                spec_patch={
+                    "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                    "tool_name": "bash.exec",
+                    "tool_params": {"command": "ls", "cwd": "."},
+                },
+            ),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_once",
+    )
+
+    assert result.envelope.action == "block"
+    assert result.envelope.blocked_reason == "interactive_flow_limit_reached"
+    assert call_count == 2
+
+
 async def test_tool_not_allowed_question_allow_once_executes_without_session_allowlist_change(
     monkeypatch: MonkeyPatch,
 ) -> None:

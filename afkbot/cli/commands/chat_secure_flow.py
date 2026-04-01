@@ -20,6 +20,7 @@ from afkbot.services.agent_loop.interactive_resume import (
     is_credential_profile_question,
     is_tool_not_allowed_question,
 )
+from afkbot.services.agent_loop.pending_envelopes import TOOL_NOT_ALLOWED_QUESTION_KIND
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.turn_context import (
     TurnContextOverrides,
@@ -397,7 +398,7 @@ async def _prompt_tool_not_allowed_choice(*, envelope: ActionEnvelope, **kwargs:
         text=_tool_not_allowed_question_text(envelope),
         options=(
             (_TOOL_ACCESS_ONCE, "Run once"),
-            (_TOOL_ACCESS_SESSION, "Run and allow for this session"),
+            (_TOOL_ACCESS_SESSION, "Allow for session"),
             (_TOOL_ACCESS_DENY, "Do not run"),
         ),
         default_value=_TOOL_ACCESS_DENY,
@@ -415,10 +416,18 @@ def _tool_not_allowed_question_text(envelope: ActionEnvelope) -> str:
     lines = [f"Approve running tool: {tool_name}?"]
     formatted_params = _format_tool_not_allowed_params(params)
     if formatted_params:
-        lines.append(f"Parameters: {formatted_params}")
+        lines.append("Parameters:")
+        lines.append(formatted_params)
     if reason:
         lines.append(f"Reason: {reason}")
-    if message and message.lower() not in {"tool not allowed", "tool access request"}:
+    normalized_message = message.lower()
+    if message and normalized_message not in {
+        "tool not allowed",
+        "tool access request",
+        "tool not allowed.",
+        "tool access request.",
+        "tool not allowed: tool access is disabled for this turn",
+    }:
         lines.append(message)
     return "\n".join(lines)
 
@@ -427,13 +436,14 @@ def _format_tool_not_allowed_params(params: object) -> str:
     if not isinstance(params, dict) or not params:
         return ""
     items = []
-    for key, value in params.items():
+    for key in sorted(params):
+        value = params[key]
         if isinstance(value, (dict, list, tuple)):
             rendered = json.dumps(value, ensure_ascii=True, sort_keys=True)
         else:
             rendered = str(value)
-        items.append(f"{key}={rendered}")
-    return " ".join(items)
+        items.append(f"- {key}: {rendered}")
+    return "\n".join(items)
 
 
 async def _prompt_approval_confirmation(
@@ -526,17 +536,26 @@ async def _prompt_inline_or_text_choice(
 
 def _build_question_signature(envelope: ActionEnvelope) -> str:
     patch = envelope.spec_patch or {}
-    question_id = str(envelope.question_id or "").strip()
     question_kind = str(patch.get("question_kind") or "").strip().lower()
     tool_name = str(patch.get("tool_name") or "").strip()
+    question_id = str(envelope.question_id or "").strip()
     question = str(envelope.message or "").strip()
-    if not question_id:
-        question_id = question
+    message_for_signature = ""
+    if question_kind == TOOL_NOT_ALLOWED_QUESTION_KIND:
+        message_for_signature = str(patch.get("tool_not_allowed_reason") or "").strip()
+        if not message_for_signature:
+            message_for_signature = question
     params = patch.get("tool_params")
     params_text = ""
     if isinstance(params, dict):
         params_text = json.dumps(params, sort_keys=True, default=str)
-    return "|".join((question_id, question_kind, tool_name, params_text))
+    signature_parts = [question_kind, tool_name, params_text]
+    if question_kind == TOOL_NOT_ALLOWED_QUESTION_KIND:
+        if message_for_signature:
+            signature_parts.append(message_for_signature)
+    else:
+        signature_parts.append(question_id or question)
+    return "|".join(part for part in signature_parts if part)
 
 
 def _normalize_text_choice(
