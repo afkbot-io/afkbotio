@@ -31,7 +31,6 @@ from afkbot.services.automations.runtime_service import (
 )
 from afkbot.services.automations.loop_factory import AgentLoopLike
 from afkbot.services.automations.service import get_automations_service
-from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.settings import Settings, get_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,8 +45,9 @@ class AutomationsRuntimeService(Protocol):
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[..., AgentLoopLike],
-        delivery_target: ChannelDeliveryTarget | None = None,
-    ) -> object: ...
+    ) -> object:
+        """Execute one webhook automation run."""
+        ...
 
     async def tick_cron(
         self,
@@ -55,13 +55,16 @@ class AutomationsRuntimeService(Protocol):
         now_utc: datetime,
         agent_loop_factory: Callable[..., AgentLoopLike],
         max_due_per_tick: int | None = None,
-    ) -> object: ...
+    ) -> object:
+        """Execute one cron scheduler tick."""
+        ...
+
 
 @dataclass(frozen=True)
 class _WebhookQueueTask:
     token: str
     payload: Mapping[str, object]
-    delivery_target: ChannelDeliveryTarget | None = None
+
 
 class RuntimeDaemon:
     """Long-running automation runtime with HTTP ingress and queue workers."""
@@ -75,6 +78,8 @@ class RuntimeDaemon:
         service: AutomationsRuntimeService | None = None,
         webhook_token_validator: WebhookTokenValidator | None = None,
     ) -> None:
+        """Initialize daemon state, queue, and HTTP runtime router."""
+
         resolved_settings = settings or get_settings()
         self._settings = resolved_settings
         self._host = resolved_settings.runtime_host if host is None else host
@@ -100,10 +105,9 @@ class RuntimeDaemon:
             is_shutting_down=lambda: self._shutting_down,
             webhook_token_validator=webhook_token_validator,
             validation_session_factory_getter=lambda: self._validation_session_factory,
-            queue_task_factory=lambda token, payload, delivery_target: _WebhookQueueTask(
+            queue_task_factory=lambda token, payload: _WebhookQueueTask(
                 token=token,
                 payload=payload,
-                delivery_target=delivery_target,
             ),
         )
 
@@ -327,7 +331,6 @@ class RuntimeDaemon:
                                 settings=self._settings,
                             ),
                         ),
-                        delivery_target=task.delivery_target,
                     )
             except asyncio.CancelledError:
                 raise

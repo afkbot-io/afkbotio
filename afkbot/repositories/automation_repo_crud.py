@@ -26,8 +26,6 @@ class AutomationRepositoryCrudMixin:
         profile_id: str,
         name: str,
         prompt: str,
-        delivery_mode: str,
-        delivery_target_json: str | None = None,
         cron_expr: str,
         timezone: str,
         next_run_at: datetime | None,
@@ -40,8 +38,6 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="cron",
             status="active",
-            delivery_mode=delivery_mode,
-            delivery_target_json=delivery_target_json,
         )
         self._session.add(automation)
         await self._session.flush()
@@ -64,8 +60,6 @@ class AutomationRepositoryCrudMixin:
         profile_id: str,
         name: str,
         prompt: str,
-        delivery_mode: str,
-        delivery_target_json: str | None = None,
         webhook_token_hash: str,
     ) -> tuple[Automation, AutomationTriggerWebhook]:
         """Create automation row with webhook trigger row."""
@@ -76,8 +70,6 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="webhook",
             status="active",
-            delivery_mode=delivery_mode,
-            delivery_target_json=delivery_target_json,
         )
         self._session.add(automation)
         await self._session.flush()
@@ -142,9 +134,6 @@ class AutomationRepositoryCrudMixin:
         name: str | None = None,
         prompt: str | None = None,
         status: str | None = None,
-        delivery_mode: str | None = None,
-        has_delivery_target_update: bool = False,
-        delivery_target_json: str | None = None,
     ) -> Automation | None:
         """Update base automation fields for one profile automation."""
 
@@ -161,10 +150,6 @@ class AutomationRepositoryCrudMixin:
             automation.prompt = prompt
         if status is not None:
             automation.status = status
-        if delivery_mode is not None:
-            automation.delivery_mode = delivery_mode
-        if has_delivery_target_update:
-            automation.delivery_target_json = delivery_target_json
         await self._session.flush()
         await self._session.refresh(automation)
         return automation

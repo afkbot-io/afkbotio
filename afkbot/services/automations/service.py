@@ -13,16 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
-from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError, resolved_from_target
-from afkbot.services.channels.service import ChannelDeliveryService
 from afkbot.services.automations.contracts import (
     AutomationCronTickResult,
     AutomationMetadata,
     AutomationWebhookTriggerResult,
 )
 from afkbot.services.automations.cron_execution import tick_cron_automations
-from afkbot.services.automations.delivery_target_codec import encode_delivery_target
 from afkbot.services.automations.errors import AutomationsServiceError
 from afkbot.services.automations.loop_factory import AgentLoopLike
 from afkbot.services.automations.metadata import to_metadata
@@ -32,7 +28,6 @@ from afkbot.services.automations.validators import (
     compute_next_run_at,
     normalize_cron_expr,
     normalize_automation_prompt,
-    normalize_delivery_mode,
     normalize_timezone_name,
     normalize_update_status,
     validate_create_payload,
@@ -42,7 +37,6 @@ from afkbot.services.automations.webhook_tokens import (
     is_webhook_token_conflict,
 )
 from afkbot.services.automations.webhook_execution import trigger_webhook_automation
-from afkbot.services.subagents.loader import SubagentLoader
 from afkbot.settings import Settings
 
 _SERVICES_BY_ROOT: dict[str, "AutomationsService"] = {}
@@ -64,18 +58,13 @@ class AutomationsService:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         settings: Settings | None = None,
-        channel_delivery_service: ChannelDeliveryService | None = None,
         engine: AsyncEngine | None = None,
     ) -> None:
+        """Capture storage/session dependencies for automation operations."""
+
         self._session_factory = session_factory
         self._settings = settings
         self._engine = engine
-        self._subagent_loader = SubagentLoader(settings) if settings is not None else None
-        self._channel_delivery_service = (
-            channel_delivery_service
-            if channel_delivery_service is not None
-            else (ChannelDeliveryService(settings) if settings is not None else None)
-        )
 
     async def create_cron(
         self,
@@ -85,24 +74,13 @@ class AutomationsService:
         prompt: str,
         cron_expr: str,
         timezone_name: str = "UTC",
-        delivery_mode: str | None = None,
-        delivery_target: ChannelDeliveryTarget | None = None,
     ) -> AutomationMetadata:
         """Create profile automation with cron trigger metadata."""
 
         validate_create_payload(name=name, prompt=prompt)
         normalized_cron = normalize_cron_expr(cron_expr)
         normalized_timezone = normalize_timezone_name(timezone_name)
-        _validate_delivery_target(delivery_target)
-        normalized_delivery_mode = normalize_delivery_mode(
-            delivery_mode,
-            has_delivery_target=delivery_target is not None,
-        )
-        normalized_prompt = normalize_automation_prompt(
-            prompt,
-            delivery_mode=normalized_delivery_mode,
-        )
-        normalized_delivery_target = encode_delivery_target(delivery_target)
+        normalized_prompt = normalize_automation_prompt(prompt)
         now_utc = datetime.now(timezone.utc)
         next_run_at = compute_next_run_at(normalized_cron, now_utc)
 
@@ -112,8 +90,6 @@ class AutomationsService:
                 profile_id=profile_id,
                 name=name.strip(),
                 prompt=normalized_prompt,
-                delivery_mode=normalized_delivery_mode,
-                delivery_target_json=normalized_delivery_target,
                 cron_expr=normalized_cron,
                 timezone=normalized_timezone,
                 next_run_at=next_run_at,
@@ -128,23 +104,12 @@ class AutomationsService:
         profile_id: str,
         name: str,
         prompt: str,
-        delivery_mode: str | None = None,
-        delivery_target: ChannelDeliveryTarget | None = None,
     ) -> AutomationMetadata:
         """Create profile automation with generated webhook trigger token."""
 
         validate_create_payload(name=name, prompt=prompt)
         stripped_name = name.strip()
-        _validate_delivery_target(delivery_target)
-        normalized_delivery_mode = normalize_delivery_mode(
-            delivery_mode,
-            has_delivery_target=delivery_target is not None,
-        )
-        normalized_prompt = normalize_automation_prompt(
-            prompt,
-            delivery_mode=normalized_delivery_mode,
-        )
-        normalized_delivery_target = encode_delivery_target(delivery_target)
+        normalized_prompt = normalize_automation_prompt(prompt)
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
             token = secrets.token_urlsafe(24)
             token_hash = hash_webhook_token(token)
@@ -155,8 +120,6 @@ class AutomationsService:
                     profile_id=profile_id,
                     name=stripped_name,
                     prompt=normalized_prompt,
-                    delivery_mode=normalized_delivery_mode,
-                    delivery_target_json=normalized_delivery_target,
                     webhook_token_hash=token_hash,
                 )
                 return to_metadata(
@@ -243,28 +206,15 @@ class AutomationsService:
         cron_expr: str | None = None,
         timezone_name: str | None = None,
         rotate_webhook_token: bool | None = None,
-        delivery_mode: str | None = None,
-        delivery_target: ChannelDeliveryTarget | None = None,
-        clear_delivery_target: bool = False,
     ) -> AutomationMetadata:
         """Update one profile automation and trigger-specific fields."""
-
-        if delivery_target is not None and clear_delivery_target:
-            raise AutomationsServiceError(
-                error_code="invalid_update_payload",
-                reason="delivery_target and clear_delivery_target cannot be used together",
-            )
         has_base_updates = any(field is not None for field in (name, prompt, status))
         has_cron_updates = cron_expr is not None or timezone_name is not None
         should_rotate_webhook_token = bool(rotate_webhook_token)
-        has_delivery_target_update = delivery_target is not None or clear_delivery_target
-        has_delivery_mode_update = delivery_mode is not None
         if (
             not has_base_updates
             and not has_cron_updates
             and not should_rotate_webhook_token
-            and not has_delivery_target_update
-            and not has_delivery_mode_update
         ):
             raise AutomationsServiceError(
                 error_code="invalid_update_payload",
@@ -294,11 +244,6 @@ class AutomationsService:
         normalized_timezone = (
             normalize_timezone_name(timezone_name) if timezone_name is not None else None
         )
-        normalized_delivery_target = (
-            None if clear_delivery_target else encode_delivery_target(delivery_target)
-        )
-        if not clear_delivery_target:
-            _validate_delivery_target(delivery_target)
 
         async def _run_update(issued_webhook_token: str | None) -> AutomationMetadata:
             return await apply_automation_update(
@@ -313,10 +258,6 @@ class AutomationsService:
                 normalized_status=normalized_status,
                 normalized_cron=normalized_cron,
                 normalized_timezone=normalized_timezone,
-                requested_delivery_mode=delivery_mode,
-                has_delivery_mode_update=has_delivery_mode_update,
-                has_delivery_target_update=has_delivery_target_update,
-                normalized_delivery_target_json=normalized_delivery_target,
                 issued_webhook_token=issued_webhook_token,
                 to_metadata=to_metadata,
                 compute_next_run_at=compute_next_run_at,
@@ -349,19 +290,15 @@ class AutomationsService:
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[..., AgentLoopLike],
-        delivery_target: ChannelDeliveryTarget | None = None,
     ) -> AutomationWebhookTriggerResult:
         """Trigger one webhook automation and run its prompt through AgentLoop."""
 
         return await trigger_webhook_automation(
             session_factory=self._session_factory,
             with_repo=self._with_repo,
-            subagent_loader=self._subagent_loader,
             token=token,
             payload=payload,
             agent_loop_factory=agent_loop_factory,
-            delivery_target=delivery_target,
-            delivery_service=self._channel_delivery_service,
         )
 
     async def tick_cron(
@@ -376,12 +313,10 @@ class AutomationsService:
         return await tick_cron_automations(
             session_factory=self._session_factory,
             with_repo=self._with_repo,
-            subagent_loader=self._subagent_loader,
             now_utc=now_utc,
             agent_loop_factory=agent_loop_factory,
             compute_next_run_at=compute_next_run_at,
             max_due_per_tick=max_due_per_tick,
-            delivery_service=self._channel_delivery_service,
         )
 
     async def _with_repo(
@@ -415,20 +350,6 @@ def get_automations_service(settings: Settings) -> AutomationsService:
         )
         _SERVICES_BY_ROOT[key] = service
     return service
-
-
-def _validate_delivery_target(target: ChannelDeliveryTarget | None) -> None:
-    """Reject persisted automation targets that cannot be delivered by transport runtime."""
-
-    if target is None:
-        return
-    try:
-        resolved_from_target(target)
-    except ChannelDeliveryServiceError as exc:
-        raise AutomationsServiceError(
-            error_code=exc.error_code,
-            reason=exc.reason,
-        ) from exc
 
 
 def reset_automations_services() -> None:

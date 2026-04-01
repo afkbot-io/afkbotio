@@ -19,5 +19,3 @@ class Automation(Base, TimestampMixin):
     prompt: Mapped[str] = mapped_column(Text)
     trigger_type: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default="active")
-    delivery_mode: Mapped[str] = mapped_column(String(16), default="tool")
-    delivery_target_json: Mapped[str | None] = mapped_column(Text, nullable=True)

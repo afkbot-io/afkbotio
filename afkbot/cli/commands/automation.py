@@ -1,4 +1,4 @@
-"""CLI commands for automation CRUD, delivery defaults, and operator triggers."""
+"""CLI commands for automation CRUD and operator triggers."""
 
 from __future__ import annotations
 
@@ -16,14 +16,13 @@ from afkbot.services.automations.cli_service import (
     update_automation_payload,
 )
 from afkbot.services.automations.runtime_service import tick_cron_payload, trigger_webhook_payload
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
 
 
 def register(app: typer.Typer) -> None:
     """Register automation CLI group."""
 
     automation_app = typer.Typer(
-        help="Manage profile automations and persisted delivery defaults.",
+        help="Manage profile automations and runtime triggers.",
         no_args_is_help=True,
     )
     app.add_typer(automation_app, name="automation")
@@ -79,24 +78,11 @@ def register(app: typer.Typer) -> None:
             "--cron-expr",
             help="Cron expression required for cron trigger.",
         ),
-        delivery_mode: str | None = typer.Option(
-            None,
-            "--delivery-mode",
-            help="Delivery mode: target, tool, or none.",
-        ),
         timezone_name: str = typer.Option(
             "UTC",
             "--timezone",
             help="IANA timezone for cron trigger.",
         ),
-        delivery_transport: str | None = typer.Option(None, "--delivery-transport"),
-        delivery_binding_id: str | None = typer.Option(None, "--delivery-binding-id"),
-        delivery_account_id: str | None = typer.Option(None, "--delivery-account-id"),
-        delivery_peer_id: str | None = typer.Option(None, "--delivery-peer-id"),
-        delivery_thread_id: str | None = typer.Option(None, "--delivery-thread-id"),
-        delivery_user_id: str | None = typer.Option(None, "--delivery-user-id"),
-        delivery_address: str | None = typer.Option(None, "--delivery-address"),
-        delivery_subject: str | None = typer.Option(None, "--delivery-subject"),
     ) -> None:
         """Create one automation under the selected profile."""
 
@@ -108,17 +94,6 @@ def register(app: typer.Typer) -> None:
                 trigger_type=trigger,
                 cron_expr=cron_expr,
                 timezone_name=timezone_name,
-                delivery_mode=delivery_mode,
-                delivery_target=_build_delivery_target(
-                    transport=delivery_transport,
-                    binding_id=delivery_binding_id,
-                    account_id=delivery_account_id,
-                    peer_id=delivery_peer_id,
-                    thread_id=delivery_thread_id,
-                    user_id=delivery_user_id,
-                    address=delivery_address,
-                    subject=delivery_subject,
-                ),
             )
         )
         typer.echo(payload)
@@ -146,26 +121,8 @@ def register(app: typer.Typer) -> None:
             "--rotate-webhook-token",
             help="Rotate webhook trigger token for webhook automations.",
         ),
-        delivery_mode: str | None = typer.Option(
-            None,
-            "--delivery-mode",
-            help="Delivery mode: target, tool, or none.",
-        ),
-        clear_delivery_target: bool = typer.Option(
-            False,
-            "--clear-delivery-target",
-            help="Remove persisted outbound delivery target.",
-        ),
-        delivery_transport: str | None = typer.Option(None, "--delivery-transport"),
-        delivery_binding_id: str | None = typer.Option(None, "--delivery-binding-id"),
-        delivery_account_id: str | None = typer.Option(None, "--delivery-account-id"),
-        delivery_peer_id: str | None = typer.Option(None, "--delivery-peer-id"),
-        delivery_thread_id: str | None = typer.Option(None, "--delivery-thread-id"),
-        delivery_user_id: str | None = typer.Option(None, "--delivery-user-id"),
-        delivery_address: str | None = typer.Option(None, "--delivery-address"),
-        delivery_subject: str | None = typer.Option(None, "--delivery-subject"),
     ) -> None:
-        """Update one automation and optionally rotate or clear delivery defaults."""
+        """Update one automation fields and optionally rotate webhook token."""
 
         payload = asyncio.run(
             update_automation_payload(
@@ -177,18 +134,6 @@ def register(app: typer.Typer) -> None:
                 cron_expr=cron_expr,
                 timezone_name=timezone_name,
                 rotate_webhook_token=rotate_webhook_token,
-                delivery_mode=delivery_mode,
-                delivery_target=_build_delivery_target(
-                    transport=delivery_transport,
-                    binding_id=delivery_binding_id,
-                    account_id=delivery_account_id,
-                    peer_id=delivery_peer_id,
-                    thread_id=delivery_thread_id,
-                    user_id=delivery_user_id,
-                    address=delivery_address,
-                    subject=delivery_subject,
-                ),
-                clear_delivery_target=clear_delivery_target,
             )
         )
         typer.echo(payload)
@@ -239,36 +184,6 @@ def register(app: typer.Typer) -> None:
         payload = asyncio.run(trigger_webhook_payload(token=token, payload_json=payload_json))
         typer.echo(payload)
         _exit_on_error_payload(payload)
-
-
-def _build_delivery_target(
-    *,
-    transport: str | None,
-    binding_id: str | None,
-    account_id: str | None,
-    peer_id: str | None,
-    thread_id: str | None,
-    user_id: str | None,
-    address: str | None,
-    subject: str | None,
-) -> ChannelDeliveryTarget | None:
-    fields = {
-        "transport": transport,
-        "binding_id": binding_id,
-        "account_id": account_id,
-        "peer_id": peer_id,
-        "thread_id": thread_id,
-        "user_id": user_id,
-        "address": address,
-        "subject": subject,
-    }
-    if not any(value is not None and str(value).strip() for value in fields.values()):
-        return None
-    try:
-        return ChannelDeliveryTarget.model_validate(fields)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from None
-
 
 def _exit_on_error_payload(payload: str) -> None:
     data = json.loads(payload)

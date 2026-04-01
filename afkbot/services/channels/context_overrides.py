@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.channels.tool_profiles import normalize_channel_tool_profile
+from afkbot.services.ingress.policy_overlay import build_tool_profile_policy_overlay_metadata
 
 
 def build_channel_tool_profile_context_overrides(
@@ -17,4 +18,8 @@ def build_channel_tool_profile_context_overrides(
         return None
     if normalized == "inherit":
         return None
-    return TurnContextOverrides(runtime_metadata={"channel_tool_profile": normalized})
+    return TurnContextOverrides(
+        runtime_metadata=build_tool_profile_policy_overlay_metadata(
+            tool_profile=normalized
+        )
+    )

@@ -10,7 +10,6 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.settings import Settings
 
 
@@ -18,7 +17,7 @@ class FakeRuntimeService:
     """Fake automation service collecting webhook/cron calls."""
 
     def __init__(self) -> None:
-        self.webhook_calls: list[tuple[str, dict[str, object], dict[str, str] | None]] = []
+        self.webhook_calls: list[tuple[str, dict[str, object]]] = []
         self.tick_calls: list[datetime] = []
         self.tick_limits: list[int | None] = []
         self.webhook_started = asyncio.Event()
@@ -31,14 +30,12 @@ class FakeRuntimeService:
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[[AsyncSession], object],
-        delivery_target: ChannelDeliveryTarget | None = None,
     ) -> object:
         _ = agent_loop_factory
         self.webhook_calls.append(
             (
                 token,
                 dict(payload),
-                None if delivery_target is None else delivery_target.model_dump(exclude_none=True),
             )
         )
         self.webhook_started.set()
@@ -68,9 +65,8 @@ class FailingWebhookRuntimeService(FakeRuntimeService):
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[[AsyncSession], object],
-        delivery_target: ChannelDeliveryTarget | None = None,
     ) -> object:
-        _ = token, payload, agent_loop_factory, delivery_target
+        _ = token, payload, agent_loop_factory
         raise RuntimeError("webhook failure")
 
 

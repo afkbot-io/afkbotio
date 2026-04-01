@@ -59,11 +59,6 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
                 "trigger_type": "cron",
                 "cron_expr": "* * * * *",
                 "timezone": "UTC",
-                "delivery_target": {
-                    "transport": "smtp",
-                    "address": "ops@example.com",
-                    "subject": "Cron report",
-                },
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
@@ -73,14 +68,8 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         automation = create_result.payload["automation"]
         assert isinstance(automation, dict)
         automation_id = int(automation["id"])
-        assert automation["delivery_mode"] == "target"
-        assert {
-            key: value for key, value in automation["delivery_target"].items() if value is not None
-        } == {
-            "transport": "smtp",
-            "address": "ops@example.com",
-            "subject": "Cron report",
-        }
+        assert automation["trigger_type"] == "cron"
+        assert isinstance(automation["cron"], dict)
 
         create_webhook_params = create_tool.parse_params(
             {
@@ -88,10 +77,6 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
                 "name": "job-2",
                 "prompt": "listen",
                 "trigger_type": "webhook",
-                "delivery_target": {
-                    "transport": "telegram",
-                    "peer_id": "42",
-                },
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
@@ -102,15 +87,6 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(webhook_automation, dict)
         assert isinstance(webhook_automation["webhook"], dict)
         webhook_id = int(webhook_automation["id"])
-        assert webhook_automation["delivery_mode"] == "target"
-        assert {
-            key: value
-            for key, value in webhook_automation["delivery_target"].items()
-            if value is not None
-        } == {
-            "transport": "telegram",
-            "peer_id": "42",
-        }
         issued_token = webhook_automation["webhook"]["webhook_token"]
         assert isinstance(issued_token, str)
         assert webhook_automation["webhook"]["webhook_path"] == "/v1/automations/webhook"
@@ -131,14 +107,6 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert issued_token not in serialized_list
         webhook_list_item = next(item for item in listed if int(item["id"]) == webhook_id)
         assert webhook_list_item["webhook"]["webhook_path"] is None
-        assert {
-            key: value
-            for key, value in webhook_list_item["delivery_target"].items()
-            if value is not None
-        } == {
-            "transport": "telegram",
-            "peer_id": "42",
-        }
 
         update_tool = registry.get("automation.update")
         assert update_tool is not None
@@ -150,11 +118,6 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
                 "status": "paused",
                 "cron_expr": "0 * * * *",
                 "timezone": "Europe/Berlin",
-                "delivery_target": {
-                    "transport": "smtp",
-                    "address": "alerts@example.com",
-                    "subject": "Updated cron report",
-                },
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
@@ -165,18 +128,8 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(updated_automation, dict)
         assert updated_automation["name"] == "job-1-updated"
         assert updated_automation["status"] == "paused"
-        assert updated_automation["delivery_mode"] == "target"
         assert isinstance(updated_automation["cron"], dict)
         assert updated_automation["cron"]["cron_expr"] == "0 * * * *"
-        assert {
-            key: value
-            for key, value in updated_automation["delivery_target"].items()
-            if value is not None
-        } == {
-            "transport": "smtp",
-            "address": "alerts@example.com",
-            "subject": "Updated cron report",
-        }
 
         rotate_params = update_tool.parse_params(
             {
@@ -209,30 +162,9 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         get_automation = get_result.payload["automation"]
         assert isinstance(get_automation, dict)
         assert isinstance(get_automation["webhook"], (dict, type(None)))
-        assert {
-            key: value for key, value in get_automation["delivery_target"].items() if value is not None
-        } == {
-            "transport": "smtp",
-            "address": "alerts@example.com",
-            "subject": "Updated cron report",
-        }
         if get_automation["webhook"] is not None:
             assert get_automation["webhook"]["webhook_token"] is None
             assert get_automation["webhook"]["webhook_path"] is None
-
-        clear_delivery_params = update_tool.parse_params(
-            {
-                "profile_key": "default",
-                "id": automation_id,
-                "clear_delivery_target": True,
-            },
-            default_timeout_sec=settings.tool_timeout_default_sec,
-            max_timeout_sec=settings.tool_timeout_max_sec,
-        )
-        clear_delivery_result = await update_tool.execute(ctx, clear_delivery_params)
-        assert clear_delivery_result.ok is True
-        assert clear_delivery_result.payload["automation"]["delivery_mode"] == "tool"
-        assert clear_delivery_result.payload["automation"]["delivery_target"] is None
 
         delete_tool = registry.get("automation.delete")
         assert delete_tool is not None
