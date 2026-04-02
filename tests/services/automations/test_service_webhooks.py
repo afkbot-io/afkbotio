@@ -39,6 +39,12 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             "default",
             token,
         )
+        assert webhook.webhook.last_execution_status == "idle"
+        assert webhook.webhook.last_session_id is None
+        assert webhook.webhook.last_succeeded_at is None
+        assert webhook.webhook.last_failed_at is None
+        assert webhook.webhook.last_error is None
+        assert webhook.webhook.last_event_hash is None
 
         fake_loop = FakeLoop()
 
@@ -83,6 +89,14 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert overrides.prompt_overlay is not None
         assert "Automation execution context." in overrides.prompt_overlay
         assert hook_result.deduplicated is False
+        metadata_after_success = await service.get(profile_id="default", automation_id=webhook.id)
+        assert metadata_after_success.webhook is not None
+        assert metadata_after_success.webhook.last_execution_status == "succeeded"
+        assert metadata_after_success.webhook.last_session_id == hook_result.session_id
+        assert metadata_after_success.webhook.last_succeeded_at is not None
+        assert metadata_after_success.webhook.last_failed_at is None
+        assert metadata_after_success.webhook.last_error is None
+        assert metadata_after_success.webhook.last_event_hash is not None
 
         duplicate_result = await service.trigger_webhook(
             profile_id="default",
@@ -158,6 +172,13 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
                 payload={"event_id": "e-1"},
                 agent_loop_factory=factory_fn,
             )
+        metadata_after_failure = await service.get(profile_id="default", automation_id=created.id)
+        assert metadata_after_failure.webhook is not None
+        assert metadata_after_failure.webhook.last_execution_status == "failed"
+        assert metadata_after_failure.webhook.last_failed_at is not None
+        assert metadata_after_failure.webhook.last_succeeded_at is None
+        assert metadata_after_failure.webhook.last_error == "RuntimeError: simulated failure after side-effect"
+        assert metadata_after_failure.webhook.last_session_id is not None
 
         second_result = await service.trigger_webhook(
             profile_id="default",
@@ -167,6 +188,12 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
         )
         assert second_result.deduplicated is False
         assert len(flaky_loop.calls) == 2
+        metadata_after_retry = await service.get(profile_id="default", automation_id=created.id)
+        assert metadata_after_retry.webhook is not None
+        assert metadata_after_retry.webhook.last_execution_status == "succeeded"
+        assert metadata_after_retry.webhook.last_succeeded_at is not None
+        assert metadata_after_retry.webhook.last_error is None
+        assert metadata_after_retry.webhook.last_session_id == second_result.session_id
 
         third_result = await service.trigger_webhook(
             profile_id="default",

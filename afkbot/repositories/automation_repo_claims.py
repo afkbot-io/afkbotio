@@ -134,6 +134,7 @@ class AutomationRepositoryClaimsMixin:
         event_hash: str,
         lease_until: datetime,
         claim_token: str,
+        session_id: str,
     ) -> bool:
         """Atomically claim webhook event; False when duplicate or trigger missing."""
 
@@ -181,6 +182,8 @@ class AutomationRepositoryClaimsMixin:
                 claim_token=claim_token,
                 in_progress_until=lease_until,
                 last_received_at=received_at,
+                last_session_id=session_id,
+                last_error=None,
             )
             .execution_options(synchronize_session=False)
         )
@@ -194,6 +197,7 @@ class AutomationRepositoryClaimsMixin:
         automation_id: int,
         event_hash: str,
         claim_token: str,
+        completed_at: datetime,
     ) -> bool:
         """Mark currently claimed webhook event as completed."""
 
@@ -209,6 +213,8 @@ class AutomationRepositoryClaimsMixin:
                 in_progress_event_hash=None,
                 claim_token=None,
                 in_progress_until=None,
+                last_succeeded_at=completed_at,
+                last_error=None,
             )
             .execution_options(synchronize_session=False)
         )
@@ -230,6 +236,8 @@ class AutomationRepositoryClaimsMixin:
         automation_id: int,
         event_hash: str,
         claim_token: str,
+        failed_at: datetime,
+        error_message: str,
     ) -> bool:
         """Release currently claimed webhook event after execution failure."""
 
@@ -240,7 +248,13 @@ class AutomationRepositoryClaimsMixin:
                 AutomationTriggerWebhook.in_progress_event_hash == event_hash,
                 AutomationTriggerWebhook.claim_token == claim_token,
             )
-            .values(in_progress_event_hash=None, claim_token=None, in_progress_until=None)
+            .values(
+                in_progress_event_hash=None,
+                claim_token=None,
+                in_progress_until=None,
+                last_failed_at=failed_at,
+                last_error=error_message,
+            )
             .execution_options(synchronize_session=False)
         )
         result = await self._session.execute(statement)

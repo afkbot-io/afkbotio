@@ -59,9 +59,33 @@ def to_metadata(
                 webhook.webhook_token,
             ),
             webhook_token_masked=mask_webhook_token(webhook.webhook_token),
+            last_execution_status=_resolve_webhook_execution_status(webhook),
             last_received_at=webhook.last_received_at,
+            last_succeeded_at=webhook.last_succeeded_at,
+            last_failed_at=webhook.last_failed_at,
+            last_error=webhook.last_error,
+            last_session_id=webhook.last_session_id,
+            last_event_hash=webhook.last_event_hash,
         ),
     )
+
+
+def _resolve_webhook_execution_status(
+    webhook: AutomationTriggerWebhook,
+) -> Literal["idle", "received", "running", "succeeded", "failed"]:
+    """Derive user-facing execution status from persisted webhook trigger state."""
+
+    if webhook.in_progress_event_hash:
+        return "running"
+    if webhook.last_succeeded_at is not None and (
+        webhook.last_failed_at is None or webhook.last_succeeded_at >= webhook.last_failed_at
+    ):
+        return "succeeded"
+    if webhook.last_failed_at is not None:
+        return "failed"
+    if webhook.last_received_at is not None:
+        return "received"
+    return "idle"
 
 
 def as_trigger_type(value: str) -> Literal["cron", "webhook"]:

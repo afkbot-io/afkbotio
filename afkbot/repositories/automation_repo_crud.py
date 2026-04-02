@@ -94,7 +94,7 @@ class AutomationRepositoryCrudMixin:
         ] = base_automation_join().where(
             Automation.profile_id == profile_id,
             Automation.id == automation_id,
-        )
+        ).execution_options(populate_existing=True)
         row = (await self._session.execute(statement)).one_or_none()
         if row is None:
             return None
@@ -111,7 +111,7 @@ class AutomationRepositoryCrudMixin:
         statement = base_automation_join().where(Automation.profile_id == profile_id)
         if not include_deleted:
             statement = statement.where(Automation.status != "deleted")
-        statement = statement.order_by(Automation.id.asc())
+        statement = statement.order_by(Automation.id.asc()).execution_options(populate_existing=True)
         result = await self._session.execute(statement)
         return [(row[0], row[1], row[2]) for row in result.all()]
 
@@ -242,6 +242,7 @@ class AutomationRepositoryCrudMixin:
                 Automation.status == "active",
                 Automation.trigger_type == "webhook",
             )
+            .execution_options(populate_existing=True)
         )
         row = (await self._session.execute(statement)).one_or_none()
         if row is None:

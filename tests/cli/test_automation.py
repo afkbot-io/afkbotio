@@ -86,6 +86,12 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
         "default",
         automation["webhook"]["webhook_token"],
     )
+    assert automation["webhook"]["last_execution_status"] == "idle"
+    assert automation["webhook"]["last_session_id"] is None
+    assert automation["webhook"]["last_succeeded_at"] is None
+    assert automation["webhook"]["last_failed_at"] is None
+    assert automation["webhook"]["last_error"] is None
+    assert automation["webhook"]["last_event_hash"] is None
     created_token = automation["webhook"]["webhook_token"]
 
     list_result = runner.invoke(app, ["automation", "list", "--profile", "default"])
@@ -106,6 +112,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
         "default",
         created_token,
     )
+    assert shown["automation"]["webhook"]["last_execution_status"] == "idle"
 
     get_result = runner.invoke(
         app,
@@ -119,6 +126,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
         "default",
         created_token,
     )
+    assert gotten["automation"]["webhook"]["last_execution_status"] == "idle"
 
     update_result = runner.invoke(
         app,
@@ -163,6 +171,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
         "default",
         rotated["automation"]["webhook"]["webhook_token"],
     )
+    assert rotated["automation"]["webhook"]["last_execution_status"] == "idle"
 
     delete_result = runner.invoke(
         app,

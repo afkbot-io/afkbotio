@@ -46,7 +46,7 @@ async def trigger_webhook_automation(
     lease_until = now_utc + WEBHOOK_CLAIM_TTL
     claim_token = secrets.token_hex(16)
 
-    async def _claim_op(repo: AutomationRepository) -> tuple[Automation, bool]:
+    async def _claim_op(repo: AutomationRepository) -> tuple[Automation, bool, str]:
         row = await repo.find_webhook_by_target(
             profile_id=normalized_profile_id,
             token=normalized_token,
@@ -57,20 +57,21 @@ async def trigger_webhook_automation(
                 reason="Automation webhook token not found",
             )
         automation, webhook = row
+        session_id = webhook_session_id(
+            automation_id=automation.id,
+            event_hash=event_hash,
+        )
         accepted = await repo.claim_webhook_event(
             automation_id=webhook.automation_id,
             received_at=now_utc,
             event_hash=event_hash,
             lease_until=lease_until,
             claim_token=claim_token,
+            session_id=session_id,
         )
-        return (automation, accepted)
+        return (automation, accepted, session_id)
 
-    automation, accepted = await with_repo(_claim_op)
-    session_id = webhook_session_id(
-        automation_id=automation.id,
-        event_hash=event_hash,
-    )
+    automation, accepted, session_id = await with_repo(_claim_op)
     if not accepted:
         return AutomationWebhookTriggerResult(
             automation_id=automation.id,
@@ -115,6 +116,8 @@ async def trigger_webhook_automation(
                 automation_id=automation.id,
                 event_hash=event_hash,
                 claim_token=claim_token,
+                failed_at=datetime.now(timezone.utc),
+                error_message=_format_webhook_execution_error(exc_info),
             )
 
         async def _complete(repo: AutomationRepository) -> bool:
@@ -122,9 +125,11 @@ async def trigger_webhook_automation(
                 automation_id=automation.id,
                 event_hash=event_hash,
                 claim_token=claim_token,
+                completed_at=datetime.now(timezone.utc),
             )
 
         completed = False
+        exc_info: BaseException | None = None
         try:
             await run_with_lease_refresh(
                 run=lambda: loop.run_turn(
@@ -138,6 +143,7 @@ async def trigger_webhook_automation(
             )
             completed = await with_repo(_complete)
         except asyncio.CancelledError as exc:
+            exc_info = exc
             released = await with_repo(_release)
             if not released:
                 raise AutomationsServiceError(
@@ -146,6 +152,7 @@ async def trigger_webhook_automation(
                 ) from exc
             raise
         except Exception as exc:
+            exc_info = exc
             released = await with_repo(_release)
             if not released:
                 raise AutomationsServiceError(
@@ -165,3 +172,14 @@ async def trigger_webhook_automation(
         session_id=session_id,
         payload=sanitized_payload,
     )
+
+
+def _format_webhook_execution_error(exc: BaseException | None) -> str:
+    """Build a compact persisted error string for failed webhook executions."""
+
+    if exc is None:
+        return "Webhook execution failed"
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"[:2000]
+    return type(exc).__name__[:2000]

@@ -96,6 +96,12 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
             "default",
             issued_token,
         )
+        assert webhook_automation["webhook"]["last_execution_status"] == "idle"
+        assert webhook_automation["webhook"]["last_session_id"] is None
+        assert webhook_automation["webhook"]["last_succeeded_at"] is None
+        assert webhook_automation["webhook"]["last_failed_at"] is None
+        assert webhook_automation["webhook"]["last_error"] is None
+        assert webhook_automation["webhook"]["last_event_hash"] is None
 
         list_tool = registry.get("automation.list")
         assert list_tool is not None
@@ -117,6 +123,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
             "default",
             issued_token,
         )
+        assert webhook_list_item["webhook"]["last_execution_status"] == "idle"
 
         update_tool = registry.get("automation.update")
         assert update_tool is not None
@@ -164,6 +171,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
             "default",
             rotated_token,
         )
+        assert rotated["webhook"]["last_execution_status"] == "idle"
 
         get_tool = registry.get("automation.get")
         assert get_tool is not None
@@ -183,6 +191,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
             "default",
             rotated_token,
         )
+        assert webhook_get["webhook"]["last_execution_status"] == "idle"
 
         get_params = get_tool.parse_params(
             {"profile_key": "default", "id": automation_id},
