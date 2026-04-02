@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] - 2026-04-02
+
+### Added
+
+- Expanded setup/provider catalog with first-class `claude` and `moonshot` options, including provider-specific defaults and API key/base URL wiring.
+- Refreshed OpenRouter setup presets to the current top-20 model list while keeping manual model entry available.
+- Improved fullscreen tool progress UX with clearer timeline states, status markers, and compact rolling output previews.
+
+### Changed
+
+- Unified automation ingress flow through the agent-loop execution path to reduce duplicated runtime entrypoints.
+- Refined fullscreen secure approval/chat interaction prompts for more consistent in-session behavior.
+- Improved long-running progress readability with clearer elapsed-time rendering and lower-noise progress updates.
+
+### Fixed
+
+- Fixed policy network host extraction crash on malformed shell tokens that previously surfaced as `ValueError: Invalid IPv6 URL`.
+- Fixed one-time tool approval and selection stability edge cases in fullscreen chat prompts.
+- Fixed typing issues in fullscreen prompt callbacks to keep CI static checks green.
+
 ## [1.0.2] - 2026-03-31
 
 ### Added
