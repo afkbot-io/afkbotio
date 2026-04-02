@@ -41,7 +41,7 @@ class InteractiveChatUX:
     _tool_panel_thread: threading.Thread | None = None
     _tool_panel_generation: int = 0
     _tool_panel_frame_index: int = 0
-    _tool_panel_frame_interval_sec: float = 0.12
+    _tool_panel_frame_interval_sec: float = 0.08
     _active_tool_block_lines: int = 0
     _active_tool_status_line: str | None = None
     _active_tool_color: str = "\033[94m"
@@ -358,7 +358,7 @@ class InteractiveChatUX:
             rendered = f"\r  {color}{label}{frame}\033[0m"
             self._write_line(rendered)
             frame_index += 1
-            time.sleep(0.12)
+            time.sleep(0.08)
 
     @staticmethod
     def _print_status_line(line: str, color: str) -> None:

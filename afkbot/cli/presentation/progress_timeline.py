@@ -25,6 +25,8 @@ class ProgressTimelineState:
     open_group_seq: int | None = None
     pending_separator: bool = False
     active_spinner_label: str | None = None
+    last_tool_preview_group_seq: int | None = None
+    last_tool_preview_lines: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -48,7 +50,7 @@ def reduce_progress_event(
     mapped = map_progress_event(event)
     if mapped is None:
         return state, None
-    color = render_progress_color(mapped)
+    color = render_progress_color(mapped, progress_event=event)
 
     if mapped.stage in {"done", "cancelled"}:
         next_state = replace(state, active_spinner_label=None, pending_separator=False)

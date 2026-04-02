@@ -21,7 +21,7 @@ def test_timeline_groups_tool_call_and_result_then_separates_next_stage() -> Non
     )
     state, call_frame = reduce_progress_event(state, call_event)
     assert call_frame is not None
-    assert call_frame.status_line == "[iter 1] [#1] calling tool: debug.echo"
+    assert call_frame.status_line == "[iter 1] [#1] ● calling tool: debug.echo"
     assert call_frame.separator_before is False
 
     result_event = ProgressEvent(
@@ -35,7 +35,7 @@ def test_timeline_groups_tool_call_and_result_then_separates_next_stage() -> Non
     result_event.attach_tool_details(tool_result={"ok": True, "payload": {"echo": "ok"}})
     state, result_frame = reduce_progress_event(state, result_event)
     assert result_frame is not None
-    assert result_frame.status_line == "[iter 1] [#1] tool completed: debug.echo"
+    assert result_frame.status_line == "[iter 1] [#1] ● tool completed: debug.echo"
     assert result_frame.separator_before is False
 
     next_event = ProgressEvent(
@@ -83,7 +83,7 @@ def test_timeline_keeps_tool_progress_inside_existing_tool_group() -> None:
 
     # Assert
     assert progress_frame is not None
-    assert progress_frame.status_line == "[iter 2] [#1] tool running: bash.exec"
+    assert progress_frame.status_line == "[iter 2] [#1] ● tool running: bash.exec"
     assert progress_frame.separator_before is False
     assert progress_frame.detail_line == "stdout | three"
 
@@ -142,9 +142,9 @@ def test_timeline_keeps_live_tool_result_and_resume_call_in_same_group() -> None
     assert live_frame is not None
     assert resume_frame is not None
     assert final_frame is not None
-    assert live_frame.status_line == "[iter 2] [#1] tool running: bash.exec"
-    assert resume_frame.status_line == "[iter 3] [#1] calling tool: bash.exec"
-    assert final_frame.status_line == "[iter 3] [#1] tool completed: bash.exec"
+    assert live_frame.status_line == "[iter 2] [#1] ● tool running: bash.exec"
+    assert resume_frame.status_line == "[iter 3] [#1] ● calling tool: bash.exec"
+    assert final_frame.status_line == "[iter 3] [#1] ● tool completed: bash.exec"
 
 
 def test_timeline_dedupes_identical_spinner_updates() -> None:

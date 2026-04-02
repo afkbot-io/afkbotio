@@ -307,7 +307,7 @@ async def run_fullscreen_chat_workspace_session(
                         status_marker=_build_status_marker(animate=True),
                     )
                 )
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.35)
 
     session_task = asyncio.create_task(_run_session())
     heartbeat_task = asyncio.create_task(_run_heartbeat())

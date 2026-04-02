@@ -31,6 +31,12 @@ NormalizeParams = Callable[[object], dict[str, object]]
 SanitizeText = Callable[[str], str]
 SanitizeValue = Callable[[object], object]
 
+_BASH_HISTORY_TAIL_LINES = 10
+_BASH_HISTORY_MAX_LINE_CHARS = 240
+_TOOL_HISTORY_MAX_STRING_CHARS = 800
+_TOOL_HISTORY_MAX_LIST_ITEMS = 24
+_TOOL_HISTORY_MAX_DICT_ITEMS = 40
+
 
 @dataclass(frozen=True, slots=True)
 class LLMIterationResult:
@@ -321,7 +327,12 @@ class LLMIterationRuntime:
             tool_results,
             strict=True,
         ):
-            result_payload = self._sanitize_value(result.model_dump())
+            result_payload = self._sanitize_value(
+                self._summarize_tool_result_for_history(
+                    tool_name=tool_call.name,
+                    result=result,
+                )
+            )
             history.append(
                 LLMMessage(
                     role="tool",
@@ -330,3 +341,122 @@ class LLMIterationRuntime:
                     content=json.dumps(result_payload, ensure_ascii=True, sort_keys=True),
                 )
             )
+
+    def _summarize_tool_result_for_history(
+        self,
+        *,
+        tool_name: str,
+        result: ToolResult,
+    ) -> dict[str, object]:
+        """Build compact, deterministic tool-result payload for model history."""
+
+        payload: dict[str, object] = {
+            "ok": result.ok,
+        }
+        if result.error_code:
+            payload["error_code"] = self._truncate_text_for_history(result.error_code)
+        if result.reason:
+            payload["reason"] = self._truncate_text_for_history(result.reason)
+
+        raw_payload = result.payload
+        if isinstance(raw_payload, dict):
+            if tool_name == "bash.exec":
+                payload["payload"] = self._summarize_bash_payload(raw_payload)
+            else:
+                payload["payload"] = self._compact_value_for_history(raw_payload)
+        elif raw_payload:
+            payload["payload"] = self._compact_value_for_history(raw_payload)
+
+        if result.metadata:
+            payload["metadata"] = self._compact_value_for_history(result.metadata)
+        return payload
+
+    def _summarize_bash_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        """Keep critical bash.exec fields while bounding stdout/stderr context."""
+
+        compact: dict[str, object] = {}
+        for field_name in (
+            "cmd",
+            "cwd",
+            "exit_code",
+            "running",
+            "session_id",
+            "chars_written",
+            "shell",
+            "login_requested",
+            "login_applied",
+            "stdout_truncated",
+            "stderr_truncated",
+        ):
+            value = payload.get(field_name)
+            if value in (None, "", (), [], {}):
+                continue
+            compact[field_name] = self._compact_value_for_history(value)
+
+        stdout_text = self._coerce_text(payload.get("stdout"))
+        stderr_text = self._coerce_text(payload.get("stderr"))
+        if stdout_text:
+            compact["stdout_tail"] = self._tail_lines(
+                stdout_text,
+                max_lines=_BASH_HISTORY_TAIL_LINES,
+            )
+            compact["stdout_lines_total"] = len(stdout_text.splitlines())
+            compact["stdout_chars_total"] = len(stdout_text)
+        if stderr_text:
+            compact["stderr_tail"] = self._tail_lines(
+                stderr_text,
+                max_lines=_BASH_HISTORY_TAIL_LINES,
+            )
+            compact["stderr_lines_total"] = len(stderr_text.splitlines())
+            compact["stderr_chars_total"] = len(stderr_text)
+        return compact
+
+    def _tail_lines(self, text: str, *, max_lines: int) -> list[str]:
+        lines = [line.strip() for line in text.replace("\r", "\n").splitlines() if line.strip()]
+        if not lines:
+            return []
+        return [
+            self._truncate_text_for_history(line, max_chars=_BASH_HISTORY_MAX_LINE_CHARS)
+            for line in lines[-max(1, max_lines) :]
+        ]
+
+    @staticmethod
+    def _coerce_text(value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return ""
+        return str(value)
+
+    def _compact_value_for_history(self, value: object) -> object:
+        if isinstance(value, dict):
+            compact_dict: dict[str, object] = {}
+            items = list(value.items())
+            for key, child in items[:_TOOL_HISTORY_MAX_DICT_ITEMS]:
+                compact_dict[str(key)] = self._compact_value_for_history(child)
+            overflow = len(items) - _TOOL_HISTORY_MAX_DICT_ITEMS
+            if overflow > 0:
+                compact_dict["__truncated_keys__"] = overflow
+            return compact_dict
+        if isinstance(value, list):
+            compact_list = [
+                self._compact_value_for_history(item)
+                for item in value[:_TOOL_HISTORY_MAX_LIST_ITEMS]
+            ]
+            overflow = len(value) - _TOOL_HISTORY_MAX_LIST_ITEMS
+            if overflow > 0:
+                compact_list.append(f"... (+{overflow} items)")
+            return compact_list
+        if isinstance(value, tuple):
+            return self._compact_value_for_history(list(value))
+        if isinstance(value, str):
+            return self._truncate_text_for_history(value)
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return self._truncate_text_for_history(str(value))
+
+    @staticmethod
+    def _truncate_text_for_history(value: str, *, max_chars: int = _TOOL_HISTORY_MAX_STRING_CHARS) -> str:
+        if len(value) <= max_chars:
+            return value
+        return value[: max_chars - 3].rstrip() + "..."
