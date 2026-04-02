@@ -9,7 +9,11 @@ import pytest
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations import AutomationsServiceError
-from afkbot.services.automations.webhook_tokens import hash_webhook_token
+from afkbot.services.automations.webhook_tokens import (
+    build_webhook_path,
+    build_webhook_url,
+    hash_webhook_token,
+)
 from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
 
@@ -51,7 +55,12 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert created_webhook.webhook is not None
         old_token = created_webhook.webhook.webhook_token
         assert old_token is not None
-        assert created_webhook.webhook.webhook_path == "/v1/automations/webhook"
+        assert created_webhook.webhook.webhook_path == build_webhook_path("default", old_token)
+        assert created_webhook.webhook.webhook_url == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            old_token,
+        )
         rotated_webhook = await service.update(
             profile_id="default",
             automation_id=created_webhook.id,
@@ -61,7 +70,12 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         new_token = rotated_webhook.webhook.webhook_token
         assert new_token is not None
         assert new_token != old_token
-        assert rotated_webhook.webhook.webhook_path == "/v1/automations/webhook"
+        assert rotated_webhook.webhook.webhook_path == build_webhook_path("default", new_token)
+        assert rotated_webhook.webhook.webhook_url == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            new_token,
+        )
 
         fake_loop = FakeLoop()
 
@@ -71,6 +85,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
 
         with pytest.raises(AutomationsServiceError) as old_token_exc:
             await service.trigger_webhook(
+                profile_id="default",
                 token=old_token,
                 payload={"event_id": "evt-old-token"},
                 agent_loop_factory=factory_fn,
@@ -78,6 +93,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert old_token_exc.value.error_code == "automation_not_found"
 
         new_token_result = await service.trigger_webhook(
+            profile_id="default",
             token=new_token,
             payload={"event_id": "evt-new-token"},
             agent_loop_factory=factory_fn,
@@ -273,6 +289,14 @@ async def test_service_create_webhook_retries_token_conflict(
         assert created.webhook is not None
         assert created.webhook.webhook_token is not None
         assert created.webhook.webhook_token != existing_token
-        assert created.webhook.webhook_path == "/v1/automations/webhook"
+        assert created.webhook.webhook_path == build_webhook_path(
+            "default",
+            created.webhook.webhook_token,
+        )
+        assert created.webhook.webhook_url == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            created.webhook.webhook_token,
+        )
     finally:
         await engine.dispose()

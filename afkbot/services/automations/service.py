@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -12,6 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.models.automation import Automation
+from afkbot.models.automation_trigger_cron import AutomationTriggerCron
+from afkbot.models.automation_trigger_webhook import AutomationTriggerWebhook
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import (
     AutomationCronTickResult,
@@ -35,6 +37,7 @@ from afkbot.services.automations.validators import (
 from afkbot.services.automations.webhook_tokens import (
     hash_webhook_token,
     is_webhook_token_conflict,
+    issue_webhook_token,
 )
 from afkbot.services.automations.webhook_execution import trigger_webhook_automation
 from afkbot.settings import Settings
@@ -94,7 +97,7 @@ class AutomationsService:
                 timezone=normalized_timezone,
                 next_run_at=next_run_at,
             )
-            return to_metadata(automation=automation, cron=cron, webhook=None)
+            return self._to_metadata(automation=automation, cron=cron, webhook=None)
 
         return await self._with_repo(_op)
 
@@ -111,7 +114,7 @@ class AutomationsService:
         stripped_name = name.strip()
         normalized_prompt = normalize_automation_prompt(prompt)
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
-            token = secrets.token_urlsafe(24)
+            token = issue_webhook_token()
             token_hash = hash_webhook_token(token)
 
             async def _op(repo: AutomationRepository) -> AutomationMetadata:
@@ -120,14 +123,10 @@ class AutomationsService:
                     profile_id=profile_id,
                     name=stripped_name,
                     prompt=normalized_prompt,
+                    webhook_token=token,
                     webhook_token_hash=token_hash,
                 )
-                return to_metadata(
-                    automation=automation,
-                    cron=None,
-                    webhook=webhook,
-                    issued_webhook_token=token,
-                )
+                return self._to_metadata(automation=automation, cron=None, webhook=webhook)
 
             try:
                 return await self._with_repo(_op)
@@ -155,7 +154,7 @@ class AutomationsService:
                     error_code="automation_not_found",
                     reason="Automation not found",
                 )
-            return to_metadata(automation=row[0], cron=row[1], webhook=row[2])
+            return self._to_metadata(automation=row[0], cron=row[1], webhook=row[2])
 
         return await self._with_repo(_op)
 
@@ -174,7 +173,7 @@ class AutomationsService:
                 include_deleted=include_deleted,
             )
             return [
-                to_metadata(automation=automation, cron=cron, webhook=webhook)
+                self._to_metadata(automation=automation, cron=cron, webhook=webhook)
                 for automation, cron, webhook in rows
             ]
 
@@ -259,7 +258,7 @@ class AutomationsService:
                 normalized_cron=normalized_cron,
                 normalized_timezone=normalized_timezone,
                 issued_webhook_token=issued_webhook_token,
-                to_metadata=to_metadata,
+                to_metadata=self._to_metadata,
                 compute_next_run_at=compute_next_run_at,
                 hash_webhook_token=hash_webhook_token,
             )
@@ -268,7 +267,7 @@ class AutomationsService:
             return await _run_update(None)
 
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
-            issued_webhook_token = secrets.token_urlsafe(24)
+            issued_webhook_token = issue_webhook_token()
             try:
                 return await _run_update(issued_webhook_token)
             except IntegrityError as exc:
@@ -287,6 +286,7 @@ class AutomationsService:
     async def trigger_webhook(
         self,
         *,
+        profile_id: str,
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[..., AgentLoopLike],
@@ -296,6 +296,7 @@ class AutomationsService:
         return await trigger_webhook_automation(
             session_factory=self._session_factory,
             with_repo=self._with_repo,
+            profile_id=profile_id,
             token=token,
             payload=payload,
             agent_loop_factory=agent_loop_factory,
@@ -326,6 +327,35 @@ class AutomationsService:
         async with session_scope(self._session_factory) as session:
             repo = AutomationRepository(session)
             return await op(repo)
+
+    def _to_metadata(
+        self,
+        *,
+        automation: Automation,
+        cron: AutomationTriggerCron | None,
+        webhook: AutomationTriggerWebhook | None,
+    ) -> AutomationMetadata:
+        """Map automation rows into public metadata using current runtime base URL settings."""
+
+        return to_metadata(
+            automation=automation,
+            cron=cron,
+            webhook=webhook,
+            runtime_base_url=self._resolve_runtime_base_url(),
+        )
+
+    def _resolve_runtime_base_url(self) -> str | None:
+        """Return best-effort base URL for absolute webhook URL rendering."""
+
+        if self._settings is None:
+            return None
+        public_runtime_url = (self._settings.public_runtime_url or "").strip()
+        if public_runtime_url:
+            return public_runtime_url.rstrip("/")
+        host = self._settings.runtime_host.strip()
+        if not host or host in {"0.0.0.0", "::", "*"}:
+            return None
+        return f"http://{host}:{int(self._settings.runtime_port)}"
 
     async def shutdown(self) -> None:
         """Dispose owned async engine when the service created it."""

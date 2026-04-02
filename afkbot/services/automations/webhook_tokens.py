@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import secrets
 from hashlib import sha256
+from urllib.parse import quote
+
 from sqlalchemy.exc import IntegrityError
 
 from afkbot.services.automations.contracts import WEBHOOK_INGRESS_PATH
+
+
+def issue_webhook_token() -> str:
+    """Issue one new webhook token suitable for path-based delivery."""
+
+    return secrets.token_urlsafe(24)
 
 
 def hash_webhook_token(token: str) -> str:
@@ -24,19 +33,39 @@ def mask_webhook_token(token: str | None) -> str:
     return f"{token[:4]}...{token[-4:]}"
 
 
-def build_webhook_path(token: str | None) -> str | None:
-    """Build public webhook ingress path (token must be sent in headers)."""
+def build_webhook_path(profile_id: str, token: str | None) -> str | None:
+    """Build public webhook ingress path with embedded profile id and token."""
 
     if token is None:
         return None
+    normalized_profile = profile_id.strip()
     normalized = token.strip()
-    if not normalized:
+    if not normalized_profile or not normalized:
         return None
-    return WEBHOOK_INGRESS_PATH
+    quoted_profile = quote(normalized_profile, safe="")
+    quoted_token = quote(normalized, safe="")
+    return f"{WEBHOOK_INGRESS_PATH}/{quoted_profile}/webhook/{quoted_token}"
+
+
+def build_webhook_url(base_url: str | None, profile_id: str, token: str | None) -> str | None:
+    """Build one absolute webhook URL when a runtime base URL is available."""
+
+    path = build_webhook_path(profile_id, token)
+    if path is None:
+        return None
+    normalized_base = (base_url or "").strip().rstrip("/")
+    if not normalized_base:
+        return None
+    return f"{normalized_base}{path}"
 
 
 def is_webhook_token_conflict(exc: IntegrityError) -> bool:
     """Return whether one database integrity error is a webhook token collision."""
 
     message = str(exc.orig if exc.orig is not None else exc).lower()
-    return "webhook_token_hash" in message or "ix_automation_webhook_token_hash" in message
+    return (
+        "webhook_token" in message
+        or "ix_automation_webhook_token" in message
+        or "webhook_token_hash" in message
+        or "ix_automation_webhook_token_hash" in message
+    )

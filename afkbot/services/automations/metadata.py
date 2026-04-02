@@ -13,7 +13,11 @@ from afkbot.services.automations.contracts import (
     AutomationWebhookMetadata,
 )
 from afkbot.services.automations.errors import AutomationsServiceError
-from afkbot.services.automations.webhook_tokens import build_webhook_path, mask_webhook_token
+from afkbot.services.automations.webhook_tokens import (
+    build_webhook_path,
+    build_webhook_url,
+    mask_webhook_token,
+)
 
 
 def to_metadata(
@@ -21,7 +25,7 @@ def to_metadata(
     automation: Automation,
     cron: AutomationTriggerCron | None,
     webhook: AutomationTriggerWebhook | None,
-    issued_webhook_token: str | None = None,
+    runtime_base_url: str | None = None,
 ) -> AutomationMetadata:
     """Map repository automation row parts into public metadata DTO."""
 
@@ -47,9 +51,14 @@ def to_metadata(
         webhook=None
         if webhook is None
         else AutomationWebhookMetadata(
-            webhook_token=issued_webhook_token,
-            webhook_path=build_webhook_path(issued_webhook_token),
-            webhook_token_masked=mask_webhook_token(issued_webhook_token),
+            webhook_token=webhook.webhook_token,
+            webhook_path=build_webhook_path(automation.profile_id, webhook.webhook_token),
+            webhook_url=build_webhook_url(
+                runtime_base_url,
+                automation.profile_id,
+                webhook.webhook_token,
+            ),
+            webhook_token_masked=mask_webhook_token(webhook.webhook_token),
             last_received_at=webhook.last_received_at,
         ),
     )

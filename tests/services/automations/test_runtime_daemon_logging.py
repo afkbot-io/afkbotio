@@ -29,7 +29,7 @@ async def test_runtime_daemon_logs_webhook_worker_failure(
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     await daemon.start()
     try:
@@ -39,7 +39,6 @@ async def test_runtime_daemon_logs_webhook_worker_failure(
                 port=daemon.bound_port,
                 method="POST",
                 path=webhook_path(),
-                headers={"X-AFK-Webhook-Token": "token-valid"},
                 body='{"event_id":"evt-log-webhook"}',
             )
             assert status == 202
@@ -64,7 +63,7 @@ async def test_runtime_daemon_logs_cron_failure(
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     await daemon.start()
     try:

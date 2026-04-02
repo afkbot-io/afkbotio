@@ -16,6 +16,7 @@ from afkbot.services.automations import (
     get_automations_service,
     reset_automations_services,
 )
+from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
@@ -89,7 +90,12 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         webhook_id = int(webhook_automation["id"])
         issued_token = webhook_automation["webhook"]["webhook_token"]
         assert isinstance(issued_token, str)
-        assert webhook_automation["webhook"]["webhook_path"] == "/v1/automations/webhook"
+        assert webhook_automation["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
+        assert webhook_automation["webhook"]["webhook_url"] == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            issued_token,
+        )
 
         list_tool = registry.get("automation.list")
         assert list_tool is not None
@@ -103,10 +109,14 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         listed = list_result.payload["automations"]
         assert isinstance(listed, list)
         assert len(listed) == 2
-        serialized_list = str(listed)
-        assert issued_token not in serialized_list
         webhook_list_item = next(item for item in listed if int(item["id"]) == webhook_id)
-        assert webhook_list_item["webhook"]["webhook_path"] is None
+        assert webhook_list_item["webhook"]["webhook_token"] == issued_token
+        assert webhook_list_item["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
+        assert webhook_list_item["webhook"]["webhook_url"] == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            issued_token,
+        )
 
         update_tool = registry.get("automation.update")
         assert update_tool is not None
@@ -148,10 +158,32 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         rotated_token = rotated["webhook"]["webhook_token"]
         assert isinstance(rotated_token, str)
         assert rotated_token != issued_token
-        assert rotated["webhook"]["webhook_path"] == "/v1/automations/webhook"
+        assert rotated["webhook"]["webhook_path"] == build_webhook_path("default", rotated_token)
+        assert rotated["webhook"]["webhook_url"] == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            rotated_token,
+        )
 
         get_tool = registry.get("automation.get")
         assert get_tool is not None
+        webhook_get_params = get_tool.parse_params(
+            {"profile_key": "default", "id": webhook_id},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        webhook_get_result = await get_tool.execute(ctx, webhook_get_params)
+        assert webhook_get_result.ok is True
+        webhook_get = webhook_get_result.payload["automation"]
+        assert isinstance(webhook_get, dict)
+        assert webhook_get["webhook"]["webhook_token"] == rotated_token
+        assert webhook_get["webhook"]["webhook_path"] == build_webhook_path("default", rotated_token)
+        assert webhook_get["webhook"]["webhook_url"] == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            rotated_token,
+        )
+
         get_params = get_tool.parse_params(
             {"profile_key": "default", "id": automation_id},
             default_timeout_sec=settings.tool_timeout_default_sec,
@@ -163,8 +195,8 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(get_automation, dict)
         assert isinstance(get_automation["webhook"], (dict, type(None)))
         if get_automation["webhook"] is not None:
-            assert get_automation["webhook"]["webhook_token"] is None
-            assert get_automation["webhook"]["webhook_path"] is None
+            assert get_automation["webhook"]["webhook_token"] is not None
+            assert get_automation["webhook"]["webhook_path"] is not None
 
         delete_tool = registry.get("automation.delete")
         assert delete_tool is not None

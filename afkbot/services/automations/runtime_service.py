@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from afkbot.services.agent_loop.loop import AgentLoop
 
 
-async def trigger_webhook_payload(*, token: str, payload_json: str) -> str:
+async def trigger_webhook_payload(*, profile_id: str, token: str, payload_json: str) -> str:
     """Trigger one webhook automation by token and return deterministic JSON payload."""
 
     settings = get_settings()
@@ -29,6 +29,7 @@ async def trigger_webhook_payload(*, token: str, payload_json: str) -> str:
         payload = _parse_payload_json(payload_json)
         service = get_automations_service(settings)
         result = await service.trigger_webhook(
+            profile_id=profile_id,
             token=token,
             payload=payload,
             agent_loop_factory=lambda session, profile_id: cast(

@@ -42,6 +42,7 @@ class AutomationsRuntimeService(Protocol):
     async def trigger_webhook(
         self,
         *,
+        profile_id: str,
         token: str,
         payload: Mapping[str, object],
         agent_loop_factory: Callable[..., AgentLoopLike],
@@ -62,6 +63,7 @@ class AutomationsRuntimeService(Protocol):
 
 @dataclass(frozen=True)
 class _WebhookQueueTask:
+    profile_id: str
     token: str
     payload: Mapping[str, object]
 
@@ -105,7 +107,8 @@ class RuntimeDaemon:
             is_shutting_down=lambda: self._shutting_down,
             webhook_token_validator=webhook_token_validator,
             validation_session_factory_getter=lambda: self._validation_session_factory,
-            queue_task_factory=lambda token, payload: _WebhookQueueTask(
+            queue_task_factory=lambda profile_id, token, payload: _WebhookQueueTask(
+                profile_id=profile_id,
                 token=token,
                 payload=payload,
             ),
@@ -321,6 +324,7 @@ class RuntimeDaemon:
             try:
                 if isinstance(task, _WebhookQueueTask):
                     await self._service.trigger_webhook(
+                        profile_id=task.profile_id,
                         token=task.token,
                         payload=task.payload,
                         agent_loop_factory=lambda session, profile_id: cast(
