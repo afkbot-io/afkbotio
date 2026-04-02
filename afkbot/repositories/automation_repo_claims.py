@@ -261,6 +261,30 @@ class AutomationRepositoryClaimsMixin:
         await self._session.flush()
         return result_succeeded(result)
 
+    async def mark_webhook_started(
+        self,
+        *,
+        automation_id: int,
+        event_hash: str,
+        claim_token: str,
+        started_at: datetime,
+    ) -> bool:
+        """Persist that a claimed webhook moved from received to active execution."""
+
+        statement = (
+            update(AutomationTriggerWebhook)
+            .where(
+                AutomationTriggerWebhook.automation_id == automation_id,
+                AutomationTriggerWebhook.in_progress_event_hash == event_hash,
+                AutomationTriggerWebhook.claim_token == claim_token,
+            )
+            .values(last_started_at=started_at)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return result_succeeded(result)
+
     async def _record_processed_webhook_event(
         self,
         *,

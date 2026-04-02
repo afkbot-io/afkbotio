@@ -71,6 +71,7 @@ def _ensure_webhook_execution_columns(conn) -> None:  # type: ignore[no-untyped-
         return
     missing_columns = {
         "last_session_id": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_session_id VARCHAR(255)",
+        "last_started_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_started_at DATETIME",
         "last_succeeded_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_succeeded_at DATETIME",
         "last_failed_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_failed_at DATETIME",
         "last_error": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_error TEXT",

@@ -61,11 +61,16 @@ def to_metadata(
             webhook_token_masked=mask_webhook_token(webhook.webhook_token),
             last_execution_status=_resolve_webhook_execution_status(webhook),
             last_received_at=webhook.last_received_at,
+            last_started_at=webhook.last_started_at,
             last_succeeded_at=webhook.last_succeeded_at,
             last_failed_at=webhook.last_failed_at,
             last_error=webhook.last_error,
             last_session_id=webhook.last_session_id,
             last_event_hash=webhook.last_event_hash,
+            chat_resume_command=_build_chat_resume_command(
+                profile_id=automation.profile_id,
+                session_id=webhook.last_session_id,
+            ),
         ),
     )
 
@@ -86,6 +91,15 @@ def _resolve_webhook_execution_status(
     if webhook.last_received_at is not None:
         return "received"
     return "idle"
+
+
+def _build_chat_resume_command(*, profile_id: str, session_id: str | None) -> str | None:
+    """Build a ready-to-copy CLI command for resuming the automation chat session."""
+
+    normalized_session = (session_id or "").strip()
+    if not normalized_session:
+        return None
+    return f"afk chat --profile {profile_id} --session {normalized_session}"
 
 
 def as_trigger_type(value: str) -> Literal["cron", "webhook"]:

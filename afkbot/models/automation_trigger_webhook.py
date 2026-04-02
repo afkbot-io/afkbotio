@@ -31,6 +31,7 @@ class AutomationTriggerWebhook(Base):
     claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     in_progress_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_succeeded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

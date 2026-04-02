@@ -32,11 +32,13 @@ class AutomationWebhookMetadata(BaseModel):
     webhook_token_masked: str
     last_execution_status: Literal["idle", "received", "running", "succeeded", "failed"]
     last_received_at: datetime | None
+    last_started_at: datetime | None = None
     last_succeeded_at: datetime | None = None
     last_failed_at: datetime | None = None
     last_error: str | None = None
     last_session_id: str | None = None
     last_event_hash: str | None = None
+    chat_resume_command: str | None = None
 
 
 class AutomationMetadata(BaseModel):

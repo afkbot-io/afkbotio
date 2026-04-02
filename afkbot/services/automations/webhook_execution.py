@@ -111,6 +111,14 @@ async def trigger_webhook_automation(
 
             return await with_repo(_refresh)
 
+        async def _mark_started(repo: AutomationRepository) -> bool:
+            return await repo.mark_webhook_started(
+                automation_id=automation.id,
+                event_hash=event_hash,
+                claim_token=claim_token,
+                started_at=datetime.now(timezone.utc),
+            )
+
         async def _release(repo: AutomationRepository) -> bool:
             return await repo.release_webhook_event(
                 automation_id=automation.id,
@@ -131,6 +139,12 @@ async def trigger_webhook_automation(
         completed = False
         exc_info: BaseException | None = None
         try:
+            started = await with_repo(_mark_started)
+            if not started:
+                raise AutomationsServiceError(
+                    error_code="automation_webhook_state_conflict",
+                    reason="Failed to mark webhook execution as started",
+                )
             await run_with_lease_refresh(
                 run=lambda: loop.run_turn(
                     profile_id=runtime_target.profile_id,

@@ -98,10 +98,12 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         )
         assert webhook_automation["webhook"]["last_execution_status"] == "idle"
         assert webhook_automation["webhook"]["last_session_id"] is None
+        assert webhook_automation["webhook"]["last_started_at"] is None
         assert webhook_automation["webhook"]["last_succeeded_at"] is None
         assert webhook_automation["webhook"]["last_failed_at"] is None
         assert webhook_automation["webhook"]["last_error"] is None
         assert webhook_automation["webhook"]["last_event_hash"] is None
+        assert webhook_automation["webhook"]["chat_resume_command"] is None
 
         list_tool = registry.get("automation.list")
         assert list_tool is not None
