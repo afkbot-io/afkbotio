@@ -69,7 +69,7 @@ def register(app: typer.Typer) -> None:
         llm_provider: str | None = typer.Option(
             None,
             "--llm-provider",
-            help="Default chat provider: openrouter, openai, deepseek, xai, qwen, or custom.",
+            help="Default chat provider: openrouter, openai, claude, moonshot, deepseek, xai, qwen, or custom.",
         ),
         chat_model: str | None = typer.Option(
             None,

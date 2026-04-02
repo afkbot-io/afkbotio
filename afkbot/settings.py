@@ -127,7 +127,16 @@ class Settings(BaseSettings):
         "subagent_profile_upsert",
         "subagent_profile_delete",
     )
-    llm_provider: Literal["openrouter", "openai", "deepseek", "xai", "qwen", "custom"] = "openrouter"
+    llm_provider: Literal[
+        "openrouter",
+        "openai",
+        "claude",
+        "moonshot",
+        "deepseek",
+        "xai",
+        "qwen",
+        "custom",
+    ] = "openrouter"
     llm_model: str = "minimax/minimax-m2.5"
     llm_api_key: str | None = None
     llm_base_url: str | None = None
@@ -135,6 +144,10 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
+    claude_api_key: str | None = None
+    claude_base_url: str = "https://api.anthropic.com/v1"
+    moonshot_api_key: str | None = None
+    moonshot_base_url: str = "https://api.moonshot.ai/v1"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     xai_api_key: str | None = None
@@ -252,6 +265,8 @@ class Settings(BaseSettings):
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "claude_api_key",
+        "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
@@ -555,6 +570,8 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "claude_api_key",
+        "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",

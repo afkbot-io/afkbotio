@@ -12,7 +12,16 @@ class ProfileRuntimeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    llm_provider: Literal["openrouter", "openai", "deepseek", "xai", "qwen", "custom"]
+    llm_provider: Literal[
+        "openrouter",
+        "openai",
+        "claude",
+        "moonshot",
+        "deepseek",
+        "xai",
+        "qwen",
+        "custom",
+    ]
     llm_model: str = Field(min_length=1)
     llm_base_url: str | None = None
     custom_interface: Literal["openai"] = "openai"

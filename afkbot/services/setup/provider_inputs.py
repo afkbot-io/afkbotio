@@ -191,6 +191,10 @@ def resolve_provider_base_url_default(
         provider_value = defaults.get("AFKBOT_OPENROUTER_BASE_URL", settings.openrouter_base_url).strip()
     elif provider_id == LLMProviderId.OPENAI:
         provider_value = defaults.get("AFKBOT_OPENAI_BASE_URL", settings.openai_base_url).strip()
+    elif provider_id == LLMProviderId.CLAUDE:
+        provider_value = defaults.get("AFKBOT_CLAUDE_BASE_URL", settings.claude_base_url).strip()
+    elif provider_id == LLMProviderId.MOONSHOT:
+        provider_value = defaults.get("AFKBOT_MOONSHOT_BASE_URL", settings.moonshot_base_url).strip()
     elif provider_id == LLMProviderId.DEEPSEEK:
         provider_value = defaults.get("AFKBOT_DEEPSEEK_BASE_URL", settings.deepseek_base_url).strip()
     elif provider_id == LLMProviderId.XAI:

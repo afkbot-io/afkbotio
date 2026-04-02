@@ -309,6 +309,44 @@ def test_build_llm_provider_uses_global_fallback_when_provider_specific_absent()
     assert provider._base_url == "https://global-gateway.example/v1"  # noqa: SLF001
 
 
+def test_build_llm_provider_supports_claude_provider_specific_settings() -> None:
+    """Claude provider should use Anthropic-specific API key/base URL fields."""
+
+    settings = Settings(
+        llm_provider="claude",
+        llm_model="claude-sonnet-4-6",
+        llm_api_key="stale-global-key",
+        llm_base_url="https://stale-global.example/v1",
+        claude_api_key="anthropic-key",
+        claude_base_url="https://api.anthropic.com/v1",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "anthropic-key"  # noqa: SLF001
+    assert provider._base_url == "https://api.anthropic.com/v1"  # noqa: SLF001
+
+
+def test_build_llm_provider_supports_moonshot_provider_specific_settings() -> None:
+    """Moonshot provider should use provider-specific API key/base URL fields."""
+
+    settings = Settings(
+        llm_provider="moonshot",
+        llm_model="kimi-k2.5",
+        llm_api_key="stale-global-key",
+        llm_base_url="https://stale-global.example/v1",
+        moonshot_api_key="moonshot-key",
+        moonshot_base_url="https://api.moonshot.ai/v1",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "moonshot-key"  # noqa: SLF001
+    assert provider._base_url == "https://api.moonshot.ai/v1"  # noqa: SLF001
+
+
 def test_build_llm_provider_uses_runtime_timeout_setting() -> None:
     """Provider transport timeout should be configured from runtime settings."""
 

@@ -104,7 +104,14 @@ def prompt_chat_model(
         return selected
 
     while True:
-        suggested_default = "custom-model" if provider_id.value == "custom" else "minimax/minimax-m2.5"
+        if provider_id.value == "custom":
+            suggested_default = "custom-model"
+        elif default_model.strip():
+            suggested_default = default_model.strip()
+        elif preset_options:
+            suggested_default = preset_options[0]
+        else:
+            suggested_default = "model-id"
         model = str(
             typer.prompt(
                 msg(lang, en="Chat model", ru="Модель чата"),
