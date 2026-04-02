@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-04-03
+
+### Added
+
+- Automatic context compaction recovery when a provider rejects a request because the model context window was exceeded.
+- Visible progress markers during recovery so fullscreen and CLI sessions show when compaction starts and when the context has been compacted.
+- Regression coverage for overflow classification, compaction retry flow, and compaction progress rendering.
+
+### Changed
+
+- Request compaction now uses a hybrid strategy: LLM-generated handoff summaries first, deterministic fallback second.
+- Session compaction and in-iteration retry flow now preserve the core prompt while replacing older carryover history with compact summaries.
+
+### Fixed
+
+- Agent-loop executions now recover from context-window overflow errors instead of immediately failing the run when compaction can reduce the payload.
+- Provider error handling now classifies context-window overflow separately from generic invalid-request failures.
+
 ## [1.0.3] - 2026-04-02
 
 ### Added
