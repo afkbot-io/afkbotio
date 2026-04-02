@@ -120,7 +120,14 @@ def _elapsed_label(state: ChatReplSessionState) -> str | None:
     if started_at is None:
         return None
     elapsed_seconds = max(0, int(monotonic() - started_at))
-    return f"{elapsed_seconds}s"
+    if elapsed_seconds < 60:
+        return f"{elapsed_seconds}s"
+    if elapsed_seconds < 3_600:
+        minutes, seconds = divmod(elapsed_seconds, 60)
+        return f"{minutes}m {seconds:02d}s"
+    hours, remainder = divmod(elapsed_seconds, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes:02d}m {seconds:02d}s"
 
 
 def _toolish_activity_label(

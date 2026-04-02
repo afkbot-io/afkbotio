@@ -128,12 +128,12 @@ def test_build_chat_workspace_progress_entries_renders_tool_status_and_detail() 
     # Assert
     assert len(call_entries) == 1
     assert call_entries[0].kind == "assistant"
-    assert call_entries[0].text == "• [#1] calling tool: bash.exec"
+    assert call_entries[0].text == "[#1] ● calling tool: bash.exec"
     assert call_entries[0].accent == "tool"
     assert call_entries[0].spacing_before == "normal"
     assert len(progress_entries) == 3
     assert progress_entries[0].kind == "assistant"
-    assert progress_entries[0].text == "[#1] tool running: bash.exec"
+    assert progress_entries[0].text == "[#1] ● tool running: bash.exec"
     assert progress_entries[0].accent == "tool"
     assert progress_entries[0].spacing_before == "tight"
     assert progress_entries[1].kind == "assistant"
@@ -144,3 +144,62 @@ def test_build_chat_workspace_progress_entries_renders_tool_status_and_detail() 
     assert progress_entries[2].text == "  stdout | two"
     assert progress_entries[2].accent == "detail"
     assert progress_entries[2].spacing_before == "tight"
+
+
+def test_build_chat_workspace_progress_entries_only_appends_new_preview_tail_lines() -> None:
+    """Rolling preview updates should not replay old tool lines in transcript."""
+
+    # Arrange
+    state = ProgressTimelineState()
+    call_event = ProgressEvent(
+        event_id=20,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="bash.exec",
+        event_type="tool.call",
+    )
+    first_progress = ProgressEvent(
+        event_id=21,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="bash.exec",
+        event_type="tool.progress",
+    )
+    first_progress.attach_tool_details(tool_progress={"preview_lines": ["stdout | one", "stdout | two"]})
+    second_progress = ProgressEvent(
+        event_id=22,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="bash.exec",
+        event_type="tool.progress",
+    )
+    second_progress.attach_tool_details(
+        tool_progress={"preview_lines": ["stdout | one", "stdout | two", "stdout | three"]}
+    )
+
+    # Act
+    state, _ = build_chat_workspace_progress_entries(state, call_event, first_progress_entry=True)
+    state, first_entries = build_chat_workspace_progress_entries(
+        state,
+        first_progress,
+        first_progress_entry=False,
+    )
+    _, second_entries = build_chat_workspace_progress_entries(
+        state,
+        second_progress,
+        first_progress_entry=False,
+    )
+
+    # Assert
+    assert [entry.text for entry in first_entries] == [
+        "[#1] ● tool running: bash.exec",
+        "  stdout | one",
+        "  stdout | two",
+    ]
+    assert [entry.text for entry in second_entries] == [
+        "[#1] ● tool running: bash.exec",
+        "  stdout | three",
+    ]

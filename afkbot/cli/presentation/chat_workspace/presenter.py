@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from afkbot.cli.presentation.progress_renderer import render_progress_detail_lines
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState, reduce_progress_event
 from afkbot.cli.presentation.chat_plan_renderer import render_chat_plan
@@ -92,7 +94,7 @@ def build_chat_workspace_progress_entries(
         entries.append(
             ChatWorkspaceTranscriptEntry(
                 kind="assistant",
-                text=f"• {cleaned_status_line}",
+                text=cleaned_status_line,
                 accent=_accent_for_stage(event.stage),
                 spacing_before=first_spacing,
             )
@@ -107,16 +109,42 @@ def build_chat_workspace_progress_entries(
             )
         )
     if cleaned_status_line is not None and not is_tool_call:
+        final_tool_result = event.event_type == "tool.result"
         entries.append(
             ChatWorkspaceTranscriptEntry(
                 kind="assistant",
                 text=cleaned_status_line,
-                accent=_accent_for_stage(event.stage, final_event=event.event_type == "tool.result"),
+                accent=_accent_for_stage(
+                    event.stage,
+                    final_event=final_tool_result,
+                    final_error=final_tool_result and _tool_result_is_error(event),
+                ),
                 spacing_before=first_spacing if not entries else "tight",
             )
         )
     if is_tool_event:
-        for detail_line in render_progress_detail_lines(event):
+        detail_lines = render_progress_detail_lines(event)
+        preview_lines = detail_lines
+        if event.event_type == "tool.progress":
+            group_seq = next_state.open_group_seq or next_state.group_seq
+            previous_lines = (
+                state.last_tool_preview_lines
+                if state.last_tool_preview_group_seq == group_seq
+                else ()
+            )
+            detail_lines = _new_tool_preview_lines(previous_lines, preview_lines)
+            next_state = replace(
+                next_state,
+                last_tool_preview_group_seq=group_seq,
+                last_tool_preview_lines=preview_lines,
+            )
+        elif event.event_type == "tool.result" and next_state.open_group_seq is None:
+            next_state = replace(
+                next_state,
+                last_tool_preview_group_seq=None,
+                last_tool_preview_lines=(),
+            )
+        for detail_line in detail_lines:
             entries.append(
                 ChatWorkspaceTranscriptEntry(
                     kind="assistant",
@@ -154,6 +182,23 @@ def _strip_progress_iteration_prefix(value: str) -> str:
     return value[close + 2 :]
 
 
+def _new_tool_preview_lines(
+    previous_lines: tuple[str, ...],
+    current_lines: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return only newly observed tail lines for one rolling preview window."""
+
+    if not current_lines:
+        return ()
+    if not previous_lines:
+        return current_lines
+    max_overlap = min(len(previous_lines), len(current_lines))
+    for overlap in range(max_overlap, 0, -1):
+        if previous_lines[-overlap:] == current_lines[:overlap]:
+            return current_lines[overlap:]
+    return current_lines
+
+
 def build_chat_workspace_outcome_entry(
     outcome: ChatTurnOutcome | None,
 ) -> ChatWorkspaceTranscriptEntry | None:
@@ -183,15 +228,31 @@ def _accent_for_stage(
     stage: str,
     *,
     final_event: bool = False,
+    final_error: bool = False,
 ) -> ChatWorkspaceAccent:
     if stage == "thinking":
         return "thinking"
     if stage == "planning":
         return "planning"
     if stage in {"tool_call", "subagent_wait"}:
+        if final_event and final_error:
+            return "error"
+        if final_event:
+            return "success"
         return "tool"
     if stage == "cancelled":
         return "error"
-    if stage == "done" or final_event:
+    if stage == "done":
         return "success"
     return "detail"
+
+
+def _tool_result_is_error(event: ProgressEvent) -> bool:
+    result = event.tool_result or {}
+    if result.get("ok") is False:
+        return True
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    exit_code = payload.get("exit_code")
+    return isinstance(exit_code, int) and exit_code != 0

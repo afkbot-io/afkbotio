@@ -43,6 +43,7 @@ _PROTECTED_ENV_NAMES = {"PATH"}
 _PROTECTED_ENV_PREFIXES = ("LD_", "DYLD_")
 _ALLOWED_SHELL_NAMES = {"ash", "bash", "dash", "fish", "ksh", "sh", "zsh"}
 _LOGIN_SHELL_NAMES = {"bash", "fish", "zsh"}
+_RUNNING_HEARTBEAT_INTERVAL_SEC = 8.0
 
 
 @dataclass(frozen=True)
@@ -441,6 +442,7 @@ class BashExecTool(ToolBase):
         output_tail = _StreamingOutputTail()
         emit_lock = asyncio.Lock()
         last_emitted_at = 0.0
+        last_heartbeat_at = time.monotonic()
         last_preview_lines: tuple[str, ...] = ()
         resolved_secret_values = secret_values or set()
 
@@ -494,6 +496,24 @@ class BashExecTool(ToolBase):
                     }
                 )
 
+        async def _emit_running_heartbeat() -> None:
+            nonlocal last_heartbeat_at
+            if progress_callback is None:
+                return
+            async with emit_lock:
+                now = time.monotonic()
+                if now - last_heartbeat_at < _RUNNING_HEARTBEAT_INTERVAL_SEC:
+                    return
+                preview_lines = output_tail.snapshot_lines(redact_line=_redact_preview_line)
+                last_heartbeat_at = now
+                await progress_callback(
+                    {
+                        "preview_lines": list(preview_lines),
+                        "stream": "mixed",
+                        "heartbeat": True,
+                    }
+                )
+
         process = await asyncio.create_subprocess_exec(
             shell_path,
             *shell_args,
@@ -520,7 +540,17 @@ class BashExecTool(ToolBase):
         )
 
         try:
-            await asyncio.wait_for(process.wait(), timeout=float(timeout_sec))
+            deadline = time.monotonic() + float(timeout_sec)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                wait_slice = min(0.5, max(0.1, remaining))
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=wait_slice)
+                    break
+                except TimeoutError:
+                    await _emit_running_heartbeat()
         except asyncio.CancelledError:
             await self._terminate_running_process(process, stdout_reader, stderr_reader)
             raise

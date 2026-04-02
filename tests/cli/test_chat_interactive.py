@@ -114,7 +114,7 @@ def test_interactive_chat_keeps_one_live_tool_panel_with_latest_ten_lines(monkey
     ux.on_progress(progress_event)
 
     # Assert
-    assert ux._active_tool_status_line == "[iter 1] [#1] tool running: bash.exec"
+    assert ux._active_tool_status_line == "[iter 1] [#1] ● tool running: bash.exec"
     assert ux._active_tool_detail_lines == tuple(f"stdout | line-{index:02d}" for index in range(3, 13))
     assert "\033[2K" in output_after_first_progress
     assert stream.getvalue() == output_after_first_progress
@@ -158,7 +158,7 @@ def test_interactive_chat_prints_final_result_after_clearing_live_panel(monkeypa
     assert ux._active_tool_block_lines == 0
     assert ux._active_tool_status_line is None
     assert ux._active_tool_detail_lines == ()
-    assert "tool completed: bash.exec" in strip_ansi(stream.getvalue())
+    assert "● tool completed: bash.exec" in strip_ansi(stream.getvalue())
 
 
 def test_interactive_chat_keeps_live_tool_result_open_until_final_result(monkeypatch) -> None:
@@ -231,8 +231,8 @@ def test_interactive_chat_keeps_live_tool_result_open_until_final_result(monkeyp
     assert live_block_lines > 0
     assert frozen_block_lines == 0
     stripped = strip_ansi(stream.getvalue())
-    assert "tool running: bash.exec" in stripped
-    assert "tool completed: bash.exec" in stripped
+    assert "● tool running: bash.exec" in stripped
+    assert "● tool completed: bash.exec" in stripped
 
 
 def test_interactive_chat_animates_live_tool_panel_header(monkeypatch) -> None:
@@ -265,4 +265,4 @@ def test_interactive_chat_animates_live_tool_panel_header(monkeypatch) -> None:
     # Assert
     assert second_output != first_output
     assert ux._tool_panel_thread is None or not ux._tool_panel_thread.is_alive()
-    assert second_output.count("tool running: bash.exec") >= 2
+    assert second_output.count("● tool running: bash.exec") >= 2

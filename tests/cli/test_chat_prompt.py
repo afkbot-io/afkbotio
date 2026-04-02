@@ -350,6 +350,38 @@ def test_chat_workspace_status_line_formats_elapsed_time_and_activity(
     )
 
 
+def test_chat_workspace_status_line_formats_minutes_and_hours(monkeypatch) -> None:
+    """Elapsed labels should roll over from seconds to minutes and hours."""
+
+    # Arrange
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level="medium",
+        default_planning_mode="auto",
+        default_thinking_level="medium",
+        active_turn=True,
+        active_turn_started_at=10.0,
+        latest_activity=ChatActivitySnapshot(
+            stage="thinking",
+            summary="thinking",
+            running=True,
+        ),
+    )
+
+    # Act / Assert
+    monkeypatch.setattr(
+        "afkbot.cli.presentation.chat_workspace.toolbar.monotonic",
+        lambda: 10.0 + 100,
+    )
+    assert build_chat_workspace_status_line(state).startswith("• Working (1m 40s • esc to interrupt)")
+
+    monkeypatch.setattr(
+        "afkbot.cli.presentation.chat_workspace.toolbar.monotonic",
+        lambda: 10.0 + 3_700,
+    )
+    assert build_chat_workspace_status_line(state).startswith("• Working (1h 01m 40s • esc to interrupt)")
+
+
 
 def test_chat_repl_help_mentions_inline_popup_and_aliases() -> None:
     """Local help should surface inline composer suggestions and slash aliases."""

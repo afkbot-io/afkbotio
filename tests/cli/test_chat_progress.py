@@ -47,7 +47,7 @@ def test_chat_progress_renderer_for_all_stages() -> None:
                 tool_name="debug.echo",
                 event_type="tool.call",
             ),
-            "calling tool: debug.echo",
+            "● calling tool: debug.echo",
         ),
         (
             ProgressEvent(
@@ -58,7 +58,7 @@ def test_chat_progress_renderer_for_all_stages() -> None:
                 tool_name="subagent.wait",
                 event_type="tool.call",
             ),
-            "waiting subagent: subagent.wait",
+            "● waiting subagent: subagent.wait",
         ),
         (
             ProgressEvent(
@@ -209,7 +209,7 @@ def test_chat_progress_detail_for_tool_progress_preview_lines() -> None:
 
     # Assert
     assert mapped is not None
-    assert render_progress_event(mapped) == "tool running: bash.exec"
+    assert render_progress_event(mapped) == "● tool running: bash.exec"
     assert detail_lines == ("stdout | one", "stderr | two")
     assert render_progress_detail(event) == "stderr | two"
 
@@ -293,7 +293,7 @@ def test_chat_progress_live_bash_session_result_renders_as_tool_running() -> Non
 
     # Assert
     assert mapped is not None
-    assert render_progress_event(mapped) == "tool running: bash.exec"
+    assert render_progress_event(mapped) == "● tool running: bash.exec"
 
 
 def test_chat_progress_event_sanitizes_terminal_control_sequences() -> None:
@@ -465,9 +465,50 @@ def test_chat_progress_color_scheme_for_key_statuses() -> None:
             ),
             "\033[92m",
         ),
+        (
+            ProgressEvent(
+                event_id=16,
+                run_id=1,
+                stage="tool_call",
+                iteration=1,
+                tool_name="bash.exec",
+                event_type="tool.call",
+            ),
+            "\033[93m",
+        ),
+        (
+            ProgressEvent(
+                event_id=17,
+                run_id=1,
+                stage="tool_call",
+                iteration=1,
+                tool_name="bash.exec",
+                event_type="tool.result",
+                payload={"result": {"ok": True, "payload": {"exit_code": 0}}},
+            ),
+            "\033[92m",
+        ),
+        (
+            ProgressEvent(
+                event_id=18,
+                run_id=1,
+                stage="tool_call",
+                iteration=1,
+                tool_name="bash.exec",
+                event_type="tool.result",
+                payload={"result": {"ok": False, "error_code": "tool_error"}},
+            ),
+            "\033[91m",
+        ),
     ]
 
     for progress_event, expected_color in cases:
+        if progress_event.event_type == "tool.result":
+            progress_event.attach_tool_details(
+                tool_result=progress_event.payload.get("result")
+                if isinstance(progress_event.payload.get("result"), dict)
+                else None
+            )
         mapped = map_progress_event(progress_event)
         assert mapped is not None
-        assert render_progress_color(mapped) == expected_color
+        assert render_progress_color(mapped, progress_event=progress_event) == expected_color

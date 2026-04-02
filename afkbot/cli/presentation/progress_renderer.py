@@ -49,6 +49,7 @@ def render_progress_event(event: RenderEvent) -> str:
     """Render one progress event as short CLI status text."""
 
     tool_name = _sanitize_terminal_text(event.tool_name) if event.tool_name else None
+    marker = _status_marker(event)
 
     match event.stage:
         case "thinking":
@@ -60,23 +61,23 @@ def render_progress_event(event: RenderEvent) -> str:
                 event.event_type == "tool.result" and event.live_result
             ):
                 if tool_name:
-                    return f"tool running: {tool_name}"
-                return "tool running"
+                    return f"{marker}tool running: {tool_name}"
+                return f"{marker}tool running".strip()
             if event.event_type == "tool.result":
                 if tool_name:
-                    return f"tool completed: {tool_name}"
-                return "tool completed"
+                    return f"{marker}tool completed: {tool_name}"
+                return f"{marker}tool completed".strip()
             if tool_name:
-                return f"calling tool: {tool_name}"
-            return "calling tool"
+                return f"{marker}calling tool: {tool_name}"
+            return f"{marker}calling tool".strip()
         case "subagent_wait":
             if event.event_type == "tool.result":
                 if tool_name:
-                    return f"subagent completed: {tool_name}"
-                return "subagent completed"
+                    return f"{marker}subagent completed: {tool_name}"
+                return f"{marker}subagent completed".strip()
             if tool_name:
-                return f"waiting subagent: {tool_name}"
-            return "waiting subagent"
+                return f"{marker}waiting subagent: {tool_name}"
+            return f"{marker}waiting subagent".strip()
         case "done":
             return "response ready"
         case "cancelled":
@@ -85,13 +86,17 @@ def render_progress_event(event: RenderEvent) -> str:
             assert_never(other)
 
 
-def render_progress_color(event: RenderEvent) -> str:
+def render_progress_color(event: RenderEvent, *, progress_event: ProgressEvent | None = None) -> str:
     """Return ANSI color escape for one progress status line."""
 
     if event.stage == "done":
         return _ANSI_SUCCESS
     if event.stage == "cancelled":
         return _ANSI_ERROR
+    if event.stage in {"tool_call", "subagent_wait"}:
+        if event.event_type == "tool.result" and not event.live_result:
+            return _ANSI_ERROR if _is_tool_result_error(progress_event) else _ANSI_SUCCESS
+        return _ANSI_WARNING
     if event.stage == "planning":
         return _ANSI_VIOLET
     if event.stage == "thinking" and event.iteration is not None and event.iteration > 0:
@@ -313,3 +318,22 @@ def _sanitize_terminal_text(value: str) -> str:
     sanitized = sanitized.replace("\x1b", "")
     sanitized = _CONTROL_RE.sub(" ", sanitized)
     return " ".join(sanitized.split())
+
+
+def _status_marker(event: RenderEvent) -> str:
+    if event.stage in {"tool_call", "subagent_wait"}:
+        return "● "
+    return ""
+
+
+def _is_tool_result_error(event: ProgressEvent | None) -> bool:
+    if event is None:
+        return False
+    result = event.tool_result or {}
+    if result.get("ok") is False:
+        return True
+    payload = result.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    exit_code = payload.get("exit_code")
+    return isinstance(exit_code, int) and exit_code != 0
