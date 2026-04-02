@@ -277,10 +277,23 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
 
     def _fallback_http_status(self, request: LLMRequest, exc: httpx.HTTPStatusError) -> LLMResponse:
         status_code = exc.response.status_code
+        provider_detail = self._extract_provider_error_detail(exc.response)
+        if self._is_context_window_error(status_code=status_code, provider_detail=provider_detail):
+            detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+            return self._fallback_response(
+                request,
+                error_code="llm_context_window_exceeded",
+                error_detail=provider_detail,
+                message=(
+                    "LLM request was rejected because the input exceeded the model context window."
+                    f"{detail_suffix} The runtime may need to compact older context before retrying."
+                ),
+            )
         if self._provider_id != LLMProviderId.OPENAI:
             return self._fallback_response(
                 request,
                 error_code=f"llm_provider_http_{status_code}",
+                error_detail=provider_detail,
             )
         if status_code in {401, 403}:
             return self._fallback_response(
@@ -301,17 +314,38 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 message="LLM provider rate-limited this request. Please try again shortly.",
             )
         if 400 <= status_code < 500:
-            provider_detail = self._extract_provider_error_detail(exc.response)
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
             return self._fallback_response(
                 request,
                 error_code="llm_provider_invalid_request",
+                error_detail=provider_detail,
                 message=(
                     "LLM request was rejected by the provider."
                     f"{detail_suffix} Check the configured model, API surface, and tool payload."
                 ),
             )
         return self._fallback_response(request, error_code="llm_provider_unavailable")
+
+    @staticmethod
+    def _is_context_window_error(*, status_code: int, provider_detail: str | None) -> bool:
+        """Return whether provider rejection indicates a context window overflow."""
+
+        if status_code == 413:
+            return True
+        if not provider_detail:
+            return False
+        normalized = " ".join(provider_detail.lower().split())
+        markers = (
+            "context window",
+            "maximum context length",
+            "context_length_exceeded",
+            "too many tokens",
+            "input exceeds the context window",
+            "input exceeded the context window",
+            "input is too long",
+            "request is too large for the model",
+        )
+        return any(marker in normalized for marker in markers)
 
     @staticmethod
     def _extract_provider_error_detail(response: httpx.Response) -> str | None:

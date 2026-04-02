@@ -88,6 +88,34 @@ def test_build_chat_workspace_progress_entries_skips_llm_internal_ticks() -> Non
     assert entries == ()
 
 
+def test_build_chat_workspace_progress_entries_shows_context_compaction_steps() -> None:
+    """Visible compaction events should reach the fullscreen transcript."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=4,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="llm.call.compaction_done",
+        payload={"attempt": 1, "summary_strategy": "hybrid_llm_v1"},
+    )
+
+    next_state, entries = build_chat_workspace_progress_entries(
+        state,
+        event,
+        first_progress_entry=True,
+    )
+
+    assert next_state.active_spinner_label is None
+    assert len(entries) == 2
+    assert entries[0].text == "----- Context automatically compacted -----"
+    assert entries[0].accent == "thinking"
+    assert entries[1].text == "attempt=1 summary=hybrid_llm_v1"
+    assert entries[1].accent == "detail"
+
+
 def test_build_chat_workspace_progress_entries_renders_tool_status_and_detail() -> None:
     """Tool progress should keep the old AFK status/detail transcript shape."""
 

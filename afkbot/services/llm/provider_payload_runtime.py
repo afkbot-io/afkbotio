@@ -393,11 +393,13 @@ class OpenAICompatiblePayloadRuntime:
         *,
         error_code: str = "llm_provider_unavailable",
         message: str = "LLM provider is temporarily unavailable. Please try again shortly.",
+        error_detail: str | None = None,
     ) -> LLMResponse:
         _ = request
         return LLMResponse.final(
             message,
             error_code=error_code,
+            error_detail=error_detail,
         )
 
     @staticmethod

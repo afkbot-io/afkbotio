@@ -50,6 +50,12 @@ def render_progress_event(event: RenderEvent) -> str:
 
     tool_name = _sanitize_terminal_text(event.tool_name) if event.tool_name else None
     marker = _status_marker(event)
+    if event.event_type == "llm.call.compaction_start":
+        return "----- Automatic context compaction -----"
+    if event.event_type == "llm.call.compaction_done":
+        return "----- Context automatically compacted -----"
+    if event.event_type == "llm.call.compaction_failed":
+        return "----- Automatic context compaction failed -----"
 
     match event.stage:
         case "thinking":
@@ -89,6 +95,12 @@ def render_progress_event(event: RenderEvent) -> str:
 def render_progress_color(event: RenderEvent, *, progress_event: ProgressEvent | None = None) -> str:
     """Return ANSI color escape for one progress status line."""
 
+    if event.event_type == "llm.call.compaction_done":
+        return _ANSI_SUCCESS
+    if event.event_type == "llm.call.compaction_failed":
+        return _ANSI_ERROR
+    if event.event_type == "llm.call.compaction_start":
+        return _ANSI_WARNING
     if event.stage == "done":
         return _ANSI_SUCCESS
     if event.stage == "cancelled":
@@ -107,6 +119,8 @@ def render_progress_color(event: RenderEvent, *, progress_event: ProgressEvent |
 def render_progress_detail(event: ProgressEvent) -> str | None:
     """Render one gray detail line for tool/subagent progress when available."""
 
+    if event.event_type.startswith("llm.call.compaction_"):
+        return _render_compaction_details(event)
     if event.event_type.startswith("llm.call."):
         return _render_llm_call_details(event)
     if event.event_type == "turn.plan":
@@ -257,6 +271,47 @@ def _render_llm_call_details(event: ProgressEvent) -> str | None:
         parts.append(f"kind={response_kind}")
     if error_code:
         parts.append(f"error={error_code}")
+    if not parts:
+        return None
+    return " ".join(parts)
+
+
+def _render_compaction_details(event: ProgressEvent) -> str | None:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    attempt = payload.get("attempt")
+    summary_strategy = str(payload.get("summary_strategy") or "").strip()
+    summary_chars = payload.get("summary_chars")
+    preserved_recent_messages = payload.get("preserved_recent_messages")
+    history_messages_before = payload.get("history_messages_before")
+    history_messages_after = payload.get("history_messages_after")
+    context_chars_before = payload.get("context_chars_before")
+    context_chars_after = payload.get("context_chars_after")
+    compacted_history = payload.get("compacted_history")
+    compacted_context = payload.get("compacted_context")
+    error_detail = str(payload.get("error_detail") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+
+    parts: list[str] = []
+    if isinstance(attempt, int):
+        parts.append(f"attempt={attempt}")
+    if summary_strategy:
+        parts.append(f"summary={summary_strategy}")
+    if isinstance(summary_chars, int):
+        parts.append(f"summary_chars={summary_chars}")
+    if isinstance(preserved_recent_messages, int):
+        parts.append(f"keep_recent={preserved_recent_messages}")
+    if isinstance(history_messages_before, int) and isinstance(history_messages_after, int):
+        parts.append(f"history={history_messages_before}->{history_messages_after}")
+    if isinstance(context_chars_before, int) and isinstance(context_chars_after, int):
+        parts.append(f"context={context_chars_before}->{context_chars_after}")
+    if compacted_history is True:
+        parts.append("history_compacted=true")
+    if compacted_context is True:
+        parts.append("context_compacted=true")
+    if reason:
+        parts.append(f"reason={_fmt_value(reason)}")
+    if error_detail:
+        parts.append(f"provider={_fmt_value(error_detail)}")
     if not parts:
         return None
     return " ".join(parts)

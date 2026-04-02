@@ -68,6 +68,7 @@ class LLMResponse(BaseModel):
     final_message: str | None = None
     tool_calls: list[ToolCallRequest] = Field(default_factory=list)
     error_code: str | None = None
+    error_detail: str | None = None
     provider_items: list[dict[str, object]] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -78,6 +79,8 @@ class LLMResponse(BaseModel):
             raise ValueError("tool_calls is required for tool_calls response")
         if self.kind == "tool_calls" and self.error_code is not None:
             raise ValueError("error_code is not allowed for tool_calls response")
+        if self.kind == "tool_calls" and self.error_detail is not None:
+            raise ValueError("error_detail is not allowed for tool_calls response")
         return self
 
     @classmethod
@@ -86,6 +89,7 @@ class LLMResponse(BaseModel):
         message: str,
         *,
         error_code: str | None = None,
+        error_detail: str | None = None,
         provider_items: list[dict[str, object]] | None = None,
     ) -> LLMResponse:
         """Build deterministic final response."""
@@ -94,6 +98,7 @@ class LLMResponse(BaseModel):
             kind="final",
             final_message=message,
             error_code=error_code,
+            error_detail=error_detail,
             provider_items=list(provider_items or []),
         )
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope
+from afkbot.services.agent_loop.llm_request_compaction import LLMRequestCompactionService
 from afkbot.services.agent_loop.llm_request_runtime import LLMRequestRuntime
 from afkbot.services.agent_loop.llm_tool_followup import LLMToolFollowupPolicy
 from afkbot.services.agent_loop.pending_envelopes import PendingEnvelopeBuilder
@@ -19,6 +20,7 @@ from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
 from afkbot.services.llm.contracts import (
     LLMMessage,
     LLMRequest,
+    LLMResponse,
     LLMToolDefinition,
     ToolCallRequest,
 )
@@ -26,6 +28,7 @@ from afkbot.services.llm.reasoning import ReasoningEffort
 from afkbot.services.tools.base import ToolCall, ToolResult
 
 AsyncProgressLogger = Callable[..., Awaitable[None]]
+AsyncEventLogger = Callable[..., Awaitable[None]]
 AsyncCancelCheck = Callable[..., Awaitable[None]]
 NormalizeParams = Callable[[object], dict[str, object]]
 SanitizeText = Callable[[str], str]
@@ -56,7 +59,9 @@ class LLMIterationRuntime:
         llm_request_runtime: LLMRequestRuntime,
         tool_execution: ToolExecutionRuntime,
         pending_envelopes: PendingEnvelopeBuilder,
+        request_compaction: LLMRequestCompactionService,
         tool_skill_resolver: ToolSkillResolver,
+        log_event: AsyncEventLogger,
         log_progress: AsyncProgressLogger,
         raise_if_cancel_requested: AsyncCancelCheck,
         sanitize: SanitizeText,
@@ -66,9 +71,11 @@ class LLMIterationRuntime:
         self._llm_request_runtime = llm_request_runtime
         self._tool_execution = tool_execution
         self._pending_envelopes = pending_envelopes
+        self._request_compaction = request_compaction
         self._tool_followup_policy = LLMToolFollowupPolicy(
             tool_skill_resolver=tool_skill_resolver,
         )
+        self._log_event = log_event
         self._log_progress = log_progress
         self._raise_if_cancel_requested = raise_if_cancel_requested
         self._sanitize = sanitize
@@ -131,7 +138,7 @@ class LLMIterationRuntime:
                 reasoning_effort=reasoning_effort,
                 request_timeout_sec=max(0.01, min(request_timeout_sec, remaining_sec)),
             )
-            response = await self._llm_request_runtime.complete_with_progress(
+            response = await self._complete_request_with_overflow_recovery(
                 run_id=run_id,
                 session_id=session_id,
                 iteration=iteration,
@@ -252,6 +259,80 @@ class LLMIterationRuntime:
         return LLMIterationResult(
             assistant_message=f"finalized: max_iterations_reached ({max_iterations})",
         )
+
+    async def _complete_request_with_overflow_recovery(
+        self,
+        *,
+        run_id: int,
+        session_id: str,
+        iteration: int,
+        request: LLMRequest,
+    ) -> LLMResponse:
+        """Complete one provider request and retry with compacted context on overflow."""
+
+        current_request = request
+        for attempt in range(0, 3):
+            response = await self._llm_request_runtime.complete_with_progress(
+                run_id=run_id,
+                session_id=session_id,
+                iteration=iteration,
+                request=current_request,
+            )
+            if response.error_code != "llm_context_window_exceeded":
+                return response
+            if attempt >= 2:
+                return response
+
+            retry_attempt = attempt + 1
+            await self._log_event(
+                run_id=run_id,
+                session_id=session_id,
+                event_type="llm.call.compaction_start",
+                payload={
+                    "iteration": iteration,
+                    "attempt": retry_attempt,
+                    "history_messages": len(current_request.history),
+                    "context_chars": len(current_request.context),
+                    "error_code": response.error_code,
+                    "error_detail": response.error_detail,
+                },
+            )
+            compacted = await self._request_compaction.compact_for_overflow(
+                request=current_request,
+                attempt=retry_attempt,
+            )
+            if compacted is None:
+                await self._log_event(
+                    run_id=run_id,
+                    session_id=session_id,
+                    event_type="llm.call.compaction_failed",
+                    payload={
+                        "iteration": iteration,
+                        "attempt": retry_attempt,
+                        "reason": "request_unchanged",
+                    },
+                )
+                return response
+            current_request = compacted.request
+            await self._log_event(
+                run_id=run_id,
+                session_id=session_id,
+                event_type="llm.call.compaction_done",
+                payload={
+                    "iteration": iteration,
+                    "attempt": retry_attempt,
+                    "summary_strategy": compacted.summary_strategy,
+                    "summary_chars": compacted.summary_chars,
+                    "preserved_recent_messages": compacted.preserved_recent_messages,
+                    "history_messages_before": compacted.history_messages_before,
+                    "history_messages_after": compacted.history_messages_after,
+                    "context_chars_before": compacted.context_chars_before,
+                    "context_chars_after": compacted.context_chars_after,
+                    "compacted_history": compacted.compacted_history,
+                    "compacted_context": compacted.compacted_context,
+                },
+            )
+        return response
 
     @staticmethod
     def _wall_clock_budget_message(*, wall_clock_budget_sec: float) -> str:

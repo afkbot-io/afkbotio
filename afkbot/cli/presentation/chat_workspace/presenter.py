@@ -22,6 +22,14 @@ from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnOutcome
 
+_VISIBLE_LLM_CALL_EVENT_TYPES = frozenset(
+    {
+        "llm.call.compaction_start",
+        "llm.call.compaction_done",
+        "llm.call.compaction_failed",
+    }
+)
+
 
 def build_chat_workspace_surface_state(
     state: ChatReplSessionState,
@@ -66,11 +74,14 @@ def build_chat_workspace_progress_entries(
 ) -> tuple[ProgressTimelineState, tuple[ChatWorkspaceTranscriptEntry, ...]]:
     """Convert one progress event into zero or more transcript entries."""
 
-    if event.stage == "thinking":
+    if event.stage == "thinking" and event.event_type not in _VISIBLE_LLM_CALL_EVENT_TYPES:
         next_state, _ = reduce_progress_event(state, event)
         return next_state, ()
 
-    if event.event_type.startswith("llm.call."):
+    if (
+        event.event_type.startswith("llm.call.")
+        and event.event_type not in _VISIBLE_LLM_CALL_EVENT_TYPES
+    ):
         return state, ()
 
     next_state, frame = reduce_progress_event(state, event)

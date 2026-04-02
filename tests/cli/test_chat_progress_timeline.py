@@ -231,3 +231,23 @@ def test_timeline_renders_llm_tick_as_status_line_not_spinner() -> None:
     assert frame.spinner_label is None
     assert frame.status_line == "[iter 1] thinking..."
     assert frame.detail_line == "llm=tick elapsed_ms=3000 timeout_ms=30000"
+
+
+def test_timeline_renders_context_compaction_step_without_iteration_prefix() -> None:
+    """Compaction system steps should stay prominent and not be prefixed like normal iterations."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=30,
+        run_id=1,
+        stage="thinking",
+        iteration=2,
+        tool_name=None,
+        event_type="llm.call.compaction_start",
+        payload={"attempt": 1},
+    )
+
+    _, frame = reduce_progress_event(state, event)
+
+    assert frame is not None
+    assert frame.status_line == "----- Automatic context compaction -----"
