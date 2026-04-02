@@ -9,6 +9,7 @@ Use the docs site for setup, configuration, MCP, automations, and command refere
 ## What AFKBOT does
 
 - Runs local chat sessions with tool access, planning, and configurable reasoning.
+- Supports multiple LLM providers in setup/profile runtime (`openrouter`, `openai`, `claude`, `moonshot`, `deepseek`, `xai`, `qwen`, and `custom`).
 - Provides a CLI-first workflow for setup, chat, health checks, and runtime control.
 - Supports profile-scoped configuration, secrets, permissions, and tool exposure.
 - Includes browser, web, app, MCP, automation, and channel integration surfaces.
@@ -95,6 +96,7 @@ curl -fsS http://127.0.0.1:8081/healthz
 Useful commands:
 
 ```bash
+uv run afk version
 uv run afk doctor
 uv run afk setup
 uv run afk chat --message "Summarize this project"
@@ -125,6 +127,7 @@ uv tool uninstall afkbotio
 ## Configuration
 
 - Environment-based configuration examples live in [`.env.example`](.env.example).
+- Setup/provider selection supports OpenRouter, OpenAI, Claude, Moonshot (Kimi), DeepSeek, xAI, Qwen, and custom OpenAI-compatible endpoints.
 - Runtime secrets should be configured through `afk setup`, `afk profile`, or credential commands, not committed into the repository.
 - Manual source setups use a local SQLite database and a local AFKBOT runtime.
 - New installs create the current SQLite schema directly; no legacy migration chain is required.
