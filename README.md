@@ -108,6 +108,7 @@ uv run afk version
 uv run afk doctor
 uv run afk setup
 uv run afk chat --message "Summarize this project"
+uv run afk automation list --profile default
 uv run afk profile show default
 uv run afk update
 ```
