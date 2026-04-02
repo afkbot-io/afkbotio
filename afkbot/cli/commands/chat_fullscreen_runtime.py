@@ -30,7 +30,7 @@ from afkbot.cli.presentation.chat_workspace.presenter import (
     build_chat_workspace_user_entry,
 )
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
-from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.interactive_resume import available_profile_choices
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.chat_session.activity_state import capture_chat_activity
@@ -173,8 +173,9 @@ async def run_fullscreen_chat_workspace_session(
         yes_label: str = "Approve",
         no_label: str = "Deny",
         hint_text: str | None = None,
-        **_: object,
+        **_unused: object,
     ) -> bool:
+        del _unused
         return await workspace.confirm(
             title=title,
             question=question,
@@ -187,11 +188,11 @@ async def run_fullscreen_chat_workspace_session(
 
     async def _prompt_workspace_tool_access(
         *,
-        envelope,
+        envelope: ActionEnvelope,
         question_text: str,
-        **_: object,
+        **_unused: object,
     ) -> str:
-        _ = envelope
+        del envelope, _unused
         selected = await workspace.choose_option(
             title="Tool access request",
             prompt=question_text,
@@ -205,7 +206,7 @@ async def run_fullscreen_chat_workspace_session(
         )
         return "deny" if selected is None else selected
 
-    async def _prompt_workspace_credential_profile(envelope) -> str | None:
+    async def _prompt_workspace_credential_profile(envelope: ActionEnvelope) -> str | None:
         available_profiles = available_profile_choices(envelope)
         if not available_profiles:
             return None
