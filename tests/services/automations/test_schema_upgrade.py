@@ -66,6 +66,7 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
                         in_progress_event_hash VARCHAR(128),
                         claim_token VARCHAR(64),
                         in_progress_until DATETIME,
+                        last_session_id VARCHAR(255),
                         last_received_at DATETIME,
                         FOREIGN KEY(automation_id) REFERENCES automation(id)
                     )
@@ -105,7 +106,13 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
                 await conn.execute(
                     text(
                         """
-                        SELECT webhook_token, webhook_token_hash
+                        SELECT
+                            webhook_token,
+                            webhook_token_hash,
+                            last_session_id,
+                            last_succeeded_at,
+                            last_failed_at,
+                            last_error
                         FROM automation_trigger_webhook
                         WHERE automation_id = 1
                         """
@@ -117,5 +124,9 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
         assert token
         assert token != "legacy-token"
         assert token_hash == hash_webhook_token(token)
+        assert row[2] is None
+        assert row[3] is None
+        assert row[4] is None
+        assert row[5] is None
     finally:
         await engine.dispose()

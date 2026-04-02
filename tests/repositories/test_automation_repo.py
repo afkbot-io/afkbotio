@@ -149,6 +149,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-1",
+                session_id="session-1",
             )
             duplicate_mark = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
@@ -156,6 +157,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-2",
+                session_id="session-2",
             )
             parallel_other_mark = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
@@ -163,16 +165,20 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-2".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-3",
+                session_id="session-3",
             )
             wrong_complete = await repo.complete_webhook_event(
                 automation_id=webhook_automation.id,
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 claim_token="wrong-token",
+                completed_at=now + timedelta(seconds=5),
             )
             released = await repo.release_webhook_event(
                 automation_id=webhook_automation.id,
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 claim_token="w-1",
+                failed_at=now + timedelta(seconds=5),
+                error_message="RuntimeError: webhook failed",
             )
             retried_mark = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
@@ -180,11 +186,13 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-4",
+                session_id="session-4",
             )
             completed = await repo.complete_webhook_event(
                 automation_id=webhook_automation.id,
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 claim_token="w-4",
+                completed_at=now + timedelta(seconds=7),
             )
             second_mark = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
@@ -192,11 +200,13 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-2".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-5",
+                session_id="session-5",
             )
             completed_second = await repo.complete_webhook_event(
                 automation_id=webhook_automation.id,
                 event_hash=sha256("event-2".encode("utf-8")).hexdigest(),
                 claim_token="w-5",
+                completed_at=now + timedelta(seconds=11),
             )
             replay_first = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
@@ -204,6 +214,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-6",
+                session_id="session-6",
             )
             assert first_mark is True
             assert duplicate_mark is False
@@ -215,6 +226,20 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
             assert second_mark is True
             assert completed_second is True
             assert replay_first is False
+            webhook_row_after = await repo.get_by_id(
+                profile_id="default",
+                automation_id=webhook_automation.id,
+            )
+            assert webhook_row_after is not None
+            assert webhook_row_after[2] is not None
+            assert webhook_row_after[2].last_session_id == "session-5"
+            assert webhook_row_after[2].last_error is None
+            assert webhook_row_after[2].last_failed_at == (now + timedelta(seconds=5)).replace(
+                tzinfo=None
+            )
+            assert webhook_row_after[2].last_succeeded_at == (
+                now + timedelta(seconds=11)
+            ).replace(tzinfo=None)
 
             due_rows = await repo.list_due_cron(now_utc=now)
             due_ids = {row[0].id for row in due_rows}
@@ -281,6 +306,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 event_hash=sha256("deleted-event".encode("utf-8")).hexdigest(),
                 lease_until=now + timedelta(minutes=15),
                 claim_token="w-deleted",
+                session_id="deleted-session",
             )
             assert deleted_cron_claim is False
             assert deleted_webhook_claim is False
@@ -320,6 +346,7 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 event_hash=event_hash,
                 lease_until=lease_until,
                 claim_token="repo-claim",
+                session_id="repo-session",
             )
             assert claimed is True
 
@@ -360,6 +387,7 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
             assert updated_webhook.claim_token == "repo-claim"
             assert updated_webhook.in_progress_until == lease_until.replace(tzinfo=None)
             assert updated_webhook.last_received_at == now.replace(tzinfo=None)
+            assert updated_webhook.last_session_id == "repo-session"
 
             updated_before_touch = updated_automation.updated_at
             touched = await repo.touch_automation(

@@ -38,6 +38,7 @@ def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
     _ensure_webhook_token_column(conn)
+    _ensure_webhook_execution_columns(conn)
     _backfill_missing_webhook_tokens(conn)
 
 
@@ -60,6 +61,23 @@ def _ensure_webhook_token_column(conn) -> None:  # type: ignore[no-untyped-def]
             "ON automation_trigger_webhook (webhook_token)"
         )
     )
+
+
+def _ensure_webhook_execution_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure webhook execution status columns exist for older installations."""
+
+    columns = _table_columns(conn, "automation_trigger_webhook")
+    if not columns:
+        return
+    missing_columns = {
+        "last_session_id": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_session_id VARCHAR(255)",
+        "last_succeeded_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_succeeded_at DATETIME",
+        "last_failed_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_failed_at DATETIME",
+        "last_error": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_error TEXT",
+    }
+    for column_name, ddl in missing_columns.items():
+        if column_name not in columns:
+            conn.execute(text(ddl))
 
 
 def _backfill_missing_webhook_tokens(conn) -> None:  # type: ignore[no-untyped-def]
