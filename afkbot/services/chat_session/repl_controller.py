@@ -65,6 +65,20 @@ async def run_queueable_chat_session(
     input_task: asyncio.Task[str] | None = asyncio.create_task(read_input())
     current_turn_task: asyncio.Task[ChatTurnOutcome | None] | None = None
 
+    async def _pause_background_input_for_prompt() -> None:
+        nonlocal input_task
+        if input_task is None or input_task.done():
+            return
+        input_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await input_task
+        input_task = None
+
+    try:
+        setattr(progress_sink, "before_interactive_prompt", _pause_background_input_for_prompt)
+    except Exception:
+        pass
+
     def _allow_background_input() -> bool:
         if allow_background_input is None:
             return True

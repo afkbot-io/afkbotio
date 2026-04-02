@@ -1,8 +1,6 @@
 """Builders for approval, profile-selection, and secure-field envelopes."""
 
 from __future__ import annotations
-
-import json
 from collections.abc import Callable
 from uuid import uuid4
 
@@ -16,7 +14,6 @@ from afkbot.services.tools.base import ToolCall, ToolResult
 
 PROFILE_SELECTION_ERROR_CODE = "credential_profile_required"
 PROFILE_SELECTION_QUESTION_KIND = "credential_profile_required"
-TOOL_NOT_ALLOWED_ERROR_CODE = "tool_not_allowed_in_turn"
 TOOL_NOT_ALLOWED_QUESTION_KIND = "tool_not_allowed_in_turn"
 SECURE_REQUEST_ERROR_CODES = frozenset(
     {
@@ -159,17 +156,12 @@ class PendingEnvelopeBuilder:
 
         for call, result in zip(tool_calls, tool_results, strict=True):
             error_code = (result.error_code or "").strip()
-            if error_code != TOOL_NOT_ALLOWED_ERROR_CODE:
+            if error_code != TOOL_NOT_ALLOWED_QUESTION_KIND:
                 continue
             tool_name = str(call.name).strip()
             normalized_call_params = self._params_normalizer(call.params)
-            reason = str(result.reason or "Requested tool is outside the visible surface.").strip()
             question_id = f"tool_not_allowed:{uuid4().hex}"
-            params_display = json.dumps(normalized_call_params, ensure_ascii=True, sort_keys=True)
-            message = (
-                f"{reason} Tool `{tool_name}` is outside the current turn's allowed tool surface "
-                f"with params {params_display}. Execute it anyway?"
-            )
+            message = "Tool access requires explicit approval before execution."
             return ActionEnvelope(
                 action="ask_question",
                 message=message,
@@ -178,7 +170,9 @@ class PendingEnvelopeBuilder:
                     "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
                     "tool_name": tool_name,
                     "tool_params": normalized_call_params,
-                    "tool_not_allowed_reason": reason,
+                    "tool_not_allowed_reason": str(
+                        result.reason or "Requested tool is outside the visible surface."
+                    ).strip(),
                     "error_code": error_code,
                 },
             )

@@ -14,6 +14,8 @@ class TurnContextOverrides:
     """Turn-scoped context additions supplied by ingress/routing layers."""
 
     runtime_metadata: dict[str, object] | None = None
+    cli_approval_surface_enabled: bool = False
+    approved_tool_names: tuple[str, ...] | None = None
     prompt_overlay: str | None = None
     planning_mode: PlanningMode = "off"
     execution_planning_mode: ChatPlanningMode | None = None
@@ -27,6 +29,8 @@ def merge_turn_context_overrides(
     """Merge trusted turn overrides from multiple ingress/runtime sources."""
 
     merged_metadata: dict[str, object] = {}
+    cli_approval_surface_enabled = False
+    merged_approved_tool_names: list[str] = []
     merged_prompt: str | None = None
     planning_mode: PlanningMode = "off"
     execution_planning_mode: ChatPlanningMode | None = None
@@ -40,6 +44,12 @@ def merge_turn_context_overrides(
         saw_value = True
         if part.runtime_metadata:
             merged_metadata.update(part.runtime_metadata)
+        if part.cli_approval_surface_enabled:
+            cli_approval_surface_enabled = True
+        _extend_unique_names(
+            target=merged_approved_tool_names,
+            source=part.approved_tool_names,
+        )
         merged_prompt = combine_prompt_overlays(merged_prompt, part.prompt_overlay)
         if part.planning_mode != "off":
             planning_mode = part.planning_mode
@@ -54,6 +64,8 @@ def merge_turn_context_overrides(
         return None
     if (
         not merged_metadata
+        and not cli_approval_surface_enabled
+        and not merged_approved_tool_names
         and merged_prompt is None
         and planning_mode == "off"
         and execution_planning_mode is None
@@ -63,9 +75,25 @@ def merge_turn_context_overrides(
         return None
     return TurnContextOverrides(
         runtime_metadata=merged_metadata or None,
+        cli_approval_surface_enabled=cli_approval_surface_enabled,
+        approved_tool_names=tuple(merged_approved_tool_names) or None,
         prompt_overlay=merged_prompt,
         planning_mode=planning_mode,
         execution_planning_mode=execution_planning_mode,
         thinking_level=thinking_level,
         tool_access_mode=tool_access_mode,
     )
+
+
+def _extend_unique_names(*, target: list[str], source: tuple[str, ...] | None) -> None:
+    """Append trimmed names preserving order and uniqueness."""
+
+    if not source:
+        return
+    seen = set(target)
+    for raw_name in source:
+        name = str(raw_name).strip()
+        if not name or name in seen:
+            continue
+        target.append(name)
+        seen.add(name)

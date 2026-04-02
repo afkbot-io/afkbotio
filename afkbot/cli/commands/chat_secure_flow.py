@@ -31,7 +31,6 @@ from afkbot.services.tools.base import ToolCall
 from afkbot.settings import get_settings
 
 _SECURITY_HEADER = "\033[93mAFK Agent (security)\033[0m"
-_SESSION_ALLOWED_TOOL_METADATA_KEY = "session_allowed_tool_names"
 _TOOL_ACCESS_DENY = "deny"
 _TOOL_ACCESS_ONCE = "allow_once"
 _TOOL_ACCESS_SESSION = "allow_session"
@@ -40,6 +39,7 @@ RunOnceResultFn = Callable[..., Coroutine[Any, Any, TurnResult]]
 SubmitSecureFieldFn = Callable[..., Coroutine[Any, Any, tuple[bool, str]]]
 ConfirmSpaceFn = Callable[..., bool | Awaitable[bool]]
 ToolNotAllowedPromptFn = Callable[..., str | Awaitable[str]]
+CredentialProfilePromptFn = Callable[..., str | None | Awaitable[str | None]]
 RunTurnWithSecureResolution = Callable[..., Coroutine[Any, Any, TurnResult]]
 
 async def run_turn_with_secure_resolution(
@@ -55,7 +55,8 @@ async def run_turn_with_secure_resolution(
     submit_secure_field_fn: SubmitSecureFieldFn = submit_secure_field,
     confirm_space_fn: ConfirmSpaceFn | None = None,
     tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
-    session_tool_allowlist: set[str] | None = None,
+    credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
+    session_approved_tools: set[str] | None = None,
 ) -> TurnResult:
     """Run turn and resolve secure credential requests without sending secrets to model."""
 
@@ -64,26 +65,26 @@ async def run_turn_with_secure_resolution(
         tool_not_allowed_prompt_fn = _prompt_tool_not_allowed_choice
     if confirm_space_fn is None:
         confirm_space_fn = _prompt_approval_confirmation
+    if credential_profile_prompt_fn is None:
+        credential_profile_prompt_fn = _prompt_credential_profile_choice
     interaction_steps = 0
     current_message = message
     planned_tool_calls: list[ToolCall] | None = None
-    runtime_one_time_allowlist: set[str] = set()
+    runtime_one_time_approved_tools: set[str] = set()
     seen_question_signatures: set[str] = set()
     while True:
         session_override: TurnContextOverrides | None = None
-        merged_allowlist = set(
+        merged_approved_tools = set(
             str(item).strip()
-            for item in (session_tool_allowlist or set())
+            for item in (session_approved_tools or set())
             if str(item).strip()
         )
-        if runtime_one_time_allowlist:
-            merged_allowlist.update(runtime_one_time_allowlist)
-        normalized_session_tools = sorted(merged_allowlist)
+        if runtime_one_time_approved_tools:
+            merged_approved_tools.update(runtime_one_time_approved_tools)
+        normalized_session_tools = sorted(merged_approved_tools)
         if normalized_session_tools:
             session_override = TurnContextOverrides(
-                runtime_metadata={
-                    _SESSION_ALLOWED_TOOL_METADATA_KEY: normalized_session_tools,
-                }
+                approved_tool_names=tuple(normalized_session_tools),
             )
         merged_overrides = merge_turn_context_overrides(
             runtime_overrides,
@@ -107,8 +108,8 @@ async def run_turn_with_secure_resolution(
                 progress_sink=progress_sink,
                 context_overrides=merged_overrides,
             )
-        runtime_one_time_allowlist.clear()
         if result.envelope.action == "request_secure_field" and allow_secure_prompt:
+            await _notify_before_interactive_prompt(progress_sink)
             if interaction_steps >= max_interaction_steps:
                 return TurnResult(
                     run_id=result.run_id,
@@ -154,6 +155,7 @@ async def run_turn_with_secure_resolution(
             planned_tool_calls = [resume_call]
             continue
         if result.envelope.action == "ask_question" and allow_secure_prompt:
+            await _notify_before_interactive_prompt(progress_sink)
             if interaction_steps >= max_interaction_steps:
                 return TurnResult(
                     run_id=result.run_id,
@@ -188,8 +190,8 @@ async def run_turn_with_secure_resolution(
                     )
                 ).strip().lower()
                 if choice == _TOOL_ACCESS_ONCE:
-                    resume_call = extract_resume_tool_call(result.envelope)
-                    if resume_call is None:
+                    tool_name = _tool_not_allowed_tool_name(result.envelope)
+                    if tool_name is None:
                         return TurnResult(
                             run_id=result.run_id,
                             session_id=result.session_id,
@@ -197,22 +199,22 @@ async def run_turn_with_secure_resolution(
                             envelope=ActionEnvelope(
                                 action="block",
                                 message=(
-                                    "Tool execution request failed: resume tool payload is missing."
+                                    "Tool execution request failed: approved tool name is missing."
                                 ),
-                                blocked_reason="tool_not_allowed_resume_payload_missing",
+                                blocked_reason="tool_not_allowed_tool_name_missing",
                             ),
                         )
                     interaction_steps += 1
-                    typer.echo(f"  Executing once: {resume_call.name}")
-                    runtime_one_time_allowlist.add(resume_call.name)
-                    current_message = f"tool_not_allowed_resume:{resume_call.name}"
-                    planned_tool_calls = [resume_call]
+                    typer.echo(f"  Allowing once: {tool_name}")
+                    runtime_one_time_approved_tools.add(tool_name)
+                    current_message = _build_tool_access_resume_message(result.envelope)
+                    planned_tool_calls = None
                     continue
                 if choice == _TOOL_ACCESS_SESSION:
-                    if session_tool_allowlist is None:
-                        session_tool_allowlist = set()
-                    resume_call = extract_resume_tool_call(result.envelope)
-                    if resume_call is None:
+                    if session_approved_tools is None:
+                        session_approved_tools = set()
+                    tool_name = _tool_not_allowed_tool_name(result.envelope)
+                    if tool_name is None:
                         return TurnResult(
                             run_id=result.run_id,
                             session_id=result.session_id,
@@ -220,16 +222,16 @@ async def run_turn_with_secure_resolution(
                             envelope=ActionEnvelope(
                                 action="block",
                                 message=(
-                                    "Tool execution request failed: resume tool payload is missing."
+                                    "Tool execution request failed: approved tool name is missing."
                                 ),
-                                blocked_reason="tool_not_allowed_resume_payload_missing",
+                                blocked_reason="tool_not_allowed_tool_name_missing",
                             ),
                         )
-                    session_tool_allowlist.add(resume_call.name)
+                    session_approved_tools.add(tool_name)
                     interaction_steps += 1
-                    typer.echo(f"  Added to session allowlist: {resume_call.name}")
-                    current_message = f"tool_not_allowed_resume:{resume_call.name}"
-                    planned_tool_calls = [resume_call]
+                    typer.echo(f"  Added to session approved tools: {tool_name}")
+                    current_message = _build_tool_access_resume_message(result.envelope)
+                    planned_tool_calls = None
                     continue
                 return TurnResult(
                     run_id=result.run_id,
@@ -243,7 +245,7 @@ async def run_turn_with_secure_resolution(
             if is_credential_profile_question(result.envelope):
                 selected_profile = cast(
                     "str | None",
-                    await _await_if_needed(_prompt_credential_profile_choice(result.envelope)),
+                    await _await_if_needed(credential_profile_prompt_fn(result.envelope)),
                 )
                 if not selected_profile:
                     return TurnResult(
@@ -333,10 +335,15 @@ def build_run_turn_with_overrides(
     run_once_result_fn: RunOnceResultFn = run_once_result,
     submit_secure_field_fn: SubmitSecureFieldFn = submit_secure_field,
     confirm_space_fn: ConfirmSpaceFn | None = None,
+    tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
+    credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
 ) -> RunTurnWithSecureResolution:
     """Bind trusted runtime overrides to one chat turn runner."""
 
-    session_tool_allowlist_by_session: dict[str, set[str]] = {}
+    session_approved_tools_by_session: dict[str, set[str]] = {}
+    bound_confirm_space_fn = confirm_space_fn
+    bound_tool_not_allowed_prompt_fn = tool_not_allowed_prompt_fn
+    bound_credential_profile_prompt_fn = credential_profile_prompt_fn
 
     async def _run_turn(
         *,
@@ -346,8 +353,11 @@ def build_run_turn_with_overrides(
         progress_sink: Callable[[ProgressEvent], None] | None,
         allow_secure_prompt: bool,
         turn_overrides: TurnContextOverrides | None = None,
+        tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
+        confirm_space_fn: ConfirmSpaceFn | None = None,
+        credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
     ) -> TurnResult:
-        session_tool_allowlist = session_tool_allowlist_by_session.setdefault(session_id, set())
+        session_approved_tools = session_approved_tools_by_session.setdefault(session_id, set())
         return await run_turn_with_secure_resolution(
             message=message,
             profile_id=profile_id,
@@ -358,8 +368,20 @@ def build_run_turn_with_overrides(
             turn_overrides=turn_overrides,
             run_once_result_fn=run_once_result_fn,
             submit_secure_field_fn=submit_secure_field_fn,
-            confirm_space_fn=confirm_space_fn,
-            session_tool_allowlist=session_tool_allowlist,
+            confirm_space_fn=(
+                bound_confirm_space_fn if confirm_space_fn is None else confirm_space_fn
+            ),
+            tool_not_allowed_prompt_fn=(
+                bound_tool_not_allowed_prompt_fn
+                if tool_not_allowed_prompt_fn is None
+                else tool_not_allowed_prompt_fn
+            ),
+            credential_profile_prompt_fn=(
+                bound_credential_profile_prompt_fn
+                if credential_profile_prompt_fn is None
+                else credential_profile_prompt_fn
+            ),
+            session_approved_tools=session_approved_tools,
         )
 
     return _run_turn
@@ -416,10 +438,10 @@ def _tool_not_allowed_question_text(envelope: ActionEnvelope) -> str:
     message = str(envelope.message or "").strip()
     reason = str(patch.get("tool_not_allowed_reason") or "").strip()
     params = patch.get("tool_params")
-    lines = [f"Approve running tool: {tool_name}?"]
+    lines = [f"Approve access to tool: {tool_name}?"]
     formatted_params = _format_tool_not_allowed_params(params)
     if formatted_params:
-        lines.append("Parameters:")
+        lines.append("Proposed parameters:")
         lines.append(formatted_params)
     if reason:
         lines.append(f"Reason: {reason}")
@@ -430,6 +452,7 @@ def _tool_not_allowed_question_text(envelope: ActionEnvelope) -> str:
         "tool not allowed.",
         "tool access request.",
         "tool not allowed: tool access is disabled for this turn",
+        "tool access requires explicit approval before execution.",
     }:
         lines.append(message)
     return "\n".join(lines)
@@ -447,6 +470,23 @@ def _format_tool_not_allowed_params(params: object) -> str:
             rendered = str(value)
         items.append(f"- {key}: {rendered}")
     return "\n".join(items)
+
+
+def _tool_not_allowed_tool_name(envelope: ActionEnvelope) -> str | None:
+    patch = envelope.spec_patch or {}
+    tool_name = str(patch.get("tool_name") or "").strip()
+    return tool_name or None
+
+
+def _build_tool_access_resume_message(envelope: ActionEnvelope) -> str:
+    tool_name = _tool_not_allowed_tool_name(envelope) or "tool"
+    return (
+        "tool_access_resume: access was approved for "
+        f"`{tool_name}` in this chat. The tool is now available in the current turn. "
+        "Continue the original task from the latest state and call the tool again only if it is "
+        "still needed. Use the visible tool schema for the next call and do not ask for the same "
+        "tool access again."
+    )
 
 
 async def _prompt_approval_confirmation(
@@ -602,3 +642,15 @@ async def _await_if_needed(value: object) -> object:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+async def _notify_before_interactive_prompt(
+    progress_sink: Callable[[ProgressEvent], None] | None,
+) -> None:
+    """Allow CLI transports to pause live progress rendering before inline prompts."""
+
+    if progress_sink is None:
+        return
+    hook = getattr(progress_sink, "before_interactive_prompt", None)
+    if callable(hook):
+        await _await_if_needed(hook())

@@ -9,12 +9,14 @@ from typing import Any, cast
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completer
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import AnyFormattedText, FormattedText
 from prompt_toolkit.formatted_text.base import StyleAndTextTuples
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 from prompt_toolkit.styles import BaseStyle
 
@@ -44,6 +46,18 @@ class ChatWorkspaceSnapshot:
     draft_text: str
 
 
+@dataclass(slots=True)
+class ChatWorkspaceChoiceState:
+    """Interactive choice prompt state rendered inside the workspace prompt."""
+
+    title: str
+    prompt: str
+    options: tuple[tuple[str, str], ...]
+    default_index: int
+    selected_index: int
+    footer_lines: tuple[str, ...]
+
+
 class ChatWorkspaceApp:
     """Own prompt-session input plus append-only terminal transcript output."""
 
@@ -65,6 +79,7 @@ class ChatWorkspaceApp:
         self._status_text = ""
         self._queue_text = ""
         self._exit_requested = False
+        self._choice_state: ChatWorkspaceChoiceState | None = None
         self._terminal_style: BaseStyle = build_chat_workspace_style()
         self._emit_output = supports_interactive_tty() if emit_output is None else emit_output
         self._last_rendered_entry_kind: str | None = None
@@ -72,6 +87,11 @@ class ChatWorkspaceApp:
             completer=composer_completer,
             interactive_tty=self._emit_output,
             on_escape=self._handle_escape,
+            choice_state_getter=lambda: self._choice_state,
+            on_choice_previous=self._select_previous_choice,
+            on_choice_next=self._select_next_choice,
+            on_choice_submit=self._submit_choice_prompt,
+            on_choice_cancel=self._cancel_choice_prompt,
         )
         self._prompt_session.bottom_toolbar = self._bottom_toolbar
         self._input_reader = ChatInputReader(
@@ -159,57 +179,47 @@ class ChatWorkspaceApp:
             options=options,
             default_value=default_value,
         )
-        option_values = tuple(value for value, _label in options)
-        state: dict[str, int] = {"selected_index": default_index}
-        while not self._exit_requested:
-            message = _choice_prompt_message(
-                title=title,
-                prompt=prompt,
-                options=options,
-                selected_index=state["selected_index"],
-                default_index=default_index,
-            )
-            footer = _choice_prompt_footer(
-                footer_lines=footer_lines,
-                default_label=options[default_index][1],
-            )
-            try:
-                raw_value = await self._prompt_choice_input(
-                    message=message,
-                    footer=footer,
-                    selected_index_ref=state,
-                    option_values=option_values,
+        self._choice_state = ChatWorkspaceChoiceState(
+            title=title,
+            prompt=prompt,
+            options=options,
+            default_index=default_index,
+            selected_index=default_index,
+            footer_lines=footer_lines,
+        )
+        self._invalidate_prompt()
+        try:
+            while not self._exit_requested:
+                raw_value = await self._prompt_choice_mode_input()
+                if raw_value is None:
+                    return None
+                resolved = _resolve_choice_value(
+                    raw_value=raw_value,
+                    options=options,
+                    default_index=default_index,
                 )
-            except TypeError:
-                raw_value = await self._prompt_choice_input(
-                    message=message,
-                    footer=footer,
-                )
-            if raw_value is None:
-                return None
-            resolved = _resolve_choice_value(
-                raw_value=raw_value,
-                options=options,
-                default_index=default_index,
-            )
-            if resolved is not None:
-                return resolved
-            if self._emit_output:
-                print_formatted_text(
-                    FormattedText(
-                        [
-                        (
-                            "class:workspace.notice",
-                            "Invalid choice. Enter a number, value, or leave blank for default.",
+                if resolved is not None:
+                    return resolved
+                if self._emit_output:
+                    print_formatted_text(
+                        FormattedText(
+                            [
+                                (
+                                    "class:workspace.notice",
+                                    "Invalid choice. Enter a number, value, or leave blank for default.",
+                                ),
+                                ("", "\n"),
+                            ]
                         ),
-                        ("", "\n"),
-                        ]
-                    ),
-                    style=self._terminal_style,
-                    end="",
-                    flush=True,
-                )
-        return None
+                        style=self._terminal_style,
+                        end="",
+                        flush=True,
+                    )
+                self._invalidate_prompt()
+            return None
+        finally:
+            self._choice_state = None
+            self._invalidate_prompt()
 
     async def confirm(
         self,
@@ -249,63 +259,81 @@ class ChatWorkspaceApp:
     def snapshot(self) -> ChatWorkspaceSnapshot:
         """Capture current transcript, status, and footer text for tests."""
 
+        choice_state = self._choice_state
+        footer_text = self._footer_text
+        if choice_state is not None:
+            footer_text = _choice_prompt_footer(
+                footer_lines=choice_state.footer_lines,
+                default_label=choice_state.options[choice_state.default_index][1],
+            )
+        draft_text = getattr(getattr(self._prompt_session, "default_buffer", None), "text", "")
         return ChatWorkspaceSnapshot(
             transcript_text=self._transcript.render_text(),
             status_text=self._status_text,
             queue_text=self._queue_text,
-            footer_text=self._footer_text,
-            overlay_title=None,
-            draft_text="",
+            footer_text=str(footer_text),
+            overlay_title=None if choice_state is None else choice_state.title,
+            draft_text=str(draft_text),
         )
 
-    async def _prompt_choice_input(
-        self,
-        *,
-        message: AnyFormattedText,
-        footer: AnyFormattedText,
-        selected_index_ref: dict[str, int],
-        option_values: tuple[str, ...],
-    ) -> str | None:
+    async def _prompt_choice_mode_input(self) -> str | None:
         prompt_async = getattr(self._prompt_session, "prompt_async", None)
         if not callable(prompt_async):
             return None
-        original_bottom_toolbar = self._prompt_session.bottom_toolbar
-        original_key_bindings = self._prompt_session.key_bindings
         original_completer = self._prompt_session.completer
         original_complete_while_typing = self._prompt_session.complete_while_typing
         original_auto_suggest = self._prompt_session.auto_suggest
+        default_buffer = getattr(self._prompt_session, "default_buffer", None)
+        saved_buffer_text = ""
+        saved_cursor_position = 0
+        if default_buffer is not None:
+            saved_buffer_text = str(getattr(default_buffer, "text", ""))
+            try:
+                saved_cursor_position = int(getattr(default_buffer, "cursor_position", 0))
+            except (TypeError, ValueError):
+                saved_cursor_position = 0
+            _set_buffer_draft(default_buffer, text="", cursor_position=0)
         try:
-            return cast(
-                str | None,
-                await prompt_async(
-                    message=message,
-                    bottom_toolbar=footer,
-                    completer=None,
-                    complete_while_typing=False,
-                    auto_suggest=None,
-                    key_bindings=_build_choice_prompt_bindings(
-                        selected_index_ref=selected_index_ref,
-                        option_values=option_values,
-                    ),
-                ),
-            )
+            self._prompt_session.completer = None
+            self._prompt_session.complete_while_typing = False
+            self._prompt_session.auto_suggest = None
+            with patch_stdout():
+                return cast(
+                    str | None,
+                    await prompt_async(self._prompt_message),
+                )
         except EOFError:
             return None
         finally:
-            self._prompt_session.bottom_toolbar = original_bottom_toolbar
-            self._prompt_session.key_bindings = original_key_bindings
             self._prompt_session.completer = original_completer
             self._prompt_session.complete_while_typing = original_complete_while_typing
             self._prompt_session.auto_suggest = original_auto_suggest
+            if default_buffer is not None:
+                _set_buffer_draft(
+                    default_buffer,
+                    text=saved_buffer_text,
+                    cursor_position=min(max(saved_cursor_position, 0), len(saved_buffer_text)),
+                )
 
     def _prompt_message(self) -> StyleAndTextTuples:
         fragments: StyleAndTextTuples = []
-        if self._status_text:
-            fragments.append(("class:workspace.status-line", self._status_text))
-            fragments.append(("", "\n"))
-        if self._queue_text:
-            fragments.append(("class:workspace.queue-line", self._queue_text))
-            fragments.append(("", "\n"))
+        _append_workspace_surface_lines(
+            fragments,
+            status_text=self._status_text,
+            queue_text=self._queue_text,
+        )
+        choice_state = self._choice_state
+        if choice_state is not None:
+            fragments.extend(
+                _choice_prompt_message(
+                    title=choice_state.title,
+                    prompt=choice_state.prompt,
+                    options=choice_state.options,
+                    selected_index=choice_state.selected_index,
+                    default_index=choice_state.default_index,
+                )
+            )
+            return fragments
         fragments.extend(
             [
                 ("class:workspace.user-label", "you"),
@@ -315,6 +343,13 @@ class ChatWorkspaceApp:
         return fragments
 
     def _bottom_toolbar(self) -> StyleAndTextTuples:
+        choice_state = self._choice_state
+        if choice_state is not None:
+            footer_text = _choice_prompt_footer(
+                footer_lines=choice_state.footer_lines,
+                default_label=choice_state.options[choice_state.default_index][1],
+            )
+            return [("class:workspace.footer-line", f" {footer_text}")]
         if not self._footer_text:
             return []
         return [("class:workspace.footer-line", f" {self._footer_text}")]
@@ -323,6 +358,36 @@ class ChatWorkspaceApp:
         if self._interrupt is None:
             return
         self._interrupt()
+
+    def _select_previous_choice(self) -> None:
+        self._move_choice_selection(-1)
+
+    def _select_next_choice(self) -> None:
+        self._move_choice_selection(1)
+
+    def _move_choice_selection(self, delta: int) -> None:
+        choice_state = self._choice_state
+        if choice_state is None or len(choice_state.options) <= 1:
+            return
+        choice_state.selected_index = (choice_state.selected_index + delta) % len(
+            choice_state.options
+        )
+        self._invalidate_prompt()
+
+    def _submit_choice_prompt(self, event) -> None:  # type: ignore[no-untyped-def]
+        choice_state = self._choice_state
+        raw_value = event.app.current_buffer.text.strip()
+        if raw_value:
+            event.app.exit(result=raw_value)
+            return
+        if choice_state is not None and choice_state.options:
+            selected_index = choice_state.selected_index % len(choice_state.options)
+            event.app.exit(result=choice_state.options[selected_index][0])
+            return
+        event.app.exit(result="")
+
+    def _cancel_choice_prompt(self, event) -> None:  # type: ignore[no-untyped-def]
+        event.app.exit(exception=EOFError(), style="class:exiting")
 
     def _invalidate_prompt(self) -> None:
         application = getattr(self._prompt_session, "app", None)
@@ -339,6 +404,11 @@ def _build_prompt_session(
     completer: Completer | None,
     interactive_tty: bool,
     on_escape: Callable[[], None],
+    choice_state_getter: Callable[[], ChatWorkspaceChoiceState | None],
+    on_choice_previous: Callable[[], None],
+    on_choice_next: Callable[[], None],
+    on_choice_submit: Callable[[Any], None],
+    on_choice_cancel: Callable[[Any], None],
 ) -> PromptSession[str]:
     prompt_kwargs: dict[str, Any] = {
         "message": "",
@@ -350,7 +420,14 @@ def _build_prompt_session(
         "history": InMemoryHistory(),
         "style": build_chat_workspace_style(),
         "completer": completer,
-        "key_bindings": _build_main_prompt_bindings(on_escape=on_escape),
+        "key_bindings": _build_main_prompt_bindings(
+            on_escape=on_escape,
+            choice_state_getter=choice_state_getter,
+            on_choice_previous=on_choice_previous,
+            on_choice_next=on_choice_next,
+            on_choice_submit=on_choice_submit,
+            on_choice_cancel=on_choice_cancel,
+        ),
         "refresh_interval": 0.25,
     }
     if not interactive_tty:
@@ -361,8 +438,34 @@ def _build_prompt_session(
     return session
 
 
-def _build_main_prompt_bindings(*, on_escape: Callable[[], None]) -> KeyBindings:
+def _build_main_prompt_bindings(
+    *,
+    on_escape: Callable[[], None],
+    choice_state_getter: Callable[[], ChatWorkspaceChoiceState | None],
+    on_choice_previous: Callable[[], None],
+    on_choice_next: Callable[[], None],
+    on_choice_submit: Callable[[Any], None],
+    on_choice_cancel: Callable[[Any], None],
+) -> KeyBindings:
     bindings = KeyBindings()
+
+    choice_active = Condition(lambda: choice_state_getter() is not None)
+
+    @bindings.add("up", filter=choice_active)
+    def _move_previous(_event) -> None:  # type: ignore[no-untyped-def]
+        on_choice_previous()
+
+    @bindings.add("down", filter=choice_active)
+    def _move_next(_event) -> None:  # type: ignore[no-untyped-def]
+        on_choice_next()
+
+    @bindings.add("enter", filter=choice_active)
+    def _accept_choice(event) -> None:  # type: ignore[no-untyped-def]
+        on_choice_submit(event)
+
+    @bindings.add("escape", filter=choice_active)
+    def _cancel_choice(event) -> None:  # type: ignore[no-untyped-def]
+        on_choice_cancel(event)
 
     @bindings.add("escape")
     def _handle_escape(event) -> None:  # type: ignore[no-untyped-def]
@@ -372,53 +475,6 @@ def _build_main_prompt_bindings(*, on_escape: Callable[[], None]) -> KeyBindings
             event.app.invalidate()
             return
         on_escape()
-
-    return bindings
-
-
-def _build_choice_prompt_bindings(
-    *,
-    selected_index_ref: dict[str, int],
-    option_values: tuple[str, ...],
-) -> KeyBindings:
-    bindings = KeyBindings()
-
-    @bindings.add("up")
-    def _move_previous(event) -> None:  # type: ignore[no-untyped-def]
-        options_len = len(option_values)
-        if options_len <= 1:
-            return
-        current = selected_index_ref.get("selected_index", 0)
-        next_index = (current - 1) % options_len
-        selected_index_ref["selected_index"] = next_index
-        event.app.invalidate()
-
-    @bindings.add("down")
-    def _move_next(event) -> None:  # type: ignore[no-untyped-def]
-        options_len = len(option_values)
-        if options_len <= 1:
-            return
-        current = selected_index_ref.get("selected_index", 0)
-        next_index = (current + 1) % options_len
-        selected_index_ref["selected_index"] = next_index
-        event.app.invalidate()
-
-    @bindings.add("enter")
-    def _accept_choice(event) -> None:  # type: ignore[no-untyped-def]
-        raw_value = event.app.current_buffer.text.strip()
-        selected_index = int(selected_index_ref.get("selected_index", 0))
-        if raw_value:
-            event.app.exit(result=raw_value)
-            return
-        if option_values:
-            selected_index = selected_index % len(option_values)
-            event.app.exit(result=option_values[selected_index])
-            return
-        event.app.exit(result="")
-
-    @bindings.add("escape")
-    def _cancel_choice(event) -> None:  # type: ignore[no-untyped-def]
-        event.app.exit(exception=EOFError(), style="class:exiting")
 
     return bindings
 
@@ -438,18 +494,13 @@ def _choice_prompt_message(
         ("", "\n\n"),
     ]
     for index, (_value, label) in enumerate(options):
-        option_number = index + 1
         default_suffix = " (default)" if index == default_index else ""
         is_selected = index == selected_index
-        marker = "▸" if is_selected else " "
-        mark = "[x]" if is_selected else "[ ]"
-        fragments.append(
-            (
-                "class:workspace.notice",
-                f"{marker} {option_number}. {mark} {label}{default_suffix}\n",
-            )
-        )
-    fragments.append(("", "\nselect > "))
+        marker = ">" if is_selected else " "
+        mark = "(*)" if is_selected else "( )"
+        style = "class:workspace.thinking" if is_selected else "class:workspace.notice"
+        fragments.append((style, f"{marker} {mark} {label}{default_suffix}\n"))
+    fragments.append(("", "\n> "))
     return fragments
 
 
@@ -457,10 +508,37 @@ def _choice_prompt_footer(
     *,
     footer_lines: tuple[str, ...],
     default_label: str,
-) -> StyleAndTextTuples:
+) -> str:
     details = list(footer_lines)
     details.append(f"Blank selects default: {default_label}")
-    return [("class:workspace.footer-line", " · ".join(details))]
+    return " · ".join(details)
+
+
+def _append_workspace_surface_lines(
+    fragments: StyleAndTextTuples,
+    *,
+    status_text: str,
+    queue_text: str,
+) -> None:
+    if status_text:
+        fragments.append(("class:workspace.status-line", status_text))
+        fragments.append(("", "\n"))
+    if queue_text:
+        fragments.append(("class:workspace.queue-line", queue_text))
+        fragments.append(("", "\n"))
+
+
+def _set_buffer_draft(buffer: object, *, text: str, cursor_position: int) -> None:
+    """Best-effort draft mutation for PromptSession buffers and test doubles."""
+
+    try:
+        setattr(buffer, "text", text)
+    except Exception:
+        return
+    try:
+        setattr(buffer, "cursor_position", cursor_position)
+    except Exception:
+        return
 
 
 def _default_choice_index(

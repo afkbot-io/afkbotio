@@ -211,7 +211,7 @@ def test_build_tool_not_allowed_envelope_asks_for_explicit_execution() -> None:
 
     assert envelope is not None
     assert envelope.action == "ask_question"
-    assert envelope.message.startswith("Tool not available in current turn: bash.exec")
+    assert envelope.message == "Tool access requires explicit approval before execution."
     assert envelope.question_id is not None
     assert envelope.spec_patch == {
         "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,

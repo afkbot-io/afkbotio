@@ -51,6 +51,31 @@ def test_policy_engine_enforces_tool_allow_and_deny() -> None:
         )
 
 
+def test_policy_engine_allows_explicit_cli_override_without_bypassing_denies() -> None:
+    """Explicit CLI-approved tools may bypass the allow gate, but not deny rules."""
+
+    engine = PolicyEngine()
+    allowed_policy = _policy(allowed_tools_json='["memory.search"]')
+    engine.ensure_tool_call_allowed(
+        policy=allowed_policy,
+        tool_name="debug.echo",
+        params={},
+        approved_tool_names={"debug.echo"},
+    )
+
+    denied_policy = _policy(
+        allowed_tools_json='["memory.search"]',
+        denied_tools_json='["debug.echo"]',
+    )
+    with pytest.raises(PolicyViolationError, match="Tool is denied by policy: debug.echo"):
+        engine.ensure_tool_call_allowed(
+            policy=denied_policy,
+            tool_name="debug.echo",
+            params={},
+            approved_tool_names={"debug.echo"},
+        )
+
+
 def test_policy_engine_matches_wildcard_tool_rules() -> None:
     """Wildcard allow/deny rules should match dynamic runtime tool prefixes."""
 

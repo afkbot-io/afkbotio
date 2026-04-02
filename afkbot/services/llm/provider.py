@@ -20,6 +20,7 @@ from afkbot.services.llm.contracts import (
 )
 from afkbot.services.llm.provider_catalog import LLMProviderId, parse_provider
 from afkbot.services.llm.provider_payload_runtime import OpenAICompatiblePayloadRuntime
+from afkbot.services.llm.tool_name_codec import build_tool_name_codec
 from afkbot.services.llm.provider_settings import (
     ResolvedProviderDebugInfo,
     describe_provider_debug_info,
@@ -74,7 +75,14 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_code="llm_provider_not_configured",
             )
 
-        encode_tool_name, decode_tool_name = self._build_tool_name_codec(request.available_tools)
+        encode_tool_name, decode_tool_name = build_tool_name_codec(
+            visible_tool_names=(definition.name for definition in request.available_tools),
+            historical_tool_names=(
+                call.name
+                for item in request.history
+                for call in item.tool_calls
+            ),
+        )
         api_surface = self._resolve_api_surface(self._model)
         request_path = "/responses" if api_surface.kind == "responses" else "/chat/completions"
         timeout_sec = resolve_llm_request_timeout_sec(

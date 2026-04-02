@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import pytest
 
 import afkbot.cli.presentation.chat_workspace.app as workspace_app_module
-from afkbot.cli.presentation.chat_workspace.app import ChatWorkspaceApp
+from afkbot.cli.presentation.chat_workspace.app import (
+    ChatWorkspaceApp,
+    ChatWorkspaceChoiceState,
+)
 from afkbot.cli.presentation.chat_workspace.layout import ChatWorkspaceSurfaceState
 from afkbot.cli.presentation.chat_workspace.toolbar import DEFAULT_CHAT_WORKSPACE_FOOTER
 from afkbot.cli.presentation.chat_workspace.transcript import ChatWorkspaceTranscriptEntry
@@ -190,6 +197,105 @@ def test_chat_workspace_bottom_toolbar_uses_current_footer_text() -> None:
     ]
 
 
+def test_chat_workspace_choice_mode_renders_inside_workspace_prompt() -> None:
+    """Choice prompts should reuse the workspace prompt and toolbar surfaces."""
+
+    workspace = ChatWorkspaceApp(
+        surface_state=ChatWorkspaceSurfaceState(
+            status_lines=("• Working (3s • esc to interrupt) · thinking...",),
+        ),
+        emit_output=False,
+    )
+    workspace._choice_state = ChatWorkspaceChoiceState(  # type: ignore[attr-defined]
+        title="Tool access request",
+        prompt="Approve access to tool: bash.exec?",
+        options=(
+            ("allow_once", "Run once"),
+            ("allow_session", "Allow for session"),
+            ("deny", "Do not run"),
+        ),
+        default_index=2,
+        selected_index=1,
+        footer_lines=("↑/↓ move, Enter confirm, Esc cancel",),
+    )
+
+    fragments = workspace._prompt_message()  # type: ignore[attr-defined]
+
+    assert fragments == [
+        ("class:workspace.status-line", "• Working (3s • esc to interrupt) · thinking..."),
+        ("", "\n"),
+        ("class:workspace.plan-title", "Tool access request"),
+        ("", "\n"),
+        ("class:workspace.assistant", "Approve access to tool: bash.exec?"),
+        ("", "\n\n"),
+        ("class:workspace.notice", "  ( ) Run once\n"),
+        ("class:workspace.thinking", "> (*) Allow for session\n"),
+        ("class:workspace.notice", "  ( ) Do not run (default)\n"),
+        ("", "\n> "),
+    ]
+    assert workspace._bottom_toolbar() == [  # type: ignore[attr-defined]
+        (
+            "class:workspace.footer-line",
+            " ↑/↓ move, Enter confirm, Esc cancel · Blank selects default: Do not run",
+        )
+    ]
+    assert workspace.snapshot().overlay_title == "Tool access request"
+
+
+@pytest.mark.asyncio
+async def test_chat_workspace_choice_mode_clears_and_restores_existing_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Choice prompts should not leak a cancelled composer draft into the selector."""
+
+    @contextmanager
+    def _fake_patch_stdout() -> Iterator[None]:
+        yield
+
+    class _FakeBuffer:
+        def __init__(self) -> None:
+            self.text = "partially typed follow-up"
+            self.cursor_position = 9
+
+    class _FakePromptSession:
+        def __init__(self) -> None:
+            self.default_buffer = _FakeBuffer()
+            self.completer = object()
+            self.complete_while_typing = True
+            self.auto_suggest = object()
+            self.bottom_toolbar = None
+            self.app = SimpleNamespace(is_running=False)
+
+        async def prompt_async(self, message: object) -> str:
+            assert self.default_buffer.text == ""
+            assert self.default_buffer.cursor_position == 0
+            rendered = message() if callable(message) else message
+            assert rendered
+            return "2"
+
+    monkeypatch.setattr(workspace_app_module, "patch_stdout", _fake_patch_stdout)
+    prompt_session = _FakePromptSession()
+    workspace = ChatWorkspaceApp(
+        prompt_session=prompt_session,  # type: ignore[arg-type]
+        emit_output=False,
+    )
+
+    selected = await workspace.choose_option(
+        title="Tool access request",
+        prompt="Approve access to tool: bash.exec?",
+        options=(
+            ("allow_once", "Run once"),
+            ("allow_session", "Allow for session"),
+            ("deny", "Do not run"),
+        ),
+        default_value="deny",
+    )
+
+    assert selected == "allow_session"
+    assert prompt_session.default_buffer.text == "partially typed follow-up"
+    assert prompt_session.default_buffer.cursor_position == 9
+
+
 def test_chat_workspace_app_can_request_exit_without_running_prompt() -> None:
     """Requesting exit should set the local shutdown flag."""
 
@@ -208,11 +314,10 @@ async def test_chat_workspace_app_choose_option_accepts_numeric_selection(
 
     workspace = ChatWorkspaceApp(emit_output=False)
 
-    async def _fake_prompt_choice_input(*, message, footer):  # noqa: ANN001
-        _ = message, footer
+    async def _fake_prompt_choice_input() -> str:
         return "2"
 
-    monkeypatch.setattr(workspace, "_prompt_choice_input", _fake_prompt_choice_input)
+    monkeypatch.setattr(workspace, "_prompt_choice_mode_input", _fake_prompt_choice_input)
 
     selected = await workspace.choose_option(
         title="Execution",
@@ -232,11 +337,10 @@ async def test_chat_workspace_app_choose_option_uses_default_for_blank_input(
 
     workspace = ChatWorkspaceApp(emit_output=False)
 
-    async def _fake_prompt_choice_input(*, message, footer):  # noqa: ANN001
-        _ = message, footer
+    async def _fake_prompt_choice_input() -> str:
         return ""
 
-    monkeypatch.setattr(workspace, "_prompt_choice_input", _fake_prompt_choice_input)
+    monkeypatch.setattr(workspace, "_prompt_choice_mode_input", _fake_prompt_choice_input)
 
     selected = await workspace.choose_option(
         title="Execution",
@@ -256,11 +360,10 @@ async def test_chat_workspace_app_confirm_can_return_cancel_result(
 
     workspace = ChatWorkspaceApp(emit_output=False)
 
-    async def _cancel_prompt(*, message, footer):  # noqa: ANN001
-        _ = message, footer
+    async def _cancel_prompt() -> None:
         return None
 
-    monkeypatch.setattr(workspace, "_prompt_choice_input", _cancel_prompt)
+    monkeypatch.setattr(workspace, "_prompt_choice_mode_input", _cancel_prompt)
 
     confirmed = await workspace.confirm(
         title="Execution",

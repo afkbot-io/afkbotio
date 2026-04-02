@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from afkbot.cli.command_errors import raise_usage_error
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.agent_loop.turn_context import (
+    TurnContextOverrides,
+    merge_turn_context_overrides,
+)
 from afkbot.services.channel_routing import (
     ChannelBindingServiceError,
     RoutingSelectors,
@@ -74,7 +77,7 @@ def build_cli_runtime_overrides(
 ) -> TurnContextOverrides | None:
     """Build turn context overrides from resolved routing target."""
 
-    return build_routing_context_overrides(
+    routing_overrides = build_routing_context_overrides(
         target=target,
         selectors=RoutingSelectors(
             transport=transport,
@@ -84,3 +87,21 @@ def build_cli_runtime_overrides(
             user_id=user_id,
         ),
     )
+    runtime_metadata = dict(
+        {}
+        if routing_overrides is None or not routing_overrides.runtime_metadata
+        else routing_overrides.runtime_metadata
+    )
+    if not str(runtime_metadata.get("transport") or "").strip():
+        runtime_metadata["transport"] = "cli"
+    cli_overrides = TurnContextOverrides(
+        runtime_metadata=runtime_metadata,
+        cli_approval_surface_enabled=True,
+        prompt_overlay=(
+            "In afk chat, some visible tools may require explicit user approval before execution. "
+            "If a suitable tool is available, you may propose and call it; the runtime will request "
+            "confirmation when needed. Do not claim that a visible approval-gated tool is unavailable "
+            "just because it needs confirmation."
+        ),
+    )
+    return merge_turn_context_overrides(routing_overrides, cli_overrides)

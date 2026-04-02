@@ -29,6 +29,9 @@ PlanPresentationFn = Callable[
     None | Awaitable[None],
 ]
 PlanRecorderFn = Callable[[ChatPlanSnapshot], None]
+InteractiveConfirmFn = Callable[..., bool | Awaitable[bool]]
+InteractiveToolAccessPromptFn = Callable[..., str | Awaitable[str]]
+InteractiveCredentialProfilePromptFn = Callable[..., str | None | Awaitable[str | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,9 @@ class ChatTurnInteractiveOptions:
     prompt_to_plan_first: PlanDecisionFn | None = None
     confirm_plan_execution: PlanDecisionFn | None = None
     present_plan: PlanPresentationFn | None = None
+    confirm_space_fn: InteractiveConfirmFn | None = None
+    tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None = None
+    credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None = None
 
 
 async def run_chat_turn_with_optional_planning(
@@ -64,6 +70,9 @@ async def run_chat_turn_with_optional_planning(
     confirm_plan_execution: PlanDecisionFn | None = None,
     present_plan: PlanPresentationFn | None = None,
     record_plan: PlanRecorderFn | None = None,
+    confirm_space_fn: InteractiveConfirmFn | None = None,
+    tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None = None,
+    credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None = None,
 ) -> ChatTurnOutcome:
     """Optionally run one safe planning turn before the execution turn."""
 
@@ -90,6 +99,11 @@ async def run_chat_turn_with_optional_planning(
                 progress_sink=progress_sink,
                 allow_secure_prompt=allow_secure_prompt,
                 turn_overrides=execution_overrides,
+                **_interactive_prompt_kwargs(
+                    confirm_space_fn=confirm_space_fn,
+                    tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+                    credential_profile_prompt_fn=credential_profile_prompt_fn,
+                ),
             )
         )
 
@@ -102,6 +116,11 @@ async def run_chat_turn_with_optional_planning(
         turn_overrides=build_plan_only_overrides(
             base_overrides=execution_overrides,
             thinking_level=thinking_level,
+        ),
+        **_interactive_prompt_kwargs(
+            confirm_space_fn=confirm_space_fn,
+            tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+            credential_profile_prompt_fn=credential_profile_prompt_fn,
         ),
     )
     plan_snapshot = capture_chat_plan(plan_result.envelope.message)
@@ -132,6 +151,11 @@ async def run_chat_turn_with_optional_planning(
                     approved_plan=plan_result.envelope.message,
                     thinking_level=thinking_level,
                 ),
+                **_interactive_prompt_kwargs(
+                    confirm_space_fn=confirm_space_fn,
+                    tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+                    credential_profile_prompt_fn=credential_profile_prompt_fn,
+                ),
             ),
             plan_snapshot=plan_snapshot,
         )
@@ -154,9 +178,32 @@ async def run_chat_turn_with_optional_planning(
                 approved_plan=plan_result.envelope.message,
                 thinking_level=thinking_level,
             ),
+            **_interactive_prompt_kwargs(
+                confirm_space_fn=confirm_space_fn,
+                tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+                credential_profile_prompt_fn=credential_profile_prompt_fn,
+            ),
         ),
         plan_snapshot=plan_snapshot,
     )
+
+
+def _interactive_prompt_kwargs(
+    *,
+    confirm_space_fn: InteractiveConfirmFn | None,
+    tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None,
+    credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None,
+) -> dict[str, object]:
+    """Return only prompt override callbacks explicitly supplied by the transport."""
+
+    kwargs: dict[str, object] = {}
+    if confirm_space_fn is not None:
+        kwargs["confirm_space_fn"] = confirm_space_fn
+    if tool_not_allowed_prompt_fn is not None:
+        kwargs["tool_not_allowed_prompt_fn"] = tool_not_allowed_prompt_fn
+    if credential_profile_prompt_fn is not None:
+        kwargs["credential_profile_prompt_fn"] = credential_profile_prompt_fn
+    return kwargs
 
 
 def _execution_overrides(

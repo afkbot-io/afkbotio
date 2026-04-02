@@ -10,7 +10,11 @@ from afkbot.services.agent_loop.planning_policy import (
     execution_planning_prompt_overlay,
     should_enable_execution_planning,
 )
-from afkbot.services.agent_loop.thinking import TurnThinkingConfig, combine_prompt_overlays, resolve_turn_thinking_config
+from afkbot.services.agent_loop.thinking import (
+    TurnThinkingConfig,
+    combine_prompt_overlays,
+    resolve_turn_thinking_config,
+)
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.llm.reasoning import ThinkingLevel
 from afkbot.services.policy import PolicyEngine
@@ -53,9 +57,7 @@ def resolve_turn_execution_context(
         override_thinking_level=(
             None if context_overrides is None else context_overrides.thinking_level
         ),
-        planning_mode=(
-            "off" if context_overrides is None else context_overrides.planning_mode
-        ),
+        planning_mode=("off" if context_overrides is None else context_overrides.planning_mode),
         override_tool_access_mode=(
             None if context_overrides is None else context_overrides.tool_access_mode
         ),
@@ -65,10 +67,7 @@ def resolve_turn_execution_context(
         execution_budget_very_high_sec=execution_budget_very_high_sec,
     )
     execution_planning_mode = chat_planning_mode
-    if (
-        context_overrides is not None
-        and context_overrides.execution_planning_mode is not None
-    ):
+    if context_overrides is not None and context_overrides.execution_planning_mode is not None:
         execution_planning_mode = context_overrides.execution_planning_mode
     effective_overrides_planning_mode = (
         "off" if context_overrides is None else context_overrides.planning_mode
@@ -87,6 +86,10 @@ def resolve_turn_execution_context(
     )
     effective_overrides = TurnContextOverrides(
         runtime_metadata=effective_runtime_metadata,
+        cli_approval_surface_enabled=(
+            False if context_overrides is None else context_overrides.cli_approval_surface_enabled
+        ),
+        approved_tool_names=None if context_overrides is None else context_overrides.approved_tool_names,
         prompt_overlay=combine_prompt_overlays(
             None if context_overrides is None else context_overrides.prompt_overlay,
             execution_planning_prompt_overlay() if execution_planning_enabled else None,

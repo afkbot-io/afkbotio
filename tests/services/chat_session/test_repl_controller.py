@@ -340,5 +340,97 @@ async def test_run_queueable_chat_session_cancels_running_turn_during_final_clea
     assert state.queued_messages == 0
 
 
+async def test_run_queueable_chat_session_pauses_background_input_before_interactive_prompt() -> None:
+    """Interactive prompt hook should cancel the active background input reader."""
+
+    input_queue: asyncio.Queue[str] = asyncio.Queue()
+    ux = _FakeUX()
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+    )
+    read_calls = 0
+    second_read_started = asyncio.Event()
+    second_read_cancelled = asyncio.Event()
+
+    async def _read_input() -> str:
+        nonlocal read_calls
+        read_calls += 1
+        if read_calls == 1:
+            return await input_queue.get()
+        if read_calls >= 3:
+            return await input_queue.get()
+        second_read_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            second_read_cancelled.set()
+            raise
+        raise AssertionError("unreachable")
+
+    async def _run_turn(
+        message: str,
+        progress_sink: object,
+        repl_state: ChatReplSessionState,
+        turn_options: ChatTurnInteractiveOptions,
+    ) -> ChatTurnOutcome:
+        _ = message, repl_state, turn_options
+        await _wait_until(second_read_started.is_set)
+        hook = getattr(progress_sink, "before_interactive_prompt", None)
+        assert callable(hook)
+        await hook()
+        await _wait_until(second_read_cancelled.is_set)
+        return ChatTurnOutcome(
+            result=TurnResult(
+                run_id=1,
+                session_id="s-pause-input",
+                profile_id="default",
+                envelope=ActionEnvelope(action="finalize", message="done"),
+            )
+        )
+
+    def _consume_input(
+        raw_message: str,
+        turn_queue: ChatReplTurnQueue,
+        turn_active: bool,
+    ) -> ChatReplInputOutcome:
+        _ = turn_active
+        if raw_message == "//quit":
+            turn_queue.request_exit()
+            return ChatReplInputOutcome(consumed=True, exit_repl=True)
+        pending_count = turn_queue.enqueue(raw_message)
+        state.queued_messages = pending_count
+        return ChatReplInputOutcome(consumed=True)
+
+    async def _run_interruptible_turn(
+        run_turn: Callable[[], Coroutine[object, object, ChatTurnOutcome]],
+    ) -> ChatTurnOutcome | None:
+        return await run_turn()
+
+    loop_task = asyncio.create_task(
+        run_queueable_chat_session(
+            ux=ux,
+            read_input=_read_input,
+            run_turn=_run_turn,
+            repl_state=state,
+            refresh_catalog=_noop_refresh,
+            consume_input=_consume_input,
+            progress_sink=lambda event: ux.on_progress(event),
+            run_interruptible_turn=_run_interruptible_turn,
+            emit_turn_output=lambda _result: None,
+            emit_notice=lambda _message: None,
+        )
+    )
+
+    await input_queue.put("first")
+    await _wait_until(second_read_cancelled.is_set)
+    await input_queue.put("//quit")
+    await loop_task
+
+    assert second_read_cancelled.is_set() is True
+
+
 async def _noop_refresh() -> None:
     """No-op refresh used by the queued session-controller test."""

@@ -52,6 +52,8 @@ class PreparedTurn:
     context: str
     history: list[LLMMessage]
     available_tools: tuple[LLMToolDefinition, ...]
+    executable_tool_names: tuple[str, ...]
+    approval_required_tool_names: tuple[str, ...]
 
 
 class TurnPreparationRuntime:
@@ -169,8 +171,10 @@ class TurnPreparationRuntime:
             ),
         )
         available_tools: tuple[LLMToolDefinition, ...] = ()
+        executable_tool_names: tuple[str, ...] = ()
+        approval_required_tool_names: tuple[str, ...] = ()
         if llm_enabled:
-            available_tools = self._tool_exposure.available_tool_definitions(
+            tool_surface = self._tool_exposure.build_tool_surface(
                 policy,
                 profile_id=profile_id,
                 skill_route=skill_route,
@@ -181,7 +185,18 @@ class TurnPreparationRuntime:
                     if context_overrides is None or context_overrides.tool_access_mode is None
                     else context_overrides.tool_access_mode
                 ),
+                approved_tool_names=(
+                    None if context_overrides is None else context_overrides.approved_tool_names
+                ),
+                cli_approval_surface_enabled=(
+                    False
+                    if context_overrides is None
+                    else context_overrides.cli_approval_surface_enabled
+                ),
             )
+            available_tools = tool_surface.visible_tools
+            executable_tool_names = tool_surface.executable_tool_names
+            approval_required_tool_names = tool_surface.approval_required_tool_names
         visible_enforceable_skill_names = self._tool_exposure.visible_enforceable_skill_names(
             available_tools=available_tools,
             profile_id=profile_id,
@@ -231,6 +246,8 @@ class TurnPreparationRuntime:
             context=context,
             history=history,
             available_tools=available_tools,
+            executable_tool_names=executable_tool_names,
+            approval_required_tool_names=approval_required_tool_names,
         )
 
     async def _build_context(

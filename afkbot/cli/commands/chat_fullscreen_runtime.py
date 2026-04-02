@@ -31,6 +31,7 @@ from afkbot.cli.presentation.chat_workspace.presenter import (
 )
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
 from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.interactive_resume import available_profile_choices
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.chat_session.activity_state import capture_chat_activity
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
@@ -164,6 +165,62 @@ async def run_fullscreen_chat_workspace_session(
             cancel_result=PLAN_EXECUTION_PROMPT.cancel_result,
         )
 
+    async def _confirm_workspace_operation(
+        *,
+        question: str,
+        default: bool,
+        title: str,
+        yes_label: str = "Approve",
+        no_label: str = "Deny",
+        hint_text: str | None = None,
+        **_: object,
+    ) -> bool:
+        return await workspace.confirm(
+            title=title,
+            question=question,
+            default=default,
+            yes_label=yes_label,
+            no_label=no_label,
+            hint_text=hint_text,
+            cancel_result=default,
+        )
+
+    async def _prompt_workspace_tool_access(
+        *,
+        envelope,
+        question_text: str,
+        **_: object,
+    ) -> str:
+        _ = envelope
+        selected = await workspace.choose_option(
+            title="Tool access request",
+            prompt=question_text,
+            options=(
+                ("allow_once", "Run once"),
+                ("allow_session", "Allow for session"),
+                ("deny", "Do not run"),
+            ),
+            default_value="deny",
+            footer_lines=("↑/↓ move, Enter confirm, Esc cancel",),
+        )
+        return "deny" if selected is None else selected
+
+    async def _prompt_workspace_credential_profile(envelope) -> str | None:
+        available_profiles = available_profile_choices(envelope)
+        if not available_profiles:
+            return None
+        selected = await workspace.choose_option(
+            title="Credential profile",
+            prompt="Choose credential profile",
+            options=tuple((profile, profile) for profile in available_profiles),
+            default_value=available_profiles[0],
+            footer_lines=("↑/↓ move, Enter confirm, Esc cancel",),
+        )
+        selected_profile = selected.strip() if selected is not None else ""
+        if selected_profile in available_profiles:
+            return selected_profile
+        return None
+
     async def _present_plan(
         plan_result: TurnResult,
         plan_snapshot: ChatPlanSnapshot | None,
@@ -211,6 +268,9 @@ async def run_fullscreen_chat_workspace_session(
                     turn_options=turn_options,
                     confirm_plan_execution=_confirm_plan_execution,
                     present_plan=_present_plan,
+                    confirm_space_fn=_confirm_workspace_operation,
+                    tool_not_allowed_prompt_fn=_prompt_workspace_tool_access,
+                    credential_profile_prompt_fn=_prompt_workspace_credential_profile,
                 ),
             )
 

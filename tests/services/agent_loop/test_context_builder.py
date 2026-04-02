@@ -100,7 +100,6 @@ async def test_context_builder_strips_internal_runtime_metadata_from_untrusted_b
         runtime_metadata={
             "source": "cli",
             "planning": {"chat_mode": "auto", "execution_enabled": False},
-            "session_allowed_tool_names": ("bash.exec",),
             "subagent_task": {"name": "researcher"},
         },
     )
@@ -108,7 +107,6 @@ async def test_context_builder_strips_internal_runtime_metadata_from_untrusted_b
     assert "Runtime Metadata (untrusted)" in context
     assert '"source": "cli"' in context
     assert '"planning": {' not in context
-    assert "session_allowed_tool_names" not in context
     assert "subagent_task" not in context
 
 

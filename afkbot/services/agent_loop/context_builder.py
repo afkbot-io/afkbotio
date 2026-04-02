@@ -285,7 +285,6 @@ class ContextBuilder:
         """Strip internal control metadata that should not be shown to the LLM."""
 
         excluded_keys = {
-            "session_allowed_tool_names",
             "planning",
             "subagent_task",
         }

@@ -81,18 +81,31 @@ class PolicyEngine:
             visible.append(name)
         return tuple(visible)
 
+    def is_tool_denied(self, *, policy: ProfilePolicy, tool_name: str) -> bool:
+        """Return whether one tool is blocked by explicit deny rules."""
+
+        if not self._is_policy_enabled(policy):
+            return False
+        denied = parse_string_set(raw=policy.denied_tools_json, field_name="denied_tools_json")
+        return any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in denied)
+
     def ensure_tool_call_allowed(
         self,
         *,
         policy: ProfilePolicy,
         tool_name: str,
         params: dict[str, object],
+        approved_tool_names: set[str] | None = None,
     ) -> None:
         """Validate one tool invocation against profile policy fields."""
 
         if not self._is_policy_enabled(policy):
             return
-        self._enforce_tool_lists(policy=policy, tool_name=tool_name)
+        self._enforce_tool_lists(
+            policy=policy,
+            tool_name=tool_name,
+            approved_tool_names=approved_tool_names,
+        )
         self._enforce_path_lists(policy=policy, params=params)
         self._enforce_shell_lists(policy=policy, params=params)
         self._enforce_network_allowlist(
@@ -107,7 +120,13 @@ class PolicyEngine:
 
         return bool(getattr(policy, "policy_enabled", True))
 
-    def _enforce_tool_lists(self, *, policy: ProfilePolicy, tool_name: str) -> None:
+    def _enforce_tool_lists(
+        self,
+        *,
+        policy: ProfilePolicy,
+        tool_name: str,
+        approved_tool_names: set[str] | None = None,
+    ) -> None:
         denied = parse_string_set(raw=policy.denied_tools_json, field_name="denied_tools_json")
         if any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in denied):
             raise PolicyViolationError(reason=f"Tool is denied by policy: {tool_name}")
@@ -116,6 +135,8 @@ class PolicyEngine:
             raw=policy.allowed_tools_json,
             field_name="allowed_tools_json",
         )
+        if approved_tool_names and tool_name in approved_tool_names:
+            return
         if allowed and not any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in allowed):
             raise PolicyViolationError(reason=f"Tool is not allowed by policy: {tool_name}")
 

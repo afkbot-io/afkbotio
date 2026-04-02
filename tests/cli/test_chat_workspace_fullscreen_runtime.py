@@ -14,7 +14,7 @@ from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions
 
 
 def test_build_workspace_turn_options_keeps_auto_mode_non_blocking() -> None:
-    """Auto planning should preserve the default REPL options without injected overlays."""
+    """Auto planning should preserve defaults until the workspace injects prompt callbacks."""
 
     # Arrange
     state = ChatReplSessionState(
@@ -31,14 +31,16 @@ def test_build_workspace_turn_options_keeps_auto_mode_non_blocking() -> None:
         turn_options,
         confirm_plan_execution=lambda: _bool_result(True),
         present_plan=lambda _result, _plan: _none_result(),
+        confirm_space_fn=lambda **_: _bool_result(True),
     )
 
     # Assert
-    assert resolved is turn_options
+    assert resolved is not turn_options
     assert resolved.interactive_confirm is True
     assert resolved.prompt_to_plan_first is None
     assert resolved.confirm_plan_execution is None
     assert resolved.present_plan is None
+    assert resolved.confirm_space_fn is not None
 
 
 def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -> None:
@@ -72,6 +74,40 @@ def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -
     assert resolved.prompt_to_plan_first is None
     assert resolved.confirm_plan_execution is _confirm_plan_execution
     assert resolved.present_plan is _present_plan
+
+
+def test_build_workspace_turn_options_injects_workspace_prompt_callbacks_in_auto_mode() -> None:
+    """Workspace transports should attach their prompt callbacks even outside plan-on mode."""
+
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+    )
+
+    async def _confirm_space(**_: object) -> bool:
+        return True
+
+    async def _tool_prompt(**_: object) -> str:
+        return "allow_once"
+
+    async def _profile_prompt(*_: object, **__: object) -> str | None:
+        return "default"
+
+    resolved = build_workspace_turn_options(
+        state,
+        ChatTurnInteractiveOptions(interactive_confirm=True),
+        confirm_plan_execution=lambda: _bool_result(True),
+        present_plan=lambda _result, _plan: _none_result(),
+        confirm_space_fn=_confirm_space,
+        tool_not_allowed_prompt_fn=_tool_prompt,
+        credential_profile_prompt_fn=_profile_prompt,
+    )
+
+    assert resolved.confirm_space_fn is _confirm_space
+    assert resolved.tool_not_allowed_prompt_fn is _tool_prompt
+    assert resolved.credential_profile_prompt_fn is _profile_prompt
 
 
 def test_interrupt_action_cancels_active_turn_before_exit() -> None:

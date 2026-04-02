@@ -1,9 +1,8 @@
-"""Payload, response, and tool-name helpers for OpenAI-compatible providers."""
+"""Payload and response helpers for OpenAI-compatible providers."""
 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
@@ -17,8 +16,6 @@ from afkbot.services.llm.contracts import (
 
 class OpenAICompatiblePayloadRuntime:
     """Reusable payload/rendering helpers for OpenAI-compatible providers."""
-
-    _tool_name_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
 
     def _build_messages(
         self,
@@ -162,6 +159,10 @@ class OpenAICompatiblePayloadRuntime:
                     f"{description} This tool is routed through the '{definition.required_skill}' "
                     "skill. Follow that SKILL.md workflow."
                 )
+            if definition.requires_confirmation:
+                description = (
+                    f"{description} This tool may require explicit user approval before execution."
+                )
             tools.append(
                 {
                     "type": "function",
@@ -189,6 +190,10 @@ class OpenAICompatiblePayloadRuntime:
                 description = (
                     f"{description} This tool is routed through the '{definition.required_skill}' "
                     "skill. Follow that SKILL.md workflow."
+                )
+            if definition.requires_confirmation:
+                description = (
+                    f"{description} This tool may require explicit user approval before execution."
                 )
             tools.append(
                 {
@@ -394,59 +399,6 @@ class OpenAICompatiblePayloadRuntime:
             message,
             error_code=error_code,
         )
-
-    @classmethod
-    def _build_tool_name_codec(
-        cls,
-        tool_defs: tuple[LLMToolDefinition, ...],
-    ) -> tuple[Callable[[str], str], Callable[[str], str]]:
-        encode_map: dict[str, str] = {}
-        decode_map: dict[str, str] = {}
-        used_names: set[str] = set()
-
-        for definition in tool_defs:
-            original = definition.name.strip()
-            if not original:
-                continue
-            encoded = cls._reserve_tool_name(original, used_names)
-            encode_map[original] = encoded
-            decode_map[encoded] = original
-
-        def encode(name: str) -> str:
-            normalized = name.strip()
-            if not normalized:
-                return normalized
-            if normalized in encode_map:
-                return encode_map[normalized]
-            return cls._sanitize_tool_name(normalized)
-
-        def decode(name: str) -> str:
-            normalized = name.strip()
-            if not normalized:
-                return normalized
-            return decode_map.get(normalized, normalized)
-
-        return encode, decode
-
-    @classmethod
-    def _reserve_tool_name(cls, original: str, used_names: set[str]) -> str:
-        if cls._tool_name_pattern.fullmatch(original) and original not in used_names:
-            used_names.add(original)
-            return original
-
-        base = cls._sanitize_tool_name(original)
-        candidate = base
-        suffix = 2
-        while candidate in used_names:
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        used_names.add(candidate)
-        return candidate
-
-    @classmethod
-    def _sanitize_tool_name(cls, value: str) -> str:
-        normalized = re.sub(r"[^a-zA-Z0-9_-]+", "_", value).strip("_")
-        return normalized or "tool"
 
     @staticmethod
     def _identity_tool_name(name: str) -> str:
