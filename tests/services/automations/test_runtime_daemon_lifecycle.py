@@ -25,7 +25,7 @@ async def test_runtime_daemon_readyz_fails_when_cron_task_stops(tmp_path: Path) 
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     await daemon.start()
     try:
@@ -52,8 +52,8 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
     service = FakeRuntimeService()
     service.block_webhook = True
 
-    async def token_validator(token: str) -> bool:
-        return token == "token-valid"
+    async def token_validator(profile_id: str, token: str) -> bool:
+        return profile_id == "default" and token == "token-valid"
 
     settings = build_settings(
         tmp_path,
@@ -68,7 +68,6 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
             port=daemon.bound_port,
             method="POST",
             path=webhook_path(),
-            headers={"X-AFK-Webhook-Token": "token-valid"},
             body='{"event_id":"evt-1"}',
         )
         assert first_status == 202
@@ -80,7 +79,6 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
             port=daemon.bound_port,
             method="POST",
             path=webhook_path(),
-            headers={"X-AFK-Webhook-Token": "token-valid"},
             body='{"event_id":"evt-2"}',
         )
         assert second_status == 202
@@ -91,7 +89,6 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
             port=daemon.bound_port,
             method="POST",
             path=webhook_path(),
-            headers={"X-AFK-Webhook-Token": "token-valid"},
             body='{"event_id":"evt-3"}',
         )
         assert third_status == 429
@@ -113,7 +110,7 @@ async def test_runtime_daemon_cron_loop_ticks(tmp_path: Path) -> None:
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     await daemon.start()
     try:
@@ -139,7 +136,7 @@ async def test_runtime_daemon_cron_tick_runs_immediately_on_start(tmp_path: Path
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     await daemon.start()
     try:
@@ -163,7 +160,7 @@ async def test_runtime_daemon_start_failure_rolls_back_resources(
     daemon = RuntimeDaemon(
         settings=settings,
         service=service,
-        webhook_token_validator=lambda _token: asyncio.sleep(0, result=True),
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
     )
     created_tasks: list[asyncio.Task[object]] = []
     original_create_task = asyncio.create_task
@@ -204,8 +201,8 @@ async def test_runtime_daemon_shutdown_timeout_cancels_blocked_worker(tmp_path: 
     service = FakeRuntimeService()
     service.block_webhook = True
 
-    async def token_validator(token: str) -> bool:
-        return token == "token-valid"
+    async def token_validator(profile_id: str, token: str) -> bool:
+        return profile_id == "default" and token == "token-valid"
 
     settings = build_settings(
         tmp_path,
@@ -219,7 +216,6 @@ async def test_runtime_daemon_shutdown_timeout_cancels_blocked_worker(tmp_path: 
         port=daemon.bound_port,
         method="POST",
         path=webhook_path(),
-        headers={"X-AFK-Webhook-Token": "token-valid"},
         body='{"event_id":"evt-blocked"}',
     )
     assert status == 202

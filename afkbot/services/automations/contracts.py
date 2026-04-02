@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-WEBHOOK_INGRESS_PATH = "/v1/automations/webhook"
+WEBHOOK_INGRESS_PATH = "/v1/automations"
 
 
 class AutomationCronMetadata(BaseModel):
@@ -28,6 +28,7 @@ class AutomationWebhookMetadata(BaseModel):
 
     webhook_token: str | None = None
     webhook_path: str | None = None
+    webhook_url: str | None = None
     webhook_token_masked: str
     last_received_at: datetime | None
 

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.services.automations import AutomationsService
+from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
     BlockingLoop,
@@ -32,7 +33,12 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert token
         assert webhook.webhook is not None
         assert isinstance(webhook.webhook.webhook_token_masked, str)
-        assert webhook.webhook.webhook_path == "/v1/automations/webhook"
+        assert webhook.webhook.webhook_path == build_webhook_path("default", token)
+        assert webhook.webhook.webhook_url == build_webhook_url(
+            "http://127.0.0.1:8080",
+            "default",
+            token,
+        )
 
         fake_loop = FakeLoop()
 
@@ -41,6 +47,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             return fake_loop
 
         hook_result = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
             agent_loop_factory=factory_fn,
@@ -78,6 +85,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert hook_result.deduplicated is False
 
         duplicate_result = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
             agent_loop_factory=factory_fn,
@@ -89,6 +97,36 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             if call["session_id"] == hook_result.session_id
         ]
         assert len(webhook_messages_after_duplicate) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_service_webhook_metadata_prefers_public_runtime_url(tmp_path: Path) -> None:
+    """Webhook metadata should use the configured public runtime URL when available."""
+
+    engine, factory, _ = await prepare_service(tmp_path)
+    service = AutomationsService(
+        factory,
+        settings=Settings(
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+            root_dir=tmp_path,
+            public_runtime_url="https://hooks.example.com/base",
+        ),
+    )
+    try:
+        created = await service.create_webhook(
+            profile_id="default",
+            name="public hook",
+            prompt="handle public events",
+        )
+        assert created.webhook is not None
+        token = created.webhook.webhook_token
+        assert token is not None
+        assert created.webhook.webhook_url == build_webhook_url(
+            "https://hooks.example.com/base",
+            "default",
+            token,
+        )
     finally:
         await engine.dispose()
 
@@ -115,12 +153,14 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
 
         with pytest.raises(RuntimeError, match="simulated failure"):
             await service.trigger_webhook(
+                profile_id="default",
                 token=token,
                 payload={"event_id": "e-1"},
                 agent_loop_factory=factory_fn,
             )
 
         second_result = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "e-1"},
             agent_loop_factory=factory_fn,
@@ -129,6 +169,7 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
         assert len(flaky_loop.calls) == 2
 
         third_result = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "e-1"},
             agent_loop_factory=factory_fn,
@@ -161,6 +202,7 @@ async def test_webhook_claim_released_on_cancellation(tmp_path: Path) -> None:
 
         task = asyncio.create_task(
             service.trigger_webhook(
+                profile_id="default",
                 token=token,
                 payload={"event_id": "cancel-1"},
                 agent_loop_factory=blocking_factory,
@@ -178,6 +220,7 @@ async def test_webhook_claim_released_on_cancellation(tmp_path: Path) -> None:
             return followup_loop
 
         followup_result = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "cancel-2"},
             agent_loop_factory=followup_factory,
@@ -211,11 +254,13 @@ async def test_webhook_concurrency_deduplicates_across_service_instances(tmp_pat
 
         res_a, res_b = await asyncio.gather(
             service_a.trigger_webhook(
+                profile_id="default",
                 token=token,
                 payload={"event_id": "same"},
                 agent_loop_factory=factory_fn,
             ),
             service_b.trigger_webhook(
+                profile_id="default",
                 token=token,
                 payload={"event_id": "same"},
                 agent_loop_factory=factory_fn,
@@ -256,16 +301,19 @@ async def test_webhook_same_body_different_event_id_executes_twice(tmp_path: Pat
             return fake_loop
 
         first = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "evt-a", "body": "same"},
             agent_loop_factory=factory_fn,
         )
         second = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "evt-b", "body": "same"},
             agent_loop_factory=factory_fn,
         )
         replay = await service.trigger_webhook(
+            profile_id="default",
             token=token,
             payload={"event_id": "evt-a", "body": "same"},
             agent_loop_factory=factory_fn,

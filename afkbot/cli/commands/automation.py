@@ -27,9 +27,25 @@ def register(app: typer.Typer) -> None:
     )
     app.add_typer(automation_app, name="automation")
 
+    @automation_app.callback()
+    def automation_group(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(
+            None,
+            "--profile",
+            help="Default target profile id for automation subcommands.",
+        ),
+    ) -> None:
+        """Capture optional group-level automation defaults."""
+
+        ctx.ensure_object(dict)
+        if profile is not None:
+            ctx.obj["profile"] = profile
+
     @automation_app.command("list")
     def list_automations(
-        profile: str = typer.Option("default", "--profile", help="Target profile id."),
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         include_deleted: bool = typer.Option(
             False,
             "--include-deleted/--no-include-deleted",
@@ -41,23 +57,25 @@ def register(app: typer.Typer) -> None:
         typer.echo(
             asyncio.run(
                 list_automations_payload(
-                    profile_id=profile,
+                    profile_id=_resolve_profile(ctx, profile),
                     include_deleted=include_deleted,
                 )
             )
         )
 
     @automation_app.command("show")
+    @automation_app.command("get")
     def show_automation(
+        ctx: typer.Context,
         automation_id: int = typer.Argument(..., min=1, help="Automation id."),
-        profile: str = typer.Option("default", "--profile", help="Target profile id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
     ) -> None:
         """Show one automation metadata record."""
 
         typer.echo(
             asyncio.run(
                 get_automation_payload(
-                    profile_id=profile,
+                    profile_id=_resolve_profile(ctx, profile),
                     automation_id=automation_id,
                 )
             )
@@ -65,7 +83,8 @@ def register(app: typer.Typer) -> None:
 
     @automation_app.command("create")
     def create_automation(
-        profile: str = typer.Option("default", "--profile", help="Target profile id."),
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         name: str = typer.Option(..., "--name", help="Automation name."),
         prompt: str = typer.Option(..., "--prompt", help="Automation task prompt."),
         trigger: str = typer.Option(
@@ -88,7 +107,7 @@ def register(app: typer.Typer) -> None:
 
         payload = asyncio.run(
             create_automation_payload(
-                profile_id=profile,
+                profile_id=_resolve_profile(ctx, profile),
                 name=name,
                 prompt=prompt,
                 trigger_type=trigger,
@@ -101,8 +120,9 @@ def register(app: typer.Typer) -> None:
 
     @automation_app.command("update")
     def update_automation(
+        ctx: typer.Context,
         automation_id: int = typer.Argument(..., min=1, help="Automation id."),
-        profile: str = typer.Option("default", "--profile", help="Target profile id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         name: str | None = typer.Option(None, "--name", help="Updated automation name."),
         prompt: str | None = typer.Option(None, "--prompt", help="Updated task prompt."),
         status: str | None = typer.Option(
@@ -126,7 +146,7 @@ def register(app: typer.Typer) -> None:
 
         payload = asyncio.run(
             update_automation_payload(
-                profile_id=profile,
+                profile_id=_resolve_profile(ctx, profile),
                 automation_id=automation_id,
                 name=name,
                 prompt=prompt,
@@ -141,14 +161,15 @@ def register(app: typer.Typer) -> None:
 
     @automation_app.command("delete")
     def delete_automation(
+        ctx: typer.Context,
         automation_id: int = typer.Argument(..., min=1, help="Automation id."),
-        profile: str = typer.Option("default", "--profile", help="Target profile id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
     ) -> None:
         """Soft-delete one automation."""
 
         payload = asyncio.run(
             delete_automation_payload(
-                profile_id=profile,
+                profile_id=_resolve_profile(ctx, profile),
                 automation_id=automation_id,
             )
         )
@@ -172,6 +193,8 @@ def register(app: typer.Typer) -> None:
 
     @automation_app.command("webhook-trigger")
     def webhook_trigger(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         token: str = typer.Option(..., "--token", help="Plaintext webhook token."),
         payload_json: str = typer.Option(
             "{}",
@@ -181,9 +204,28 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Trigger one webhook automation immediately from CLI."""
 
-        payload = asyncio.run(trigger_webhook_payload(token=token, payload_json=payload_json))
+        payload = asyncio.run(
+            trigger_webhook_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                token=token,
+                payload_json=payload_json,
+            )
+        )
         typer.echo(payload)
         _exit_on_error_payload(payload)
+
+
+def _resolve_profile(ctx: typer.Context, profile: str | None) -> str:
+    """Resolve subcommand profile from explicit flag, group option, or default."""
+
+    if profile is not None and profile.strip():
+        return profile
+    if isinstance(ctx.obj, dict):
+        group_profile = ctx.obj.get("profile")
+        if isinstance(group_profile, str) and group_profile.strip():
+            return group_profile
+    return "default"
+
 
 def _exit_on_error_payload(payload: str) -> None:
     data = json.loads(payload)

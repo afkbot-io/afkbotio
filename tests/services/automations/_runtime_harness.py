@@ -8,8 +8,6 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from afkbot.settings import Settings
 
 
@@ -17,7 +15,7 @@ class FakeRuntimeService:
     """Fake automation service collecting webhook/cron calls."""
 
     def __init__(self) -> None:
-        self.webhook_calls: list[tuple[str, dict[str, object]]] = []
+        self.webhook_calls: list[tuple[str, str, dict[str, object]]] = []
         self.tick_calls: list[datetime] = []
         self.tick_limits: list[int | None] = []
         self.webhook_started = asyncio.Event()
@@ -27,13 +25,15 @@ class FakeRuntimeService:
     async def trigger_webhook(
         self,
         *,
+        profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[[AsyncSession], object],
+        agent_loop_factory: Callable[..., object],
     ) -> object:
         _ = agent_loop_factory
         self.webhook_calls.append(
             (
+                profile_id,
                 token,
                 dict(payload),
             )
@@ -47,7 +47,7 @@ class FakeRuntimeService:
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[[AsyncSession], object],
+        agent_loop_factory: Callable[..., object],
         max_due_per_tick: int | None = None,
     ) -> object:
         _ = agent_loop_factory
@@ -62,11 +62,12 @@ class FailingWebhookRuntimeService(FakeRuntimeService):
     async def trigger_webhook(
         self,
         *,
+        profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[[AsyncSession], object],
+        agent_loop_factory: Callable[..., object],
     ) -> object:
-        _ = token, payload, agent_loop_factory
+        _ = profile_id, token, payload, agent_loop_factory
         raise RuntimeError("webhook failure")
 
 
@@ -77,7 +78,7 @@ class FailingCronRuntimeService(FakeRuntimeService):
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[[AsyncSession], object],
+        agent_loop_factory: Callable[..., object],
         max_due_per_tick: int | None = None,
     ) -> object:
         _ = now_utc, agent_loop_factory, max_due_per_tick
@@ -105,10 +106,10 @@ def build_settings(tmp_path: Path, **overrides: object) -> Settings:
     return base.model_copy(update=overrides)
 
 
-def webhook_path(token: str | None = None) -> str:
+def webhook_path(*, profile_id: str = "default", token: str | None = "token-valid") -> str:
     """Build one runtime webhook path for socket-level tests."""
 
-    base = "/v1/automations/webhook"
+    base = f"/v1/automations/{profile_id}/webhook"
     if token is None:
         return base
     return f"{base}/{token}"

@@ -57,8 +57,12 @@ Use this skill only for explicit automation requests:
 5. After tool call, return short factual result from payload:
    - `id`, `name`, `status`, `trigger_type`
    - for cron: `cron.cron_expr`, `cron.timezone`
-   - for webhook create/rotate: `webhook.webhook_path`, `webhook.webhook_token`, and `webhook.webhook_token_masked`
-   - explain that external webhook providers should call the returned `webhook.webhook_path` on the AFKBOT base URL
+   - for webhook create/get/list/rotate: `webhook.webhook_path`, `webhook.webhook_url`, `webhook.webhook_token`, and `webhook.webhook_token_masked`
+   - explain that external webhook providers should call the returned path/URL directly; the token is embedded into the webhook path, not passed via headers
+6. For read-only webhook questions such as “what is the webhook URL/token/path?”:
+   - use `automation.get` when the automation id is known
+   - use `automation.list` first when the id is not known
+   - do not call `automation.update` or rotate webhook tokens unless the user explicitly asked to rotate/regenerate them
 
 ## Rules
 - Never call `automation.*` for plain integration tasks (e.g. send Telegram message once).

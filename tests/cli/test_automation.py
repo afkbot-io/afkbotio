@@ -15,6 +15,7 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
+from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.settings import get_settings
 
 
@@ -76,7 +77,15 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     automation_id = int(automation["id"])
     assert automation["trigger_type"] == "webhook"
     assert isinstance(automation["webhook"]["webhook_token"], str)
-    assert automation["webhook"]["webhook_path"] == "/v1/automations/webhook"
+    assert automation["webhook"]["webhook_path"] == build_webhook_path(
+        "default",
+        automation["webhook"]["webhook_token"],
+    )
+    assert automation["webhook"]["webhook_url"] == build_webhook_url(
+        "http://127.0.0.1:8080",
+        "default",
+        automation["webhook"]["webhook_token"],
+    )
     created_token = automation["webhook"]["webhook_token"]
 
     list_result = runner.invoke(app, ["automation", "list", "--profile", "default"])
@@ -91,7 +100,25 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     assert show_result.exit_code == 0
     shown = json.loads(show_result.stdout)
     assert shown["automation"]["id"] == automation_id
-    assert shown["automation"]["webhook"]["webhook_token"] is None
+    assert shown["automation"]["webhook"]["webhook_token"] == created_token
+    assert shown["automation"]["webhook"]["webhook_url"] == build_webhook_url(
+        "http://127.0.0.1:8080",
+        "default",
+        created_token,
+    )
+
+    get_result = runner.invoke(
+        app,
+        ["automation", "get", str(automation_id), "--profile", "default"],
+    )
+    assert get_result.exit_code == 0
+    gotten = json.loads(get_result.stdout)
+    assert gotten["automation"]["webhook"]["webhook_token"] == created_token
+    assert gotten["automation"]["webhook"]["webhook_url"] == build_webhook_url(
+        "http://127.0.0.1:8080",
+        "default",
+        created_token,
+    )
 
     update_result = runner.invoke(
         app,
@@ -125,9 +152,17 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     )
     assert rotate_result.exit_code == 0
     rotated = json.loads(rotate_result.stdout)
-    assert rotated["automation"]["webhook"]["webhook_path"] == "/v1/automations/webhook"
+    assert rotated["automation"]["webhook"]["webhook_path"] == build_webhook_path(
+        "default",
+        rotated["automation"]["webhook"]["webhook_token"],
+    )
     assert isinstance(rotated["automation"]["webhook"]["webhook_token"], str)
     assert rotated["automation"]["webhook"]["webhook_token"] != created_token
+    assert rotated["automation"]["webhook"]["webhook_url"] == build_webhook_url(
+        "http://127.0.0.1:8080",
+        "default",
+        rotated["automation"]["webhook"]["webhook_token"],
+    )
 
     delete_result = runner.invoke(
         app,
@@ -181,3 +216,52 @@ def test_automation_cli_supports_manual_cron_tick(tmp_path: Path, monkeypatch: M
     assert tick_result.exit_code == 0
     payload = json.loads(tick_result.stdout)
     assert payload["cron_tick"]["triggered_ids"] == [created["automation"]["id"]]
+
+
+def test_automation_cli_accepts_group_level_profile_option(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Automation CLI should accept --profile before the subcommand."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    app = _build_automation_cli()
+
+    create_result = runner.invoke(
+        app,
+        [
+            "automation",
+            "--profile",
+            "default",
+            "create",
+            "--name",
+            "Group profile webhook",
+            "--prompt",
+            "Listen for events",
+            "--trigger",
+            "webhook",
+        ],
+    )
+    assert create_result.exit_code == 0
+    created = json.loads(create_result.stdout)
+    automation_id = int(created["automation"]["id"])
+    token = created["automation"]["webhook"]["webhook_token"]
+    assert created["automation"]["webhook"]["webhook_url"] == build_webhook_url(
+        "http://127.0.0.1:8080",
+        "default",
+        token,
+    )
+
+    list_result = runner.invoke(app, ["automation", "--profile", "default", "list"])
+    assert list_result.exit_code == 0
+    listed = json.loads(list_result.stdout)
+    assert [item["id"] for item in listed["automations"]] == [automation_id]
+
+    get_result = runner.invoke(
+        app,
+        ["automation", "--profile", "default", "get", str(automation_id)],
+    )
+    assert get_result.exit_code == 0
+    gotten = json.loads(get_result.stdout)
+    assert gotten["automation"]["webhook"]["webhook_token"] == token

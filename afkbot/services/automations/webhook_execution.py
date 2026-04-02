@@ -23,7 +23,6 @@ from afkbot.services.automations.message_factory import (
 from afkbot.services.automations.payloads import resolve_webhook_event_hash, sanitize_payload
 from afkbot.services.automations.runtime_contracts import WithAutomationRepo
 from afkbot.services.automations.runtime_target import build_automation_runtime_target
-from afkbot.services.automations.webhook_tokens import hash_webhook_token
 
 WEBHOOK_CLAIM_TTL = timedelta(minutes=15)
 
@@ -32,6 +31,7 @@ async def trigger_webhook_automation(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     with_repo: WithAutomationRepo,
+    profile_id: str,
     token: str,
     payload: Mapping[str, object],
     agent_loop_factory: Callable[..., AgentLoopLike],
@@ -39,14 +39,18 @@ async def trigger_webhook_automation(
     """Trigger one webhook automation and run its prompt through AgentLoop."""
 
     now_utc = datetime.now(timezone.utc)
-    token_hash = hash_webhook_token(token.strip())
+    normalized_profile_id = profile_id.strip()
+    normalized_token = token.strip()
     event_hash = resolve_webhook_event_hash(payload)
     sanitized_payload = sanitize_payload(payload)
     lease_until = now_utc + WEBHOOK_CLAIM_TTL
     claim_token = secrets.token_hex(16)
 
     async def _claim_op(repo: AutomationRepository) -> tuple[Automation, bool]:
-        row = await repo.find_webhook_by_token(token_hash=token_hash)
+        row = await repo.find_webhook_by_target(
+            profile_id=normalized_profile_id,
+            token=normalized_token,
+        )
         if row is None:
             raise AutomationsServiceError(
                 error_code="automation_not_found",

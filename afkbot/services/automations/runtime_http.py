@@ -8,8 +8,12 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Final
+from urllib.parse import unquote
+
 from afkbot.services.automations.contracts import WEBHOOK_INGRESS_PATH
 from afkbot.services.automations.runtime_service import coerce_webhook_payload_mapping
+
+_WEBHOOK_PATH_PREFIX: Final[str] = f"{WEBHOOK_INGRESS_PATH}/"
 
 STATUS_TEXT: Final[dict[int, str]] = {
     200: "OK",
@@ -22,8 +26,6 @@ STATUS_TEXT: Final[dict[int, str]] = {
     429: "Too Many Requests",
     503: "Service Unavailable",
 }
-
-WEBHOOK_TOKEN_HEADER: Final[str] = "x-afk-webhook-token"
 
 
 @dataclass(frozen=True)
@@ -44,20 +46,28 @@ class HttpReadError:
     payload: Mapping[str, object]
 
 
-def match_webhook_path(path: str) -> tuple[bool, str | None]:
-    """Return whether a path targets webhook ingress."""
+@dataclass(frozen=True)
+class WebhookIngressTarget:
+    """Resolved webhook route target extracted from HTTP path."""
 
-    if path != WEBHOOK_INGRESS_PATH:
-        return False, None
-    return True, None
+    profile_id: str
+    token: str
 
 
-def extract_webhook_token(headers: Mapping[str, str]) -> str | None:
-    """Extract webhook token from headers with normalization."""
+def match_webhook_path(path: str) -> WebhookIngressTarget | None:
+    """Return resolved webhook ingress target from canonical runtime path."""
 
-    token = (headers.get(WEBHOOK_TOKEN_HEADER) or "").strip()
-    return token or None
-
+    if not path.startswith(_WEBHOOK_PATH_PREFIX):
+        return None
+    suffix = path[len(_WEBHOOK_PATH_PREFIX) :]
+    profile_part, sep, token_part = suffix.partition("/webhook/")
+    if not sep:
+        return None
+    profile_id = unquote(profile_part).strip()
+    token = unquote(token_part).strip()
+    if not profile_id or not token or "/" in token_part or not token_part:
+        return None
+    return WebhookIngressTarget(profile_id=profile_id, token=token)
 
 async def read_request(
     reader: asyncio.StreamReader,
