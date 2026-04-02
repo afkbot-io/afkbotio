@@ -93,6 +93,14 @@ uv run afk start
 curl -fsS http://127.0.0.1:8081/healthz
 ```
 
+Webhook trigger example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/automations/<profile_id>/webhook/<token> \
+  -H 'Content-Type: application/json' \
+  -d '{"event_id":"manual-test-1"}'
+```
+
 Useful commands:
 
 ```bash
