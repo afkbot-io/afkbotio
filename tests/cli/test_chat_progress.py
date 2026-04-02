@@ -348,6 +348,44 @@ def test_chat_progress_detail_for_llm_call_tick() -> None:
     assert render_progress_detail(event) == "llm=tick elapsed_ms=6000 timeout_ms=30000"
 
 
+def test_chat_progress_event_for_context_compaction_steps() -> None:
+    """Automatic context compaction should render as dedicated visible system steps."""
+
+    start_event = ProgressEvent(
+        event_id=600,
+        run_id=1,
+        stage="thinking",
+        iteration=2,
+        tool_name=None,
+        event_type="llm.call.compaction_start",
+        payload={"attempt": 1, "error_detail": "context window exceeded"},
+    )
+    done_event = ProgressEvent(
+        event_id=601,
+        run_id=1,
+        stage="thinking",
+        iteration=2,
+        tool_name=None,
+        event_type="llm.call.compaction_done",
+        payload={
+            "attempt": 1,
+            "summary_strategy": "hybrid_llm_v1",
+            "history_messages_before": 9,
+            "history_messages_after": 4,
+        },
+    )
+
+    mapped_start = map_progress_event(start_event)
+    mapped_done = map_progress_event(done_event)
+
+    assert mapped_start is not None
+    assert mapped_done is not None
+    assert render_progress_event(mapped_start) == "----- Automatic context compaction -----"
+    assert render_progress_event(mapped_done) == "----- Context automatically compacted -----"
+    assert render_progress_detail(start_event) == "attempt=1 provider=context window exceeded"
+    assert render_progress_detail(done_event) == "attempt=1 summary=hybrid_llm_v1 history=9->4"
+
+
 def test_chat_progress_detail_for_llm_call_start_includes_reasoning_and_tool_count() -> None:
     """LLM start detail should expose reasoning budget and visible tool count."""
 

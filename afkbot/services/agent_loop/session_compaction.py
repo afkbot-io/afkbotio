@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from afkbot.repositories.chat_session_compaction_repo import ChatSessionCompactionRepository
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.services.agent_loop.session_compaction_summarizer import SessionCompactionSummarizer
+from afkbot.services.llm.contracts import LLMProvider
 
 _COMPACTION_STRATEGY = "deterministic_v1"
 
@@ -45,11 +46,15 @@ class SessionCompactionService:
         keep_recent_turns: int,
         history_turns: int,
         max_chars: int,
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._enabled = enabled
         self._trigger_turns = max(1, trigger_turns)
         self._keep_recent_turns = min(max(0, keep_recent_turns), max(0, history_turns))
-        self._summarizer = SessionCompactionSummarizer(max_chars=max_chars)
+        self._summarizer = SessionCompactionSummarizer(
+            max_chars=max_chars,
+            llm_provider=llm_provider,
+        )
         self._compactions = ChatSessionCompactionRepository(session)
         self._turns = ChatTurnRepository(session)
 
@@ -105,17 +110,17 @@ class SessionCompactionService:
             return self._build_result(snapshot=snapshot, new_turn_count=0, updated=False)
 
         existing_summary = None if snapshot is None else snapshot.summary_text
-        summary_text = self._summarizer.extend(
+        summary_build = await self._summarizer.extend(
             existing_summary=existing_summary,
             new_turns=new_turns,
         )
         row = await self._compactions.upsert(
             profile_id=profile_id,
             session_id=session_id,
-            summary_text=summary_text,
+            summary_text=summary_build.summary_text,
             compacted_until_turn_id=new_turns[-1].id,
             source_turn_count=(0 if snapshot is None else snapshot.source_turn_count) + len(new_turns),
-            strategy=_COMPACTION_STRATEGY,
+            strategy=summary_build.strategy or _COMPACTION_STRATEGY,
         )
         return SessionCompactionResult(
             updated=True,

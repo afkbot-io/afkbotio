@@ -117,6 +117,49 @@ async def test_session_compaction_refreshes_incrementally(tmp_path: Path) -> Non
     await engine.dispose()
 
 
+async def test_session_compaction_uses_llm_merge_when_summary_budget_is_tight(tmp_path: Path) -> None:
+    """Large persisted summaries should switch to hybrid LLM merge before pruning too aggressively."""
+
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_compaction_llm.db'}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    llm = MockLLMProvider([LLMResponse.final("Goal: keep context compact\nNext: continue with turn three")])
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        await ChatSessionRepository(session).create(session_id="s-1", profile_id="default")
+        session.add_all(
+            [
+                ChatTurn(profile_id="default", session_id="s-1", user_message="u1 " * 40, assistant_message="a1 " * 40),
+                ChatTurn(profile_id="default", session_id="s-1", user_message="u2 " * 40, assistant_message="a2 " * 40),
+                ChatTurn(profile_id="default", session_id="s-1", user_message="u3 " * 40, assistant_message="a3 " * 40),
+            ]
+        )
+        await session.flush()
+
+        service = SessionCompactionService(
+            session,
+            enabled=True,
+            trigger_turns=2,
+            keep_recent_turns=1,
+            history_turns=3,
+            max_chars=140,
+            llm_provider=llm,
+        )
+
+        result = await service.refresh_if_needed(profile_id="default", session_id="s-1")
+        snapshot = await service.load_snapshot(profile_id="default", session_id="s-1")
+
+        assert result.updated is True
+        assert snapshot is not None
+        assert snapshot.strategy == "hybrid_llm_v1"
+        assert "Goal: keep context compact" in snapshot.summary_text
+        assert len(llm.requests) == 1
+
+    await engine.dispose()
+
+
 async def test_agent_loop_uses_compacted_summary_in_followup_history(tmp_path: Path) -> None:
     """Longer sessions should switch older turns from raw replay to trusted compact summary."""
 

@@ -19,6 +19,7 @@ from afkbot.services.agent_loop.browser_carryover import BrowserCarryoverService
 from afkbot.services.agent_loop.chat_history_builder import ChatHistoryBuilder
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.llm_iteration_runtime import LLMIterationRuntime
+from afkbot.services.agent_loop.llm_request_compaction import LLMRequestCompactionService
 from afkbot.services.agent_loop.llm_request_runtime import LLMRequestRuntime
 from afkbot.services.agent_loop.loop_sanitizer import (
     is_sensitive_field as _is_sensitive_field_name,
@@ -195,6 +196,7 @@ class AgentLoop:
             keep_recent_turns=session_compaction_keep_recent_turns,
             history_turns=llm_history_turns,
             max_chars=session_compaction_max_chars,
+            llm_provider=llm_provider,
         )
         self._chat_history = ChatHistoryBuilder(
             session=session,
@@ -218,6 +220,11 @@ class AgentLoop:
             )
             if llm_provider is not None
             else None
+        )
+        self._request_compaction = LLMRequestCompactionService(
+            llm_provider=llm_provider,
+            max_summary_chars=session_compaction_max_chars,
+            keep_recent_turns=session_compaction_keep_recent_turns,
         )
         self._memory_runtime = MemoryRuntime(
             tool_registry=tool_registry,
@@ -254,7 +261,9 @@ class AgentLoop:
                 llm_request_runtime=self._llm_runtime,
                 tool_execution=self._tool_execution,
                 pending_envelopes=self._pending_envelopes,
+                request_compaction=self._request_compaction,
                 tool_skill_resolver=self._tool_skill_resolver,
+                log_event=self._runlog.log_event,
                 log_progress=self._runlog.log_progress,
                 raise_if_cancel_requested=self._runlog.raise_if_cancel_requested,
                 sanitize=self._sanitize,

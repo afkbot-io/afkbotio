@@ -133,6 +133,8 @@ def _decorate_group(line: str, group_seq: int) -> str:
 
 
 def _decorate_iteration(line: str, iteration: int | None) -> str:
+    if line.startswith("----- "):
+        return line
     if iteration is None or iteration <= 0:
         return line
     return f"[iter {iteration}] {line}"

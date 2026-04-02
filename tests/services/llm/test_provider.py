@@ -488,6 +488,12 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("boom", request=request, response=response)
 
 
+def _http_status_error_with_detail(status_code: int, detail: str) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(status_code, request=request, json={"error": {"message": detail}})
+    return httpx.HTTPStatusError("boom", request=request, response=response)
+
+
 def test_openai_http_status_401_maps_to_auth_error() -> None:
     provider = OpenAICompatibleChatProvider(
         provider_id=LLMProviderId.OPENAI,
@@ -567,7 +573,47 @@ def test_openai_http_status_400_includes_provider_detail() -> None:
 
     # Assert
     assert result.error_code == "llm_provider_invalid_request"
+    assert result.error_detail == "Input item 2 uses an unsupported role."
     assert "unsupported role" in (result.final_message or "").lower()
+
+
+def test_openai_http_status_400_maps_context_window_rejection_to_overflow_error() -> None:
+    """Context-window rejections should use the dedicated overflow error code."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-5.1",
+        api_key="token",
+        base_url="https://api.openai.com/v1",
+    )
+
+    response = provider._fallback_http_status(  # noqa: SLF001
+        _request(),
+        _http_status_error_with_detail(
+            400,
+            "Your input exceeds the context window of this model. Please adjust your input and try again.",
+        ),
+    )
+
+    assert response.error_code == "llm_context_window_exceeded"
+    assert response.error_detail is not None
+    assert "context window" in response.error_detail.lower()
+    assert "context window" in (response.final_message or "").lower()
+
+
+def test_non_openai_http_status_413_maps_to_context_window_overflow() -> None:
+    """413 provider errors should trigger the same overflow classification."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENROUTER,
+        model="minimax/minimax-m2.5",
+        api_key="token",
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(413))  # noqa: SLF001
+
+    assert response.error_code == "llm_context_window_exceeded"
 
 
 def test_build_llm_provider_uses_socks_proxy_when_configured() -> None:

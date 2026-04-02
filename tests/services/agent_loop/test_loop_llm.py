@@ -20,7 +20,7 @@ from afkbot.services.agent_loop.llm_tool_followup import LLMToolFollowupPolicy
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-from afkbot.services.llm import BaseLLMProvider, LLMResponse, MockLLMProvider, ToolCallRequest
+from afkbot.services.llm import BaseLLMProvider, LLMRequest, LLMResponse, MockLLMProvider, ToolCallRequest
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolParameters
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolCall, ToolResult
@@ -243,6 +243,73 @@ async def test_llm_history_keeps_assistant_tool_call_linkage(tmp_path: Path) -> 
     assert tool_result_message is not None
     assert tool_result_message.tool_call_id == "call_debug_1"
     assert tool_result_message.tool_name == "debug.echo"
+
+    await engine.dispose()
+
+
+async def test_llm_overflow_retries_with_automatic_context_compaction(tmp_path: Path) -> None:
+    """Overflow rejections should trigger hybrid compaction and retry within the same iteration."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_overflow_compaction.db")
+
+    class _OverflowRecoveryProvider(BaseLLMProvider):
+        def __init__(self) -> None:
+            self.requests: list[LLMRequest] = []
+            self._main_calls = 0
+
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            self.requests.append(request)
+            if request.session_id == "system-compaction":
+                return LLMResponse.final(
+                    "Goal: continue the conversation\nCompleted: earlier discussion summarized\nNext: answer the latest user message"
+                )
+            self._main_calls += 1
+            if self._main_calls < 3:
+                return LLMResponse.final(f"seed-{self._main_calls}")
+            if self._main_calls == 3:
+                return LLMResponse.final(
+                    "overflow",
+                    error_code="llm_context_window_exceeded",
+                    error_detail="Your input exceeds the context window of this model.",
+                )
+            return LLMResponse.final("recovered final")
+
+    provider = _OverflowRecoveryProvider()
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=1,
+            session_compaction_keep_recent_turns=1,
+            session_compaction_max_chars=320,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(profile_id="default", session_id="s-overflow", message="first")
+        await loop.run_turn(profile_id="default", session_id="s-overflow", message="second")
+        result = await loop.run_turn(profile_id="default", session_id="s-overflow", message="third")
+
+        assert result.envelope.message == "recovered final"
+        assert len(provider.requests) == 5
+        retry_request = provider.requests[-1]
+        assert retry_request.history[0].role == "system"
+        assert "continue the conversation" in (retry_request.history[0].content or "")
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        event_types = [event.event_type for event in events]
+        assert "llm.call.compaction_start" in event_types
+        assert "llm.call.compaction_done" in event_types
+        compaction_done = next(event for event in events if event.event_type == "llm.call.compaction_done")
+        payload = json.loads(compaction_done.payload_json)
+        assert payload["summary_strategy"] == "hybrid_llm_v1"
+        assert payload["history_messages_before"] > payload["history_messages_after"]
 
     await engine.dispose()
 
@@ -590,6 +657,7 @@ async def test_llm_runtime_budget_stops_long_multi_iteration_turns(tmp_path: Pat
     """Total wall-clock budget should stop iterative turns before max_iterations when time is spent across iterations."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_runtime_budget.db")
+    settings = settings.model_copy(update={"llm_shared_request_min_interval_ms": 0})
 
     class _SlowTool(ToolBase):
         name = "debug.loopslow"
@@ -617,7 +685,7 @@ async def test_llm_runtime_budget_stops_long_multi_iteration_turns(tmp_path: Pat
             ContextBuilder(settings, SkillLoader(settings)),
             tool_registry=ToolRegistry([_SlowTool()]),
             llm_provider=provider,
-            llm_request_timeout_sec=0.05,
+            llm_request_timeout_sec=0.2,
             llm_max_iterations=50,
             llm_execution_budget_low_sec=0.15,
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
