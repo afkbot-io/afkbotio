@@ -85,6 +85,12 @@ def run_repl_transport(
                 def _sequential_progress_sink(event: ProgressEvent) -> None:
                     _record_progress(event=event, repl_state=repl_state, ux=ux)
 
+                setattr(
+                    _sequential_progress_sink,
+                    "before_interactive_prompt",
+                    ux.stop_progress,
+                )
+
                 _run_repl_sequential(
                     runner=runner,
                     ux=ux,

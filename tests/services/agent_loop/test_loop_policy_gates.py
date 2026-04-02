@@ -229,10 +229,11 @@ async def test_llm_tool_schema_hides_legacy_skill_name_for_routed_tools(
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         policy = await _ensure_default_profile_policy(session)
-        tools = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
         )
+        tools = tool_surface.visible_tools
         tool_map = {item.name: item for item in tools}
         telegram_schema = tool_map["app.run"].parameters_schema
 
@@ -261,10 +262,11 @@ async def test_llm_credential_tool_schemas_hide_secret_value_fields(tmp_path: Pa
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         policy = await _ensure_default_profile_policy(session)
-        tools = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
         )
+        tools = tool_surface.visible_tools
         tool_map = {item.name: item for item in tools}
 
         for tool_name in ("credentials.request", "credentials.create", "credentials.update"):
@@ -295,11 +297,12 @@ async def test_llm_hides_credentials_tools_for_user_facing_channels(tmp_path: Pa
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         policy = await _ensure_default_profile_policy(session)
-        tools = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
             runtime_metadata={"transport": "telegram_user", "account_id": "personal-user", "peer_id": "42"},
         )
+        tools = tool_surface.visible_tools
         tool_names = {item.name for item in tools}
 
         assert "credentials.list" not in tool_names
@@ -388,7 +391,7 @@ async def test_llm_app_run_schema_binds_only_selected_app_names(tmp_path: Path) 
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         policy = await _ensure_default_profile_policy(session)
-        tools = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             profile_id="default",
             skill_route=SkillRoute(
@@ -406,6 +409,7 @@ async def test_llm_app_run_schema_binds_only_selected_app_names(tmp_path: Path) 
             ),
             automation_intent=True,
         )
+        tools = tool_surface.visible_tools
         tool_map = {item.name: item for item in tools}
         app_run_schema = tool_map["app.run"].parameters_schema
 
@@ -514,12 +518,13 @@ async def test_channel_tool_profile_filters_llm_visible_tools(tmp_path: Path) ->
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        tools = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             profile_id="default",
             automation_intent=True,
             runtime_metadata={"policy_overlay": {"tool_profile": "support_readonly"}},
         )
+        tools = tool_surface.visible_tools
         tool_names = {item.name for item in tools}
 
         assert "file.read" in tool_names

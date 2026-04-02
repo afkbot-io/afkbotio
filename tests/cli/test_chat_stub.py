@@ -10,10 +10,12 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.commands.chat_planning import build_plan_only_overrides
+from afkbot.cli.commands.chat_target import build_cli_runtime_overrides
 from afkbot.cli.main import app
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.runtime_config import ProfileRuntimeConfigService
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.channel_routing.runtime_target import RuntimeTarget
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
 from afkbot.services.agent_loop.turn_runtime import run_once_result
@@ -194,7 +196,7 @@ def test_chat_cli_plan_on_runs_plan_then_execution(
 
     monkeypatch.setattr("afkbot.cli.commands.chat.run_once_result", _fake_run_once_result)
     monkeypatch.setattr(
-        "afkbot.cli.commands.chat_planning_runtime.confirm_space",
+        "afkbot.cli.commands.chat_planning_runtime.confirm_chat_plan_first",
         lambda **_: next(confirmations),
     )
 
@@ -212,10 +214,13 @@ def test_chat_cli_plan_on_runs_plan_then_execution(
     )
 
     assert result.exit_code == 0
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert calls[0]["context_overrides"] is not None
     assert calls[0]["context_overrides"].planning_mode == "plan_only"
     assert calls[0]["context_overrides"].execution_planning_mode == "off"
+    assert calls[1]["context_overrides"] is not None
+    assert calls[1]["context_overrides"].planning_mode == "off"
+    assert calls[1]["context_overrides"].execution_planning_mode == "off"
     assert "AFK Plan" in strip_ansi(result.stdout)
     assert "[ ] Inspect" in strip_ansi(result.stdout)
     assert "[ ] Implement" in strip_ansi(result.stdout)
@@ -234,7 +239,6 @@ def test_build_plan_only_overrides_merges_expected_plan_only_context() -> None:
 
     assert overrides.runtime_metadata == {
         "source": "cli",
-        "planning": {"mode": "plan_only"},
     }
     assert "Base instructions." in (overrides.prompt_overlay or "")
     assert "Return only the plan." in (overrides.prompt_overlay or "")
@@ -242,6 +246,24 @@ def test_build_plan_only_overrides_merges_expected_plan_only_context() -> None:
     assert overrides.execution_planning_mode == "off"
     assert overrides.thinking_level == "high"
     assert overrides.tool_access_mode == "read_only"
+
+
+def test_build_cli_runtime_overrides_enables_cli_approval_surface() -> None:
+    """afk chat should always enable the trusted CLI approval surface."""
+
+    overrides = build_cli_runtime_overrides(
+        target=RuntimeTarget(profile_id="default", session_id="cli:default"),
+        transport=None,
+        account_id=None,
+        peer_id=None,
+        thread_id=None,
+        user_id=None,
+    )
+
+    assert overrides is not None
+    assert overrides.cli_approval_surface_enabled is True
+    assert overrides.runtime_metadata == {"transport": "cli"}
+    assert "explicit user approval" in (overrides.prompt_overlay or "")
 
 
 def test_chat_cli_single_turn_json_mode(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -297,7 +319,7 @@ def test_chat_cli_single_turn_auto_plan_does_not_prompt_without_tty(
 
     monkeypatch.setattr("afkbot.cli.commands.chat.run_once_result", _fake_run_once_result)
     monkeypatch.setattr(
-        "afkbot.cli.commands.chat_planning_runtime.confirm_space",
+        "afkbot.cli.commands.chat_planning_runtime.confirm_chat_plan_first",
         lambda **_: (_ for _ in ()).throw(AssertionError("confirm_space must not run without TTY")),
     )
 

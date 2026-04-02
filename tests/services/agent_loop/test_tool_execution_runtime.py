@@ -33,8 +33,9 @@ class _FakePolicyEngine:
         policy: ProfilePolicy,
         tool_name: str,
         params: dict[str, object],
+        approved_tool_names: set[str] | None = None,
     ) -> None:
-        _ = policy, tool_name, params
+        _ = policy, tool_name, params, approved_tool_names
         return None
 
 
@@ -119,6 +120,9 @@ class _FakeRegistry:
             return self._tool
         return None
 
+    def list_names(self) -> tuple[str, ...]:
+        return (self._tool.name,)
+
 
 async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_policy_params() -> None:
     """Disallowed tools should fail before policy-parameter expansion runs."""
@@ -160,3 +164,68 @@ async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_polic
     assert results[0].ok is False
     assert results[0].error_code == "tool_not_allowed_in_turn"
     assert results[0].reason == "Tool not available in current turn: mcp.github.search"
+
+
+class _PolicyCaptureEngine(_FakePolicyEngine):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, set[str] | None]] = []
+
+    def ensure_tool_call_allowed(
+        self,
+        *,
+        policy: ProfilePolicy,
+        tool_name: str,
+        params: dict[str, object],
+        approved_tool_names: set[str] | None = None,
+    ) -> None:
+        _ = policy, params
+        self.calls.append((tool_name, None if approved_tool_names is None else set(approved_tool_names)))
+
+
+class _EchoTool(ToolBase):
+    name = "bash.exec"
+    description = "Echo tool"
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        return ToolResult(ok=True, payload={"ok": True})
+
+
+async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_override() -> None:
+    """CLI-approved tools should bypass only the policy allow gate for that tool."""
+
+    policy_engine = _PolicyCaptureEngine()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=policy_engine,
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-policy-override",
+        profile_id="default",
+        tool_calls=[ToolCall(name="bash.exec", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"bash.exec"},
+        approved_tool_names={"bash.exec"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert policy_engine.calls == [("bash.exec", {"bash.exec"})]

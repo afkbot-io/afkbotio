@@ -29,6 +29,7 @@ class LLMToolDefinition(BaseModel):
     description: str = Field(min_length=1)
     parameters_schema: dict[str, object] = Field(default_factory=dict)
     required_skill: str | None = None
+    requires_confirmation: bool = False
 
 
 class LLMMessage(BaseModel):

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
-from typing import Any
+import inspect
+import json
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any, cast
 
 import typer
 
-from afkbot.cli.presentation import confirm_space
+from afkbot.cli.presentation.inline_select import run_inline_single_select_async
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.interactive_resume import (
     apply_approval_to_resume_call,
@@ -16,7 +18,9 @@ from afkbot.services.agent_loop.interactive_resume import (
     build_secure_resume_message,
     extract_resume_tool_call,
     is_credential_profile_question,
+    is_tool_not_allowed_question,
 )
+from afkbot.services.agent_loop.pending_envelopes import TOOL_NOT_ALLOWED_QUESTION_KIND
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.turn_context import (
     TurnContextOverrides,
@@ -27,12 +31,16 @@ from afkbot.services.tools.base import ToolCall
 from afkbot.settings import get_settings
 
 _SECURITY_HEADER = "\033[93mAFK Agent (security)\033[0m"
+_TOOL_ACCESS_DENY = "deny"
+_TOOL_ACCESS_ONCE = "allow_once"
+_TOOL_ACCESS_SESSION = "allow_session"
 
 RunOnceResultFn = Callable[..., Coroutine[Any, Any, TurnResult]]
 SubmitSecureFieldFn = Callable[..., Coroutine[Any, Any, tuple[bool, str]]]
-ConfirmSpaceFn = Callable[..., bool]
+ConfirmSpaceFn = Callable[..., bool | Awaitable[bool]]
+ToolNotAllowedPromptFn = Callable[..., str | Awaitable[str]]
+CredentialProfilePromptFn = Callable[..., str | None | Awaitable[str | None]]
 RunTurnWithSecureResolution = Callable[..., Coroutine[Any, Any, TurnResult]]
-
 
 async def run_turn_with_secure_resolution(
     *,
@@ -45,16 +53,44 @@ async def run_turn_with_secure_resolution(
     turn_overrides: TurnContextOverrides | None = None,
     run_once_result_fn: RunOnceResultFn = run_once_result,
     submit_secure_field_fn: SubmitSecureFieldFn = submit_secure_field,
-    confirm_space_fn: ConfirmSpaceFn = confirm_space,
+    confirm_space_fn: ConfirmSpaceFn | None = None,
+    tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
+    credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
+    session_approved_tools: set[str] | None = None,
 ) -> TurnResult:
     """Run turn and resolve secure credential requests without sending secrets to model."""
 
     max_interaction_steps = max(1, int(get_settings().secure_flow_max_steps))
+    if tool_not_allowed_prompt_fn is None:
+        tool_not_allowed_prompt_fn = _prompt_tool_not_allowed_choice
+    if confirm_space_fn is None:
+        confirm_space_fn = _prompt_approval_confirmation
+    if credential_profile_prompt_fn is None:
+        credential_profile_prompt_fn = _prompt_credential_profile_choice
     interaction_steps = 0
     current_message = message
     planned_tool_calls: list[ToolCall] | None = None
+    runtime_one_time_approved_tools: set[str] = set()
+    seen_question_signatures: set[str] = set()
     while True:
-        merged_overrides = merge_turn_context_overrides(runtime_overrides, turn_overrides)
+        session_override: TurnContextOverrides | None = None
+        merged_approved_tools = set(
+            str(item).strip()
+            for item in (session_approved_tools or set())
+            if str(item).strip()
+        )
+        if runtime_one_time_approved_tools:
+            merged_approved_tools.update(runtime_one_time_approved_tools)
+        normalized_session_tools = sorted(merged_approved_tools)
+        if normalized_session_tools:
+            session_override = TurnContextOverrides(
+                approved_tool_names=tuple(normalized_session_tools),
+            )
+        merged_overrides = merge_turn_context_overrides(
+            runtime_overrides,
+            session_override,
+            turn_overrides,
+        )
         if merged_overrides is None:
             result = await run_once_result_fn(
                 message=current_message,
@@ -73,6 +109,7 @@ async def run_turn_with_secure_resolution(
                 context_overrides=merged_overrides,
             )
         if result.envelope.action == "request_secure_field" and allow_secure_prompt:
+            await _notify_before_interactive_prompt(progress_sink)
             if interaction_steps >= max_interaction_steps:
                 return TurnResult(
                     run_id=result.run_id,
@@ -118,6 +155,7 @@ async def run_turn_with_secure_resolution(
             planned_tool_calls = [resume_call]
             continue
         if result.envelope.action == "ask_question" and allow_secure_prompt:
+            await _notify_before_interactive_prompt(progress_sink)
             if interaction_steps >= max_interaction_steps:
                 return TurnResult(
                     run_id=result.run_id,
@@ -129,8 +167,86 @@ async def run_turn_with_secure_resolution(
                         blocked_reason="interactive_flow_limit_reached",
                     ),
                 )
+            question_signature = _build_question_signature(result.envelope)
+            if question_signature in seen_question_signatures:
+                return TurnResult(
+                    run_id=result.run_id,
+                    session_id=result.session_id,
+                    profile_id=result.profile_id,
+                    envelope=ActionEnvelope(
+                        action="block",
+                        message="Interactive flow stopped: repeated approval/question prompt.",
+                        blocked_reason="interactive_flow_limit_reached",
+                    ),
+                )
+            seen_question_signatures.add(question_signature)
+            if is_tool_not_allowed_question(result.envelope):
+                choice = str(
+                    await _await_if_needed(
+                        tool_not_allowed_prompt_fn(
+                            envelope=result.envelope,
+                            question_text=_tool_not_allowed_question_text(result.envelope),
+                        )
+                    )
+                ).strip().lower()
+                if choice == _TOOL_ACCESS_ONCE:
+                    tool_name = _tool_not_allowed_tool_name(result.envelope)
+                    if tool_name is None:
+                        return TurnResult(
+                            run_id=result.run_id,
+                            session_id=result.session_id,
+                            profile_id=result.profile_id,
+                            envelope=ActionEnvelope(
+                                action="block",
+                                message=(
+                                    "Tool execution request failed: approved tool name is missing."
+                                ),
+                                blocked_reason="tool_not_allowed_tool_name_missing",
+                            ),
+                        )
+                    interaction_steps += 1
+                    typer.echo(f"  Allowing once: {tool_name}")
+                    runtime_one_time_approved_tools.add(tool_name)
+                    current_message = _build_tool_access_resume_message(result.envelope)
+                    planned_tool_calls = None
+                    continue
+                if choice == _TOOL_ACCESS_SESSION:
+                    if session_approved_tools is None:
+                        session_approved_tools = set()
+                    tool_name = _tool_not_allowed_tool_name(result.envelope)
+                    if tool_name is None:
+                        return TurnResult(
+                            run_id=result.run_id,
+                            session_id=result.session_id,
+                            profile_id=result.profile_id,
+                            envelope=ActionEnvelope(
+                                action="block",
+                                message=(
+                                    "Tool execution request failed: approved tool name is missing."
+                                ),
+                                blocked_reason="tool_not_allowed_tool_name_missing",
+                            ),
+                        )
+                    session_approved_tools.add(tool_name)
+                    interaction_steps += 1
+                    typer.echo(f"  Added to session approved tools: {tool_name}")
+                    current_message = _build_tool_access_resume_message(result.envelope)
+                    planned_tool_calls = None
+                    continue
+                return TurnResult(
+                    run_id=result.run_id,
+                    session_id=result.session_id,
+                    profile_id=result.profile_id,
+                    envelope=ActionEnvelope(
+                        action="finalize",
+                        message="Operation cancelled: user denied tool execution.",
+                    ),
+                )
             if is_credential_profile_question(result.envelope):
-                selected_profile = _prompt_credential_profile_choice(result.envelope)
+                selected_profile = cast(
+                    "str | None",
+                    await _await_if_needed(credential_profile_prompt_fn(result.envelope)),
+                )
                 if not selected_profile:
                     return TurnResult(
                         run_id=result.run_id,
@@ -170,12 +286,16 @@ async def run_turn_with_secure_resolution(
                 planned_tool_calls = [resumed_call]
                 continue
             _render_approval_prompt(result.envelope)
-            approved = confirm_space_fn(
-                question="Approve this operation now?",
-                default=False,
-                title="Safety Confirmation",
+            approved = await _await_if_needed(
+                confirm_space_fn(
+                    question="Approve this operation now?",
+                    default=False,
+                    title="Safety Confirmation",
+                )
             )
-            if not approved:
+            if not isinstance(approved, bool):
+                approved = str(approved).strip().lower() in {"1", "true", "yes", "y"}
+            if not bool(approved):
                 return TurnResult(
                     run_id=result.run_id,
                     session_id=result.session_id,
@@ -214,9 +334,16 @@ def build_run_turn_with_overrides(
     *,
     run_once_result_fn: RunOnceResultFn = run_once_result,
     submit_secure_field_fn: SubmitSecureFieldFn = submit_secure_field,
-    confirm_space_fn: ConfirmSpaceFn = confirm_space,
+    confirm_space_fn: ConfirmSpaceFn | None = None,
+    tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
+    credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
 ) -> RunTurnWithSecureResolution:
     """Bind trusted runtime overrides to one chat turn runner."""
+
+    session_approved_tools_by_session: dict[str, set[str]] = {}
+    bound_confirm_space_fn = confirm_space_fn
+    bound_tool_not_allowed_prompt_fn = tool_not_allowed_prompt_fn
+    bound_credential_profile_prompt_fn = credential_profile_prompt_fn
 
     async def _run_turn(
         *,
@@ -226,7 +353,11 @@ def build_run_turn_with_overrides(
         progress_sink: Callable[[ProgressEvent], None] | None,
         allow_secure_prompt: bool,
         turn_overrides: TurnContextOverrides | None = None,
+        tool_not_allowed_prompt_fn: ToolNotAllowedPromptFn | None = None,
+        confirm_space_fn: ConfirmSpaceFn | None = None,
+        credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
     ) -> TurnResult:
+        session_approved_tools = session_approved_tools_by_session.setdefault(session_id, set())
         return await run_turn_with_secure_resolution(
             message=message,
             profile_id=profile_id,
@@ -237,7 +368,20 @@ def build_run_turn_with_overrides(
             turn_overrides=turn_overrides,
             run_once_result_fn=run_once_result_fn,
             submit_secure_field_fn=submit_secure_field_fn,
-            confirm_space_fn=confirm_space_fn,
+            confirm_space_fn=(
+                bound_confirm_space_fn if confirm_space_fn is None else confirm_space_fn
+            ),
+            tool_not_allowed_prompt_fn=(
+                bound_tool_not_allowed_prompt_fn
+                if tool_not_allowed_prompt_fn is None
+                else tool_not_allowed_prompt_fn
+            ),
+            credential_profile_prompt_fn=(
+                bound_credential_profile_prompt_fn
+                if credential_profile_prompt_fn is None
+                else credential_profile_prompt_fn
+            ),
+            session_approved_tools=session_approved_tools,
         )
 
     return _run_turn
@@ -271,7 +415,103 @@ def _render_approval_prompt(envelope: ActionEnvelope) -> None:
     typer.echo(f"  {envelope.message}")
 
 
-def _prompt_credential_profile_choice(envelope: ActionEnvelope) -> str | None:
+
+async def _prompt_tool_not_allowed_choice(*, envelope: ActionEnvelope, **kwargs: object) -> str:
+    _ = kwargs
+    selected = await _prompt_inline_or_text_choice(
+        title="Tool access request",
+        text=_tool_not_allowed_question_text(envelope),
+        options=(
+            (_TOOL_ACCESS_ONCE, "Run once"),
+            (_TOOL_ACCESS_SESSION, "Allow for session"),
+            (_TOOL_ACCESS_DENY, "Do not run"),
+        ),
+        default_value=_TOOL_ACCESS_DENY,
+        hint_text="↑/↓ move, Enter confirm, Esc cancel",
+    )
+    return _TOOL_ACCESS_DENY if selected is None else selected
+
+
+def _tool_not_allowed_question_text(envelope: ActionEnvelope) -> str:
+    patch = envelope.spec_patch or {}
+    tool_name = str(patch.get("tool_name") or "tool").strip() or "tool"
+    message = str(envelope.message or "").strip()
+    reason = str(patch.get("tool_not_allowed_reason") or "").strip()
+    params = patch.get("tool_params")
+    lines = [f"Approve access to tool: {tool_name}?"]
+    formatted_params = _format_tool_not_allowed_params(params)
+    if formatted_params:
+        lines.append("Proposed parameters:")
+        lines.append(formatted_params)
+    if reason:
+        lines.append(f"Reason: {reason}")
+    normalized_message = message.lower()
+    if message and normalized_message not in {
+        "tool not allowed",
+        "tool access request",
+        "tool not allowed.",
+        "tool access request.",
+        "tool not allowed: tool access is disabled for this turn",
+        "tool access requires explicit approval before execution.",
+    }:
+        lines.append(message)
+    return "\n".join(lines)
+
+
+def _format_tool_not_allowed_params(params: object) -> str:
+    if not isinstance(params, dict) or not params:
+        return ""
+    items = []
+    for key in sorted(params):
+        value = params[key]
+        if isinstance(value, (dict, list, tuple)):
+            rendered = json.dumps(value, ensure_ascii=True, sort_keys=True)
+        else:
+            rendered = str(value)
+        items.append(f"- {key}: {rendered}")
+    return "\n".join(items)
+
+
+def _tool_not_allowed_tool_name(envelope: ActionEnvelope) -> str | None:
+    patch = envelope.spec_patch or {}
+    tool_name = str(patch.get("tool_name") or "").strip()
+    return tool_name or None
+
+
+def _build_tool_access_resume_message(envelope: ActionEnvelope) -> str:
+    tool_name = _tool_not_allowed_tool_name(envelope) or "tool"
+    return (
+        "tool_access_resume: access was approved for "
+        f"`{tool_name}` in this chat. The tool is now available in the current turn. "
+        "Continue the original task from the latest state and call the tool again only if it is "
+        "still needed. Use the visible tool schema for the next call and do not ask for the same "
+        "tool access again."
+    )
+
+
+async def _prompt_approval_confirmation(
+    *,
+    question: str,
+    default: bool,
+    title: str,
+    yes_label: str = "Approve",
+    no_label: str = "Deny",
+    hint_text: str | None = None,
+    **kwargs: object,
+) -> bool:
+    selected = await _prompt_inline_or_text_choice(
+        title=title,
+        text=question,
+        options=(("yes", yes_label), ("no", no_label)),
+        default_value="yes" if default else "no",
+        hint_text=hint_text or "↑/↓ move, Enter confirm, Esc cancel",
+    )
+    if selected is None:
+        return default
+    return selected == "yes"
+
+
+async def _prompt_credential_profile_choice(envelope: ActionEnvelope) -> str | None:
     patch = envelope.spec_patch or {}
     available_profiles = available_profile_choices(envelope)
     if not available_profiles:
@@ -286,9 +526,131 @@ def _prompt_credential_profile_choice(envelope: ActionEnvelope) -> str | None:
     typer.echo(f"  Integration: {integration}")
     typer.echo(f"  Credential field: {credential_name}")
     typer.echo(f"  Available credential profiles: {', '.join(available_profiles)}")
+    selected = await _prompt_inline_or_text_choice(
+        title="Credential profile",
+        text="Choose credential profile",
+        options=tuple((profile, profile) for profile in available_profiles),
+        default_value=available_profiles[0],
+        hint_text="↑/↓ move, Enter confirm, Esc cancel",
+    )
+    selected_profile = selected.strip() if selected is not None else ""
+    if selected_profile in available_profiles:
+        return selected_profile
+    return None
+
+
+async def _prompt_inline_or_text_choice(
+    *,
+    title: str,
+    text: str,
+    options: tuple[tuple[str, str], ...],
+    default_value: str,
+    hint_text: str | None = None,
+) -> str | None:
+    selected = await run_inline_single_select_async(
+        title=title,
+        text=text,
+        options=[(value, label) for value, label in options],
+        default_value=default_value,
+        hint_text=hint_text,
+    )
+    if selected is not None:
+        resolved = _normalize_text_choice(
+            answer=str(selected).strip(),
+            options=options,
+            default_value=default_value,
+        )
+        if resolved is not None:
+            return resolved
+    prompt = _build_choice_prompt(title=title, text=text, options=options, default=default_value)
     while True:
-        selected = typer.prompt("Credential profile", default=available_profiles[0])
-        selected = str(selected).strip()
-        if selected in available_profiles:
-            return selected
-        typer.echo(f"  Invalid credential profile. Choose one of: {', '.join(available_profiles)}")
+        answer = typer.prompt(prompt, default=default_value, show_default=False)
+        resolved = _normalize_text_choice(
+            answer=str(answer).strip(),
+            options=options,
+            default_value=default_value,
+        )
+        if resolved is not None:
+            return resolved
+        if str(answer).strip().lower() in {"q", "quit", "cancel"}:
+            return None
+        typer.echo("Invalid choice. Enter option number, value, or blank for default.")
+
+
+def _build_question_signature(envelope: ActionEnvelope) -> str:
+    patch = envelope.spec_patch or {}
+    question_kind = str(patch.get("question_kind") or "").strip().lower()
+    tool_name = str(patch.get("tool_name") or "").strip()
+    question_id = str(envelope.question_id or "").strip()
+    question = str(envelope.message or "").strip()
+    message_for_signature = ""
+    if question_kind == TOOL_NOT_ALLOWED_QUESTION_KIND:
+        message_for_signature = str(patch.get("tool_not_allowed_reason") or "").strip()
+        if not message_for_signature:
+            message_for_signature = question
+    params = patch.get("tool_params")
+    params_text = ""
+    if isinstance(params, dict):
+        params_text = json.dumps(params, sort_keys=True, default=str)
+    signature_parts = [question_kind, tool_name, params_text]
+    if question_kind == TOOL_NOT_ALLOWED_QUESTION_KIND:
+        if message_for_signature:
+            signature_parts.append(message_for_signature)
+    else:
+        signature_parts.append(question_id or question)
+    return "|".join(part for part in signature_parts if part)
+
+
+def _normalize_text_choice(
+    *,
+    answer: str,
+    options: tuple[tuple[str, str], ...],
+    default_value: str,
+) -> str | None:
+    answer = str(answer).strip()
+    if not answer:
+        return default_value.strip() if default_value else None
+    if answer.lower() in {"q", "quit", "cancel"}:
+        return None
+    if answer.isdecimal():
+        index = int(answer) - 1
+        if 0 <= index < len(options):
+            return options[index][0]
+    lowered = answer.lower()
+    for value, label in options:
+        if lowered in {value.lower(), label.lower()}:
+            return value
+    return None
+
+
+def _build_choice_prompt(
+    *,
+    title: str,
+    text: str,
+    options: tuple[tuple[str, str], ...],
+    default: str,
+) -> str:
+    values = [label for _value, label in options]
+    if values:
+        body = "\n".join(f"{index}. {label}" for index, label in enumerate(values, start=1))
+    else:
+        body = ""
+    return "\n".join((title, text, body, "Enter option number, value, or blank for default:")).strip() + ": "
+
+
+async def _await_if_needed(value: object) -> object:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _notify_before_interactive_prompt(
+    progress_sink: Callable[[ProgressEvent], None] | None,
+) -> None:
+    """Allow CLI transports to pause live progress rendering before inline prompts."""
+
+    if progress_sink is None:
+        return
+    hook = getattr(progress_sink, "before_interactive_prompt", None)
+    if callable(hook):
+        await _await_if_needed(hook())

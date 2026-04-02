@@ -1,4 +1,4 @@
-"""Transcript models and styled renderers for the fullscreen chat workspace."""
+"""Transcript models and styled renderers for the chat workspace."""
 
 from __future__ import annotations
 
@@ -74,11 +74,10 @@ class ChatWorkspaceTranscript:
         self,
         *,
         width: int,
-        max_lines: int | None = None,
     ) -> ChatWorkspaceRenderedTranscript:
-        """Render the transcript into styled fragments for the active viewport width."""
+        """Render the transcript into styled fragments for the active width."""
 
-        return render_chat_workspace_transcript(self.entries, width=width, max_lines=max_lines)
+        return render_chat_workspace_transcript(self.entries, width=width)
 
     def render_text(self) -> str:
         """Render the transcript as plain text for a read-only text area."""
@@ -90,7 +89,6 @@ def render_chat_workspace_transcript(
     entries: tuple[ChatWorkspaceTranscriptEntry, ...] | list[ChatWorkspaceTranscriptEntry],
     *,
     width: int,
-    max_lines: int | None = None,
 ) -> ChatWorkspaceRenderedTranscript:
     """Render transcript entries into styled prompt-toolkit fragments."""
 
@@ -99,11 +97,6 @@ def render_chat_workspace_transcript(
 
     safe_width = max(_MIN_WRAP_WIDTH, width)
     visual_lines = _build_visual_lines(entries, width=safe_width)
-    if max_lines is not None:
-        if max_lines <= 0:
-            visual_lines = ()
-        else:
-            visual_lines = visual_lines[-max_lines:]
 
     fragments: StyleAndTextTuples = []
     plain_lines: list[str] = []

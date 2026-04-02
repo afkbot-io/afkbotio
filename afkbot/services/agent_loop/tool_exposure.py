@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.channel_tool_policy import filter_tool_names_for_runtime
@@ -12,8 +13,26 @@ from afkbot.services.agent_loop.thinking import READ_ONLY_TOOL_NAMES, ToolAccess
 from afkbot.services.agent_loop.skill_router import SkillRoute
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
 from afkbot.services.llm.contracts import LLMToolDefinition
-from afkbot.services.policy import PolicyEngine
+from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.tools.registry import ToolRegistry
+
+_CLI_APPROVAL_CANDIDATE_TOOL_NAMES = (
+    "bash.exec",
+    "file.list",
+    "file.read",
+    "file.search",
+    "file.edit",
+    "file.write",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSurface:
+    """Visible and directly executable tool sets for one turn."""
+
+    visible_tools: tuple[LLMToolDefinition, ...]
+    executable_tool_names: tuple[str, ...]
+    approval_required_tool_names: tuple[str, ...]
 
 
 class ToolExposureBuilder:
@@ -32,7 +51,7 @@ class ToolExposureBuilder:
         self._tool_skill_resolver = tool_skill_resolver
         self._tool_requires_automation_intent = tool_requires_automation_intent
 
-    def available_tool_definitions(
+    def build_tool_surface(
         self,
         policy: ProfilePolicy,
         *,
@@ -41,11 +60,13 @@ class ToolExposureBuilder:
         automation_intent: bool,
         runtime_metadata: dict[str, object] | None = None,
         tool_access_mode: ToolAccessMode = "default",
-    ) -> tuple[LLMToolDefinition, ...]:
-        """Return structured tool definitions visible for LLM planning."""
+        approved_tool_names: tuple[str, ...] | None = None,
+        cli_approval_surface_enabled: bool = False,
+    ) -> ToolSurface:
+        """Return visible tools plus the subset executable without extra approval."""
 
         if self._tool_registry is None:
-            return ()
+            return ToolSurface(visible_tools=(), executable_tool_names=(), approval_required_tool_names=())
         allowed_names = self._policy_engine.allowed_tool_names(
             policy=policy,
             available_names=self._tool_registry.list_names(),
@@ -73,32 +94,112 @@ class ToolExposureBuilder:
             filtered_names = tuple(
                 name for name in filtered_names if name not in blocked_sensitive_names
             )
+        filtered_names = self._merge_approved_tool_names(
+            filtered_names=filtered_names,
+            approved_tool_names=approved_tool_names,
+            policy=policy,
+            runtime_metadata=runtime_metadata,
+            tool_access_mode=tool_access_mode,
+        )
+        approval_visible_names = self._approval_visible_tool_names(
+            executable_tool_names=filtered_names,
+            policy=policy,
+            runtime_metadata=runtime_metadata,
+            tool_access_mode=tool_access_mode,
+            automation_intent=automation_intent,
+            cli_approval_surface_enabled=cli_approval_surface_enabled,
+        )
+        visible_name_set = set(filtered_names)
+        visible_names = filtered_names + tuple(
+            name for name in approval_visible_names if name not in visible_name_set
+        )
         definitions: list[LLMToolDefinition] = []
-        for name in filtered_names:
-            if not automation_intent and self._tool_requires_automation_intent(tool_name=name):
-                continue
-            tool = self._tool_registry.get(name)
-            if tool is None:
-                continue
-            dynamic_app_names = self._dynamic_allowed_app_names_for_tool(
-                tool_name=tool.name,
+        approval_required_names = set(approval_visible_names)
+        for name in visible_names:
+            definition = self._tool_definition(
+                tool_name=name,
                 selected_app_names=selected_app_names,
+                automation_intent=automation_intent,
+                approval_required=name in approval_required_names,
             )
-            schema = self._tool_schema_for_llm(
-                tool_name=tool.name,
-                required_skill=tool.required_skill,
-                raw_schema=tool.llm_parameters_schema(),
-                allowed_app_names=dynamic_app_names or None,
+            if definition is not None:
+                definitions.append(definition)
+        return ToolSurface(
+            visible_tools=tuple(definitions),
+            executable_tool_names=filtered_names,
+            approval_required_tool_names=approval_visible_names,
+        )
+
+    def _passes_runtime_hard_guards(
+        self,
+        *,
+        tool_name: str,
+        runtime_metadata: dict[str, object] | None,
+        tool_access_mode: ToolAccessMode,
+        blocked_sensitive_names: set[str],
+    ) -> bool:
+        """Return whether one tool survives non-policy runtime guards."""
+
+        if self._tool_registry is None or self._tool_registry.get(tool_name) is None:
+            return False
+        if tool_name in blocked_sensitive_names:
+            return False
+        if not self._filter_tool_names_by_access_mode(
+            tool_names=(tool_name,),
+            tool_access_mode=tool_access_mode,
+        ):
+            return False
+        return bool(
+            filter_tool_names_for_runtime(
+                tool_names=(tool_name,),
+                runtime_metadata=runtime_metadata,
             )
-            definitions.append(
-                LLMToolDefinition(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters_schema=schema,
-                    required_skill=tool.required_skill,
+        )
+
+    def _tool_is_explicitly_denied(self, *, policy: ProfilePolicy, tool_name: str) -> bool:
+        """Return whether one tool is denied, failing closed on invalid policy config."""
+
+        try:
+            return self._policy_engine.is_tool_denied(policy=policy, tool_name=tool_name)
+        except PolicyViolationError:
+            return True
+
+    def _merge_approved_tool_names(
+        self,
+        *,
+        filtered_names: tuple[str, ...],
+        approved_tool_names: tuple[str, ...] | None,
+        policy: ProfilePolicy,
+        runtime_metadata: dict[str, object] | None,
+        tool_access_mode: ToolAccessMode,
+    ) -> tuple[str, ...]:
+        """Merge explicitly approved tool names into the directly executable surface."""
+
+        if self._tool_registry is None or not approved_tool_names:
+            return filtered_names
+
+        blocked_sensitive_names = set(
+            blocked_tool_names_for_runtime(runtime_metadata=runtime_metadata)
+        )
+        merged = list(filtered_names)
+        seen = set(filtered_names)
+        for raw_name in approved_tool_names:
+            name = str(raw_name).strip()
+            if (
+                not name
+                or name in seen
+                or self._tool_is_explicitly_denied(policy=policy, tool_name=name)
+                or not self._passes_runtime_hard_guards(
+                    tool_name=name,
+                    runtime_metadata=runtime_metadata,
+                    tool_access_mode=tool_access_mode,
+                    blocked_sensitive_names=blocked_sensitive_names,
                 )
-            )
-        return tuple(definitions)
+            ):
+                continue
+            merged.append(name)
+            seen.add(name)
+        return tuple(merged)
 
     def visible_enforceable_skill_names(
         self,
@@ -151,6 +252,90 @@ class ToolExposureBuilder:
             return ()
         return selected_app_names
 
+    def _tool_definition(
+        self,
+        *,
+        tool_name: str,
+        selected_app_names: tuple[str, ...],
+        automation_intent: bool,
+        approval_required: bool,
+    ) -> LLMToolDefinition | None:
+        """Build one visible tool definition when registry and intent allow it."""
+
+        if self._tool_registry is None:
+            return None
+        if not automation_intent and self._tool_requires_automation_intent(tool_name=tool_name):
+            return None
+        tool = self._tool_registry.get(tool_name)
+        if tool is None:
+            return None
+        dynamic_app_names = self._dynamic_allowed_app_names_for_tool(
+            tool_name=tool.name,
+            selected_app_names=selected_app_names,
+        )
+        schema = self._tool_schema_for_llm(
+            tool_name=tool.name,
+            required_skill=tool.required_skill,
+            raw_schema=tool.llm_parameters_schema(),
+            allowed_app_names=dynamic_app_names or None,
+        )
+        return LLMToolDefinition(
+            name=tool.name,
+            description=self._tool_description_for_llm(tool.description),
+            parameters_schema=schema,
+            required_skill=tool.required_skill,
+            requires_confirmation=approval_required,
+        )
+
+    def _approval_visible_tool_names(
+        self,
+        *,
+        executable_tool_names: tuple[str, ...],
+        policy: ProfilePolicy,
+        runtime_metadata: dict[str, object] | None,
+        tool_access_mode: ToolAccessMode,
+        automation_intent: bool,
+        cli_approval_surface_enabled: bool,
+    ) -> tuple[str, ...]:
+        """Return CLI-only visible tools that still require runtime approval to execute."""
+
+        if (
+            self._tool_registry is None
+            or not cli_approval_surface_enabled
+            or tool_access_mode != "default"
+        ):
+            return ()
+
+        direct_names = set(executable_tool_names)
+        blocked_sensitive_names = set(
+            blocked_tool_names_for_runtime(runtime_metadata=runtime_metadata)
+        )
+        approval_names: list[str] = []
+        for name in _CLI_APPROVAL_CANDIDATE_TOOL_NAMES:
+            if (
+                name in direct_names
+                or self._tool_is_explicitly_denied(policy=policy, tool_name=name)
+                or not self._passes_runtime_hard_guards(
+                    tool_name=name,
+                    runtime_metadata=runtime_metadata,
+                    tool_access_mode=tool_access_mode,
+                    blocked_sensitive_names=blocked_sensitive_names,
+                )
+                or (
+                    not automation_intent
+                    and self._tool_requires_automation_intent(tool_name=name)
+                )
+            ):
+                continue
+            approval_names.append(name)
+        return tuple(approval_names)
+
+    @staticmethod
+    def _tool_description_for_llm(description: str) -> str:
+        """Normalize one tool description before provider-specific annotations."""
+
+        return description.rstrip()
+
     @staticmethod
     def _tool_schema_for_llm(
         *,
@@ -177,9 +362,7 @@ class ToolExposureBuilder:
                     "Use only one of the routed apps for this request."
                 ),
             )
-        return {
-            str(key): value for key, value in schema.items()
-        }
+        return {str(key): value for key, value in schema.items()}
 
     @staticmethod
     def _strip_secure_secret_properties(

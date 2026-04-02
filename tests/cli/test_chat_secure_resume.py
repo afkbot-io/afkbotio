@@ -11,9 +11,13 @@ from afkbot.cli.commands.chat_secure_flow import (
     _render_security_prompt,
     build_run_turn_with_overrides,
     run_turn_with_secure_resolution,
+    _tool_not_allowed_question_text,
 )
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
-from afkbot.services.agent_loop.pending_envelopes import PROFILE_SELECTION_QUESTION_KIND
+from afkbot.services.agent_loop.pending_envelopes import (
+    PROFILE_SELECTION_QUESTION_KIND,
+    TOOL_NOT_ALLOWED_QUESTION_KIND,
+)
 from afkbot.services.agent_loop.safety_policy import CONFIRM_ACK_PARAM, CONFIRM_QID_PARAM
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.tools.base import ToolCall
@@ -176,6 +180,28 @@ def test_render_security_prompt_shows_security_context(capsys: CaptureFixture[st
     out = capsys.readouterr().out
     assert "AFK Agent (security)" in out
     assert "Secure input required" in out
+
+
+def test_tool_not_allowed_question_text_includes_tool_params_and_reason() -> None:
+    """CLI question helper should render a concise tool-access prompt."""
+
+    text = _tool_not_allowed_question_text(
+        ActionEnvelope(
+            action="ask_question",
+            message="Tool access requires explicit approval before execution.",
+            spec_patch={
+                "tool_name": "bash.exec",
+                "tool_params": {"cwd": ".", "command": "ls"},
+                "tool_not_allowed_reason": "Tool not available in current turn: bash.exec",
+                "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+            },
+        )
+    )
+
+    assert "Approve access to tool: bash.exec?" in text
+    assert "Proposed parameters:" in text
+    assert "command: ls" in text
+    assert "Reason: Tool not available in current turn: bash.exec" in text
 
 
 async def test_build_run_turn_without_bound_overrides_rejects_unexpected_runtime_kwarg() -> None:
@@ -745,3 +771,433 @@ async def test_approval_question_limit_blocks_repeated_prompts(monkeypatch: Monk
     assert run_calls == 2
     assert confirm_calls == 1
     get_settings.cache_clear()
+
+
+async def test_confirmation_prompt_accepts_async_callback() -> None:
+    """Async approval callback should be awaited and keep secure flow progressing."""
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        return TurnResult(
+            run_id=1,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(
+                action="ask_question",
+                message="confirm",
+                question_id="approval-1",
+                spec_patch={
+                    "tool_name": "debug.echo",
+                    "tool_params": {"message": "ok"},
+                    "approval_mode": "strict",
+                },
+            ),
+        )
+
+    async def _async_confirm(**kwargs: object) -> bool:  # noqa: ARG003
+        return True
+
+    result = await run_turn_with_secure_resolution(
+        message="remove file",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        confirm_space_fn=_async_confirm,
+    )
+
+    assert result.envelope.action == "block"
+    assert result.envelope.blocked_reason == "interactive_flow_limit_reached"
+
+
+async def test_tool_not_allowed_question_allow_session_updates_session_approved_tools(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Tool-not-allowed decision with session scope should remember approved tools."""
+
+    calls: list[tuple[str, list[ToolCall] | None]] = []
+    session_approved_tools: set[str] = set()
+
+    async def _fake_run_once_result(
+        *,
+        message: str,
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        calls.append((message, planned_tool_calls))
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="tool not allowed",
+                    question_id="tool_not_allowed-1",
+                    spec_patch={
+                        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                        "tool_name": "bash.exec",
+                        "tool_params": {"cmd": "echo ok", "cwd": "."},
+                    },
+                ),
+            )
+        assert message.startswith("tool_access_resume:")
+        assert planned_tool_calls is None
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_session",
+        session_approved_tools=session_approved_tools,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert result.envelope.message == "done"
+    assert len(calls) == 2
+    assert session_approved_tools == {"bash.exec"}
+
+
+async def test_tool_not_allowed_question_with_stable_signature_blocks_retries_for_same_tool_params() -> None:
+    """Tool-not-allowed prompt should not loop indefinitely when tool is still rejected."""
+
+    call_count = 0
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        del message, profile_id, session_id, progress_sink, context_overrides, planned_tool_calls
+        nonlocal call_count
+        call_count += 1
+        return TurnResult(
+            run_id=call_count,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(
+                action="ask_question",
+                message="tool not allowed",
+                question_id=f"tool_not_allowed-{call_count}",
+                spec_patch={
+                    "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                    "tool_name": "bash.exec",
+                    "tool_params": {"command": "ls", "cwd": "."},
+                },
+            ),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_once",
+    )
+
+    assert result.envelope.action == "block"
+    assert result.envelope.blocked_reason == "interactive_flow_limit_reached"
+    assert call_count == 2
+
+
+async def test_tool_not_allowed_question_allow_once_applies_one_time_runtime_approval() -> None:
+    """Allow once should pass temporary approval metadata even without session approvals."""
+
+    calls: list[tuple[str, list[str] | None]] = []
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        runtime_allowed_tools: list[str] | None = None
+        if context_overrides is not None:
+            if context_overrides.approved_tool_names:
+                runtime_allowed_tools = sorted(context_overrides.approved_tool_names)
+        calls.append(
+            (
+                message,
+                runtime_allowed_tools,
+            )
+        )
+
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="tool not allowed",
+                    question_id="tool_not_allowed-1",
+                    spec_patch={
+                        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                        "tool_name": "bash.exec",
+                        "tool_params": {"cmd": "echo ok", "cwd": "."},
+                    },
+                ),
+            )
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_once",
+    )
+
+    assert result.envelope.action == "finalize"
+    assert calls[0][1] is None
+    assert calls[1][1] == ["bash.exec"]
+
+
+async def test_tool_not_allowed_question_allow_once_executes_without_session_approved_tool_change(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Tool-not-allowed decision 'once' should execute and not require session storage."""
+
+    calls: list[tuple[str, list[ToolCall] | None]] = []
+    session_approved_tools: set[str] = set(["other.tool"])
+
+    async def _fake_run_once_result(
+        *,
+        message: str,
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        calls.append((message, planned_tool_calls))
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="tool not allowed",
+                    question_id="tool_not_allowed-1",
+                    spec_patch={
+                        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                        "tool_name": "bash.exec",
+                        "tool_params": {"cmd": "echo ok", "cwd": "."},
+                    },
+                ),
+            )
+        assert message.startswith("tool_access_resume:")
+        assert planned_tool_calls is None
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "allow_once",
+        session_approved_tools=session_approved_tools,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert len(calls) == 2
+    assert session_approved_tools == {"other.tool"}
+
+
+async def test_tool_not_allowed_question_stops_live_progress_before_prompt() -> None:
+    """Interactive prompts should ask the transport to stop live progress rendering first."""
+
+    class _ProgressSink:
+        def __init__(self) -> None:
+            self.stopped = 0
+
+        def __call__(self, _event: object) -> None:
+            return None
+
+        def before_interactive_prompt(self) -> None:
+            self.stopped += 1
+
+    progress_sink = _ProgressSink()
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        return TurnResult(
+            run_id=1,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(
+                action="ask_question",
+                message="tool not allowed",
+                question_id="tool_not_allowed-1",
+                spec_patch={
+                    "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                    "tool_name": "bash.exec",
+                    "tool_params": {"cmd": "ls"},
+                },
+            ),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=progress_sink,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "deny",
+    )
+
+    assert result.envelope.action == "finalize"
+    assert progress_sink.stopped == 1
+
+
+async def test_tool_not_allowed_question_supports_async_prompt_callback() -> None:
+    """Async callback for tool-not-allowed prompt should be awaited and honored."""
+
+    calls: list[tuple[str, list[ToolCall] | None]] = []
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        calls.append((message, planned_tool_calls))
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="tool not allowed",
+                    question_id="tool_not_allowed-1",
+                    spec_patch={
+                        "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                        "tool_name": "bash.exec",
+                        "tool_params": {"cmd": "echo ok", "cwd": "."},
+                    },
+                ),
+            )
+        assert message.startswith("tool_access_resume:")
+        assert planned_tool_calls is None
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    async def _choose_once(**kwargs: object) -> str:  # noqa: ARG003
+        return "allow_once"
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=_choose_once,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert result.envelope.message == "done"
+    assert len(calls) == 2
+
+
+async def test_tool_not_allowed_question_denied_stops_turn() -> None:
+    """Tool-not-allowed branch should stop immediately when user denies execution."""
+
+    async def _fake_run_once_result(
+        *,
+        message: str,  # noqa: ARG001
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,  # noqa: ARG001
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+        context_overrides: TurnContextOverrides | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        return TurnResult(
+            run_id=1,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(
+                action="ask_question",
+                message="tool not allowed",
+                question_id="tool_not_allowed-1",
+                spec_patch={
+                    "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+                    "tool_name": "bash.exec",
+                    "tool_params": {"cmd": "echo bad", "cwd": "."},
+                },
+            ),
+        )
+
+    result = await run_turn_with_secure_resolution(
+        message="inspect files",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        tool_not_allowed_prompt_fn=lambda **kwargs: "deny",
+        session_approved_tools=set(),
+    )
+
+    assert result.envelope.action == "finalize"
+    assert "cancelled" in result.envelope.message.lower()

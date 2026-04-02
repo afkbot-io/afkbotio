@@ -673,6 +673,134 @@ def test_openai_gpt5_family_uses_responses_api_and_returns_tool_calls() -> None:
     ]
 
 
+def test_provider_decodes_visible_tool_name_back_to_canonical_name() -> None:
+    """Provider should decode provider-safe visible tool names back to canonical names."""
+
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-4.1-mini",
+        chat_payload={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_hidden_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "bash_exec",
+                                    "arguments": '{"cmd":"ls"}',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    )
+    request = _request().model_copy(
+        update={
+            "available_tools": (
+                LLMToolDefinition(
+                    name="bash.exec",
+                    description="Run bash commands",
+                    parameters_schema={
+                        "type": "object",
+                        "properties": {
+                            "cmd": {"type": "string"},
+                        },
+                        "required": ["cmd"],
+                        "additionalProperties": False,
+                    },
+                ),
+            ),
+        }
+    )
+
+    response = asyncio.run(provider.complete(request))
+
+    assert response.kind == "tool_calls"
+    assert response.tool_calls == [
+        ToolCallRequest(
+            name="bash.exec",
+            params={"cmd": "ls"},
+            call_id="call_hidden_1",
+        )
+    ]
+
+
+def test_provider_rejects_unknown_tool_name_from_model() -> None:
+    """Provider should fail closed when the model emits a tool outside the visible surface."""
+
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-4.1-mini",
+        chat_payload={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "call_hidden_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "totally_unknown_tool",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    )
+
+    response = asyncio.run(provider.complete(_request()))
+
+    assert response.kind == "final"
+    assert response.error_code == "llm_provider_response_invalid"
+
+
+def test_provider_encodes_history_tool_calls_with_historical_codec_surface() -> None:
+    """Provider should replay prior assistant tool calls even when they are not visible this turn."""
+
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-4.1-mini",
+    )
+    request = _request().model_copy(
+        update={
+            "history": [
+                LLMMessage(
+                    role="assistant",
+                    tool_calls=[
+                        ToolCallRequest(
+                            name="bash.exec",
+                            params={"cmd": "pwd"},
+                            call_id="call_hist_1",
+                        )
+                    ],
+                ),
+            ],
+        }
+    )
+
+    response = asyncio.run(provider.complete(request))
+
+    assert response.kind == "final"
+    assert provider.last_chat_payload is not None
+    assert provider.last_chat_payload["messages"][1]["tool_calls"] == [
+        {
+            "id": "call_hist_1",
+            "type": "function",
+            "function": {
+                "name": "bash_exec",
+                "arguments": '{"cmd": "pwd"}',
+            },
+        }
+    ]
+
+
 def test_responses_payload_includes_reasoning_effort_when_requested() -> None:
     """Responses payload should forward structured reasoning effort to OpenAI reasoning models."""
 

@@ -80,6 +80,7 @@ class LLMIterationRuntime:
         history: list[LLMMessage],
         machine: StateMachine,
         available_tools: tuple[LLMToolDefinition, ...],
+        executable_tool_names: tuple[str, ...],
         max_iterations: int,
         request_timeout_sec: float,
         wall_clock_budget_sec: float,
@@ -89,10 +90,13 @@ class LLMIterationRuntime:
         explicit_subagent_requests: set[str] | None,
         emit_planning_progress: bool = True,
         runtime_metadata: dict[str, object] | None = None,
+        approved_tool_names: tuple[str, ...] | None = None,
+        approval_required_tool_names: tuple[str, ...] | None = None,
     ) -> LLMIterationResult:
         """Execute one iterative LLM loop with sequential guarded tool calls."""
 
         visible_tool_names = {tool.name for tool in available_tools}
+        effective_allowed_tool_names = set(executable_tool_names)
         consecutive_missing_file_reads = 0
         started_at = time.monotonic()
         deadline = started_at + max(0.01, float(wall_clock_budget_sec))
@@ -170,7 +174,17 @@ class LLMIterationRuntime:
                 explicit_subagent_requests=explicit_subagent_requests,
                 allow_confirmation_markers=False,
                 runtime_metadata=runtime_metadata,
-                allowed_tool_names=visible_tool_names,
+                allowed_tool_names=effective_allowed_tool_names,
+                approved_tool_names=(
+                    None
+                    if approved_tool_names is None
+                    else set(approved_tool_names)
+                ),
+                approval_required_tool_names=(
+                    None
+                    if approval_required_tool_names is None
+                    else set(approval_required_tool_names)
+                ),
             )
             pending_envelope = self._build_pending_envelope(
                 tool_calls=tool_calls,
@@ -247,10 +261,15 @@ class LLMIterationRuntime:
     ) -> ActionEnvelope | None:
         """Convert tool failures into pending user-interaction envelopes."""
 
-        pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+        pending_envelope = self._pending_envelopes.build_tool_not_allowed_envelope(
             tool_calls=tool_calls,
             tool_results=tool_results,
         )
+        if pending_envelope is None:
+            pending_envelope = self._pending_envelopes.build_profile_selection_envelope(
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            )
         if pending_envelope is None:
             pending_envelope = self._pending_envelopes.build_secure_envelope(
                 tool_calls=tool_calls,

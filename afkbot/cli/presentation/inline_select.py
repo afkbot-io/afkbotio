@@ -34,6 +34,7 @@ def run_inline_single_select(
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import HSplit, Layout, Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.patch_stdout import patch_stdout
         from prompt_toolkit.styles import Style
     except ImportError:
         return _run_inline_single_select_text(
@@ -47,6 +48,7 @@ def run_inline_single_select(
     values = [value for value, _label in options]
     default_index = values.index(default_value) if default_value in values else 0
     state: dict[str, int] = {"cursor": default_index}
+    option_width = _single_select_option_width(options)
 
     style = Style.from_dict(
         {
@@ -60,11 +62,12 @@ def run_inline_single_select(
         lines: list[tuple[str, str]] = [("class:title", f"{title}\n"), ("", f"{text}\n\n")]
         for index, (_value, label) in enumerate(options):
             is_focused = index == state["cursor"]
-            is_selected = index == state["cursor"]
             pointer = "> " if is_focused else "  "
-            mark = "[x]" if is_selected else "[ ]"
+            mark = "(*) " if is_focused else "( ) "
             style_name = "class:focused" if is_focused else ""
-            lines.append((style_name, f"{pointer}{mark} {label}\n"))
+            lines.append(
+                (style_name, _pad_option_line(f"{pointer}{mark}{label}", option_width) + "\n")
+            )
         lines.append(("class:hint", f"\n{hint_text or _HINT_TEXT}"))
         return lines
 
@@ -77,12 +80,14 @@ def run_inline_single_select(
     kb = KeyBindings()
 
     @kb.add("up")
-    def _up(_event: object) -> None:
+    def _up(event: object) -> None:
         state["cursor"] = (state["cursor"] - 1) % len(options)
+        getattr(event, "app").invalidate()
 
     @kb.add("down")
-    def _down(_event: object) -> None:
+    def _down(event: object) -> None:
         state["cursor"] = (state["cursor"] + 1) % len(options)
+        getattr(event, "app").invalidate()
 
     @kb.add(" ")
     def _space(_event: object) -> None:
@@ -111,9 +116,156 @@ def run_inline_single_select(
         mouse_support=False,
     )
     try:
-        result = app.run()
+        with patch_stdout():
+            result = app.run()
     except Exception:
         return _run_inline_single_select_text(
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+    return str(result) if isinstance(result, str) else None
+
+
+async def run_inline_single_select_async(
+    *,
+    title: str,
+    text: str,
+    options: list[tuple[str, str]],
+    default_value: str,
+    hint_text: str | None = None,
+) -> str | None:
+    """Async single-select variant used from async contexts."""
+
+    if not options:
+        return None
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return None
+    if _has_running_event_loop():
+        return await _run_inline_single_select_async(
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+    return _run_inline_single_select_text(
+        title=title,
+        text=text,
+        options=options,
+        default_value=default_value,
+        hint_text=hint_text,
+    )
+
+
+async def _run_inline_single_select_async(
+    *,
+    title: str,
+    text: str,
+    options: list[tuple[str, str]],
+    default_value: str,
+    hint_text: str | None,
+) -> str | None:
+    """Async prompt-toolkit single-select implementation with async event loop."""
+
+    values = [value for value, _label in options]
+    default_index = values.index(default_value) if default_value in values else 0
+    state: dict[str, int] = {"cursor": default_index}
+    option_width = _single_select_option_width(options)
+
+    try:
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.patch_stdout import patch_stdout
+        from prompt_toolkit.styles import Style
+    except ImportError:
+        return await asyncio.to_thread(
+            _run_inline_single_select_text,
+            title=title,
+            text=text,
+            options=options,
+            default_value=default_value,
+            hint_text=hint_text,
+        )
+
+    style = Style.from_dict(
+        {
+            "title": "bold",
+            "hint": "ansigray",
+            "focused": "ansicyan bold",
+        }
+    )
+
+    def _render() -> list[tuple[str, str]]:
+        lines: list[tuple[str, str]] = [
+            ("class:title", f"{title}\n"),
+            ("", f"{text}\n\n"),
+        ]
+        for index, (_value, label) in enumerate(options):
+            is_focused = index == state["cursor"]
+            pointer = "> " if is_focused else "  "
+            mark = "(*) " if is_focused else "( ) "
+            style_name = "class:focused" if is_focused else ""
+            lines.append(
+                (style_name, _pad_option_line(f"{pointer}{mark}{label}", option_width) + "\n")
+            )
+        lines.append(("class:hint", f"\n{hint_text or _HINT_TEXT}"))
+        return lines
+
+    body = Window(
+        content=FormattedTextControl(_render),
+        always_hide_cursor=True,
+        dont_extend_height=True,
+    )
+    root = HSplit([body])
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _up(event: object) -> None:
+        state["cursor"] = (state["cursor"] - 1) % len(options)
+        getattr(event, "app").invalidate()
+
+    @kb.add("down")
+    def _down(event: object) -> None:
+        state["cursor"] = (state["cursor"] + 1) % len(options)
+        getattr(event, "app").invalidate()
+
+    @kb.add(" ")
+    def _space(_event: object) -> None:
+        return None
+
+    @kb.add("enter")
+    def _enter(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=values[state["cursor"]])
+
+    @kb.add("escape")
+    def _escape(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=None)
+
+    @kb.add("c-c")
+    def _ctrl_c(event: object) -> None:
+        app = getattr(event, "app")
+        app.exit(result=None)
+
+    app: Any = Application(
+        layout=Layout(root),
+        key_bindings=kb,
+        full_screen=False,
+        style=style,
+        mouse_support=False,
+    )
+    try:
+        with patch_stdout():
+            result = await app.run_async()
+    except Exception:
+        return await asyncio.to_thread(
+            _run_inline_single_select_text,
             title=title,
             text=text,
             options=options,
@@ -197,6 +349,7 @@ def run_inline_multi_select(
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import HSplit, Layout, Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.patch_stdout import patch_stdout
         from prompt_toolkit.styles import Style
     except ImportError:
         return _run_inline_multi_select_text(
@@ -210,6 +363,7 @@ def run_inline_multi_select(
     values = [value for value, _label in options]
     selected_values = {value for value in default_values if value in values}
     state: dict[str, int] = {"cursor": 0}
+    option_width = _multi_select_option_width(options)
 
     style = Style.from_dict(
         {
@@ -227,7 +381,9 @@ def run_inline_multi_select(
             pointer = "> " if is_focused else "  "
             mark = "[x]" if is_selected else "[ ]"
             style_name = "class:focused" if is_focused else ""
-            lines.append((style_name, f"{pointer}{mark} {label}\n"))
+            lines.append(
+                (style_name, _pad_option_line(f"{pointer}{mark} {label}", option_width) + "\n")
+            )
         lines.append(("class:hint", f"\n{hint_text or _MULTI_HINT_TEXT}"))
         return lines
 
@@ -240,28 +396,32 @@ def run_inline_multi_select(
     kb = KeyBindings()
 
     @kb.add("up")
-    def _up(_event: object) -> None:
+    def _up(event: object) -> None:
         state["cursor"] = (state["cursor"] - 1) % len(options)
+        getattr(event, "app").invalidate()
 
     @kb.add("down")
-    def _down(_event: object) -> None:
+    def _down(event: object) -> None:
         state["cursor"] = (state["cursor"] + 1) % len(options)
+        getattr(event, "app").invalidate()
 
     @kb.add(" ")
-    def _space(_event: object) -> None:
+    def _space(event: object) -> None:
         value = values[state["cursor"]]
         if value in selected_values:
             selected_values.remove(value)
         else:
             selected_values.add(value)
+        getattr(event, "app").invalidate()
 
     @kb.add("a")
-    def _all(_event: object) -> None:
+    def _all(event: object) -> None:
         if len(selected_values) == len(values):
             selected_values.clear()
         else:
             selected_values.clear()
             selected_values.update(values)
+        getattr(event, "app").invalidate()
 
     @kb.add("enter")
     def _enter(event: object) -> None:
@@ -286,7 +446,8 @@ def run_inline_multi_select(
         mouse_support=False,
     )
     try:
-        result = app.run()
+        with patch_stdout():
+            result = app.run()
     except Exception:
         return _run_inline_multi_select_text(
             title=title,
@@ -331,6 +492,24 @@ _TEXT_MULTI_PROMPT_HINT: Final[str] = (
     "Enter comma-separated option numbers or values. Blank keeps defaults. "
     "Type all, none, or q."
 )
+
+
+def _single_select_option_width(options: list[tuple[str, str]]) -> int:
+    """Return padded width for single-select option lines."""
+
+    return max(len(f"> (*) {label}") for _value, label in options)
+
+
+def _multi_select_option_width(options: list[tuple[str, str]]) -> int:
+    """Return padded width for multi-select option lines."""
+
+    return max(len(f"> [x] {label}") for _value, label in options)
+
+
+def _pad_option_line(value: str, width: int) -> str:
+    """Pad one rendered option line to a stable width for clean redraws."""
+
+    return value.ljust(width)
 
 
 def _has_running_event_loop() -> bool:

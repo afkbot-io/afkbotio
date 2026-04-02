@@ -82,6 +82,9 @@ def run_single_turn(
         if frame.detail_line is not None:
             typer.echo(f"    \033[90m{frame.detail_line}\033[0m")
 
+    if interactive_ux is not None:
+        setattr(echo_progress, "before_interactive_prompt", interactive_ux.stop_progress)
+
     try:
         if interactive_ux is not None:
             interactive_ux.begin_agent_turn()
@@ -222,6 +225,9 @@ async def _run_repl_turn(
         ),
         present_plan=present_plan,
         record_plan=lambda snapshot: _store_repl_plan(snapshot, repl_state),
+        confirm_space_fn=turn_options.confirm_space_fn,
+        tool_not_allowed_prompt_fn=turn_options.tool_not_allowed_prompt_fn,
+        credential_profile_prompt_fn=turn_options.credential_profile_prompt_fn,
     )
 
 

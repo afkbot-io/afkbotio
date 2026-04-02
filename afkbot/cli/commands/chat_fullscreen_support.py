@@ -1,4 +1,4 @@
-"""Shared support helpers for the fullscreen chat workspace runtime."""
+"""Shared support helpers for the interactive chat workspace runtime."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from afkbot.services.chat_session.turn_flow import (
 
 
 class FullscreenChatWorkspaceUX:
-    """Minimal no-stdout UX adapter for fullscreen workspace sessions."""
+    """Minimal no-stdout UX adapter for prompt-session workspace sessions."""
 
     def begin_agent_turn(self) -> None:
         """A fullscreen workspace updates state in-place instead of using stdout spinners."""
@@ -32,14 +32,11 @@ class FullscreenChatWorkspaceUX:
 
 def interrupt_action(
     *,
-    overlay_active: bool,
     active_turn: bool,
     session_running: bool,
-) -> Literal["dismiss_overlay", "cancel_turn", "exit_session"]:
-    """Resolve one deterministic fullscreen interrupt action from current session state."""
+) -> Literal["cancel_turn", "exit_session"]:
+    """Resolve one deterministic interrupt action from current session state."""
 
-    if overlay_active:
-        return "dismiss_overlay"
     if active_turn and session_running:
         return "cancel_turn"
     return "exit_session"
@@ -61,14 +58,45 @@ def build_workspace_turn_options(
     *,
     confirm_plan_execution: Callable[[], Coroutine[Any, Any, bool]],
     present_plan: PlanPresentationFn,
+    confirm_space_fn: Callable[..., bool | Coroutine[Any, Any, bool]] | None = None,
+    tool_not_allowed_prompt_fn: Callable[..., str | Coroutine[Any, Any, str]] | None = None,
+    credential_profile_prompt_fn: Callable[..., str | None | Coroutine[Any, Any, str | None]] | None = None,
 ) -> ChatTurnInteractiveOptions:
-    """Attach only the fullscreen callbacks that differ from the default REPL wiring."""
+    """Attach only the workspace callbacks that differ from the default REPL wiring."""
 
-    if state.planning_mode != "on":
+    if (
+        state.planning_mode != "on"
+        and confirm_space_fn is None
+        and tool_not_allowed_prompt_fn is None
+        and credential_profile_prompt_fn is None
+    ):
         return turn_options
     return ChatTurnInteractiveOptions(
         interactive_confirm=turn_options.interactive_confirm,
         prompt_to_plan_first=turn_options.prompt_to_plan_first,
-        confirm_plan_execution=confirm_plan_execution,
-        present_plan=present_plan,
+        confirm_plan_execution=(
+            confirm_plan_execution
+            if state.planning_mode == "on"
+            else turn_options.confirm_plan_execution
+        ),
+        present_plan=(
+            present_plan
+            if state.planning_mode == "on"
+            else turn_options.present_plan
+        ),
+        confirm_space_fn=(
+            confirm_space_fn
+            if confirm_space_fn is not None
+            else turn_options.confirm_space_fn
+        ),
+        tool_not_allowed_prompt_fn=(
+            tool_not_allowed_prompt_fn
+            if tool_not_allowed_prompt_fn is not None
+            else turn_options.tool_not_allowed_prompt_fn
+        ),
+        credential_profile_prompt_fn=(
+            credential_profile_prompt_fn
+            if credential_profile_prompt_fn is not None
+            else turn_options.credential_profile_prompt_fn
+        ),
     )

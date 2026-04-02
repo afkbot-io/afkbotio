@@ -1,4 +1,4 @@
-"""CLI runtime glue for interactive fullscreen chat workspace sessions."""
+"""CLI runtime glue for interactive prompt-session chat workspace sessions."""
 
 from __future__ import annotations
 
@@ -30,7 +30,8 @@ from afkbot.cli.presentation.chat_workspace.presenter import (
     build_chat_workspace_user_entry,
 )
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
-from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.agent_loop.interactive_resume import available_profile_choices
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.chat_session.activity_state import capture_chat_activity
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
@@ -61,20 +62,16 @@ async def run_fullscreen_chat_workspace_session(
     refresh_catalog: RefreshCatalogFn,
     run_turn: RunReplTurnFn,
 ) -> None:
-    """Run the interactive chat session inside the fullscreen workspace app."""
+    """Run the interactive chat session inside the prompt-session workspace."""
 
     session_task: asyncio.Task[None] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
 
     def _interrupt() -> None:
         action = interrupt_action(
-            overlay_active=workspace.overlay_active(),
             active_turn=repl_state.active_turn,
             session_running=session_task is not None and not session_task.done(),
         )
-        if action == "dismiss_overlay":
-            workspace.clear_overlay()
-            return
         if action == "cancel_turn" and session_task is not None:
             session_task.cancel()
             return
@@ -92,9 +89,40 @@ async def run_fullscreen_chat_workspace_session(
     ux = FullscreenChatWorkspaceUX()
     progress_timeline_state = ProgressTimelineState()
     progress_entries_emitted = False
+    spinner_frames = ("◌", "◉", "◍", "◉")
+    spinner_position = 0
+
+    def _status_mode_icon() -> str | None:
+        activity = repl_state.latest_activity
+        if activity is None or not activity.running:
+            return None
+        if activity.stage == "thinking":
+            return "◇"
+        if activity.stage == "planning":
+            return "◈"
+        if activity.stage == "tool_call":
+            return "⚙"
+        if activity.stage == "subagent_wait":
+            return "↻"
+        return None
+
+    def _build_status_marker(*, animate: bool) -> str | None:
+        nonlocal spinner_position
+        icon = _status_mode_icon()
+        if icon is None:
+            return None
+        marker = f"{spinner_frames[spinner_position]} {icon}"
+        if animate:
+            spinner_position = (spinner_position + 1) % len(spinner_frames)
+        return marker
 
     def _sync_workspace_from_state() -> None:
-        workspace.replace_surface_state(build_chat_workspace_surface_state(repl_state))
+        workspace.replace_surface_state(
+            build_chat_workspace_surface_state(
+                repl_state,
+                status_marker=_build_status_marker(animate=False),
+            )
+        )
         workspace.set_toolbar_text(build_chat_workspace_toolbar_text(repl_state))
 
     async def _read_input() -> str:
@@ -113,7 +141,8 @@ async def run_fullscreen_chat_workspace_session(
         )
         if outcome.queued_message:
             workspace.append_transcript_entry(
-                build_chat_workspace_user_entry(outcome.queued_message)
+                build_chat_workspace_user_entry(outcome.queued_message),
+                echo=False,
             )
         return outcome
 
@@ -135,6 +164,63 @@ async def run_fullscreen_chat_workspace_session(
             hint_text=PLAN_EXECUTION_PROMPT.hint_text,
             cancel_result=PLAN_EXECUTION_PROMPT.cancel_result,
         )
+
+    async def _confirm_workspace_operation(
+        *,
+        question: str,
+        default: bool,
+        title: str,
+        yes_label: str = "Approve",
+        no_label: str = "Deny",
+        hint_text: str | None = None,
+        **_unused: object,
+    ) -> bool:
+        del _unused
+        return await workspace.confirm(
+            title=title,
+            question=question,
+            default=default,
+            yes_label=yes_label,
+            no_label=no_label,
+            hint_text=hint_text,
+            cancel_result=default,
+        )
+
+    async def _prompt_workspace_tool_access(
+        *,
+        envelope: ActionEnvelope,
+        question_text: str,
+        **_unused: object,
+    ) -> str:
+        del envelope, _unused
+        selected = await workspace.choose_option(
+            title="Tool access request",
+            prompt=question_text,
+            options=(
+                ("allow_once", "Run once"),
+                ("allow_session", "Allow for session"),
+                ("deny", "Do not run"),
+            ),
+            default_value="deny",
+            footer_lines=("↑/↓ move, Enter confirm, Esc cancel",),
+        )
+        return "deny" if selected is None else selected
+
+    async def _prompt_workspace_credential_profile(envelope: ActionEnvelope) -> str | None:
+        available_profiles = available_profile_choices(envelope)
+        if not available_profiles:
+            return None
+        selected = await workspace.choose_option(
+            title="Credential profile",
+            prompt="Choose credential profile",
+            options=tuple((profile, profile) for profile in available_profiles),
+            default_value=available_profiles[0],
+            footer_lines=("↑/↓ move, Enter confirm, Esc cancel",),
+        )
+        selected_profile = selected.strip() if selected is not None else ""
+        if selected_profile in available_profiles:
+            return selected_profile
+        return None
 
     async def _present_plan(
         plan_result: TurnResult,
@@ -183,6 +269,9 @@ async def run_fullscreen_chat_workspace_session(
                     turn_options=turn_options,
                     confirm_plan_execution=_confirm_plan_execution,
                     present_plan=_present_plan,
+                    confirm_space_fn=_confirm_workspace_operation,
+                    tool_not_allowed_prompt_fn=_prompt_workspace_tool_access,
+                    credential_profile_prompt_fn=_prompt_workspace_credential_profile,
                 ),
             )
 
@@ -212,17 +301,19 @@ async def run_fullscreen_chat_workspace_session(
     async def _run_heartbeat() -> None:
         while not workspace.exit_requested:
             if repl_state.active_turn:
-                _sync_workspace_from_state()
+                workspace.replace_surface_state(
+                    build_chat_workspace_surface_state(
+                        repl_state,
+                        status_marker=_build_status_marker(animate=True),
+                    )
+                )
             await asyncio.sleep(1)
 
-    def _pre_run() -> None:
-        nonlocal heartbeat_task, session_task
-        workspace.clear_scrollback()
-        session_task = workspace.application.create_background_task(_run_session())
-        heartbeat_task = workspace.application.create_background_task(_run_heartbeat())
-
+    session_task = asyncio.create_task(_run_session())
+    heartbeat_task = asyncio.create_task(_run_heartbeat())
     try:
-        await workspace.application.run_async(pre_run=_pre_run)
+        await session_task
     finally:
+        workspace.request_exit()
         await cancel_background_task(session_task)
         await cancel_background_task(heartbeat_task)

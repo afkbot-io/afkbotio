@@ -28,14 +28,7 @@ def first_execution_blocker(
         error_code = str(tool_result.error_code or "").strip()
         reason = str(tool_result.reason or "").strip()
         if error_code == "tool_not_allowed_in_turn":
-            return ExecutionBlocker(
-                error_code=error_code,
-                message=(
-                    "The requested operation could not run because tool "
-                    f"`{tool_call.name}` is not available in the current turn. "
-                    "Stay within the visible tool surface or widen it before retrying."
-                ),
-            )
+            continue
         if error_code == "profile_policy_violation":
             details = f" Reason: {reason}" if reason else ""
             return ExecutionBlocker(

@@ -17,8 +17,14 @@ def test_merge_turn_context_overrides_combines_metadata_prompt_and_thinking() ->
     """Merge helper should keep later thinking/planning fields and merge trusted metadata."""
 
     merged = merge_turn_context_overrides(
-        TurnContextOverrides(runtime_metadata={"channel": "telegram"}, prompt_overlay="base"),
         TurnContextOverrides(
+            runtime_metadata={"channel": "telegram"},
+            cli_approval_surface_enabled=True,
+            approved_tool_names=("bash.exec",),
+            prompt_overlay="base",
+        ),
+        TurnContextOverrides(
+            approved_tool_names=("file.read", "bash.exec"),
             planning_mode="plan_only",
             execution_planning_mode="off",
             thinking_level="high",
@@ -29,6 +35,8 @@ def test_merge_turn_context_overrides_combines_metadata_prompt_and_thinking() ->
 
     assert merged is not None
     assert merged.runtime_metadata == {"channel": "telegram"}
+    assert merged.cli_approval_surface_enabled is True
+    assert merged.approved_tool_names == ("bash.exec", "file.read")
     assert merged.prompt_overlay == "base\n\noverlay"
     assert merged.planning_mode == "plan_only"
     assert merged.execution_planning_mode == "off"

@@ -132,7 +132,7 @@ def register(app: typer.Typer) -> None:
             runtime_overrides,
             run_once_result_fn=run_once_result,
             submit_secure_field_fn=submit_secure_field,
-            confirm_space_fn=confirm_space,
+            confirm_space_fn=None if message is not None else confirm_space,
         )
 
         if message is not None:

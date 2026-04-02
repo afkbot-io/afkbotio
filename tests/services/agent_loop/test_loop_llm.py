@@ -922,10 +922,10 @@ async def test_llm_tool_calls_respect_profile_policy(tmp_path: Path) -> None:
             [event for event in events if event.event_type == "tool.result"][0].payload_json
         )
         assert result_payload["result"]["error_code"] == "tool_not_allowed_in_turn"
-        assert (
-            result.envelope.message
-            == "The requested operation could not run because tool `debug.echo` is not available in the current turn. Stay within the visible tool surface or widen it before retrying."
-        )
+        assert result.envelope.action == "ask_question"
+        assert result.envelope.spec_patch is not None
+        assert result.envelope.spec_patch["tool_name"] == "debug.echo"
+        assert result.envelope.spec_patch["question_kind"] == "tool_not_allowed_in_turn"
 
     assert len(scripted.requests) == 1
     await engine.dispose()
@@ -1055,10 +1055,11 @@ async def test_llm_request_tools_follow_policy_allowlist(tmp_path: Path) -> None
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        visible = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
         )
+        visible = tool_surface.visible_tools
         tool_names = {item.name for item in visible}
         assert tool_names == {"debug.echo"}
 
@@ -1084,11 +1085,119 @@ async def test_llm_request_tools_fail_closed_on_invalid_policy_json(tmp_path: Pa
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        visible = loop._tool_exposure.available_tool_definitions(  # noqa: SLF001
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
         )
+        visible = tool_surface.visible_tools
         assert visible == ()
+
+    await engine.dispose()
+
+
+async def test_llm_cli_approval_surface_fails_closed_on_invalid_deny_policy_json(
+    tmp_path: Path,
+) -> None:
+    """CLI approval surface should fail closed when deny rules are invalid."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_cli_approval_invalid_deny.db")
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.policy_enabled = True
+        policy.allowed_tools_json = json.dumps(["debug.echo"], ensure_ascii=True, sort_keys=True)
+        policy.denied_tools_json = "{not-json"
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            automation_intent=True,
+            approved_tool_names=("bash.exec",),
+            cli_approval_surface_enabled=True,
+        )
+
+        assert tool_surface.visible_tools == ()
+        assert tool_surface.executable_tool_names == ()
+        assert tool_surface.approval_required_tool_names == ()
+
+    await engine.dispose()
+
+
+async def test_llm_visible_tools_include_cli_approval_surface_for_afk_chat(tmp_path: Path) -> None:
+    """Trusted afk chat should expose curated approval-required tools even outside policy allowlist."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_cli_approval_surface.db")
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.policy_enabled = True
+        policy.allowed_tools_json = json.dumps(["debug.echo"], ensure_ascii=True, sort_keys=True)
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            automation_intent=True,
+            cli_approval_surface_enabled=True,
+        )
+        visible = tool_surface.visible_tools
+        by_name = {item.name: item for item in visible}
+        assert "debug.echo" in by_name
+        assert "bash.exec" in by_name
+        assert "file.read" in by_name
+        assert by_name["bash.exec"].requires_confirmation is True
+        assert by_name["file.read"].requires_confirmation is True
+
+    await engine.dispose()
+
+
+async def test_llm_visible_tools_include_explicitly_approved_tool_without_bypassing_deny_rules(
+    tmp_path: Path,
+) -> None:
+    """Trusted CLI-approved tools should become visible to replanning without bypassing denies."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_approved_tools_visible.db")
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.policy_enabled = True
+        policy.allowed_tools_json = json.dumps(["debug.echo"], ensure_ascii=True, sort_keys=True)
+        policy.denied_tools_json = json.dumps(["file.read"], ensure_ascii=True, sort_keys=True)
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            automation_intent=True,
+            approved_tool_names=("bash.exec", "file.read"),
+        )
+        visible = tool_surface.visible_tools
+        tool_names = {item.name for item in visible}
+        assert "debug.echo" in tool_names
+        assert "bash.exec" in tool_names
+        assert "file.read" not in tool_names
 
     await engine.dispose()
 

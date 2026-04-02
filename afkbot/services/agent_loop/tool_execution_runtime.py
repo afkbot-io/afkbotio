@@ -78,6 +78,8 @@ class ToolExecutionRuntime:
         allow_confirmation_markers: bool,
         runtime_metadata: dict[str, object] | None = None,
         allowed_tool_names: set[str] | None = None,
+        approved_tool_names: set[str] | None = None,
+        approval_required_tool_names: set[str] | None = None,
     ) -> list[ToolResult]:
         """Execute requested tool calls sequentially with logging and pre-execution guards."""
 
@@ -145,6 +147,8 @@ class ToolExecutionRuntime:
                 confirmed=confirmed,
                 confirmation_question_id=confirmation_question_id,
                 allowed_tool_names=allowed_tool_names,
+                approved_tool_names=approved_tool_names,
+                approval_required_tool_names=approval_required_tool_names,
             )
             await self._log_event(
                 run_id=run_id,
@@ -330,6 +334,8 @@ class ToolExecutionRuntime:
         confirmed: bool,
         confirmation_question_id: str | None,
         allowed_tool_names: set[str] | None,
+        approved_tool_names: set[str] | None,
+        approval_required_tool_names: set[str] | None,
     ) -> ToolResult:
         """Execute one already-logged tool call through all runtime guards."""
 
@@ -337,6 +343,18 @@ class ToolExecutionRuntime:
             return ToolResult.error(
                 error_code=guarded_error_code or "security_secure_input_required",
                 reason=guarded_reason or "Secret-like tool call blocked",
+            )
+        if (
+            approval_required_tool_names is not None
+            and execution_name in approval_required_tool_names
+            and (allowed_tool_names is None or execution_name not in allowed_tool_names)
+        ):
+            return ToolResult.error(
+                error_code="tool_not_allowed_in_turn",
+                reason=(
+                    f"Tool requires explicit user approval before execution in afk chat: "
+                    f"{execution_name}"
+                ),
             )
         if allowed_tool_names is not None and execution_name not in allowed_tool_names:
             return ToolResult.error(
@@ -393,6 +411,7 @@ class ToolExecutionRuntime:
                 policy=policy,
                 tool_name=execution_name,
                 params=approval_params,
+                approved_tool_names=approved_tool_names,
             )
             result = await self.execute_tool_call(
                 tool_call=guarded_call,
