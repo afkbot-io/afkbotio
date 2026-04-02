@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 import shlex
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from afkbot.services.policy.contracts import PolicyViolationError
 
@@ -216,11 +216,11 @@ def extract_hosts(value: object, *, field_name: str | None = None) -> list[str]:
             return extract_hosts_from_shell_command(value)
         if not any(part in lowered for part in URL_PARAM_PARTS):
             return []
-        parsed = urlparse(value)
-        if parsed.hostname is not None:
+        parsed = safe_urlparse(value)
+        if parsed is not None and parsed.hostname is not None:
             return [parsed.hostname]
-        reparsed = urlparse(f"//{value}")
-        if reparsed.hostname is not None:
+        reparsed = safe_urlparse(f"//{value}")
+        if reparsed is not None and reparsed.hostname is not None:
             return [reparsed.hostname]
     return []
 
@@ -234,8 +234,12 @@ def extract_hosts_from_shell_command(raw: str) -> list[str]:
     except ValueError:
         return hosts
     for token in tokens:
-        parsed = urlparse(token)
-        if parsed.scheme.lower() in {"http", "https"} and parsed.hostname is not None:
+        parsed = safe_urlparse(token)
+        if (
+            parsed is not None
+            and parsed.scheme.lower() in {"http", "https"}
+            and parsed.hostname is not None
+        ):
             hosts.append(parsed.hostname)
     command_index = find_first_command_index(tokens)
     if command_index is None:
@@ -398,9 +402,11 @@ def extract_hostname_from_shell_token(token: str) -> str | None:
     if not candidate or candidate.startswith("@"):
         return None
     if "://" in candidate:
-        parsed = urlparse(candidate)
-        return parsed.hostname
-    reparsed = urlparse(f"//{candidate}")
+        parsed = safe_urlparse(candidate)
+        return parsed.hostname if parsed is not None else None
+    reparsed = safe_urlparse(f"//{candidate}")
+    if reparsed is None:
+        return None
     hostname = reparsed.hostname
     if hostname is None:
         return None
@@ -467,3 +473,12 @@ def dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(item)
         deduped.append(item)
     return deduped
+
+
+def safe_urlparse(value: str) -> ParseResult | None:
+    """Parse URL-like values while tolerating malformed bracket tokens."""
+
+    try:
+        return urlparse(value)
+    except ValueError:
+        return None
