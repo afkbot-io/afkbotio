@@ -137,6 +137,8 @@ class ProfileRuntimeConfigService:
             provider_field_by_id = {
                 "openrouter": "openrouter_base_url",
                 "openai": "openai_base_url",
+                "claude": "claude_base_url",
+                "moonshot": "moonshot_base_url",
                 "deepseek": "deepseek_base_url",
                 "xai": "xai_base_url",
                 "qwen": "qwen_base_url",

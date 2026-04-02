@@ -96,6 +96,10 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
     assert settings.openai_api_key is None
     assert settings.openai_base_url == "https://api.openai.com/v1"
+    assert settings.claude_api_key is None
+    assert settings.claude_base_url == "https://api.anthropic.com/v1"
+    assert settings.moonshot_api_key is None
+    assert settings.moonshot_base_url == "https://api.moonshot.ai/v1"
     assert settings.deepseek_api_key is None
     assert settings.deepseek_base_url == "https://api.deepseek.com"
     assert settings.xai_api_key is None

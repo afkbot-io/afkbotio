@@ -25,6 +25,8 @@ _PROFILE_RUNTIME_SECRET_FIELDS = frozenset(
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "claude_api_key",
+        "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
@@ -211,6 +213,10 @@ def provider_secret_field(provider_id: str) -> str:
         return "openrouter_api_key"
     if normalized == "openai":
         return "openai_api_key"
+    if normalized == "claude":
+        return "claude_api_key"
+    if normalized == "moonshot":
+        return "moonshot_api_key"
     if normalized == "deepseek":
         return "deepseek_api_key"
     if normalized == "xai":

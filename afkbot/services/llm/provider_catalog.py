@@ -11,6 +11,8 @@ class LLMProviderId(StrEnum):
 
     OPENROUTER = "openrouter"
     OPENAI = "openai"
+    CLAUDE = "claude"
+    MOONSHOT = "moonshot"
     DEEPSEEK = "deepseek"
     XAI = "xai"
     QWEN = "qwen"
@@ -39,18 +41,26 @@ _PROVIDER_SPECS: dict[LLMProviderId, ProviderSpec] = {
         base_url_env_name="AFKBOT_OPENROUTER_BASE_URL",
         verify_path="/key",
         model_choices=(
+            "xiaomi/mimo-v2-pro",
+            "stepfun/step-3.5-flash:free",
+            "minimax/minimax-m2.7",
+            "deepseek/deepseek-v3.2",
+            "qwen/qwen3.6-plus-preview:free",
+            "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-opus-4.6",
+            "google/gemini-3-flash-preview",
+            "z-ai/glm-5-turbo",
+            "x-ai/grok-4.1-fast",
             "minimax/minimax-m2.5",
-            "minimax/minimax-m1",
-            "openai/gpt-4o-mini",
-            "openai/gpt-4.1-mini",
-            "openai/gpt-4.1-nano",
-            "anthropic/claude-3.5-sonnet",
-            "anthropic/claude-3.7-sonnet",
-            "google/gemini-2.0-flash-001",
-            "deepseek/deepseek-chat-v3-0324",
-            "qwen/qwen3-32b",
-            "x-ai/grok-3-mini",
-            "meta-llama/llama-3.3-70b-instruct",
+            "xiaomi/mimo-v2-omni",
+            "google/gemini-2.5-flash-lite",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            "google/gemini-2.5-flash",
+            "moonshotai/kimi-k2.5",
+            "openai/gpt-oss-120b",
+            "z-ai/glm-5",
+            "openai/gpt-5.4",
+            "anthropic/claude-sonnet-4.5",
         ),
         api_key_env_names=("AFKBOT_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
     ),
@@ -67,6 +77,32 @@ _PROVIDER_SPECS: dict[LLMProviderId, ProviderSpec] = {
             "o4-mini",
         ),
         api_key_env_names=("AFKBOT_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    ),
+    LLMProviderId.CLAUDE: ProviderSpec(
+        id=LLMProviderId.CLAUDE,
+        label="Claude (Anthropic)",
+        default_base_url="https://api.anthropic.com/v1",
+        base_url_env_name="AFKBOT_CLAUDE_BASE_URL",
+        verify_path="/models",
+        model_choices=(
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+            "claude-sonnet-4-5",
+        ),
+        api_key_env_names=("AFKBOT_CLAUDE_API_KEY", "ANTHROPIC_API_KEY"),
+    ),
+    LLMProviderId.MOONSHOT: ProviderSpec(
+        id=LLMProviderId.MOONSHOT,
+        label="Moonshot (Kimi)",
+        default_base_url="https://api.moonshot.ai/v1",
+        base_url_env_name="AFKBOT_MOONSHOT_BASE_URL",
+        verify_path="/models",
+        model_choices=(
+            "kimi-k2.5",
+            "kimi-k2-thinking",
+            "kimi-k2-turbo-preview",
+        ),
+        api_key_env_names=("AFKBOT_MOONSHOT_API_KEY", "MOONSHOT_API_KEY"),
     ),
     LLMProviderId.DEEPSEEK: ProviderSpec(
         id=LLMProviderId.DEEPSEEK,
@@ -125,6 +161,8 @@ def list_supported_providers(*, include_none: bool = True) -> tuple[LLMProviderI
     return (
         LLMProviderId.OPENROUTER,
         LLMProviderId.OPENAI,
+        LLMProviderId.CLAUDE,
+        LLMProviderId.MOONSHOT,
         LLMProviderId.DEEPSEEK,
         LLMProviderId.XAI,
         LLMProviderId.QWEN,
