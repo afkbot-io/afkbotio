@@ -151,6 +151,12 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 claim_token="w-1",
                 session_id="session-1",
             )
+            started = await repo.mark_webhook_started(
+                automation_id=webhook_automation.id,
+                event_hash=sha256("event-1".encode("utf-8")).hexdigest(),
+                claim_token="w-1",
+                started_at=now + timedelta(seconds=1),
+            )
             duplicate_mark = await repo.claim_webhook_event(
                 automation_id=webhook_automation.id,
                 received_at=now + timedelta(seconds=5),
@@ -217,6 +223,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 session_id="session-6",
             )
             assert first_mark is True
+            assert started is True
             assert duplicate_mark is False
             assert parallel_other_mark is False
             assert wrong_complete is False
@@ -234,6 +241,9 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
             assert webhook_row_after[2] is not None
             assert webhook_row_after[2].last_session_id == "session-5"
             assert webhook_row_after[2].last_error is None
+            assert webhook_row_after[2].last_started_at == (now + timedelta(seconds=1)).replace(
+                tzinfo=None
+            )
             assert webhook_row_after[2].last_failed_at == (now + timedelta(seconds=5)).replace(
                 tzinfo=None
             )
@@ -349,6 +359,13 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 session_id="repo-session",
             )
             assert claimed is True
+            started = await repo.mark_webhook_started(
+                automation_id=webhook_automation.id,
+                event_hash=event_hash,
+                claim_token="repo-claim",
+                started_at=now + timedelta(seconds=1),
+            )
+            assert started is True
 
             updated_automation = await repo.update_automation(
                 profile_id="default",
@@ -388,6 +405,9 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
             assert updated_webhook.in_progress_until == lease_until.replace(tzinfo=None)
             assert updated_webhook.last_received_at == now.replace(tzinfo=None)
             assert updated_webhook.last_session_id == "repo-session"
+            assert updated_webhook.last_started_at == (now + timedelta(seconds=1)).replace(
+                tzinfo=None
+            )
 
             updated_before_touch = updated_automation.updated_at
             touched = await repo.touch_automation(

@@ -88,10 +88,12 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     )
     assert automation["webhook"]["last_execution_status"] == "idle"
     assert automation["webhook"]["last_session_id"] is None
+    assert automation["webhook"]["last_started_at"] is None
     assert automation["webhook"]["last_succeeded_at"] is None
     assert automation["webhook"]["last_failed_at"] is None
     assert automation["webhook"]["last_error"] is None
     assert automation["webhook"]["last_event_hash"] is None
+    assert automation["webhook"]["chat_resume_command"] is None
     created_token = automation["webhook"]["webhook_token"]
 
     list_result = runner.invoke(app, ["automation", "list", "--profile", "default"])

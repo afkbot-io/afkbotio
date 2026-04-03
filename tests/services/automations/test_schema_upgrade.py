@@ -110,6 +110,7 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
                             webhook_token,
                             webhook_token_hash,
                             last_session_id,
+                            last_started_at,
                             last_succeeded_at,
                             last_failed_at,
                             last_error
@@ -128,5 +129,6 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
         assert row[3] is None
         assert row[4] is None
         assert row[5] is None
+        assert row[6] is None
     finally:
         await engine.dispose()
