@@ -50,7 +50,7 @@ def resolve_api_key(
                     msg(
                         lang,
                         en=(
-                            f"A {spec.label} API key is already configured. "
+                            f"A {spec.label} API key is currently configured. "
                             "Press Enter to keep it, or paste a new key."
                         ),
                         ru=(

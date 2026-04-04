@@ -18,6 +18,13 @@ from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
 
 
+def _runtime_base_url(service: object) -> str:
+    """Build the effective local runtime base URL for automation service assertions."""
+
+    settings = getattr(service, "_settings")
+    return f"http://{settings.runtime_host}:{settings.runtime_port}"
+
+
 async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
     """Update should modify allowed fields and rotate webhook token when requested."""
 
@@ -57,7 +64,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert old_token is not None
         assert created_webhook.webhook.webhook_path == build_webhook_path("default", old_token)
         assert created_webhook.webhook.webhook_url == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(service),
             "default",
             old_token,
         )
@@ -72,7 +79,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert new_token != old_token
         assert rotated_webhook.webhook.webhook_path == build_webhook_path("default", new_token)
         assert rotated_webhook.webhook.webhook_url == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(service),
             "default",
             new_token,
         )
@@ -294,7 +301,7 @@ async def test_service_create_webhook_retries_token_conflict(
             created.webhook.webhook_token,
         )
         assert created.webhook.webhook_url == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(service),
             "default",
             created.webhook.webhook_token,
         )
