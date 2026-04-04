@@ -9,6 +9,7 @@ import typer
 
 from afkbot.cli.presentation.setup_prompts import (
     PromptLanguage,
+    msg,
     prompt_policy_capabilities,
     prompt_policy_enabled,
     prompt_policy_file_access_mode,
@@ -132,7 +133,11 @@ def resolve_policy_preset(
         return parse_preset_level(preset).value
     except ValueError as exc:
         raise typer.BadParameter(
-            "policy preset must be one of: simple, medium, strict (aliases: light, hard)"
+            msg(
+                lang,
+                en="Security preset must be one of: simple, medium, strict (aliases: light, hard)",
+                ru="Профиль безопасности должен быть одним из: simple, medium, strict (синонимы: light, hard)",
+            )
         ) from exc
 
 
@@ -274,7 +279,13 @@ def resolve_policy_file_access_mode(
         if interactive:
             normalized = prompt_policy_file_access_mode(default=normalized, lang=lang).strip().lower()
     if normalized not in {item.value for item in PolicyFileAccessMode}:
-        raise typer.BadParameter("policy file access mode must be one of: none, read_only, read_write")
+        raise typer.BadParameter(
+            msg(
+                lang,
+                en="File access mode must be one of: none, read_only, read_write",
+                ru="Режим доступа к файлам должен быть одним из: none, read_only, read_write",
+            )
+        )
     return normalized
 
 
@@ -292,7 +303,16 @@ def resolve_policy_workspace_scope_mode(
         try:
             return normalize_workspace_scope_mode(value)
         except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+            raise typer.BadParameter(
+                msg(
+                    lang,
+                    en=str(exc),
+                    ru=(
+                        "Режим рабочей области должен быть одним из: "
+                        "profile_only, project_only, profile_and_project, full_system, custom"
+                    ),
+                )
+            ) from exc
     if interactive:
         selected = prompt_policy_workspace_scope_mode(
             default=default,
@@ -302,11 +322,29 @@ def resolve_policy_workspace_scope_mode(
         try:
             return normalize_workspace_scope_mode(selected)
         except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+            raise typer.BadParameter(
+                msg(
+                    lang,
+                    en=str(exc),
+                    ru=(
+                        "Режим рабочей области должен быть одним из: "
+                        "profile_only, project_only, profile_and_project, full_system, custom"
+                    ),
+                )
+            ) from exc
     try:
         return normalize_workspace_scope_mode(default)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        raise typer.BadParameter(
+            msg(
+                lang,
+                en=str(exc),
+                ru=(
+                    "Режим рабочей области должен быть одним из: "
+                    "profile_only, project_only, profile_and_project, full_system, custom"
+                ),
+            )
+        ) from exc
 
 
 def recommended_policy_network_hosts(*, capabilities: tuple[str, ...]) -> tuple[str, ...]:

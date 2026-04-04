@@ -4,11 +4,13 @@ param(
     [string]$InstallDir = "",
     [string]$RepoUrl = "https://github.com/afkbot-io/afkbotio.git",
     [string]$GitRef = "main",
+    [string]$Lang = "",
     [switch]$SkipSetup,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
+$script:ResolvedInstallLang = "en"
 
 if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
     Write-Warning "-InstallDir is ignored by the uv tool installer."
@@ -49,6 +51,65 @@ function Invoke-NativeCommand {
         throw ("Command failed with exit code {0}: {1}" -f $exitCode, $Description)
     }
     return $result
+}
+
+function Resolve-InstallLanguage {
+    param([string]$Requested)
+
+    $requestedValue = ""
+    if ($null -ne $Requested) {
+        $requestedValue = [string]$Requested
+    }
+    $normalized = $requestedValue.Trim().ToLowerInvariant().Replace("-", "_")
+    if ($normalized -in @("ru", "russian", "ru_ru")) {
+        return "ru"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($normalized) -and $normalized -notin @("en", "english", "en_us", "en_gb")) {
+        throw "-Lang must be one of: en, ru."
+    }
+
+    $candidates = @(
+        $env:LC_ALL,
+        $env:LC_MESSAGES,
+        $env:LANG,
+        $PSUICulture,
+        [System.Globalization.CultureInfo]::CurrentUICulture.Name
+    )
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        $resolved = $candidate.Trim().ToLowerInvariant().Replace("-", "_")
+        if ($resolved.StartsWith("ru")) {
+            return "ru"
+        }
+    }
+    return "en"
+}
+
+function Get-LocalizedText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$English,
+        [Parameter(Mandatory = $true)]
+        [string]$Russian
+    )
+
+    if ($script:ResolvedInstallLang -eq "ru") {
+        return $Russian
+    }
+    return $English
+}
+
+function Write-Localized {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$English,
+        [Parameter(Mandatory = $true)]
+        [string]$Russian
+    )
+
+    Write-Host (Get-LocalizedText -English $English -Russian $Russian)
 }
 
 function Get-UserBinDir {
@@ -220,10 +281,15 @@ function Update-ToolShell([string]$UvExe) {
             & $UvExe tool update-shell
         })
     } catch {
-        Write-Warning "uv tool update-shell failed; reopen the shell if 'afk' is not yet visible."
+        Write-Warning (
+            Get-LocalizedText `
+                -English "uv tool update-shell failed; reopen the terminal after install if 'afk' is not yet visible." `
+                -Russian "Не удалось выполнить uv tool update-shell; после установки откройте терминал заново, если 'afk' ещё не появился."
+        )
     }
 }
 
+$script:ResolvedInstallLang = Resolve-InstallLanguage -Requested $Lang
 $uvExe = Get-UvExePath
 Ensure-Uv -UvExe $uvExe
 $toolSource = Get-ToolSource
@@ -235,25 +301,46 @@ $afkCmd = Get-AfkToolPath -ToolBinDir $toolBinDir
 $env:Path = "$toolBinDir;$env:Path"
 
 if (-not $SkipSetup) {
-    [void](Invoke-NativeCommand -Description "$afkCmd setup --bootstrap-only --yes" -Script {
-        & $afkCmd "setup" "--bootstrap-only" "--yes"
-    })
+    $previousInstallSourceMode = $env:AFKBOT_INSTALL_SOURCE_MODE
+    $previousInstallSourceSpec = $env:AFKBOT_INSTALL_SOURCE_SPEC
+    try {
+        $env:AFKBOT_INSTALL_SOURCE_MODE = [string]$toolSource.Mode
+        $env:AFKBOT_INSTALL_SOURCE_SPEC = [string]$toolSource.Value
+        [void](Invoke-NativeCommand -Description "$afkCmd setup --bootstrap-only --yes --lang $script:ResolvedInstallLang" -Script {
+            & $afkCmd "setup" "--bootstrap-only" "--yes" "--lang" $script:ResolvedInstallLang
+        })
+    } finally {
+        if ([string]::IsNullOrWhiteSpace($previousInstallSourceMode)) {
+            Remove-Item Env:AFKBOT_INSTALL_SOURCE_MODE -ErrorAction SilentlyContinue
+        } else {
+            $env:AFKBOT_INSTALL_SOURCE_MODE = $previousInstallSourceMode
+        }
+        if ([string]::IsNullOrWhiteSpace($previousInstallSourceSpec)) {
+            Remove-Item Env:AFKBOT_INSTALL_SOURCE_SPEC -ErrorAction SilentlyContinue
+        } else {
+            $env:AFKBOT_INSTALL_SOURCE_SPEC = $previousInstallSourceSpec
+        }
+    }
 }
 
 $legacyManagedBin = Join-Path (Get-LegacyInstallDir) "bin"
 Remove-UserPathEntry -Entry $legacyManagedBin
 
 Write-Host ""
-Write-Host "AFKBOT install complete."
-Write-Host "Tool source: $($toolSource.Value)"
+Write-Localized -English "AFKBOT install complete." -Russian "Установка AFKBOT завершена."
+Write-Localized -English "Tool source: $($toolSource.Value)" -Russian "Источник установки: $($toolSource.Value)"
 Write-Host "uv: $uvExe"
 Write-Host "CLI: $afkCmd"
 Write-Host ""
-Write-Host "If 'afk' is not visible in the current shell yet, reopen the terminal."
+Write-Localized `
+    -English "Recommended next step: open a new terminal window." `
+    -Russian "Рекомендуемый следующий шаг: откройте новый терминал."
 Write-Host ""
-Write-Host "Next steps:"
+Write-Localized -English "Then run:" -Russian "Затем выполните:"
 Write-Host "  afk setup"
-Write-Host "  afk doctor"
-Write-Host "  afk chat"
 Write-Host ""
-Write-Host 'To update later, run `afk update` or `uv tool upgrade afkbotio --reinstall`.'
+Write-Localized `
+    -English "After `afk setup`, AFKBOT will tell you to run `afk doctor` and then `afk chat`." `
+    -Russian "После `afk setup` AFKBOT подскажет выполнить `afk doctor`, а затем `afk chat`."
+Write-Host ""
+Write-Localized -English 'To update later, run `afk update`.' -Russian 'Чтобы обновиться позже, выполните `afk update`.'

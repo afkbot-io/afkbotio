@@ -19,6 +19,12 @@ from tests.services.automations._harness import (
 )
 
 
+def _runtime_base_url(settings: Settings) -> str:
+    """Build the effective local runtime base URL for automation service assertions."""
+
+    return f"http://{settings.runtime_host}:{settings.runtime_port}"
+
+
 async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_path: Path) -> None:
     """Webhook trigger should compose one sanitized message and deduplicate retries."""
 
@@ -35,7 +41,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert isinstance(webhook.webhook.webhook_token_masked, str)
         assert webhook.webhook.webhook_path == build_webhook_path("default", token)
         assert webhook.webhook.webhook_url == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(service._settings),
             "default",
             token,
         )

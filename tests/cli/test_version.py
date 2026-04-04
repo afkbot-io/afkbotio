@@ -64,7 +64,7 @@ def test_load_cli_version_info_prefers_local_checkout_version(
     # Arrange
     (tmp_path / ".git").mkdir()
     (tmp_path / "pyproject.toml").write_text(
-        "[project]\nname='afkbotio'\nversion='1.0.4'\n",
+        "[project]\nname='afkbotio'\nversion='1.0.5'\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -77,4 +77,4 @@ def test_load_cli_version_info_prefers_local_checkout_version(
     info = load_cli_version_info(root_dir=tmp_path)
 
     # Assert
-    assert info.version == "1.0.4"
+    assert info.version == "1.0.5"

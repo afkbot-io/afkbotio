@@ -73,6 +73,11 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "memory_digest",
         "memory_list",
         "memory_promote",
+        "mcp_profile_list",
+        "mcp_profile_get",
+        "mcp_profile_upsert",
+        "mcp_profile_delete",
+        "mcp_profile_validate",
         "skill_profile_list",
         "skill_profile_get",
         "skill_profile_upsert",
@@ -118,7 +123,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.llm_thinking_level == "medium"
     assert settings.chat_planning_mode == "auto"
     assert settings.runtime_host == "127.0.0.1"
-    assert settings.runtime_port == 8080
+    assert settings.runtime_port == 46339
     assert settings.runtime_queue_max_size == 100
     assert settings.runtime_worker_count == 4
     assert settings.runtime_cron_interval_sec == 60.0

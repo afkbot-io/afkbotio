@@ -37,6 +37,13 @@ def _build_automation_cli() -> typer.Typer:
     return app
 
 
+def _runtime_base_url() -> str:
+    """Return the effective local runtime base URL for CLI automation tests."""
+
+    settings = get_settings()
+    return f"http://{settings.runtime_host}:{settings.runtime_port}"
+
+
 async def _ensure_default_profile() -> None:
     settings = get_settings()
     engine = create_engine(settings)
@@ -82,7 +89,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
         automation["webhook"]["webhook_token"],
     )
     assert automation["webhook"]["webhook_url"] == build_webhook_url(
-        "http://127.0.0.1:8080",
+        _runtime_base_url(),
         "default",
         automation["webhook"]["webhook_token"],
     )
@@ -110,7 +117,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     assert shown["automation"]["id"] == automation_id
     assert shown["automation"]["webhook"]["webhook_token"] == created_token
     assert shown["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        "http://127.0.0.1:8080",
+        _runtime_base_url(),
         "default",
         created_token,
     )
@@ -124,7 +131,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     gotten = json.loads(get_result.stdout)
     assert gotten["automation"]["webhook"]["webhook_token"] == created_token
     assert gotten["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        "http://127.0.0.1:8080",
+        _runtime_base_url(),
         "default",
         created_token,
     )
@@ -169,7 +176,7 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     assert isinstance(rotated["automation"]["webhook"]["webhook_token"], str)
     assert rotated["automation"]["webhook"]["webhook_token"] != created_token
     assert rotated["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        "http://127.0.0.1:8080",
+        _runtime_base_url(),
         "default",
         rotated["automation"]["webhook"]["webhook_token"],
     )
@@ -259,7 +266,7 @@ def test_automation_cli_accepts_group_level_profile_option(
     automation_id = int(created["automation"]["id"])
     token = created["automation"]["webhook"]["webhook_token"]
     assert created["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        "http://127.0.0.1:8080",
+        _runtime_base_url(),
         "default",
         token,
     )

@@ -274,3 +274,61 @@ def test_collect_setup_config_does_not_rerun_policy_setup_mode_when_policy_alrea
     # Assert
     assert config.policy_preset == "simple"
     assert config.policy_setup_mode == "custom"
+
+
+def test_collect_setup_config_uses_auto_selected_exotic_runtime_port_when_unconfigured(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """First-time setup should use the resolved exotic runtime port instead of the legacy 8080 default."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'install-config-resolver.db'}",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.config_resolver.resolve_default_runtime_port",
+        lambda *, settings, host, runtime_config: 46341,
+    )
+
+    config = collect_setup_config(
+        settings=settings,
+        defaults={
+            "AFKBOT_LLM_PROVIDER": "openrouter",
+            "AFKBOT_LLM_MODEL": "minimax/minimax-m2.5",
+            "AFKBOT_OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+            "AFKBOT_LLM_API_KEY": "seed-key",
+            "AFKBOT_CREDENTIALS_MASTER_KEYS": "seed-master-key",
+        },
+        env_file=tmp_path / ".unused",
+        interactive=False,
+        lang=PromptLanguage.EN,
+        llm_provider=None,
+        chat_model=None,
+        thinking_level=None,
+        llm_api_key_file=None,
+        llm_base_url=None,
+        custom_interface=None,
+        skip_llm_token_verify=True,
+        llm_proxy_type=None,
+        llm_proxy_url=None,
+        runtime_host=None,
+        runtime_port=None,
+        nginx_enabled=None,
+        nginx_port=None,
+        nginx_runtime_host=None,
+        nginx_runtime_https=None,
+        nginx_api_host=None,
+        nginx_api_https=None,
+        certbot_email=None,
+        policy_enabled=None,
+        policy_preset=None,
+        policy_capability=(),
+        policy_file_access_mode=None,
+        policy_workspace_scope=None,
+        policy_network_host=(),
+        auto_install_deps=None,
+        platform_seed_only=True,
+    )
+
+    assert config.runtime_port == 46341

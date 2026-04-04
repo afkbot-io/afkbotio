@@ -13,6 +13,12 @@ import time
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from afkbot.services.install_source import (
+    InstallSource,
+    build_uv_tool_install_command,
+    default_package_install_source,
+    read_install_source_from_runtime_config,
+)
 from afkbot.services.managed_install import (
     ManagedInstallContext,
     build_next_app_dir,
@@ -23,6 +29,7 @@ from afkbot.services.managed_install import (
     write_managed_launcher,
 )
 from afkbot.services.setup.runtime_store import read_runtime_config
+from afkbot.services.runtime_ports import resolve_default_runtime_port
 from afkbot.settings import Settings
 
 _HOST_SERVICE_MARKER = "afkbot-managed-runtime-service"
@@ -30,7 +37,6 @@ _SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
 _LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
 _DEFAULT_API_PORT_OFFSET = 1
 _CODE_CHECKOUT_ROOT = Path(__file__).resolve(strict=False).parents[2]
-_UV_TOOL_PACKAGE = "afkbotio"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,9 @@ def run_update(settings: Settings) -> UpdateResult:
     managed_context = resolve_managed_install_context()
     if managed_context is not None:
         return _run_managed_update(settings=settings, context=managed_context)
+    install_source = read_install_source_from_runtime_config(read_runtime_config(settings))
+    if install_source is not None:
+        return _run_installer_source_update(settings=settings, install_source=install_source)
     if _is_source_checkout_install():
         return _run_host_update(settings=settings)
     return _run_uv_tool_update(settings=settings)
@@ -205,11 +214,28 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
 def _run_uv_tool_update(*, settings: Settings) -> UpdateResult:
     """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
 
+    return _run_installer_source_update(
+        settings=settings,
+        install_source=default_package_install_source(),
+    )
+
+
+def _run_installer_source_update(
+    *,
+    settings: Settings,
+    install_source: InstallSource,
+) -> UpdateResult:
+    """Replay one installer-style uv tool install and then apply maintenance."""
+
     uv_executable = _resolve_uv_executable()
+    install_command = build_uv_tool_install_command(
+        uv_executable=uv_executable,
+        install_source=install_source,
+    )
     _run_checked(
-        [str(uv_executable), "tool", "upgrade", _UV_TOOL_PACKAGE, "--reinstall"],
+        install_command,
         error_code="update_failed",
-        fallback="failed to upgrade AFKBOT via uv tool",
+        fallback="failed to reinstall AFKBOT from the saved installer source",
     )
     afk_executable = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
     _run_afk_executable(
@@ -225,7 +251,8 @@ def _run_uv_tool_update(*, settings: Settings) -> UpdateResult:
 
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
-        f"Tool package: {_UV_TOOL_PACKAGE}",
+        f"Tool source mode: {install_source.mode}",
+        f"Tool source: {install_source.spec}",
         f"Tool executable: {afk_executable}",
         (
             "Runtime health: ok"
@@ -498,11 +525,11 @@ def _resolve_runtime_health_target(settings: Settings) -> tuple[str, int]:
 
     runtime_config = read_runtime_config(settings)
     host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or "127.0.0.1"
-    raw_port = runtime_config.get("runtime_port", settings.runtime_port)
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError):
-        port = int(settings.runtime_port)
+    port = resolve_default_runtime_port(
+        settings=settings,
+        host=host,
+        runtime_config=runtime_config,
+    )
     return host, port
 
 

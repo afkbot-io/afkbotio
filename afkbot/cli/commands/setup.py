@@ -17,6 +17,7 @@ from afkbot.cli.commands.setup_support import (
     load_setup_defaults,
 )
 from afkbot.cli.presentation.activity_indicator import ActivityIndicator
+from afkbot.cli.presentation.prompt_i18n import detect_system_prompt_language
 from afkbot.cli.presentation.setup_prompts import (
     normalize_prompt_language,
 )
@@ -174,8 +175,13 @@ def register(app: typer.Typer) -> None:
             else None
         )
         try:
+            default_prompt_language = (
+                lang
+                or defaults.get("AFKBOT_PROMPT_LANGUAGE")
+                or detect_system_prompt_language().value
+            )
             prompt_language = normalize_prompt_language(
-                value=lang or defaults.get("AFKBOT_PROMPT_LANGUAGE"),
+                value=default_prompt_language,
                 ru=ru,
             )
         except ValueError as exc:

@@ -110,6 +110,33 @@ async def test_doctor_integrations_fail(tmp_path: Path, monkeypatch: MonkeyPatch
     assert await _run_doctor(settings, integrations=True, probe=True) is False
 
 
+async def test_doctor_reports_runtime_bind_summary(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """Doctor should print the effective runtime bind ports and prompt language."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.read_runtime_config",
+        lambda settings: {"runtime_host": "127.0.0.1", "prompt_language": "ru"},
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.resolve_default_runtime_port",
+        lambda *, settings, host, runtime_config: 46341,
+    )
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_runtime.db'}", root_dir=tmp_path)
+
+    assert await _run_doctor(settings, integrations=False, upgrades=False) is True
+    out = capsys.readouterr().out
+    assert "runtime: host=127.0.0.1, runtime_port=46341, api_port=46342, prompt_language=ru" in out
+
+
 async def test_doctor_reports_pending_upgrades(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

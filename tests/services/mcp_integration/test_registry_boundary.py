@@ -43,7 +43,8 @@ def test_mcp_integration_configs_do_not_create_runtime_mcp_tools_in_static_regis
 
     # Assert
     assert payload["servers"]
-    assert all(not name.startswith("mcp.") for name in registry.list_names())
+    assert registry.get("mcp.tools.list") is None
+    assert registry.get("mcp.tools.call") is None
     assert registry.get("mcp.github") is None
 
 

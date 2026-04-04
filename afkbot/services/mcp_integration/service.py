@@ -9,6 +9,7 @@ from afkbot.services.mcp_integration.errors import MCPIntegrationError
 from afkbot.services.mcp_integration.operator_contracts import (
     MCPAddPreview,
     MCPAddResult,
+    MCP_CONFIG_BOUNDARY_NOTE,
     MCPRemovePreview,
     MCPRemoveResult,
     MCPServerAccessView,
@@ -26,10 +27,7 @@ from afkbot.services.profile_runtime.service import get_profile_service
 from afkbot.settings import Settings
 
 _SERVICES_BY_ROOT: dict[str, "MCPProfileService"] = {}
-_BOUNDARY_NOTE = (
-    "Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for enabled remote "
-    "servers with `tools` capability and matching policy/network access."
-)
+_BOUNDARY_NOTE = MCP_CONFIG_BOUNDARY_NOTE
 
 
 class MCPProfileService:

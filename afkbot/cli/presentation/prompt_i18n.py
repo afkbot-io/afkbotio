@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from enum import StrEnum
+import locale
+import os
 
 
 class PromptLanguage(StrEnum):
@@ -10,6 +12,32 @@ class PromptLanguage(StrEnum):
 
     EN = "en"
     RU = "ru"
+
+
+def detect_system_locale() -> str | None:
+    """Return the best-effort current system locale string."""
+
+    for env_name in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        raw_value = str(os.getenv(env_name) or "").strip()
+        if raw_value:
+            return raw_value
+    try:
+        language_code, encoding = locale.getlocale()
+    except ValueError:
+        language_code, encoding = (None, None)
+    parts = [part for part in (language_code, encoding) if part]
+    if parts:
+        return ".".join(parts)
+    return None
+
+
+def detect_system_prompt_language() -> PromptLanguage:
+    """Return the preferred CLI language inferred from the local system locale."""
+
+    locale_name = str(detect_system_locale() or "").strip().lower().replace("-", "_")
+    if locale_name.startswith("ru"):
+        return PromptLanguage.RU
+    return PromptLanguage.EN
 
 
 def normalize_prompt_language(*, value: str | None, ru: bool) -> PromptLanguage:

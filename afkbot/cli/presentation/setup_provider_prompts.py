@@ -38,11 +38,11 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
 
     selected_default = default if default in LLM_PROVIDER_CHOICES else LLM_PROVIDER_CHOICES[0]
     selected = select_option_dialog(
-        title=msg(lang, en="Setup: LLM provider", ru="Настройка: LLM провайдер"),
+        title=msg(lang, en="Setup: AI provider", ru="Настройка: AI-провайдер"),
         text=msg(
             lang,
-            en="Select the default provider for chat runtime.",
-            ru="Выберите провайдера по умолчанию для чата.",
+            en="Choose which AI service AFKBOT should use for new chats by default.",
+            ru="Выберите, какой AI-сервис AFKBOT будет использовать в новых чатах по умолчанию.",
         ),
         options=list(LLM_PROVIDER_CHOICES),
         default=selected_default,
@@ -56,8 +56,8 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
             typer.prompt(
                 msg(
                     lang,
-                    en=f"LLM provider ({options})",
-                    ru=f"LLM провайдер ({options})",
+                    en=f"AI provider ({options})",
+                    ru=f"AI-провайдер ({options})",
                 ),
                 default=selected_default,
             )
@@ -93,8 +93,8 @@ def prompt_chat_model(
         title=msg(lang, en="Setup: Chat model", ru="Настройка: Модель чата"),
         text=msg(
             lang,
-            en=f"Select {spec.label} model or choose manual input.",
-            ru=f"Выберите модель {spec.label} или ручной ввод.",
+            en=f"Choose the {spec.label} model AFKBOT should use. Pick manual input if your model ID is not listed.",
+            ru=f"Выберите модель {spec.label}, которую AFKBOT будет использовать. Выберите ручной ввод, если нужного ID модели нет в списке.",
         ),
         options=options,
         default=selected_default,
@@ -114,7 +114,7 @@ def prompt_chat_model(
             suggested_default = "model-id"
         model = str(
             typer.prompt(
-                msg(lang, en="Chat model", ru="Модель чата"),
+                msg(lang, en="Model ID", ru="ID модели"),
                 default=default_model or suggested_default,
             )
         ).strip()
@@ -138,11 +138,11 @@ def prompt_thinking_level(
 
     selected_default = default if default in THINKING_LEVEL_CHOICES else "medium"
     selected = select_option_dialog(
-        title=msg(lang, en="Setup: Thinking level", ru="Настройка: Уровень раздумия"),
+        title=msg(lang, en="Setup: Reasoning effort", ru="Настройка: Глубина рассуждения"),
         text=msg(
             lang,
-            en="Select the default reasoning budget for this profile.",
-            ru="Выберите уровень раздумия по умолчанию для этого профиля.",
+            en="Choose how much effort the agent should spend thinking before it acts.",
+            ru="Выберите, насколько глубоко агент должен обдумывать ответ перед действием.",
         ),
         options=list(THINKING_LEVEL_CHOICES),
         default=selected_default,
@@ -155,8 +155,8 @@ def prompt_thinking_level(
             typer.prompt(
                 msg(
                     lang,
-                    en="Default thinking level (low/medium/high/very_high)",
-                    ru="Уровень раздумия по умолчанию (low/medium/high/very_high)",
+                    en="Default reasoning effort (low/medium/high/very_high)",
+                    ru="Глубина рассуждения по умолчанию (low/medium/high/very_high)",
                 ),
                 default=selected_default,
             )
@@ -166,8 +166,8 @@ def prompt_thinking_level(
         typer.echo(
             msg(
                 lang,
-                en="Invalid thinking level: choose low, medium, high, or very_high.",
-                ru="Некорректный уровень раздумия: выберите low, medium, high или very_high.",
+                en="Invalid reasoning effort: choose low, medium, high, or very_high.",
+                ru="Некорректная глубина рассуждения: выберите low, medium, high или very_high.",
             )
         )
 
@@ -184,8 +184,8 @@ def prompt_custom_interface(
         title=msg(lang, en="Setup: Custom interface", ru="Настройка: Интерфейс custom API"),
         text=msg(
             lang,
-            en="Select API interface for custom provider.",
-            ru="Выберите API-интерфейс для custom провайдера.",
+            en="Choose the API format your custom endpoint speaks.",
+            ru="Выберите формат API, который поддерживает ваш custom endpoint.",
         ),
         options=["openai"],
         default=selected_default,
@@ -207,8 +207,8 @@ def prompt_proxy_config(
     should_use_proxy = confirm_space(
         question=msg(
             lang,
-            en="Use proxy for LLM requests?",
-            ru="Использовать прокси для запросов к LLM?",
+            en="Route provider requests through a proxy?",
+            ru="Пропускать запросы к провайдеру через прокси?",
         ),
         default=default_type != "none",
         title=msg(lang, en="Setup: Proxy", ru="Настройка: Прокси"),
@@ -222,8 +222,8 @@ def prompt_proxy_config(
         title=msg(lang, en="Setup: Proxy type", ru="Настройка: Тип прокси"),
         text=msg(
             lang,
-            en="Select proxy type for LLM requests.",
-            ru="Выберите тип прокси для запросов к LLM.",
+            en="Choose which proxy protocol AFKBOT should use for provider requests.",
+            ru="Выберите, какой протокол прокси AFKBOT должен использовать для запросов к провайдеру.",
         ),
         options=[HTTP_PROXY_TYPE, SOCKS5_PROXY_TYPE, SOCKS5H_PROXY_TYPE],
         default=(default_type if default_type in PROXY_TYPE_CHOICES else HTTP_PROXY_TYPE),
@@ -274,8 +274,14 @@ def prompt_secret_ack(*, lang: PromptLanguage = PromptLanguage.EN) -> bool:
     return confirm_space(
         question=msg(
             lang,
-            en="I understand responsibility for tokens, secrets, and automations. Continue?",
-            ru="Я понимаю ответственность за токены, секреты и автоматизации. Продолжить?",
+            en=(
+                "AFKBOT can use your API keys, local files, and automations on this machine. "
+                "Continue only if you understand and accept that responsibility."
+            ),
+            ru=(
+                "AFKBOT может использовать ваши API-ключи, локальные файлы и автоматизации на этой машине. "
+                "Продолжайте, только если понимаете и принимаете эту ответственность."
+            ),
         ),
         default=False,
         title=msg(lang, en="Setup: Security acknowledgment", ru="Настройка: Подтверждение безопасности"),
@@ -310,8 +316,8 @@ def prompt_nginx_enabled(*, default: bool, lang: PromptLanguage = PromptLanguage
     return confirm_space(
         question=msg(
             lang,
-            en="Enable nginx sidecar configuration?",
-            ru="Включить конфигурацию nginx sidecar?",
+            en="Generate nginx reverse-proxy configuration?",
+            ru="Сгенерировать конфигурацию nginx как reverse proxy?",
         ),
         default=default,
         title=msg(lang, en="Setup: Nginx", ru="Настройка: Nginx"),

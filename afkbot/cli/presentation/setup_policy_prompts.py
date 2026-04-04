@@ -40,24 +40,24 @@ def prompt_policy_setup_mode(
         title=msg(lang, en="Setup: Security setup", ru="Настройка: Безопасность"),
         text=msg(
             lang,
-            en="Choose ready-made security settings or configure them yourself.",
-            ru="Выберите готовые настройки безопасности или настройте всё сами.",
+            en="Choose the quick recommended safety setup or review permissions yourself.",
+            ru="Выберите быстрый рекомендуемый вариант безопасности или настройте права вручную.",
         ),
         options=[
             (
                 "recommended",
                 msg(
                     lang,
-                    en="Use recommended settings",
-                    ru="Использовать рекомендуемые настройки",
+                    en="Recommended: safe defaults",
+                    ru="Рекомендуется: безопасные настройки",
                 ),
             ),
             (
                 "custom",
                 msg(
                     lang,
-                    en="Configure manually",
-                    ru="Настроить самому",
+                    en="Custom: review each permission",
+                    ru="Вручную: проверить каждое право",
                 ),
             ),
         ],
@@ -72,8 +72,8 @@ def prompt_policy_enabled(*, default: bool, lang: PromptLanguage = PromptLanguag
     return confirm_space(
         question=msg(
             lang,
-            en="Enable security enforcement now?",
-            ru="Включить применение ограничений безопасности сейчас?",
+            en="Enable safety limits now? Recommended.",
+            ru="Включить ограничения безопасности сейчас? Рекомендуется.",
         ),
         default=default,
         title=msg(lang, en="Setup: Security enforcement", ru="Настройка: Применение ограничений"),
@@ -91,32 +91,32 @@ def prompt_policy_preset(*, default: str, lang: PromptLanguage = PromptLanguage.
         title=msg(lang, en="Setup: Security level", ru="Настройка: Уровень безопасности"),
         text=msg(
             lang,
-            en="Choose how strict confirmations and guardrails should be.",
-            ru="Выберите, насколько строгими должны быть подтверждения и ограничения.",
+            en="Choose how often AFKBOT should ask before risky actions.",
+            ru="Выберите, как часто AFKBOT должен спрашивать подтверждение перед рискованными действиями.",
         ),
         options=[
             (
                 "simple",
                 msg(
                     lang,
-                    en="Simple: fastest workflow, no extra confirmations",
-                    ru="Лёгкий: быстрый режим, без лишних подтверждений",
+                    en="Simple: move fast, almost no confirmations",
+                    ru="Лёгкий: быстрее работать, почти без подтверждений",
                 ),
             ),
             (
                 "medium",
                 msg(
                     lang,
-                    en="Medium: confirm destructive file operations",
-                    ru="Средний: подтверждать удаление и разрушительные операции с файлами",
+                    en="Medium: confirm dangerous file changes",
+                    ru="Средний: подтверждать опасные изменения файлов",
                 ),
             ),
             (
                 "strict",
                 msg(
                     lang,
-                    en="Strict: confirm all critical mutations",
-                    ru="Строгий: подтверждать все критичные изменения",
+                    en="Strict: confirm every critical action",
+                    ru="Строгий: подтверждать каждое критичное действие",
                 ),
             ),
         ],
@@ -176,8 +176,8 @@ def prompt_policy_capabilities(
         title=msg(lang, en="Setup: Capabilities", ru="Настройка: Возможности"),
         text=msg(
             lang,
-            en="Select capability groups to expose to the agent.",
-            ru="Выберите группы возможностей, которые будут доступны агенту.",
+            en="Choose what the agent is allowed to do.",
+            ru="Выберите, что агенту разрешено делать.",
         ),
         options=options,
         default_values=resolved_defaults,
@@ -214,8 +214,8 @@ def prompt_policy_network_mode(
         title=msg(lang, en="Setup: Network access", ru="Настройка: Доступ к сети"),
         text=msg(
             lang,
-            en="Choose how much outbound network access the agent should have.",
-            ru="Выберите, какой исходящий сетевой доступ дать агенту.",
+            en="Choose how much network access the agent should have.",
+            ru="Выберите, какой сетевой доступ должен быть у агента.",
         ),
         options=options,
         default=default if default in {"unrestricted", "recommended", "custom", "deny_all"} else "recommended",
@@ -234,8 +234,8 @@ def prompt_policy_file_access_mode(
         title=msg(lang, en="Setup: File access", ru="Настройка: Доступ к файлам"),
         text=msg(
             lang,
-            en="Choose how much direct file-tool access the agent should have.",
-            ru="Выберите, какой прямой доступ к файловым инструментам дать агенту.",
+            en="Choose whether the agent can read or edit local files.",
+            ru="Выберите, может ли агент читать или менять локальные файлы.",
         ),
         options=[
             ("none", msg(lang, en="No file tools", ru="Без файловых инструментов")),
@@ -285,8 +285,8 @@ def prompt_policy_workspace_scope_mode(
         title=msg(lang, en="Setup: Workspace scope", ru="Настройка: Область файлового доступа"),
         text=msg(
             lang,
-            en="Choose which local directories file and shell tools should treat as in-scope by default.",
-            ru="Выберите, какие локальные директории файловые и shell-инструменты считают доступными по умолчанию.",
+            en="Choose which folders the agent should treat as its working area by default.",
+            ru="Выберите, какие папки агент должен считать своей рабочей областью по умолчанию.",
         ),
         options=options,
         default=resolved_default,
@@ -338,7 +338,7 @@ def capability_label(capability: PolicyCapabilityId, *, lang: PromptLanguage) ->
             PolicyCapabilityId.BROWSER: "Browser: управление браузером",
             PolicyCapabilityId.SKILLS: "Skills: управление навыками профиля",
             PolicyCapabilityId.APPS: "Apps: Telegram, IMAP, SMTP и другие app-интеграции",
-            PolicyCapabilityId.MCP: "MCP: доступ к runtime MCP серверам профиля",
+            PolicyCapabilityId.MCP: "MCP: настройка MCP профиля и доступ к runtime MCP серверам",
             PolicyCapabilityId.EMAIL: "Email: legacy alias для Apps",
             PolicyCapabilityId.TELEGRAM: "Telegram: legacy alias для Apps",
             PolicyCapabilityId.DEBUG: "Debug: диагностические инструменты",
@@ -356,7 +356,7 @@ def capability_label(capability: PolicyCapabilityId, *, lang: PromptLanguage) ->
         PolicyCapabilityId.BROWSER: "Browser: browser control actions",
         PolicyCapabilityId.SKILLS: "Skills: manage profile skills",
         PolicyCapabilityId.APPS: "Apps: Telegram, IMAP, SMTP, and app integrations",
-        PolicyCapabilityId.MCP: "MCP: access profile runtime MCP servers",
+        PolicyCapabilityId.MCP: "MCP: manage profile MCP config and access runtime MCP servers",
         PolicyCapabilityId.EMAIL: "Email: legacy alias for Apps",
         PolicyCapabilityId.TELEGRAM: "Telegram: legacy alias for Apps",
         PolicyCapabilityId.DEBUG: "Debug: diagnostics-only tools",

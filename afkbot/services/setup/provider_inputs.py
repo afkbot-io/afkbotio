@@ -66,7 +66,13 @@ def resolve_provider(
     allowed = provider_choices(include_none=False)
     if provider not in allowed:
         available = ", ".join(allowed)
-        raise typer.BadParameter(f"llm provider must be one of: {available}")
+        raise typer.BadParameter(
+            msg(
+                lang,
+                en=f"AI provider must be one of: {available}",
+                ru=f"AI-провайдер должен быть одним из: {available}",
+            )
+        )
     return provider
 
 
@@ -116,8 +122,8 @@ def resolve_custom_interface(
         raise typer.BadParameter(
             msg(
                 lang,
-                en="custom interface must be: openai",
-                ru="custom interface должен быть: openai",
+                en="Custom interface must be: openai",
+                ru="Параметр custom interface должен быть: openai",
             )
         )
     return normalized
@@ -171,8 +177,8 @@ def resolve_thinking_level(
         raise typer.BadParameter(
             msg(
                 lang,
-                en="thinking level must be one of: low, medium, high, very_high",
-                ru="уровень раздумия должен быть одним из: low, medium, high, very_high",
+                en="Reasoning effort must be one of: low, medium, high, very_high",
+                ru="Глубина рассуждения должна быть одной из: low, medium, high, very_high",
             )
         )
     return normalized

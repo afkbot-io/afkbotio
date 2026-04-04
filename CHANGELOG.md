@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.5] - 2026-04-04
+
+### Added
+
+- Path-based automation webhook URLs using `/v1/automations/<profile_id>/webhook/<token>` plus richer webhook metadata in `afk automation get/list`.
+- Webhook execution tracking fields including status, timestamps, last session id, event hash, and a chat resume command for inspecting the last automation session.
+- MCP profile-management flows for both operators and agents: `afk mcp connect/get/validate`, `mcp.profile.*` tools, and the built-in `mcp-manager` skill.
+- Installer/setup guidance updates for locale-aware first run flows and MCP onboarding in the README.
+
+### Changed
+
+- `afk update` now replays the saved installer source so updates follow the same source-selection logic as `install.sh` and `install.ps1`.
+- Fresh installs now auto-select and persist a non-default local runtime port pair; `afk doctor` shows the effective runtime/chat ports and saved prompt language.
+- `afk setup` now auto-detects the system locale, persists `--lang`, and skips unnecessary base-URL prompts for standard providers.
+- Installer and setup success messaging now points users directly to `afk setup`, `afk doctor`, and `afk chat` instead of requiring manual command discovery.
+
+### Fixed
+
+- CLI and runtime webhook flows now expose stable, usable URLs instead of header-token-only webhook wiring.
+- MCP management tools remain gated behind the dedicated skill boundary instead of leaking into the normal tool surface.
+- Runtime port resolution helpers are now explicitly typed so the strict `mypy` quality job stays green for the new port-selection flow.
+
 ## [1.0.4] - 2026-04-03
 
 ### Added

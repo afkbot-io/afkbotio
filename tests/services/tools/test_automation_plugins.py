@@ -43,6 +43,12 @@ async def _prepare(
     return settings, engine, ToolRegistry.from_settings(settings)
 
 
+def _runtime_base_url(settings: Settings) -> str:
+    """Build the effective local runtime base URL for automation metadata assertions."""
+
+    return f"http://{settings.runtime_host}:{settings.runtime_port}"
+
+
 async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """Automation plugins should support create/list/get/delete workflow."""
 
@@ -92,7 +98,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(issued_token, str)
         assert webhook_automation["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
         assert webhook_automation["webhook"]["webhook_url"] == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(settings),
             "default",
             issued_token,
         )
@@ -121,7 +127,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert webhook_list_item["webhook"]["webhook_token"] == issued_token
         assert webhook_list_item["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
         assert webhook_list_item["webhook"]["webhook_url"] == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(settings),
             "default",
             issued_token,
         )
@@ -169,7 +175,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert rotated_token != issued_token
         assert rotated["webhook"]["webhook_path"] == build_webhook_path("default", rotated_token)
         assert rotated["webhook"]["webhook_url"] == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(settings),
             "default",
             rotated_token,
         )
@@ -189,7 +195,7 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert webhook_get["webhook"]["webhook_token"] == rotated_token
         assert webhook_get["webhook"]["webhook_path"] == build_webhook_path("default", rotated_token)
         assert webhook_get["webhook"]["webhook_url"] == build_webhook_url(
-            "http://127.0.0.1:8080",
+            _runtime_base_url(settings),
             "default",
             rotated_token,
         )

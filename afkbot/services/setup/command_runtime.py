@@ -8,6 +8,10 @@ from contextlib import nullcontext
 from afkbot.cli.presentation.activity_indicator import ActivityIndicator
 from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg
 from afkbot.services.bootstrap_service import seed_missing_global_bootstrap_files
+from afkbot.services.install_source import (
+    install_source_runtime_payload,
+    read_install_source_from_env,
+)
 from afkbot.services.setup.contracts import SetupConfig
 from afkbot.services.setup.runtime_store import (
     read_runtime_config,
@@ -64,22 +68,38 @@ def render_setup_success(
     echo(
         msg(
             prompt_language,
-            en="Default AFKBOT profile configured successfully.",
-            ru="Профиль AFKBOT по умолчанию успешно настроен.",
+            en="AFKBOT setup is complete.",
+            ru="Настройка AFKBOT завершена.",
         )
     )
     echo(
         msg(
             prompt_language,
-            en="Platform prerequisites were already available; setup configured the default profile.",
-            ru="Базовые требования платформы уже были готовы; setup настроил профиль по умолчанию.",
+            en="The default profile is ready and saved for future chats.",
+            ru="Профиль по умолчанию готов и сохранён для следующих чатов.",
         )
     )
     echo(
         msg(
             prompt_language,
-            en="Next steps: run `afk doctor` and then `afk chat`.",
-            ru="Дальше: запустите `afk doctor`, затем `afk chat`.",
+            en="Next, check local health:",
+            ru="Теперь проверьте локальное состояние:",
+        )
+    )
+    echo("  afk doctor")
+    echo(
+        msg(
+            prompt_language,
+            en="Then open chat and start working with AFKBOT:",
+            ru="Затем откройте чат и начните работать с AFKBOT:",
+        )
+    )
+    echo("  afk chat")
+    echo(
+        msg(
+            prompt_language,
+            en="Inside `afk chat`, describe the task in natural language.",
+            ru="Внутри `afk chat` просто опишите задачу обычным языком.",
         )
     )
     echo(
@@ -239,7 +259,7 @@ def _finalize_setup_runtime(
 
 
 def _build_platform_runtime_config_payload(*, config: SetupConfig) -> dict[str, object]:
-    return {
+    payload = {
         "db_url": config.db_url,
         "runtime_host": config.runtime_host,
         "runtime_port": config.runtime_port,
@@ -257,6 +277,8 @@ def _build_platform_runtime_config_payload(*, config: SetupConfig) -> dict[str, 
         "auto_install_deps": config.auto_install_deps,
         "prompt_language": config.prompt_language,
     }
+    payload.update(install_source_runtime_payload(read_install_source_from_env()))
+    return payload
 
 
 def _build_runtime_config_payload(

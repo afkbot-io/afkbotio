@@ -336,7 +336,7 @@ def test_run_update_upgrades_uv_tool_install(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Installed uv-tool mode should upgrade the tool, then run maintenance via the fresh executable."""
+    """Installed uv-tool mode should reinstall the tool source, then run maintenance via the fresh executable."""
 
     settings = _prepare_settings(tmp_path, monkeypatch)
     tool_bin = tmp_path / "tool-bin"
@@ -373,9 +373,74 @@ def test_run_update_upgrades_uv_tool_install(
     assert result.source_updated is True
     assert result.maintenance_applied is True
     assert result.runtime_restarted is False
-    assert [str(uv_executable), "tool", "upgrade", "afkbotio", "--reinstall"] in commands
+    assert [str(uv_executable), "tool", "install", "--python", "3.12", "--reinstall", "afkbotio"] in commands
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
+
+
+def test_run_update_prefers_saved_installer_source_over_git_checkout(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Installer metadata should keep editable/archive tool installs off the git-fetch path."""
+
+    settings = _prepare_settings(tmp_path / "runtime", monkeypatch)
+    checkout_root = tmp_path / "checkout"
+    checkout_root.mkdir(parents=True, exist_ok=True)
+    (checkout_root / ".git").mkdir()
+    (checkout_root / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    source_path = tmp_path / "editable-source"
+    source_path.mkdir(parents=True, exist_ok=True)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    write_runtime_config(
+        settings,
+        config={
+            "install_source_mode": "editable",
+            "install_source_spec": str(source_path),
+        },
+    )
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", checkout_root)
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+
+    result = run_update(settings)
+
+    assert result.install_mode == "uv-tool"
+    assert [
+        str(uv_executable),
+        "tool",
+        "install",
+        "--python",
+        "3.12",
+        "--reinstall",
+        "--editable",
+        str(source_path),
+    ] in commands
+    assert all(not command or command[0] != "git" for command in commands)
 
 
 def test_resolve_uv_tool_afk_executable_prefers_windows_exe(

@@ -40,6 +40,11 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "file.search",
         "file.write",
         "http.request",
+        "mcp.profile.delete",
+        "mcp.profile.get",
+        "mcp.profile.list",
+        "mcp.profile.upsert",
+        "mcp.profile.validate",
         "memory.delete",
         "memory.digest",
         "memory.list",
@@ -74,6 +79,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("web.search") is not None
     assert registry.get("web.fetch") is not None
     assert registry.get("browser.control") is not None
+    assert registry.get("mcp.profile.upsert") is not None
     assert registry.get("mcp.debug.echo") is None
 
 

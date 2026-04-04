@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from collections.abc import Mapping
 
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
+from afkbot.cli.presentation.prompt_i18n import detect_system_prompt_language
 from afkbot.services.health import (
     DoctorChannelsReport,
     DoctorDeliveryReport,
@@ -27,6 +29,8 @@ from afkbot.services.health import (
 )
 from afkbot.services.channel_routing import ChannelRoutingTransportDiagnostics
 from afkbot.services.channels.contracts import ChannelDeliveryTransportDiagnostics
+from afkbot.services.runtime_ports import resolve_default_runtime_port
+from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
 
@@ -130,6 +134,7 @@ async def _run_doctor(
         typer.echo("bootstrap: missing files")
 
     typer.echo("db: ok" if report.db_ok else "db: failed")
+    typer.echo(_format_runtime_summary(settings))
     ok = report.ok
 
     if upgrades and report.db_ok:
@@ -196,6 +201,33 @@ def _format_integration_check(check: IntegrationCheck) -> str:
     if check.error_code:
         return f"{prefix} ({check.error_code}) - {check.reason}"
     return f"{prefix} - {check.reason}"
+
+
+def _format_runtime_summary(settings: Settings) -> str:
+    """Render one short runtime bind summary for operator-facing diagnostics."""
+
+    runtime_config = read_runtime_config(settings)
+    runtime_host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
+    runtime_port = resolve_default_runtime_port(
+        settings=settings,
+        host=runtime_host,
+        runtime_config=runtime_config,
+    )
+    prompt_language = _resolve_prompt_language(runtime_config)
+    return (
+        "runtime: "
+        f"host={runtime_host}, "
+        f"runtime_port={runtime_port}, "
+        f"api_port={runtime_port + 1}, "
+        f"prompt_language={prompt_language}"
+    )
+
+
+def _resolve_prompt_language(runtime_config: Mapping[str, object]) -> str:
+    normalized = str(runtime_config.get("prompt_language") or "").strip().lower()
+    if normalized in {"en", "ru"}:
+        return normalized
+    return detect_system_prompt_language().value
 
 
 def _format_upgrade_report(report: UpgradeApplyReport) -> str:

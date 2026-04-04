@@ -20,6 +20,9 @@ async def test_trusted_runtime_facts_service_renders_detected_environment(
     service = TrustedRuntimeFactsService(settings=settings)
 
     monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
+    monkeypatch.setenv("LANG", "ru_RU.UTF-8")
     monkeypatch.setattr(
         "afkbot.services.agent_loop.runtime_facts.platform.system",
         lambda: "Linux",
@@ -65,10 +68,13 @@ async def test_trusted_runtime_facts_service_renders_detected_environment(
     assert "- distro: Ubuntu 24.04" in block
     assert "- arch: arm64" in block
     assert "- shell: /bin/zsh" in block
+    assert "- system_locale: ru_RU.UTF-8" in block
+    assert "- prompt_language: ru" in block
     assert "- is_root: no" in block
     assert "- has_sudo: yes" in block
     assert "- has_systemctl: yes" in block
     assert "- package_managers: apt" in block
+    assert "- Prefer prompt_language for default responses unless the user clearly asked for another language." in block
     assert "- This session is already a valid execution environment for the current host and workspace above." in block
     assert (
         "- If shell or file tools are visible and policy allows, execute current-host tasks here "
@@ -92,6 +98,13 @@ async def test_trusted_runtime_facts_service_handles_missing_optional_details(
     service = TrustedRuntimeFactsService(settings=settings)
 
     monkeypatch.delenv("SHELL", raising=False)
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
+    monkeypatch.delenv("LANG", raising=False)
+    monkeypatch.setattr(
+        "afkbot.cli.presentation.prompt_i18n.locale.getlocale",
+        lambda: (None, None),
+    )
     monkeypatch.setattr(
         "afkbot.services.agent_loop.runtime_facts.platform.system",
         lambda: "Darwin",
@@ -115,6 +128,8 @@ async def test_trusted_runtime_facts_service_handles_missing_optional_details(
     assert "- execution_target: local_runtime" in block
     assert "- distro: unknown" in block
     assert "- shell: unknown" in block
+    assert "- system_locale: unknown" in block
+    assert "- prompt_language: en" in block
     assert "- is_root: unknown" in block
     assert "- has_sudo: no" in block
     assert "- has_systemctl: no" in block

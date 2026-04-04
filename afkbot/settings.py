@@ -55,6 +55,14 @@ def _default_app_root() -> Path:
     return _package_root()
 
 
+def _default_runtime_port() -> int:
+    """Return the default local runtime port for first-run installs."""
+
+    from afkbot.services.runtime_ports import DEFAULT_EXOTIC_RUNTIME_PORT
+
+    return DEFAULT_EXOTIC_RUNTIME_PORT
+
+
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
@@ -112,6 +120,11 @@ class Settings(BaseSettings):
         "memory_digest",
         "memory_list",
         "memory_promote",
+        "mcp_profile_list",
+        "mcp_profile_get",
+        "mcp_profile_upsert",
+        "mcp_profile_delete",
+        "mcp_profile_validate",
         "skill_profile_list",
         "skill_profile_get",
         "skill_profile_upsert",
@@ -162,7 +175,7 @@ class Settings(BaseSettings):
     llm_proxy_url: str | None = None
     llm_debug_diagnostics_enabled: bool = False
     runtime_host: str = "127.0.0.1"
-    runtime_port: int = 8080
+    runtime_port: int = Field(default_factory=_default_runtime_port)
     connect_rate_limit_enabled: bool = True
     connect_claim_rate_limit_window_sec: int = 60
     connect_claim_rate_limit_max_attempts: int = 10

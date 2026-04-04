@@ -39,7 +39,7 @@ def resolve_api_key(
         provider_id=provider_id,
         defaults=defaults,
     )
-    key_from_file = read_secret_file(key_file) if key_file is not None else ""
+    key_from_file = read_secret_file(key_file, lang=lang) if key_file is not None else ""
 
     if interactive:
         if key_from_file:
@@ -50,20 +50,20 @@ def resolve_api_key(
                     msg(
                         lang,
                         en=(
-                            f"{spec.label} API key is currently configured. "
-                            "Press Enter to keep it, or type a new key."
+                            f"A {spec.label} API key is currently configured. "
+                            "Press Enter to keep it, or paste a new key."
                         ),
                         ru=(
-                            f"API key для {spec.label} сейчас уже настроен. "
-                            "Нажмите Enter, чтобы оставить его, или введите новый."
+                            f"API key для {spec.label} уже настроен. "
+                            "Нажмите Enter, чтобы оставить его, или вставьте новый ключ."
                         ),
                     )
                 )
             key = typer.prompt(
                 msg(
                     lang,
-                    en=f"{spec.label} API key",
-                    ru=f"API key для {spec.label}",
+                    en=f"{spec.label} API key (hidden input)",
+                    ru=f"API key для {spec.label} (ввод скрыт)",
                 ),
                 hide_input=True,
                 default="",
@@ -173,13 +173,19 @@ def peek_existing_api_key(
     return (defaults.get("AFKBOT_LLM_API_KEY", "") or "").strip()
 
 
-def read_secret_file(path: Path) -> str:
+def read_secret_file(path: Path, *, lang: PromptLanguage = PromptLanguage.EN) -> str:
     """Read one required secret value from file."""
 
     raw = path.read_text(encoding="utf-8")
     value = raw.strip()
     if not value:
-        raise typer.BadParameter(f"LLM API key file is empty: {path}")
+        raise typer.BadParameter(
+            msg(
+                lang,
+                en=f"API key file is empty: {path}",
+                ru=f"Файл с API key пустой: {path}",
+            )
+        )
     return value
 
 
@@ -203,8 +209,8 @@ def resolve_credentials_master_keys(
         typer.echo(
             msg(
                 lang,
-                en="Generated credentials encryption key for secure vault.",
-                ru="Сгенерирован ключ шифрования credentials для защищённого vault.",
+                en="Generated an encryption key for stored credentials.",
+                ru="Сгенерирован ключ шифрования для сохранённых credentials.",
             )
         )
     return generated
