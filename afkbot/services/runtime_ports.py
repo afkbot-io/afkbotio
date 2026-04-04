@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from contextlib import closing
 import os
 import socket
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from afkbot.settings import Settings
 
 DEFAULT_EXOTIC_RUNTIME_PORT = 46339
 _DEFAULT_API_PORT_OFFSET = 1
@@ -14,7 +18,7 @@ _PORT_SCAN_ATTEMPTS = 64
 
 def resolve_default_runtime_port(
     *,
-    settings,
+    settings: Settings,
     host: str,
     runtime_config: Mapping[str, object] | None = None,
 ) -> int:
@@ -62,9 +66,19 @@ def is_runtime_port_pair_available(*, host: str, runtime_port: int) -> bool:
 
 
 def _coerce_port(value: object) -> int | None:
-    try:
-        port = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        port = value
+    elif isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            port = int(normalized)
+        except ValueError:
+            return None
+    else:
         return None
     if not (1 <= port <= 65535):
         return None
