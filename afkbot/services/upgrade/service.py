@@ -185,7 +185,10 @@ class UpgradeService:
             llm_proxy_configured=_coerce_bool(config.get("llm_proxy_configured")),
             credentials_master_keys_configured=_coerce_bool(config.get("credentials_master_keys_configured")),
             runtime_host=_coerce_text(_first_present(config, runtime_config, "runtime_host"), default="127.0.0.1"),
-            runtime_port=_coerce_int(_first_present(config, runtime_config, "runtime_port"), default=8080),
+            runtime_port=_coerce_int(
+                _first_present(config, runtime_config, "runtime_port"),
+                default=self._settings.runtime_port,
+            ),
             nginx_enabled=_coerce_bool(_first_present(config, runtime_config, "nginx_enabled")),
             nginx_port=_coerce_int(_first_present(config, runtime_config, "nginx_port"), default=80),
             public_runtime_url=_coerce_text(

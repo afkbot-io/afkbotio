@@ -6,6 +6,12 @@ from pydantic import BaseModel, Field
 
 from afkbot.services.mcp_integration.profile_store import MCPStorageMode
 
+MCP_CONFIG_BOUNDARY_NOTE = (
+    "Profile MCP configuration uses `afk mcp` or `mcp.profile.*`. Runtime MCP tool access uses "
+    "`mcp.tools.list` / `mcp.tools.call` for enabled remote servers with `tools` capability and "
+    "matching policy/network access."
+)
+
 
 class MCPServerAccessView(BaseModel):
     """Operator-facing access summary for one configured MCP server."""
@@ -15,10 +21,7 @@ class MCPServerAccessView(BaseModel):
     secret_refs: tuple[str, ...] = ()
     ide_visible: bool = True
     runtime_available: bool = False
-    boundary_note: str = (
-        "Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for enabled remote "
-        "servers with `tools` capability and matching policy/network access."
-    )
+    boundary_note: str = MCP_CONFIG_BOUNDARY_NOTE
 
 
 class MCPServerView(BaseModel):

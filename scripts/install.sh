@@ -12,6 +12,8 @@ DRY_RUN="false"
 SKIP_SETUP="false"
 REPO_URL="${DEFAULT_REPO_URL}"
 GIT_REF="${DEFAULT_GIT_REF}"
+INSTALL_LANG=""
+RESOLVED_INSTALL_LANG="en"
 ORIGINAL_PATH="${PATH:-}"
 UV_BIN_DIR=""
 UV_BIN=""
@@ -41,6 +43,7 @@ Usage: scripts/install.sh [options]
 Options:
   --repo-url <url>      GitHub repo URL or local source path to install.
   --git-ref <ref>       Branch or tag to install from a remote repo. Default: main.
+  --lang <en|ru>        Installer and bootstrap setup language.
   --skip-setup          Skip `afk setup --bootstrap-only --yes`.
   --dry-run             Print actions without changing the machine.
   -h, --help            Show this help.
@@ -55,6 +58,16 @@ USAGE
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+localized_text() {
+  local en="$1"
+  local ru="$2"
+  if [[ "${RESOLVED_INSTALL_LANG}" == "ru" ]]; then
+    printf '%s\n' "${ru}"
+    return 0
+  fi
+  printf '%s\n' "${en}"
 }
 
 run() {
@@ -80,6 +93,11 @@ parse_args() {
         GIT_REF="$2"
         shift 2
         ;;
+      --lang)
+        [[ $# -ge 2 ]] || fail "--lang requires a value"
+        INSTALL_LANG="$2"
+        shift 2
+        ;;
       --skip-setup)
         SKIP_SETUP="true"
         shift
@@ -102,6 +120,32 @@ parse_args() {
         ;;
     esac
   done
+}
+
+resolve_install_lang() {
+  local normalized=""
+  normalized="$(printf '%s' "${INSTALL_LANG}" | tr '[:upper:]' '[:lower:]' | tr '-' '_')"
+  case "${normalized}" in
+    ru|russian|ru_ru)
+      printf 'ru\n'
+      return 0
+      ;;
+    ""|en|english|en_us|en_gb)
+      ;;
+    *)
+      fail "--lang must be one of: en, ru"
+      ;;
+  esac
+
+  local candidate=""
+  for candidate in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+    normalized="$(printf '%s' "${candidate}" | tr '[:upper:]' '[:lower:]' | tr '-' '_')"
+    if [[ -n "${normalized}" && "${normalized}" == ru* ]]; then
+      printf 'ru\n'
+      return 0
+    fi
+  done
+  printf 'en\n'
 }
 
 default_user_bin_dir() {
@@ -289,14 +333,21 @@ ensure_shell_integration() {
   if "${UV_BIN}" tool update-shell; then
     return 0
   fi
-  log "WARNING uv tool update-shell failed; reopen your shell after install if \`afk\` is not yet visible."
+  log "$(
+    localized_text \
+      "WARNING uv tool update-shell failed; reopen the terminal after install if \`afk\` is not yet visible." \
+      "WARNING не удалось выполнить uv tool update-shell; после установки откройте терминал заново, если \`afk\` ещё не появился."
+  )"
 }
 
 run_bootstrap_setup() {
   if [[ "${SKIP_SETUP}" == "true" ]]; then
     return 0
   fi
-  run "${AFK_BIN}" setup --bootstrap-only --yes
+  run env \
+    AFKBOT_INSTALL_SOURCE_MODE="${TOOL_INSTALL_MODE}" \
+    AFKBOT_INSTALL_SOURCE_SPEC="${TOOL_SOURCE}" \
+    "${AFK_BIN}" setup --bootstrap-only --yes --lang "${RESOLVED_INSTALL_LANG}"
 }
 
 path_contains() {
@@ -310,28 +361,44 @@ path_contains() {
 
 print_success() {
   log ""
-  log "${PROGRAM_NAME} install complete."
-  log "Tool source: ${TOOL_SOURCE}"
+  log "$(localized_text "${PROGRAM_NAME} install complete." "Установка ${PROGRAM_NAME} завершена.")"
+  log "$(localized_text "Tool source: ${TOOL_SOURCE}" "Источник установки: ${TOOL_SOURCE}")"
   log "uv: ${UV_BIN}"
   log "CLI: ${AFK_BIN}"
   log ""
   if ! path_contains "${AFK_BIN_DIR}" "${ORIGINAL_PATH}"; then
-    log "To use \`afk\` in this terminal immediately, run:"
+    log "$(
+      localized_text \
+        "If you want to use \`afk\` in this terminal immediately, run:" \
+        "Если хотите использовать \`afk\` в этом терминале сразу, выполните:"
+    )"
     log "  export PATH=\"${AFK_BIN_DIR}:\$PATH\" && hash -r"
     log ""
-    log "Or reopen the terminal to pick up the updated shell profile."
-    log ""
   fi
-  log "Next steps:"
+  log "$(
+    localized_text \
+      "Recommended next step: open a new terminal window." \
+      "Рекомендуемый следующий шаг: откройте новый терминал."
+  )"
+  log "$(
+    localized_text \
+      "Then run:" \
+      "Затем выполните:"
+  )"
   log "  afk setup"
-  log "  afk doctor"
-  log "  afk chat"
   log ""
-  log "To update later, run \`afk update\` or \`uv tool upgrade afkbotio --reinstall\`."
+  log "$(
+    localized_text \
+      "After \`afk setup\`, AFKBOT will tell you to run \`afk doctor\` and then \`afk chat\`." \
+      "После \`afk setup\` AFKBOT подскажет выполнить \`afk doctor\`, а затем \`afk chat\`."
+  )"
+  log ""
+  log "$(localized_text "To update later, run \`afk update\`." "Чтобы обновиться позже, выполните \`afk update\`.")"
 }
 
 main() {
   parse_args "$@"
+  RESOLVED_INSTALL_LANG="$(resolve_install_lang)"
   detect_platform
   ensure_uv
   build_tool_source

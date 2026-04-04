@@ -299,6 +299,40 @@ def test_shell_installer_dry_run_uses_github_archive_source_for_remote_repo() ->
     assert "tool install --python 3.12 --reinstall" in output
 
 
+def test_shell_installer_bootstrap_setup_receives_install_source_metadata_in_dry_run() -> None:
+    """Shell installer should pass the saved tool source to bootstrap-only setup for later updates."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    env = dict(os.environ)
+    env["LANG"] = "ru_RU.UTF-8"
+    env.pop("LC_ALL", None)
+    env.pop("LC_MESSAGES", None)
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--dry-run",
+            "--repo-url",
+            "https://github.com/afkbot-io/afkbotio.git",
+            "--git-ref",
+            "main",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    output = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0
+    assert "AFKBOT_INSTALL_SOURCE_MODE=archive" in output
+    assert "AFKBOT_INSTALL_SOURCE_SPEC=https://github.com/afkbot-io/afkbotio/archive/main.tar.gz" in output
+    assert "setup --bootstrap-only --yes --lang ru" in output
+    assert "Рекомендуемый следующий шаг: откройте новый терминал." in output
+
+
 def test_shell_installer_dry_run_warns_when_current_shell_path_will_still_miss_afk(
     tmp_path: Path,
 ) -> None:
@@ -337,9 +371,55 @@ def test_shell_installer_dry_run_warns_when_current_shell_path_will_still_miss_a
     expected_bin_dir = home_dir / ".local" / "bin"
 
     assert result.returncode == 0
-    assert "To use `afk` in this terminal immediately, run:" in output
+    assert "If you want to use `afk` in this terminal immediately, run:" in output
     assert f'export PATH="{expected_bin_dir}:$PATH" && hash -r' in output
-    assert "Or reopen the terminal to pick up the updated shell profile." in output
+    assert "Recommended next step: open a new terminal window." in output
+    assert "Then run:" in output
+    assert "  afk setup" in output
+    assert "  afk doctor" not in output
+    assert "  afk chat" not in output
+
+
+def test_shell_installer_dry_run_supports_explicit_russian_lang(tmp_path: Path) -> None:
+    """Shell installer should allow an explicit Russian language override."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "install.sh"
+    home_dir = tmp_path / "home"
+    home_dir.mkdir(parents=True, exist_ok=True)
+
+    env = dict(os.environ)
+    env["HOME"] = str(home_dir)
+    env["LANG"] = "en_US.UTF-8"
+    env.pop("LC_ALL", None)
+    env.pop("LC_MESSAGES", None)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(script_path),
+            "--dry-run",
+            "--lang",
+            "ru",
+            "--repo-url",
+            f"file://{repo_root}",
+            "--git-ref",
+            "local-dry-run",
+        ],
+        capture_output=True,
+        check=False,
+        cwd=repo_root,
+        env=env,
+        text=True,
+    )
+
+    output = f"{result.stdout}\n{result.stderr}"
+
+    assert result.returncode == 0
+    assert "setup --bootstrap-only --yes --lang ru" in output
+    assert "Установка AFKBOT завершена." in output
+    assert "Затем выполните:" in output
+    assert "После `afk setup` AFKBOT подскажет выполнить `afk doctor`, а затем `afk chat`." in output
 
 
 def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:

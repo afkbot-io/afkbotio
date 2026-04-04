@@ -92,6 +92,7 @@ except ImportError:
 from afkbot.cli.main import app
 from afkbot.cli.commands.setup_support import load_current_default_profile
 from afkbot.services.profile_runtime import ProfileServiceError
+from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.settings import get_settings
 from tests.cli._setup_harness import bootstrap_platform, prepare_root
 
@@ -203,6 +204,74 @@ def test_setup_cli_bootstrap_only_creates_missing_root_directory(
     assert not (missing_root / "profiles/default").exists()
 
 
+def test_setup_cli_bootstrap_only_persists_installer_source_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Bootstrap-only setup should persist installer source metadata for later `afk update` runs."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("AFKBOT_INSTALL_SOURCE_MODE", "archive")
+    monkeypatch.setenv(
+        "AFKBOT_INSTALL_SOURCE_SPEC",
+        "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz",
+    )
+
+    payload = bootstrap_platform(tmp_path)
+
+    assert payload["ok"] is True
+    config = read_runtime_config(get_settings())
+    assert config["install_source_mode"] == "archive"
+    assert config["install_source_spec"] == "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+
+
+def test_setup_cli_detects_russian_language_from_system_locale(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Setup should persist Russian prompt language when the local system locale is Russian."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
+    monkeypatch.setenv("LANG", "ru_RU.UTF-8")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.setup.reload_install_managed_runtime_notice",
+        lambda _settings: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--accept-risk", "--skip-llm-token-verify"])
+
+    assert result.exit_code == 0
+    config = read_runtime_config(get_settings())
+    assert config["prompt_language"] == "ru"
+
+
+def test_setup_cli_lang_flag_overrides_detected_system_locale(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Explicit `--lang` should win over detected system locale."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.setup.reload_install_managed_runtime_notice",
+        lambda _settings: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["setup", "--yes", "--accept-risk", "--skip-llm-token-verify", "--lang", "ru"],
+    )
+
+    assert result.exit_code == 0
+    config = read_runtime_config(get_settings())
+    assert config["prompt_language"] == "ru"
+
+
 def test_setup_cli_yes_requires_accept_risk(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -219,6 +288,21 @@ def test_setup_cli_yes_requires_accept_risk(
     # Assert
     assert result.exit_code == 2
     assert "Use --accept-risk in --yes mode." in result.output
+
+
+def test_setup_cli_yes_requires_accept_risk_in_russian(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Non-interactive setup should localize the accept-risk error when Russian is requested."""
+
+    prepare_root(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--skip-llm-token-verify", "--lang", "ru"])
+
+    assert result.exit_code == 2
+    assert "Используйте --accept-risk вместе с --yes." in result.output
 
 
 def test_setup_cli_requests_managed_runtime_reload_after_public_setup(

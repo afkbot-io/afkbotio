@@ -25,6 +25,7 @@ from afkbot.services.setup.defaults import (
     read_int_default,
     recommended_policy_capabilities,
 )
+from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.setup.profile_resolution import (
     ResolvedProfileRuntimeCore,
     ResolvedProfilePolicyInputs,
@@ -48,7 +49,27 @@ from afkbot.services.setup.provider_inputs import (
 )
 from afkbot.services.llm.token_verifier import verify_provider_token
 from afkbot.services.policy import PolicyPresetLevel, resolve_allowed_directories_for_scope_mode
+from afkbot.services.runtime_ports import (
+    resolve_default_runtime_port,
+)
 from afkbot.settings import Settings
+
+
+def _resolve_runtime_port_default_from_inputs(
+    *,
+    settings: Settings,
+    defaults: dict[str, str],
+    runtime_config: dict[str, object],
+    host: str,
+) -> int:
+    """Resolve the runtime-port default while preserving operator-configured values."""
+
+    del defaults
+    return resolve_default_runtime_port(
+        settings=settings,
+        host=host,
+        runtime_config=runtime_config,
+    )
 
 
 def _infer_policy_setup_mode_from_resolved_policy(
@@ -121,7 +142,13 @@ def ensure_security_ack(
     if accept_risk:
         return
     if not interactive:
-        raise_usage_error("Use --accept-risk in --yes mode.")
+        raise_usage_error(
+            msg(
+                lang,
+                en="Use --accept-risk in --yes mode.",
+                ru="Используйте --accept-risk вместе с --yes.",
+            )
+        )
     confirmed = prompt_secret_ack(lang=lang)
     if not confirmed:
         raise typer.Exit(code=1)
@@ -227,7 +254,14 @@ def collect_setup_config(
             proxy_url=proxy_url if proxy_type != "none" else None,
         )
         if not verification.ok:
-            raise typer.BadParameter(verification.reason or "LLM token verification failed.")
+            raise typer.BadParameter(
+                verification.reason
+                or msg(
+                    lang,
+                    en="Provider API key verification failed.",
+                    ru="Не удалось проверить API key провайдера.",
+                )
+            )
 
     if platform_seed_only:
         policy_setup_mode_resolved = PolicySetupMode.RECOMMENDED.value
@@ -336,13 +370,20 @@ def collect_setup_config(
         root_dir=settings.root_dir,
         db_url=str(defaults.get("AFKBOT_DB_URL", settings.db_url)).strip() or settings.db_url,
     ).db_url
+    persisted_runtime_config = read_runtime_config(settings)
 
     if profile_setup_only or platform_seed_only:
         runtime_host_resolved = (runtime_host or defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host)).strip()
+        runtime_port_default = _resolve_runtime_port_default_from_inputs(
+            settings=settings,
+            defaults=defaults,
+            runtime_config=persisted_runtime_config,
+            host=runtime_host_resolved,
+        )
         runtime_port_resolved = int(
             runtime_port
             if runtime_port is not None
-            else read_int_default(defaults.get("AFKBOT_RUNTIME_PORT"), settings.runtime_port)
+            else runtime_port_default
         )
         nginx_enabled_resolved = (
             nginx_enabled
@@ -384,11 +425,17 @@ def collect_setup_config(
             default=defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host),
             lang=lang,
         )
+        runtime_port_default = _resolve_runtime_port_default_from_inputs(
+            settings=settings,
+            defaults=defaults,
+            runtime_config=persisted_runtime_config,
+            host=runtime_host_resolved,
+        )
         runtime_port_resolved = resolve_port(
             value=runtime_port,
             interactive=interactive,
             prompt=msg(lang, en="Runtime port", ru="Порт runtime"),
-            default=read_int_default(defaults.get("AFKBOT_RUNTIME_PORT"), settings.runtime_port),
+            default=runtime_port_default,
             lang=lang,
         )
         nginx_enabled_resolved = resolve_nginx_enabled(

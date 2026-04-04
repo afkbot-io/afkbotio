@@ -8,6 +8,8 @@ from pathlib import Path
 import platform
 import shutil
 
+from afkbot.cli.presentation.prompt_i18n import detect_system_locale, detect_system_prompt_language
+from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.tools.workspace import resolve_tool_workspace_base_dir
 from afkbot.settings import Settings
 
@@ -24,6 +26,8 @@ class TrustedRuntimeFacts:
     distro: str | None
     arch: str
     shell_path: str | None
+    system_locale: str | None
+    prompt_language: str
     is_root: bool | None
     has_sudo: bool
     has_systemctl: bool
@@ -40,6 +44,7 @@ class _ProcessRuntimeFacts:
     distro: str | None
     arch: str
     shell_path: str | None
+    system_locale: str | None
     is_root: bool | None
     has_sudo: bool
     has_systemctl: bool
@@ -61,6 +66,7 @@ class TrustedRuntimeFactsService:
         shell_line = facts.shell_path or "unknown"
         repo_root = str(facts.repo_root) if facts.repo_root is not None else "not detected"
         distro_line = facts.distro or "unknown"
+        system_locale_line = facts.system_locale or "unknown"
         if facts.is_root is None:
             root_line = "unknown"
         else:
@@ -79,10 +85,13 @@ class TrustedRuntimeFactsService:
                 f"- distro: {distro_line}",
                 f"- arch: {facts.arch}",
                 f"- shell: {shell_line}",
+                f"- system_locale: {system_locale_line}",
+                f"- prompt_language: {facts.prompt_language}",
                 f"- is_root: {root_line}",
                 f"- has_sudo: {sudo_line}",
                 f"- has_systemctl: {systemctl_line}",
                 f"- package_managers: {package_managers}",
+                "- Prefer prompt_language for default responses unless the user clearly asked for another language.",
                 "- This session is already a valid execution environment for the current host and workspace above.",
                 "- For system or package-management tasks, trust these facts before guessing.",
                 "- If shell or file tools are visible and policy allows, execute current-host tasks here instead of turning them into manual instructions.",
@@ -107,6 +116,8 @@ class TrustedRuntimeFactsService:
             distro=process_facts.distro,
             arch=process_facts.arch,
             shell_path=process_facts.shell_path,
+            system_locale=process_facts.system_locale,
+            prompt_language=self._resolve_prompt_language(),
             is_root=process_facts.is_root,
             has_sudo=process_facts.has_sudo,
             has_systemctl=process_facts.has_systemctl,
@@ -130,6 +141,7 @@ class TrustedRuntimeFactsService:
                 distro=distro,
                 arch=platform.machine().strip().lower() or "unknown",
                 shell_path=self._normalize_shell_path(os.environ.get("SHELL")),
+                system_locale=detect_system_locale(),
                 is_root=self._detect_is_root(),
                 has_sudo=shutil.which("sudo") is not None,
                 has_systemctl=shutil.which("systemctl") is not None,
@@ -190,3 +202,10 @@ class TrustedRuntimeFactsService:
             if candidate:
                 return candidate
         return None
+
+    def _resolve_prompt_language(self) -> str:
+        runtime_config = read_runtime_config(self._settings)
+        normalized = str(runtime_config.get("prompt_language") or "").strip().lower()
+        if normalized in {"en", "ru"}:
+            return normalized
+        return detect_system_prompt_language().value

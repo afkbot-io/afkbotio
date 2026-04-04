@@ -87,7 +87,7 @@ def test_mcp_cli_add_list_and_validate_roundtrip(tmp_path: Path, monkeypatch: Mo
     validate_payload = json.loads(validate_result.stdout)
     assert validate_payload["report"]["ok"] is True
     assert validate_payload["report"]["notes"] == [
-        "Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for enabled remote servers with `tools` capability and matching policy/network access."
+        "Profile MCP configuration uses `afk mcp` or `mcp.profile.*`. Runtime MCP tool access uses `mcp.tools.list` / `mcp.tools.call` for enabled remote servers with `tools` capability and matching policy/network access."
     ]
 
 
@@ -121,6 +121,41 @@ def test_mcp_cli_add_reports_invalid_url_without_traceback(
     assert "MCP URL scheme must be one of: http, https, ws, wss" in result.stdout
     assert "Traceback" not in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_mcp_cli_connect_and_get_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """`afk mcp connect <url>` and `afk mcp get <server>` should work for manual URL-driven flows."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    _create_profile(runner)
+
+    connect_result = runner.invoke(
+        app,
+        [
+            "mcp",
+            "connect",
+            "https://example.com/mcp",
+            "--profile",
+            "default",
+            "--secret-ref",
+            "mcp_example_token",
+            "--yes",
+            "--json",
+        ],
+    )
+    get_result = runner.invoke(
+        app,
+        ["mcp", "get", "example", "--profile", "default", "--json"],
+    )
+
+    assert connect_result.exit_code == 0
+    connect_payload = json.loads(connect_result.stdout)
+    assert connect_payload["result"]["server"]["server"] == "example"
+    assert get_result.exit_code == 0
+    get_payload = json.loads(get_result.stdout)
+    assert get_payload["server"]["url"] == "https://example.com/mcp"
+    assert get_payload["server"]["secret_refs"] == ["mcp_example_token"]
 
 
 def test_mcp_cli_edit_and_remove_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

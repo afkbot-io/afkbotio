@@ -6,6 +6,7 @@ import typer
 
 from afkbot.cli.presentation.inline_select import confirm_space, run_inline_multi_select, select_option_dialog
 from afkbot.cli.presentation.tty import supports_interactive_tty
+from afkbot.services.mcp_integration.operator_contracts import MCP_CONFIG_BOUNDARY_NOTE
 from afkbot.services.mcp_integration.url_resolver import MCPURLResolution, resolve_mcp_url
 
 _REMOTE_TRANSPORT_OPTIONS = ["http", "sse", "websocket"]
@@ -26,7 +27,7 @@ def prompt_mcp_url(*, default: str | None = None) -> str:
     """Prompt for the remote MCP endpoint URL."""
 
     prompt_default = (default or "").strip() or None
-    return str(typer.prompt("MCP URL", default=prompt_default)).strip()
+    return str(typer.prompt("MCP endpoint URL", default=prompt_default)).strip()
 
 
 def prompt_resolved_mcp_url(*, default: str | None = None) -> MCPURLResolution:
@@ -105,11 +106,7 @@ def confirm_mcp_add(*, preview_text: str) -> bool:
         title="MCP Add",
         yes_label="Write config",
         no_label="Cancel",
-        hint_text=(
-            "This stores MCP profile config. Runtime access uses `mcp.tools.list` / "
-            "`mcp.tools.call` for enabled remote `tools` servers with matching "
-            "policy/network access."
-        ),
+        hint_text=MCP_CONFIG_BOUNDARY_NOTE,
     )
 
 
@@ -154,10 +151,7 @@ def render_mcp_add_preview(
         f"- storage_mode: {storage_mode}",
         f"- target_path: {target_path}",
         f"- replace_effective_server: {'yes' if replacing_existing else 'no'}",
-        (
-            "- boundary: Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for "
-            "enabled remote `tools` servers with matching policy/network access."
-        ),
+        f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}",
     ]
     return "\n".join(lines)
 
@@ -182,10 +176,7 @@ def render_mcp_remove_preview(
         f"- storage_mode: {storage_mode}",
         f"- target_path: {target_path}",
         f"- config_source: {config_source or '-'}",
-        (
-            "- boundary: Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for "
-            "enabled remote `tools` servers with matching policy/network access."
-        ),
+        f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}",
     ]
     return "\n".join(lines)
 

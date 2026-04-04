@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+import os
 import signal
 from contextlib import suppress
 from typing import Final
@@ -18,6 +20,8 @@ from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManagerError,
     ChannelRuntimeStartReport,
 )
+from afkbot.services.runtime_ports import resolve_default_runtime_port
+from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
 
@@ -80,10 +84,24 @@ def register(app: typer.Typer) -> None:
 
         settings = get_settings()
         resolved_host = host or settings.runtime_host
-        resolved_runtime_port = runtime_port or settings.runtime_port
+        runtime_config = read_runtime_config(settings)
+        resolved_runtime_port = (
+            runtime_port
+            if runtime_port is not None
+            else resolve_default_runtime_port(
+                settings=settings,
+                host=resolved_host,
+                runtime_config=runtime_config,
+            )
+        )
         resolved_api_port = api_port or (resolved_runtime_port + _DEFAULT_API_PORT_OFFSET)
         if resolved_runtime_port == resolved_api_port:
             raise_usage_error("--runtime-port and --api-port must be different ports")
+        persist_runtime_bind = _should_persist_runtime_bind_defaults(
+            runtime_config=runtime_config,
+            runtime_port_override=runtime_port,
+            api_port_override=api_port,
+        )
         if not allow_pending_upgrades:
             upgrade_report = asyncio.run(_inspect_pending_upgrades(settings))
             if upgrade_report.changed:
@@ -115,6 +133,7 @@ def register(app: typer.Typer) -> None:
                     start_channels=channels,
                     channel_ids=tuple(channel),
                     strict_channels=strict_channels,
+                    persist_runtime_bind=persist_runtime_bind,
                     settings=settings,
                 )
             )
@@ -141,6 +160,7 @@ async def _run_full_stack(
     start_channels: bool,
     channel_ids: tuple[str, ...],
     strict_channels: bool,
+    persist_runtime_bind: bool,
     settings: Settings,
 ) -> None:
     """Run runtime daemon and API server concurrently with shared shutdown."""
@@ -177,6 +197,12 @@ async def _run_full_stack(
 
     try:
         await daemon.start()
+        if persist_runtime_bind:
+            _persist_runtime_bind_defaults(
+                settings=settings,
+                host=host,
+                runtime_port=runtime_port,
+            )
         if start_channels:
             channel_report = await _start_channels(
                 channel_manager=channel_manager,
@@ -261,3 +287,32 @@ def _format_runtime_start_os_error(
             "Choose free ports or stop the conflicting listener."
         )
     return f"Runtime startup failed: {message}"
+
+
+def _should_persist_runtime_bind_defaults(
+    *,
+    runtime_config: Mapping[str, object],
+    runtime_port_override: int | None,
+    api_port_override: int | None,
+) -> bool:
+    """Return whether `afk start` should persist the auto-selected runtime bind."""
+
+    if runtime_port_override is not None or api_port_override is not None:
+        return False
+    if str(os.getenv("AFKBOT_RUNTIME_PORT") or "").strip():
+        return False
+    return runtime_config.get("runtime_port") in {None, ""}
+
+
+def _persist_runtime_bind_defaults(
+    *,
+    settings: Settings,
+    host: str,
+    runtime_port: int,
+) -> None:
+    """Persist the first successful runtime bind so future starts reuse it."""
+
+    runtime_config = dict(read_runtime_config(settings))
+    runtime_config.setdefault("runtime_host", host)
+    runtime_config["runtime_port"] = runtime_port
+    write_runtime_config(settings, config=runtime_config)

@@ -24,7 +24,7 @@ def prepare_root(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("AFKBOT_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setenv("AFKBOT_LLM_PROXY_TYPE", "none")
     monkeypatch.setenv("AFKBOT_RUNTIME_HOST", "127.0.0.1")
-    monkeypatch.setenv("AFKBOT_RUNTIME_PORT", "8080")
+    monkeypatch.setenv("AFKBOT_RUNTIME_PORT", "46339")
     monkeypatch.setenv("AFKBOT_NGINX_ENABLED", "0")
     monkeypatch.setenv("AFKBOT_NGINX_PORT", "18080")
     get_settings.cache_clear()

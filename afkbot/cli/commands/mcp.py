@@ -22,6 +22,11 @@ from afkbot.cli.presentation.mcp_wizard import (
     render_mcp_remove_preview,
     prompt_resolved_mcp_url,
 )
+from afkbot.services.mcp_integration.operator_contracts import (
+    MCPAddResult,
+    MCPServerView,
+    MCP_CONFIG_BOUNDARY_NOTE,
+)
 from afkbot.services.mcp_integration.errors import MCPIntegrationError
 from afkbot.services.mcp_integration.service import get_mcp_profile_service
 from afkbot.services.mcp_integration.url_resolver import resolve_mcp_url
@@ -38,136 +43,46 @@ def register(app: typer.Typer) -> None:
     )
     app.add_typer(mcp_app, name="mcp")
 
-    @mcp_app.command("list")
-    def list_mcp(
-        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
-        show_disabled: bool = typer.Option(
-            False,
-            "--show-disabled",
-            help="Include disabled MCP servers in the result.",
-        ),
+    def _emit_server_view(item: MCPServerView) -> None:
+        typer.echo(f"- server: {item.server}")
+        typer.echo(f"- transport: {item.transport}")
+        if item.url:
+            typer.echo(f"- url: {item.url}")
+        typer.echo(f"- capabilities: {', '.join(item.capabilities) or 'none'}")
+        typer.echo(f"- env_refs: {', '.join(item.env_refs) or 'none'}")
+        typer.echo(f"- secret_refs: {', '.join(item.secret_refs) or 'none'}")
+        typer.echo(f"- enabled: {item.enabled}")
+        typer.echo(f"- config_source: {item.config_source or '-'}")
+        typer.echo(f"- runtime_available: {item.access.runtime_available}")
+        typer.echo(f"- ide_visible: {item.access.ide_visible}")
+        typer.echo(f"- boundary: {item.access.boundary_note}")
+
+    def _emit_add_or_update_result(*, label: str, result: MCPAddResult) -> None:
+        typer.echo(f"{label}: {result.server.server}")
+        _emit_server_view(result.server)
+        typer.echo(f"- storage_mode: {result.storage_mode}")
+        typer.echo(f"- target_path: {result.target_path}")
+
+    def _execute_add_mcp(
+        *,
+        profile_id: str,
+        url: str | None,
+        missing_url_reason: str,
+        server: str | None,
+        transport: str | None,
+        capability: list[str] | None,
+        env_ref: list[str] | None,
+        secret_ref: list[str] | None,
+        enabled: bool,
+        yes: bool,
+        json_output: bool,
     ) -> None:
-        """List effective MCP servers configured for one profile."""
-
-        try:
-            settings = get_settings()
-            items = asyncio.run(
-                get_mcp_profile_service(settings).list(
-                    profile_id=profile_id,
-                    show_disabled=show_disabled,
-                )
-            )
-        except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
-            _exit_mcp_error(exc, json_output=json_output)
-
-        if json_output:
-            typer.echo(
-                json.dumps(
-                    {"servers": [item.model_dump(mode="json") for item in items]},
-                    ensure_ascii=True,
-                )
-            )
-            return
-        if not items:
-            if show_disabled:
-                typer.echo(f"No MCP servers configured for profile `{profile_id}`.")
-            else:
-                typer.echo(
-                    f"No enabled MCP servers configured for profile `{profile_id}`. "
-                    "Use `afk mcp list --show-disabled` to include disabled entries."
-                )
-            typer.echo(
-                "- boundary: Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for "
-                "enabled remote `tools` servers with matching policy/network access."
-            )
-            return
-        for item in items:
-            typer.echo(
-                f"- {item.server}: transport={item.transport}, enabled={item.enabled}, "
-                f"capabilities={','.join(item.capabilities) or 'none'}, "
-                f"source={item.config_source or '-'}"
-            )
-            typer.echo(
-                f"  access_inputs: env_refs={','.join(item.env_refs) or 'none'}, "
-                f"secret_refs={','.join(item.secret_refs) or 'none'}"
-            )
-            if item.url:
-                typer.echo(f"  url: {item.url}")
-            typer.echo(f"  boundary: {item.access.boundary_note}")
-
-    @mcp_app.command("validate")
-    def validate_mcp(
-        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
-    ) -> None:
-        """Validate profile-local MCP config files and print a structured report."""
-
-        try:
-            settings = get_settings()
-            report = asyncio.run(get_mcp_profile_service(settings).validate(profile_id=profile_id))
-        except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
-            _exit_mcp_error(exc, json_output=json_output)
-
-        if json_output:
-            typer.echo(json.dumps({"report": report.model_dump(mode="json")}, ensure_ascii=True))
-            return
-        typer.echo(f"MCP validate: {'ok' if report.ok else 'failed'}")
-        typer.echo(f"- profile: {report.profile_id}")
-        typer.echo(f"- storage_mode: {report.storage_mode}")
-        typer.echo(f"- files_checked: {len(report.files_checked)}")
-        if report.files_checked:
-            for item in report.files_checked:
-                typer.echo(f"  - {item}")
-        typer.echo(f"- effective_servers: {len(report.servers)}")
-        for note in report.notes:
-            typer.echo(f"- note: {note}")
-        for error in report.errors:
-            typer.echo(f"- error: {error}")
-        if not report.ok:
-            raise typer.Exit(code=1)
-
-    @mcp_app.command("add")
-    def add_mcp(
-        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        url: str | None = typer.Option(None, "--url", help="Remote MCP endpoint URL."),
-        server: str | None = typer.Option(None, "--server", help="Normalized MCP server id."),
-        transport: str | None = typer.Option(
-            None,
-            "--transport",
-            help="Remote transport: http, sse, or websocket.",
-        ),
-        capability: list[str] | None = typer.Option(
-            None,
-            "--capability",
-            help="Advertised capability. Repeat for multiple values.",
-        ),
-        env_ref: list[str] | None = typer.Option(
-            None,
-            "--env-ref",
-            help="Required environment ref. Repeat for multiple values.",
-        ),
-        secret_ref: list[str] | None = typer.Option(
-            None,
-            "--secret-ref",
-            help="Required secret ref. Repeat for multiple values.",
-        ),
-        enabled: bool = typer.Option(
-            True,
-            "--enabled/--disabled",
-            help="Store the MCP server as enabled or disabled.",
-        ),
-        yes: bool = typer.Option(False, "--yes", help="Skip the interactive preview confirmation."),
-        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
-    ) -> None:
-        """Add or update one remote MCP server config for the current profile."""
-
         interactive = mcp_wizard_enabled() and not json_output
         resolved_url = (url or "").strip()
         if not resolved_url:
             if not interactive:
                 _exit_mcp_usage_error(
-                    "--url is required without an interactive TTY",
+                    missing_url_reason,
                     json_output=json_output,
                 )
             resolution = prompt_resolved_mcp_url()
@@ -256,19 +171,216 @@ def register(app: typer.Typer) -> None:
         if json_output:
             typer.echo(json.dumps({"result": result.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(
-            f"MCP server {'created' if result.created else 'updated'}: {result.server.server}"
+        _emit_add_or_update_result(
+            label=f"MCP server {'created' if result.created else 'updated'}",
+            result=result,
         )
-        typer.echo(f"- transport: {result.server.transport}")
-        if result.server.url:
-            typer.echo(f"- url: {result.server.url}")
-        typer.echo(f"- capabilities: {', '.join(result.server.capabilities) or 'none'}")
-        typer.echo(f"- env_refs: {', '.join(result.server.env_refs) or 'none'}")
-        typer.echo(f"- secret_refs: {', '.join(result.server.secret_refs) or 'none'}")
-        typer.echo(f"- enabled: {result.server.enabled}")
-        typer.echo(f"- storage_mode: {result.storage_mode}")
-        typer.echo(f"- target_path: {result.target_path}")
-        typer.echo(f"- boundary: {result.server.access.boundary_note}")
+
+    @mcp_app.command("list")
+    def list_mcp(
+        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+        show_disabled: bool = typer.Option(
+            False,
+            "--show-disabled",
+            help="Include disabled MCP servers in the result.",
+        ),
+    ) -> None:
+        """List effective MCP servers configured for one profile."""
+
+        try:
+            settings = get_settings()
+            items = asyncio.run(
+                get_mcp_profile_service(settings).list(
+                    profile_id=profile_id,
+                    show_disabled=show_disabled,
+                )
+            )
+        except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
+            _exit_mcp_error(exc, json_output=json_output)
+
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"servers": [item.model_dump(mode="json") for item in items]},
+                    ensure_ascii=True,
+                )
+            )
+            return
+        if not items:
+            if show_disabled:
+                typer.echo(f"No MCP servers configured for profile `{profile_id}`.")
+            else:
+                typer.echo(
+                    f"No enabled MCP servers configured for profile `{profile_id}`. "
+                    "Use `afk mcp list --show-disabled` to include disabled entries."
+                )
+            typer.echo(
+                f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}"
+            )
+            return
+        for item in items:
+            typer.echo(
+                f"- {item.server}: transport={item.transport}, enabled={item.enabled}, "
+                f"capabilities={','.join(item.capabilities) or 'none'}, "
+                f"source={item.config_source or '-'}"
+            )
+            typer.echo(
+                f"  access_inputs: env_refs={','.join(item.env_refs) or 'none'}, "
+                f"secret_refs={','.join(item.secret_refs) or 'none'}"
+            )
+            if item.url:
+                typer.echo(f"  url: {item.url}")
+            typer.echo(f"  boundary: {item.access.boundary_note}")
+
+    @mcp_app.command("get")
+    def get_mcp(
+        server: str = typer.Argument(..., metavar="SERVER"),
+        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        """Show one effective MCP server config for the selected profile."""
+
+        try:
+            settings = get_settings()
+            item = asyncio.run(get_mcp_profile_service(settings).get(profile_id=profile_id, server=server))
+        except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
+            _exit_mcp_error(exc, json_output=json_output)
+
+        if json_output:
+            typer.echo(json.dumps({"server": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(f"MCP server: {item.server}")
+        _emit_server_view(item)
+
+    @mcp_app.command("validate")
+    def validate_mcp(
+        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        """Validate profile-local MCP config files and print a structured report."""
+
+        try:
+            settings = get_settings()
+            report = asyncio.run(get_mcp_profile_service(settings).validate(profile_id=profile_id))
+        except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
+            _exit_mcp_error(exc, json_output=json_output)
+
+        if json_output:
+            typer.echo(json.dumps({"report": report.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(f"MCP validate: {'ok' if report.ok else 'failed'}")
+        typer.echo(f"- profile: {report.profile_id}")
+        typer.echo(f"- storage_mode: {report.storage_mode}")
+        typer.echo(f"- files_checked: {len(report.files_checked)}")
+        if report.files_checked:
+            for item in report.files_checked:
+                typer.echo(f"  - {item}")
+        typer.echo(f"- effective_servers: {len(report.servers)}")
+        for note in report.notes:
+            typer.echo(f"- note: {note}")
+        for error in report.errors:
+            typer.echo(f"- error: {error}")
+        if not report.ok:
+            raise typer.Exit(code=1)
+
+    @mcp_app.command("add")
+    def add_mcp(
+        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
+        url: str | None = typer.Option(None, "--url", help="Remote MCP endpoint URL."),
+        server: str | None = typer.Option(None, "--server", help="Normalized MCP server id."),
+        transport: str | None = typer.Option(
+            None,
+            "--transport",
+            help="Remote transport: http, sse, or websocket.",
+        ),
+        capability: list[str] | None = typer.Option(
+            None,
+            "--capability",
+            help="Advertised capability. Repeat for multiple values.",
+        ),
+        env_ref: list[str] | None = typer.Option(
+            None,
+            "--env-ref",
+            help="Required environment ref. Repeat for multiple values.",
+        ),
+        secret_ref: list[str] | None = typer.Option(
+            None,
+            "--secret-ref",
+            help="Required secret ref. Repeat for multiple values.",
+        ),
+        enabled: bool = typer.Option(
+            True,
+            "--enabled/--disabled",
+            help="Store the MCP server as enabled or disabled.",
+        ),
+        yes: bool = typer.Option(False, "--yes", help="Skip the interactive preview confirmation."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        """Add or update one remote MCP server config for the current profile."""
+
+        _execute_add_mcp(
+            profile_id=profile_id,
+            url=url,
+            missing_url_reason="--url is required without an interactive TTY",
+            server=server,
+            transport=transport,
+            capability=capability,
+            env_ref=env_ref,
+            secret_ref=secret_ref,
+            enabled=enabled,
+            yes=yes,
+            json_output=json_output,
+        )
+
+    @mcp_app.command("connect")
+    def connect_mcp(
+        mcp_url: str | None = typer.Argument(None, metavar="URL"),
+        profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
+        server: str | None = typer.Option(None, "--server", help="Normalized MCP server id."),
+        transport: str | None = typer.Option(
+            None,
+            "--transport",
+            help="Remote transport: http, sse, or websocket.",
+        ),
+        capability: list[str] | None = typer.Option(
+            None,
+            "--capability",
+            help="Advertised capability. Repeat for multiple values.",
+        ),
+        env_ref: list[str] | None = typer.Option(
+            None,
+            "--env-ref",
+            help="Required environment ref. Repeat for multiple values.",
+        ),
+        secret_ref: list[str] | None = typer.Option(
+            None,
+            "--secret-ref",
+            help="Required secret ref. Repeat for multiple values.",
+        ),
+        enabled: bool = typer.Option(
+            True,
+            "--enabled/--disabled",
+            help="Store the MCP server as enabled or disabled.",
+        ),
+        yes: bool = typer.Option(False, "--yes", help="Skip the interactive preview confirmation."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        """Connect one remote MCP endpoint URL to the current profile."""
+
+        _execute_add_mcp(
+            profile_id=profile_id,
+            url=mcp_url,
+            missing_url_reason="URL argument is required without an interactive TTY",
+            server=server,
+            transport=transport,
+            capability=capability,
+            env_ref=env_ref,
+            secret_ref=secret_ref,
+            enabled=enabled,
+            yes=yes,
+            json_output=json_output,
+        )
 
     @mcp_app.command("edit")
     def edit_mcp(
@@ -409,17 +521,7 @@ def register(app: typer.Typer) -> None:
         if json_output:
             typer.echo(json.dumps({"result": result.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(f"MCP server updated: {result.server.server}")
-        typer.echo(f"- transport: {result.server.transport}")
-        if result.server.url:
-            typer.echo(f"- url: {result.server.url}")
-        typer.echo(f"- capabilities: {', '.join(result.server.capabilities) or 'none'}")
-        typer.echo(f"- env_refs: {', '.join(result.server.env_refs) or 'none'}")
-        typer.echo(f"- secret_refs: {', '.join(result.server.secret_refs) or 'none'}")
-        typer.echo(f"- enabled: {result.server.enabled}")
-        typer.echo(f"- storage_mode: {result.storage_mode}")
-        typer.echo(f"- target_path: {result.target_path}")
-        typer.echo(f"- boundary: {result.server.access.boundary_note}")
+        _emit_add_or_update_result(label="MCP server updated", result=result)
 
     @mcp_app.command("remove")
     def remove_mcp(
@@ -471,10 +573,7 @@ def register(app: typer.Typer) -> None:
         typer.echo(f"MCP server removed: {result.removed_server}")
         typer.echo(f"- storage_mode: {result.storage_mode}")
         typer.echo(f"- target_path: {result.target_path}")
-        typer.echo(
-            "- boundary: Runtime MCP access uses `mcp.tools.list` / `mcp.tools.call` for "
-            "enabled remote `tools` servers with matching policy/network access."
-        )
+        typer.echo(f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}")
 
 
 class _MCPCLIError(ValueError):

@@ -146,16 +146,22 @@ def resolve_profile_runtime_core(
             default=default_custom_interface,
             lang=lang,
         )
+    provider_default_base_url = resolve_provider_base_url_default(
+        defaults={},
+        settings=settings,
+        provider_id=provider_id,
+    )
+    effective_default_base_url = default_base_url or provider_default_base_url
+    should_prompt_base_url = interactive and (
+        base_url_value is not None
+        or provider_id == LLMProviderId.CUSTOM
+        or effective_default_base_url.strip() != provider_default_base_url.strip()
+    )
     resolved_base_url = resolve_text(
         value=base_url_value,
-        interactive=interactive,
+        interactive=should_prompt_base_url,
         prompt=base_url_prompt,
-        default=default_base_url
-        or resolve_provider_base_url_default(
-            defaults={},
-            settings=settings,
-            provider_id=provider_id,
-        ),
+        default=effective_default_base_url,
         lang=lang,
     )
     resolved_proxy_type, resolved_proxy_url = resolve_proxy(

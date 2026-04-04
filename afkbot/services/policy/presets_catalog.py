@@ -96,8 +96,8 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
     ),
     PolicyCapabilityId.MCP: PolicyCapabilitySpec(
         id=PolicyCapabilityId.MCP,
-        label="MCP runtime",
-        description="List and call runtime-accessible MCP tools from configured remote servers.",
+        label="MCP",
+        description="Manage profile MCP configs and use runtime-accessible MCP tools from configured remote servers.",
         tool_prefixes=("mcp.",),
     ),
     # Legacy aliases kept for backwards compatibility in non-interactive flags.
