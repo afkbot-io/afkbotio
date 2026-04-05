@@ -409,7 +409,7 @@ def _resolve_interactive_provider_credential_with_metadata(
 def _prompt_hidden_credential_input(*, provider_id: LLMProviderId, lang: PromptLanguage) -> str:
     spec = get_provider_spec(provider_id)
     credential_label = _provider_credential_label(provider_id=provider_id, lang=lang)
-    return typer.prompt(
+    raw_value = typer.prompt(
         msg(
             lang,
             en=f"{spec.label} {credential_label} (hidden input)",
@@ -418,7 +418,8 @@ def _prompt_hidden_credential_input(*, provider_id: LLMProviderId, lang: PromptL
         hide_input=True,
         default="",
         show_default=False,
-    ).strip()
+    )
+    return str(raw_value).strip()
 
 
 def _prompt_minimax_region(*, lang: PromptLanguage) -> MiniMaxRegion:
