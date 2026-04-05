@@ -74,6 +74,8 @@ class TaskUpdateTool(ToolBase):
                 labels=payload.labels,
                 blocked_reason_code=payload.blocked_reason_code,
                 blocked_reason_text=payload.blocked_reason_text,
+                actor_type="ai_profile",
+                actor_ref=ctx.profile_id,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:

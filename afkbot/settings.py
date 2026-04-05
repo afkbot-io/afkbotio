@@ -98,17 +98,26 @@ class Settings(BaseSettings):
         "automation_update",
         "automation_delete",
         "task_board",
+        "task_comment_add",
+        "task_comment_list",
         "task_create",
         "task_dependency_add",
         "task_dependency_list",
         "task_dependency_remove",
+        "task_event_list",
         "task_flow_create",
         "task_flow_list",
         "task_flow_get",
         "task_list",
+        "task_maintenance_sweep",
         "task_get",
+        "task_inbox",
+        "task_review_list",
+        "task_review_approve",
+        "task_review_request_changes",
         "task_run_list",
         "task_run_get",
+        "task_stale_list",
         "task_update",
         "credentials_create",
         "credentials_update",
@@ -207,6 +216,7 @@ class Settings(BaseSettings):
     runtime_max_header_bytes: int = 16384
     runtime_max_body_bytes: int = 262144
     taskflow_runtime_poll_interval_sec: float = 5.0
+    taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND
     browser_cdp_url: str | None = None
@@ -376,6 +386,7 @@ class Settings(BaseSettings):
         "runtime_cron_max_due_per_tick",
         "runtime_max_header_bytes",
         "runtime_max_body_bytes",
+        "taskflow_runtime_maintenance_batch_size",
         "taskflow_runtime_claim_ttl_sec",
         "browser_session_idle_ttl_sec",
         "diffs_artifact_ttl_sec",

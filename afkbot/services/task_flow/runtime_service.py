@@ -18,6 +18,7 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
 from afkbot.services.task_flow.message_factory import compose_task_message, task_session_id
 from afkbot.services.task_flow.runtime_target import build_task_flow_runtime_target
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
+_LEASE_EXPIRED_ERROR_CODE = "task_lease_expired"
+_LEASE_EXPIRED_ERROR_TEXT = "Task claim lease expired before execution completed."
 
 
 class AgentLoopLike(Protocol):
@@ -65,6 +68,7 @@ class ClaimedTaskExecution:
     claim_token: str
     task_run_id: int
     session_id: str
+    worker_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,11 +125,78 @@ class TaskFlowRuntimeService:
         """Claim and execute one runnable AI-owned task, returning whether work was found."""
 
         await self._ensure_started()
+        await self.sweep_expired_claims(
+            worker_id=worker_id,
+            limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
+        )
         claimed = await self._claim_next_task(worker_id=worker_id)
         if claimed is None:
             return False
         await self._execute_claimed_task(claimed)
         return True
+
+    async def sweep_expired_claims(
+        self,
+        *,
+        worker_id: str,
+        limit: int = 25,
+        profile_id: str | None = None,
+    ) -> int:
+        """Release expired claims back into the backlog and mark their runs cancelled."""
+
+        await self._ensure_started()
+        session_factory = self._require_session_factory()
+        now_utc = datetime.now(timezone.utc)
+        released_count = 0
+        async with session_scope(session_factory) as session:
+            repo = TaskFlowRepository(session)
+            expired_rows = await repo.list_expired_claimed_tasks(
+                now_utc=now_utc,
+                profile_id=profile_id,
+                limit=max(1, limit),
+            )
+            for row in expired_rows:
+                claim_token = str(row.claim_token or "").strip()
+                if not claim_token:
+                    continue
+                released = await repo.release_expired_task_claim(
+                    task_id=row.id,
+                    claim_token=claim_token,
+                    now_utc=now_utc,
+                    ready_at=now_utc,
+                    error_code=_LEASE_EXPIRED_ERROR_CODE,
+                    error_text=_LEASE_EXPIRED_ERROR_TEXT,
+                )
+                if not released:
+                    continue
+                if row.last_run_id is not None:
+                    await repo.update_task_run(
+                        task_run_id=row.last_run_id,
+                        status="cancelled",
+                        error_code=_LEASE_EXPIRED_ERROR_CODE,
+                        error_text=_LEASE_EXPIRED_ERROR_TEXT,
+                        finished_at=now_utc,
+                    )
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    task_run_id=row.last_run_id,
+                    event_type="lease_expired",
+                    actor_type="runtime",
+                    actor_ref=worker_id,
+                    message=_LEASE_EXPIRED_ERROR_TEXT,
+                    from_status=row.status,
+                    to_status="todo",
+                    details={"error_code": _LEASE_EXPIRED_ERROR_CODE},
+                )
+                released_count += 1
+        if released_count:
+            _LOGGER.info(
+                "taskflow_runtime_swept_expired_claims worker_id=%s count=%s",
+                worker_id,
+                released_count,
+            )
+        return released_count
 
     async def _ensure_started(self) -> None:
         if self._session_factory is not None:
@@ -195,6 +266,7 @@ class TaskFlowRuntimeService:
                 claim_token=claim_token,
                 task_run_id=task_run.id,
                 session_id=session_id,
+                worker_id=worker_id,
             )
 
     async def _execute_claimed_task(self, claimed: ClaimedTaskExecution) -> None:
@@ -323,6 +395,18 @@ class TaskFlowRuntimeService:
                     error_code=outcome.error_code,
                     error_text=outcome.error_text,
                     finished_at=finished_at,
+                )
+                await record_task_event(
+                    repo=repo,
+                    task_id=claimed.task_id,
+                    task_run_id=claimed.task_run_id,
+                    event_type=_task_event_type_for_outcome(outcome.status),
+                    actor_type="runtime",
+                    actor_ref=claimed.worker_id,
+                    message=_task_event_message_for_outcome(outcome),
+                    from_status="running",
+                    to_status=outcome.status,
+                    details=_task_event_details_for_outcome(outcome),
                 )
                 reconcile_completed = outcome.status == "completed"
             else:
@@ -708,3 +792,39 @@ def _task_run_error_text(*, current: object, outcome: TaskExecutionOutcome) -> s
     if last_error_text:
         return last_error_text
     return outcome.error_text
+
+
+def _task_event_type_for_outcome(status: str) -> str:
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status == "completed":
+        return "execution_completed"
+    if normalized_status == "review":
+        return "execution_review_ready"
+    if normalized_status == "blocked":
+        return "execution_blocked"
+    if normalized_status == "failed":
+        return "execution_failed"
+    return "execution_finished"
+
+
+def _task_event_message_for_outcome(outcome: TaskExecutionOutcome) -> str | None:
+    if outcome.status == "completed":
+        return outcome.summary
+    if outcome.status == "review":
+        return outcome.summary
+    if outcome.status == "blocked":
+        return outcome.blocked_reason_text or outcome.summary or outcome.error_text
+    if outcome.status == "failed":
+        return outcome.error_text or outcome.summary
+    return outcome.summary or outcome.error_text
+
+
+def _task_event_details_for_outcome(outcome: TaskExecutionOutcome) -> dict[str, object]:
+    details: dict[str, object] = {"summary_present": bool(_trim_text(outcome.summary, limit=1))}
+    if outcome.run_id is not None:
+        details["run_id"] = outcome.run_id
+    if outcome.error_code is not None:
+        details["error_code"] = outcome.error_code
+    if outcome.blocked_reason_code is not None:
+        details["blocked_reason_code"] = outcome.blocked_reason_code
+    return details

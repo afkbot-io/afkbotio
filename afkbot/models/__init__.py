@@ -34,7 +34,9 @@ _MODEL_EXPORT_MODULES = {
     "SubagentTask": "subagent_task",
     "Task": "task",
     "TaskDependency": "task_dependency",
+    "TaskEvent": "task_event",
     "TaskFlow": "task_flow",
+    "TaskNotificationCursor": "task_notification_cursor",
     "TaskRun": "task_run",
     "ToolCredentialBinding": "tool_credential_binding",
 }

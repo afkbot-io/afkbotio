@@ -97,11 +97,20 @@ def test_task_help_exposes_dependency_and_run_management() -> None:
     assert result.exit_code == 0
     output = result.stdout
     assert "board" in output
+    assert "comment-add" in output
+    assert "comment-list" in output
+    assert "inbox" in output
     assert "dependency-add" in output
     assert "dependency-list" in output
     assert "dependency-remove" in output
+    assert "event-list" in output
+    assert "review-list" in output
+    assert "review-approve" in output
+    assert "review-request-changes" in output
     assert "run-list" in output
     assert "run-get" in output
+    assert "stale-list" in output
+    assert "stale-sweep" in output
 
 
 def test_task_help_exposes_dependency_and_run_surfaces() -> None:
@@ -113,8 +122,17 @@ def test_task_help_exposes_dependency_and_run_surfaces() -> None:
     assert result.exit_code == 0
     output = result.stdout
     assert "board" in output
+    assert "comment-add" in output
+    assert "comment-list" in output
+    assert "inbox" in output
     assert "dependency-add" in output
     assert "dependency-list" in output
     assert "dependency-remove" in output
+    assert "event-list" in output
+    assert "review-list" in output
+    assert "review-approve" in output
+    assert "review-request-changes" in output
     assert "run-list" in output
     assert "run-get" in output
+    assert "stale-list" in output
+    assert "stale-sweep" in output

@@ -6,6 +6,10 @@ import asyncio
 from datetime import datetime, timezone
 
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage
+from afkbot.cli.commands.chat_task_startup_digest import (
+    compose_human_task_startup_message,
+    render_human_task_startup_summary,
+)
 from afkbot.cli.commands.chat_repl_runtime import _run_repl_sequential, run_repl_transport
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.services.chat_session.input_catalog import ChatInputCatalog, ChatInputCatalogStore
@@ -14,7 +18,14 @@ from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
-from afkbot.services.task_flow import HumanTaskStartupSummary, TaskMetadata
+from afkbot.services.llm.contracts import LLMResponse
+from afkbot.services.llm.mock_provider import MockLLMProvider
+from afkbot.services.task_flow import (
+    HumanTaskInboxEventMetadata,
+    HumanTaskInboxMetadata,
+    HumanTaskStartupSummary,
+    TaskMetadata,
+)
 from afkbot.settings import Settings
 
 
@@ -287,7 +298,7 @@ def test_run_repl_sequential_reuses_one_queue_across_inputs(monkeypatch) -> None
 def test_render_human_task_startup_summary_renders_ru_notice(monkeypatch) -> None:
     """Human startup summary should render task titles and localized summary copy."""
 
-    from afkbot.cli.commands import chat_repl_runtime as module
+    from afkbot.cli.commands import chat_task_startup_digest as module
 
     monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
     summary = HumanTaskStartupSummary(
@@ -296,6 +307,7 @@ def test_render_human_task_startup_summary_renders_ru_notice(monkeypatch) -> Non
         todo_count=1,
         blocked_count=1,
         review_count=0,
+        overdue_count=1,
         tasks=(
             TaskMetadata(
                 id="task_1",
@@ -364,13 +376,127 @@ def test_render_human_task_startup_summary_renders_ru_notice(monkeypatch) -> Non
         ),
     )
 
-    rendered = module._render_human_task_startup_summary(summary)
+    rendered = render_human_task_startup_summary(summary)
 
     assert rendered is not None
     assert "Для вас есть 2 открытых задач" in rendered
     assert "Подготовить релиз" in rendered
     assert "Дождаться дизайна" in rendered
-    assert "Используйте `afk task list`" in rendered
+    assert "просрочено: 1" in rendered
+    assert "Используйте `afk task inbox`" in rendered
+
+
+def test_render_human_task_startup_summary_includes_recent_inbox_activity(monkeypatch) -> None:
+    """Startup digest should prepend recent inbox activity when provided."""
+
+    from afkbot.cli.commands import chat_task_startup_digest as module
+
+    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    summary = HumanTaskStartupSummary(
+        owner_ref="cli_user:alice",
+        total_count=1,
+        todo_count=0,
+        blocked_count=0,
+        review_count=1,
+        overdue_count=0,
+        tasks=(),
+    )
+    inbox = HumanTaskInboxMetadata(
+        owner_ref="cli_user:alice",
+        channel="chat_startup",
+        total_count=1,
+        todo_count=0,
+        blocked_count=0,
+        review_count=1,
+        overdue_count=0,
+        unseen_event_count=1,
+        tasks=(),
+        recent_events=(
+            HumanTaskInboxEventMetadata(
+                id=5,
+                task_id="task_5",
+                task_title="Проверить ответ",
+                event_type="execution_review_ready",
+                actor_type="runtime",
+                actor_ref="worker-a",
+                message="Готово к ревью",
+                from_status="running",
+                to_status="review",
+                details={"run_id": 7},
+                created_at=datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+
+    rendered = render_human_task_startup_summary(summary, inbox=inbox)
+
+    assert rendered is not None
+    assert "С прошлого чата появились новые изменения" in rendered
+    assert "Проверить ответ: готово к ревью" in rendered
+    assert "Для вас есть 1 открытых задач" in rendered
+
+
+async def test_compose_human_task_startup_message_prefers_llm_digest(monkeypatch) -> None:
+    """Startup digest should prefer concise LLM output when available."""
+
+    from afkbot.cli.commands import chat_task_startup_digest as module
+
+    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_profile_settings", lambda **kwargs: kwargs["settings"])
+    provider = MockLLMProvider([LLMResponse.final("Для вас 2 задачи: одна на review, одна в todo. Начните с review.")])
+    monkeypatch.setattr(module, "build_llm_provider", lambda _settings: provider)
+
+    summary = HumanTaskStartupSummary(
+        owner_ref="cli_user:alice",
+        total_count=2,
+        todo_count=1,
+        blocked_count=0,
+        review_count=1,
+        overdue_count=0,
+        tasks=(),
+    )
+
+    rendered = await compose_human_task_startup_message(
+        settings=Settings(root_dir="."),
+        profile_id="default",
+        summary=summary,
+    )
+
+    assert rendered == "Для вас 2 задачи: одна на review, одна в todo. Начните с review."
+    assert provider.requests
+
+
+async def test_compose_human_task_startup_message_falls_back_when_provider_errors(monkeypatch) -> None:
+    """Startup digest should fall back to deterministic copy on provider failure."""
+
+    from afkbot.cli.commands import chat_task_startup_digest as module
+
+    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_profile_settings", lambda **kwargs: kwargs["settings"])
+    provider = MockLLMProvider(
+        [LLMResponse.final("ignored", error_code="llm_provider_not_configured")]
+    )
+    monkeypatch.setattr(module, "build_llm_provider", lambda _settings: provider)
+
+    summary = HumanTaskStartupSummary(
+        owner_ref="cli_user:alice",
+        total_count=1,
+        todo_count=1,
+        blocked_count=0,
+        review_count=0,
+        overdue_count=0,
+        tasks=(),
+    )
+
+    rendered = await compose_human_task_startup_message(
+        settings=Settings(root_dir="."),
+        profile_id="default",
+        summary=summary,
+    )
+
+    assert rendered is not None
+    assert "Для вас есть 1 открытых задач" in rendered
+    assert "afk task inbox" in rendered
 
 
 async def _async_noop() -> None:

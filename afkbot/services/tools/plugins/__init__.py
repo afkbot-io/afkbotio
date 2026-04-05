@@ -75,17 +75,30 @@ from afkbot.services.tools.plugins.subagent_result import create_tool as create_
 from afkbot.services.tools.plugins.subagent_run import create_tool as create_subagent_run_tool
 from afkbot.services.tools.plugins.subagent_wait import create_tool as create_subagent_wait_tool
 from afkbot.services.tools.plugins.task_board import create_tool as create_task_board_tool
+from afkbot.services.tools.plugins.task_comment_add import create_tool as create_task_comment_add_tool
+from afkbot.services.tools.plugins.task_comment_list import create_tool as create_task_comment_list_tool
 from afkbot.services.tools.plugins.task_create import create_tool as create_task_create_tool
 from afkbot.services.tools.plugins.task_dependency_add import create_tool as create_task_dependency_add_tool
 from afkbot.services.tools.plugins.task_dependency_list import create_tool as create_task_dependency_list_tool
 from afkbot.services.tools.plugins.task_dependency_remove import create_tool as create_task_dependency_remove_tool
+from afkbot.services.tools.plugins.task_event_list import create_tool as create_task_event_list_tool
 from afkbot.services.tools.plugins.task_flow_create import create_tool as create_task_flow_create_tool
 from afkbot.services.tools.plugins.task_flow_get import create_tool as create_task_flow_get_tool
 from afkbot.services.tools.plugins.task_flow_list import create_tool as create_task_flow_list_tool
 from afkbot.services.tools.plugins.task_get import create_tool as create_task_get_tool
+from afkbot.services.tools.plugins.task_inbox import create_tool as create_task_inbox_tool
 from afkbot.services.tools.plugins.task_list import create_tool as create_task_list_tool
+from afkbot.services.tools.plugins.task_maintenance_sweep import (
+    create_tool as create_task_maintenance_sweep_tool,
+)
+from afkbot.services.tools.plugins.task_review_approve import create_tool as create_task_review_approve_tool
+from afkbot.services.tools.plugins.task_review_list import create_tool as create_task_review_list_tool
+from afkbot.services.tools.plugins.task_review_request_changes import (
+    create_tool as create_task_review_request_changes_tool,
+)
 from afkbot.services.tools.plugins.task_run_get import create_tool as create_task_run_get_tool
 from afkbot.services.tools.plugins.task_run_list import create_tool as create_task_run_list_tool
+from afkbot.services.tools.plugins.task_stale_list import create_tool as create_task_stale_list_tool
 from afkbot.services.tools.plugins.task_update import create_tool as create_task_update_tool
 from afkbot.services.tools.plugins.web_fetch import create_tool as create_web_fetch_tool
 from afkbot.services.tools.plugins.web_search import create_tool as create_web_search_tool
@@ -183,17 +196,26 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "subagent_wait": create_subagent_wait_tool,
     "subagent_result": create_subagent_result_tool,
     "task_board": create_task_board_tool,
+    "task_comment_add": create_task_comment_add_tool,
+    "task_comment_list": create_task_comment_list_tool,
     "task_create": create_task_create_tool,
     "task_dependency_add": create_task_dependency_add_tool,
     "task_dependency_list": create_task_dependency_list_tool,
     "task_dependency_remove": create_task_dependency_remove_tool,
+    "task_event_list": create_task_event_list_tool,
     "task_flow_create": create_task_flow_create_tool,
     "task_flow_get": create_task_flow_get_tool,
     "task_flow_list": create_task_flow_list_tool,
     "task_get": create_task_get_tool,
+    "task_inbox": create_task_inbox_tool,
     "task_list": create_task_list_tool,
+    "task_maintenance_sweep": create_task_maintenance_sweep_tool,
+    "task_review_approve": create_task_review_approve_tool,
+    "task_review_list": create_task_review_list_tool,
+    "task_review_request_changes": create_task_review_request_changes_tool,
     "task_run_get": create_task_run_get_tool,
     "task_run_list": create_task_run_list_tool,
+    "task_stale_list": create_task_stale_list_tool,
     "task_update": create_task_update_tool,
     "subagent_profile_list": create_subagent_profile_list,
     "subagent_profile_get": create_subagent_profile_get,

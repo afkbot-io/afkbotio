@@ -9,20 +9,31 @@ from datetime import datetime
 import typer
 
 from afkbot.services.task_flow.cli_service import (
+    add_task_comment_payload,
     add_dependency_payload,
+    approve_review_task_payload,
     build_board_payload,
+    build_human_inbox_payload,
     create_flow_payload,
     create_task_payload,
     get_flow_payload,
     get_task_payload,
     get_task_run_payload,
+    list_task_comments_payload,
     list_flows_payload,
     list_dependencies_payload,
+    list_task_events_payload,
+    list_review_tasks_payload,
     list_task_runs_payload,
     list_tasks_payload,
     remove_dependency_payload,
+    request_review_changes_payload,
+    list_stale_task_claims_payload,
+    sweep_stale_task_claims_payload,
     update_task_payload,
 )
+from afkbot.services.task_flow.human_ref import resolve_local_human_ref
+from afkbot.settings import get_settings
 
 
 def register(app: typer.Typer) -> None:
@@ -103,6 +114,194 @@ def register(app: typer.Typer) -> None:
                 )
             )
         )
+
+    @task_app.command("inbox")
+    def inbox_command(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        owner_ref: str | None = typer.Option(
+            None,
+            "--owner-ref",
+            help="Human owner ref. Defaults to the local human ref for CLI use.",
+        ),
+        task_limit: int = typer.Option(5, "--task-limit", min=1, help="Maximum preview tasks."),
+        event_limit: int = typer.Option(
+            5,
+            "--event-limit",
+            min=1,
+            help="Maximum recent inbox events to include.",
+        ),
+        channel: str | None = typer.Option(
+            None,
+            "--channel",
+            help="Optional dedupe channel scope for notification cursors.",
+        ),
+        mark_seen: bool = typer.Option(
+            False,
+            "--mark-seen/--no-mark-seen",
+            help="Advance the dedupe cursor for the selected channel.",
+        ),
+    ) -> None:
+        """Show notification-ready human inbox summary."""
+
+        resolved_owner_ref = owner_ref or resolve_local_human_ref(get_settings())
+        if mark_seen and owner_ref is not None:
+            local_owner_ref = resolve_local_human_ref(get_settings())
+            if resolved_owner_ref != local_owner_ref:
+                raise typer.BadParameter(
+                    "mark_seen can only be used for the local human inbox",
+                    param_hint="--owner-ref",
+                )
+        typer.echo(
+            asyncio.run(
+                build_human_inbox_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    owner_ref=resolved_owner_ref,
+                    task_limit=task_limit,
+                    event_limit=event_limit,
+                    channel=channel,
+                    mark_seen=mark_seen,
+                )
+            )
+        )
+
+    @task_app.command("stale-list")
+    def list_stale_task_claims(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
+    ) -> None:
+        """List stale claimed/running Task Flow tasks for one profile."""
+
+        typer.echo(
+            asyncio.run(
+                list_stale_task_claims_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    limit=limit,
+                )
+            )
+        )
+
+    @task_app.command("stale-sweep")
+    def sweep_stale_task_claims(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        limit: int | None = typer.Option(
+            None,
+            "--limit",
+            min=1,
+            help="Maximum stale claims to repair in one sweep.",
+        ),
+    ) -> None:
+        """Force one maintenance sweep for stale claimed/running Task Flow tasks."""
+
+        typer.echo(
+            asyncio.run(
+                sweep_stale_task_claims_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    limit=limit,
+                )
+            )
+        )
+
+    @task_app.command("review-list")
+    def list_review_tasks(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        actor_type: str = typer.Option("human", "--actor-type", help="Reviewer actor type."),
+        actor_ref: str | None = typer.Option(
+            None,
+            "--actor-ref",
+            help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
+        ),
+        flow_id: str | None = typer.Option(None, "--flow-id", help="Optional task flow filter."),
+        label: list[str] = typer.Option([], "--label", help="Repeatable label filter."),
+        limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
+    ) -> None:
+        """List review queue tasks for one reviewer inbox."""
+
+        typer.echo(
+            asyncio.run(
+                list_review_tasks_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    actor_type=actor_type,
+                    actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
+                    flow_id=flow_id,
+                    labels=tuple(label),
+                    limit=limit,
+                )
+            )
+        )
+
+    @task_app.command("review-approve")
+    def approve_review_task(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        actor_type: str = typer.Option("human", "--actor-type", help="Reviewer actor type."),
+        actor_ref: str | None = typer.Option(
+            None,
+            "--actor-ref",
+            help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
+        ),
+    ) -> None:
+        """Approve one task currently in review."""
+
+        payload = asyncio.run(
+            approve_review_task_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                task_id=task_id,
+                actor_type=actor_type,
+                actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @task_app.command("review-request-changes")
+    def request_review_changes(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        reason_text: str = typer.Option(..., "--reason-text", help="Required review feedback."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        actor_type: str = typer.Option("human", "--actor-type", help="Reviewer actor type."),
+        actor_ref: str | None = typer.Option(
+            None,
+            "--actor-ref",
+            help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
+        ),
+        owner_type: str | None = typer.Option(
+            None,
+            "--owner-type",
+            help="Optional owner reassignment while returning the task for changes.",
+        ),
+        owner_ref: str | None = typer.Option(
+            None,
+            "--owner-ref",
+            help="Optional owner ref reassignment while returning the task for changes.",
+        ),
+        reason_code: str = typer.Option(
+            "review_changes_requested",
+            "--reason-code",
+            help="Blocked reason code to persist on the task.",
+        ),
+    ) -> None:
+        """Request changes for one review task and move it back to blocked."""
+
+        payload = asyncio.run(
+            request_review_changes_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                task_id=task_id,
+                reason_text=reason_text,
+                actor_type=actor_type,
+                actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
+                owner_type=owner_type,
+                owner_ref=owner_ref,
+                reason_code=reason_code,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
 
     @task_app.command("show")
     @task_app.command("get")
@@ -241,6 +440,8 @@ def register(app: typer.Typer) -> None:
                 labels=(tuple(label) if label is not None else None),
                 blocked_reason_code=blocked_reason_code,
                 blocked_reason_text=blocked_reason_text,
+                actor_type="human",
+                actor_ref=resolve_local_human_ref(get_settings()),
             )
         )
         typer.echo(payload)
@@ -325,6 +526,73 @@ def register(app: typer.Typer) -> None:
                 )
             )
         )
+
+    @task_app.command("event-list")
+    def list_task_events(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
+    ) -> None:
+        """List append-only task events for one task."""
+
+        typer.echo(
+            asyncio.run(
+                list_task_events_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    task_id=task_id,
+                    limit=limit,
+                )
+            )
+        )
+
+    @task_app.command("comment-list")
+    def list_task_comments(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
+    ) -> None:
+        """List append-only task comments for one task."""
+
+        typer.echo(
+            asyncio.run(
+                list_task_comments_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    task_id=task_id,
+                    limit=limit,
+                )
+            )
+        )
+
+    @task_app.command("comment-add")
+    def add_task_comment(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        message: str = typer.Option(..., "--message", help="Comment body."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        comment_type: str = typer.Option("note", "--comment-type", help="Comment type."),
+        task_run_id: int | None = typer.Option(
+            None,
+            "--task-run-id",
+            help="Optional task run id when the comment refers to one execution attempt.",
+        ),
+    ) -> None:
+        """Append one human comment to the selected task."""
+
+        payload = asyncio.run(
+            add_task_comment_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                task_id=task_id,
+                message=message,
+                actor_type="human",
+                actor_ref=resolve_local_human_ref(get_settings()),
+                comment_type=comment_type,
+                task_run_id=task_run_id,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
 
     @task_app.command("run-get")
     def get_task_run(
@@ -426,3 +694,13 @@ def _exit_on_error_payload(payload: str) -> None:
     data = json.loads(payload)
     if data.get("ok") is False:
         raise typer.Exit(code=1)
+
+
+def _resolve_review_actor_ref(*, actor_type: str, actor_ref: str | None) -> str:
+    """Resolve reviewer actor ref for CLI review surfaces."""
+
+    if actor_ref is not None and actor_ref.strip():
+        return actor_ref
+    if actor_type != "human":
+        raise typer.BadParameter("--actor-ref is required unless --actor-type=human")
+    return resolve_local_human_ref(get_settings())

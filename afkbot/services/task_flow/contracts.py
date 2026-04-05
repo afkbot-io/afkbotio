@@ -89,6 +89,81 @@ class TaskRunMetadata(BaseModel):
     updated_at: datetime
 
 
+class StaleTaskClaimMetadata(BaseModel):
+    """Public metadata for one expired in-flight task claim."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task: TaskMetadata
+    claimed_by: str | None = None
+    lease_until: datetime
+    stale_for_sec: int = Field(ge=0)
+
+
+class TaskMaintenanceSweepMetadata(BaseModel):
+    """Public metadata for one bounded stale-claim maintenance sweep."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    profile_id: str | None = None
+    limit: int = Field(ge=1)
+    repaired_count: int = Field(ge=0)
+    remaining_count: int = Field(ge=0)
+    remaining: tuple[StaleTaskClaimMetadata, ...] = ()
+
+
+class TaskEventMetadata(BaseModel):
+    """Public metadata for one append-only task event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    task_id: str
+    task_run_id: int | None = None
+    event_type: str
+    actor_type: str | None = None
+    actor_ref: str | None = None
+    message: str | None = None
+    from_status: str | None = None
+    to_status: str | None = None
+    details: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class HumanTaskInboxEventMetadata(BaseModel):
+    """Notification-ready event summary for one human inbox item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    task_id: str
+    task_title: str
+    event_type: str
+    actor_type: str | None = None
+    actor_ref: str | None = None
+    message: str | None = None
+    from_status: str | None = None
+    to_status: str | None = None
+    details: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class TaskCommentMetadata(BaseModel):
+    """Public metadata for one append-only task comment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    task_id: str
+    task_run_id: int | None = None
+    comment_type: str
+    actor_type: str | None = None
+    actor_ref: str | None = None
+    message: str
+    created_at: datetime
+
+
 class TaskDependencyMetadata(BaseModel):
     """Public metadata for one dependency edge."""
 
@@ -143,4 +218,22 @@ class HumanTaskStartupSummary(BaseModel):
     todo_count: int = Field(ge=0)
     blocked_count: int = Field(ge=0)
     review_count: int = Field(ge=0)
+    overdue_count: int = Field(ge=0)
     tasks: tuple[TaskMetadata, ...] = ()
+
+
+class HumanTaskInboxMetadata(BaseModel):
+    """Notification-ready summary for one human Task Flow inbox."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner_ref: str
+    channel: str | None = None
+    total_count: int = Field(ge=0)
+    todo_count: int = Field(ge=0)
+    blocked_count: int = Field(ge=0)
+    review_count: int = Field(ge=0)
+    overdue_count: int = Field(ge=0)
+    unseen_event_count: int = Field(ge=0)
+    tasks: tuple[TaskMetadata, ...] = ()
+    recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()

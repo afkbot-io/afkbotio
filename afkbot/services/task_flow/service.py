@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TypeVar
 from uuid import uuid4
@@ -14,19 +15,26 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.task import Task
 from afkbot.models.task_dependency import TaskDependency
+from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
 from afkbot.models.task_run import TaskRun
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.repositories.support import profile_exists
 from afkbot.services.task_flow.contracts import (
+    HumanTaskInboxEventMetadata,
+    HumanTaskInboxMetadata,
     HumanTaskStartupSummary,
+    StaleTaskClaimMetadata,
+    TaskCommentMetadata,
     TaskBoardColumnMetadata,
     TaskBoardMetadata,
     TaskDependencyMetadata,
+    TaskEventMetadata,
     TaskFlowMetadata,
     TaskMetadata,
     TaskRunMetadata,
 )
+from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.settings import Settings
 
@@ -44,6 +52,16 @@ _VALID_TASK_STATUSES = {
 }
 _VALID_FLOW_STATUSES = {"active", "completed", "cancelled", "archived"}
 _VISIBLE_HUMAN_STATUSES = ("todo", "blocked", "review")
+_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES = {
+    "comment_added",
+    "created",
+    "updated",
+    "review_changes_requested",
+    "execution_review_ready",
+    "execution_blocked",
+    "dependencies_satisfied",
+}
+_TASK_COMMENT_EVENT_TYPE = "comment_added"
 _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("todo", "Todo", ("todo",)),
     ("blocked", "Blocked", ("blocked",)),
@@ -54,6 +72,23 @@ _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("cancelled", "Cancelled", ("cancelled",)),
 )
 TValue = TypeVar("TValue")
+
+
+@dataclass(frozen=True, slots=True)
+class _TaskSnapshot:
+    title: str
+    prompt: str
+    priority: int
+    due_at: datetime | None
+    owner_type: str
+    owner_ref: str
+    reviewer_type: str | None
+    reviewer_ref: str | None
+    requires_review: bool
+    labels: tuple[str, ...]
+    status: str
+    blocked_reason_code: str | None
+    blocked_reason_text: str | None
 
 
 class TaskFlowService:
@@ -236,6 +271,25 @@ class TaskFlowService:
                 )
             if normalized_depends_on:
                 row = await _reconcile_task_readiness(repo=repo, task=row)
+            await record_task_event(
+                repo=repo,
+                task_id=row.id,
+                event_type="created",
+                actor_type=_normalize_required_text(created_by_type, field_name="created_by_type"),
+                actor_ref=_normalize_required_text(created_by_ref, field_name="created_by_ref"),
+                to_status=row.status,
+                details={
+                    "flow_id": normalized_flow_id,
+                    "owner_type": resolved_owner_type,
+                    "owner_ref": resolved_owner_ref,
+                    "reviewer_type": _normalize_optional_text(reviewer_type),
+                    "reviewer_ref": _normalize_optional_text(reviewer_ref),
+                    "priority": priority,
+                    "labels": list(normalized_labels),
+                    "depends_on_task_ids": list(normalized_depends_on),
+                    "requires_review": bool(requires_review),
+                },
+            )
             return await _build_task_metadata(repo, row)
 
         return await self._with_repo(_op)
@@ -353,6 +407,323 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def list_stale_task_claims(
+        self,
+        *,
+        profile_id: str,
+        limit: int | None = None,
+    ) -> tuple[StaleTaskClaimMetadata, ...]:
+        """List stale AI-owned claimed/running tasks whose lease already expired."""
+
+        async def _op(repo: TaskFlowRepository) -> tuple[StaleTaskClaimMetadata, ...]:
+            await _ensure_profile_exists(repo, profile_id)
+            now_utc = datetime.now(timezone.utc)
+            rows = await repo.list_expired_claimed_tasks(
+                now_utc=now_utc,
+                profile_id=profile_id,
+                limit=limit,
+            )
+            items = [
+                await _to_stale_task_claim_metadata(
+                    repo,
+                    row=row,
+                    now_utc=now_utc,
+                )
+                for row in rows
+            ]
+            return tuple(items)
+
+        return await self._with_repo(_op)
+
+    async def list_task_events(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        limit: int | None = None,
+    ) -> list[TaskEventMetadata]:
+        """List append-only task events for one task."""
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskEventMetadata]:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            rows = await repo.list_task_events(task_id=task.id, limit=limit)
+            return [_to_task_event_metadata(row) for row in rows]
+
+        return await self._with_repo(_op)
+
+    async def list_task_comments(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        limit: int | None = None,
+    ) -> list[TaskCommentMetadata]:
+        """List append-only task comments for one task."""
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskCommentMetadata]:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            rows = await repo.list_task_events(task_id=task.id, limit=limit)
+            return [
+                _to_task_comment_metadata(row)
+                for row in rows
+                if str(row.event_type or "").strip() == _TASK_COMMENT_EVENT_TYPE
+            ]
+
+        return await self._with_repo(_op)
+
+    async def add_task_comment(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        message: str,
+        actor_type: str,
+        actor_ref: str,
+        comment_type: str = "note",
+        task_run_id: int | None = None,
+    ) -> TaskCommentMetadata:
+        """Append one task comment without changing task state."""
+
+        normalized_message = _normalize_required_text(message, field_name="message")
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_comment_type = _normalize_required_text(comment_type, field_name="comment_type")
+        _validate_owner_pair(
+            owner_type=normalized_actor_type,
+            owner_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+
+        async def _op(repo: TaskFlowRepository) -> TaskCommentMetadata:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            await _ensure_actor_refs_exist(
+                repo,
+                owner_type=normalized_actor_type,
+                owner_ref=normalized_actor_ref,
+                reviewer_type=None,
+                reviewer_ref=None,
+            )
+            if task_run_id is not None:
+                task_run = await repo.get_task_run(task_run_id=task_run_id, task_id=task.id)
+                if task_run is None:
+                    raise TaskFlowServiceError(
+                        error_code="task_run_not_found",
+                        reason="Task run not found",
+                    )
+            row = await repo.create_task_event(
+                task_id=task.id,
+                task_run_id=task_run_id,
+                event_type=_TASK_COMMENT_EVENT_TYPE,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                message=normalized_message,
+                details_json=encode_task_event_details({"comment_type": normalized_comment_type}),
+            )
+            return _to_task_comment_metadata(row)
+
+        return await self._with_repo(_op)
+
+    async def list_review_tasks(
+        self,
+        *,
+        profile_id: str,
+        actor_type: str,
+        actor_ref: str,
+        flow_id: str | None = None,
+        labels: Sequence[str] = (),
+        limit: int | None = None,
+    ) -> list[TaskMetadata]:
+        """List review-queue tasks for one reviewer/actor inbox."""
+
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        _validate_owner_pair(
+            owner_type=normalized_actor_type,
+            owner_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        normalized_flow_id = _normalize_optional_text(flow_id)
+        normalized_labels = _normalize_labels(labels)
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskMetadata]:
+            await _ensure_profile_exists(repo, profile_id)
+            if normalized_flow_id is not None:
+                flow = await repo.get_flow(profile_id=profile_id, flow_id=normalized_flow_id)
+                if flow is None:
+                    raise TaskFlowServiceError(
+                        error_code="task_flow_not_found",
+                        reason="Task flow not found",
+                    )
+            rows = await repo.list_tasks(
+                profile_id=profile_id,
+                statuses=("review",),
+                flow_id=normalized_flow_id,
+            )
+            filtered_rows = [
+                row
+                for row in rows
+                if _task_matches_required_labels(row=row, labels=normalized_labels)
+                and _task_matches_review_inbox(
+                    row=row,
+                    actor_type=normalized_actor_type or "",
+                    actor_ref=normalized_actor_ref or "",
+                )
+            ]
+            if limit is not None:
+                filtered_rows = filtered_rows[:limit]
+            return [await _build_task_metadata(repo, row) for row in filtered_rows]
+
+        return await self._with_repo(_op)
+
+    async def approve_review_task(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
+    ) -> TaskMetadata:
+        """Approve one review task and transition it into completed."""
+
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_owner_pair(
+                owner_type=normalized_actor_type,
+                owner_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
+
+        async def _op(repo: TaskFlowRepository) -> TaskMetadata:
+            row = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            if row.status != "review":
+                raise TaskFlowServiceError(
+                    error_code="task_review_invalid_state",
+                    reason="Task is not in review",
+                )
+            before = _snapshot_task(row)
+            if normalized_actor_type is not None and normalized_actor_ref is not None:
+                _ensure_review_actor_matches_task(
+                    row=row,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
+            updated = await repo.update_task(
+                profile_id=profile_id,
+                task_id=row.id,
+                status="completed",
+                blocked_reason_code=None,
+                blocked_reason_text=None,
+            )
+            if updated is None:
+                raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
+            await _reconcile_dependent_tasks(
+                repo=repo,
+                profile_id=profile_id,
+                task_id=updated.id,
+            )
+            await record_task_event(
+                repo=repo,
+                task_id=updated.id,
+                task_run_id=row.last_run_id,
+                event_type="review_approved",
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                message="Review approved.",
+                from_status=before.status,
+                to_status=updated.status,
+            )
+            return await _build_task_metadata(repo, updated)
+
+        return await self._with_repo(_op)
+
+    async def request_review_changes(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        reason_text: str,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
+        owner_type: str | None = None,
+        owner_ref: str | None = None,
+        reason_code: str = "review_changes_requested",
+    ) -> TaskMetadata:
+        """Request changes for one review task and keep it non-terminal."""
+
+        normalized_reason_text = _normalize_required_text(reason_text, field_name="reason_text")
+        normalized_reason_code = _normalize_required_text(reason_code, field_name="reason_code")
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_owner_pair(
+                owner_type=normalized_actor_type,
+                owner_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
+        normalized_owner_type = _normalize_optional_text(owner_type)
+        normalized_owner_ref = _normalize_optional_text(owner_ref)
+        if normalized_owner_type is not None or normalized_owner_ref is not None:
+            _validate_owner_pair(
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                allow_missing=False,
+            )
+
+        async def _op(repo: TaskFlowRepository) -> TaskMetadata:
+            row = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            if row.status != "review":
+                raise TaskFlowServiceError(
+                    error_code="task_review_invalid_state",
+                    reason="Task is not in review",
+                )
+            before = _snapshot_task(row)
+            if normalized_actor_type is not None and normalized_actor_ref is not None:
+                _ensure_review_actor_matches_task(
+                    row=row,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
+            effective_owner_type = normalized_owner_type or row.owner_type
+            effective_owner_ref = normalized_owner_ref or row.owner_ref
+            await _ensure_actor_refs_exist(
+                repo,
+                owner_type=effective_owner_type,
+                owner_ref=effective_owner_ref,
+                reviewer_type=row.reviewer_type,
+                reviewer_ref=row.reviewer_ref,
+            )
+            updated = await repo.update_task(
+                profile_id=profile_id,
+                task_id=row.id,
+                status="blocked",
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                blocked_reason_code=normalized_reason_code,
+                blocked_reason_text=normalized_reason_text,
+            )
+            if updated is None:
+                raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
+            await record_task_event(
+                repo=repo,
+                task_id=updated.id,
+                task_run_id=row.last_run_id,
+                event_type="review_changes_requested",
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                message=normalized_reason_text,
+                from_status=before.status,
+                to_status=updated.status,
+                details={
+                    "reason_code": normalized_reason_code,
+                    "owner_type": updated.owner_type,
+                    "owner_ref": updated.owner_ref,
+                },
+            )
+            return await _build_task_metadata(repo, updated)
+
+        return await self._with_repo(_op)
+
     async def list_dependencies(
         self,
         *,
@@ -388,6 +759,15 @@ class TaskFlowService:
                 task_id=task.id,
                 depends_on_task_id=depends_on_task_id,
                 satisfied_on_status=normalized_status,
+            )
+            await record_task_event(
+                repo=repo,
+                task_id=task.id,
+                event_type="dependency_added",
+                details={
+                    "depends_on_task_id": depends_on_task_id,
+                    "satisfied_on_status": normalized_status,
+                },
             )
             refreshed_task = await repo.get_task(profile_id=profile_id, task_id=task.id)
             if refreshed_task is not None:
@@ -428,6 +808,12 @@ class TaskFlowService:
                     error_code="task_dependency_not_found",
                     reason="Dependency edge not found",
                 )
+            await record_task_event(
+                repo=repo,
+                task_id=task.id,
+                event_type="dependency_removed",
+                details={"depends_on_task_id": depends_on_task_id},
+            )
             refreshed_task = await repo.get_task(profile_id=profile_id, task_id=task.id)
             if refreshed_task is not None:
                 await _reconcile_task_readiness_after_dependency_change(
@@ -544,6 +930,8 @@ class TaskFlowService:
         labels: Sequence[str] | None = None,
         blocked_reason_code: str | None = None,
         blocked_reason_text: str | None = None,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
     ) -> TaskMetadata:
         """Update mutable task fields."""
 
@@ -562,6 +950,14 @@ class TaskFlowService:
                 owner_ref=normalized_owner_ref,
                 allow_missing=False,
             )
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_owner_pair(
+                owner_type=normalized_actor_type,
+                owner_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
         _validate_owner_pair(
             owner_type=reviewer_type,
             owner_ref=reviewer_ref,
@@ -573,6 +969,7 @@ class TaskFlowService:
             current_row = await repo.get_task(profile_id=profile_id, task_id=task_id)
             if current_row is None:
                 raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
+            before = _snapshot_task(current_row)
             owner_changed = (
                 (normalized_owner_type is not None and normalized_owner_type != current_row.owner_type)
                 or (normalized_owner_ref is not None and normalized_owner_ref != current_row.owner_ref)
@@ -625,6 +1022,22 @@ class TaskFlowService:
                     profile_id=profile_id,
                     task_id=row.id,
                 )
+            update_details = _build_task_update_event_details(
+                before=before,
+                after=row,
+                labels=labels,
+            )
+            if update_details:
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    event_type="updated",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    from_status=before.status if before.status != row.status else None,
+                    to_status=row.status if before.status != row.status else None,
+                    details=update_details,
+                )
             return await _build_task_metadata(repo, row)
 
         return await self._with_repo(_op)
@@ -645,6 +1058,86 @@ class TaskFlowService:
 
         await self._with_repo(_op)
 
+    async def build_human_inbox(
+        self,
+        *,
+        profile_id: str,
+        owner_ref: str,
+        task_limit: int = 5,
+        event_limit: int = 5,
+        channel: str | None = None,
+        mark_seen: bool = False,
+    ) -> HumanTaskInboxMetadata:
+        """Build one notification-ready human inbox summary."""
+
+        normalized_owner_ref = _normalize_required_text(owner_ref, field_name="owner_ref")
+        normalized_channel = _normalize_optional_text(channel)
+
+        async def _op(repo: TaskFlowRepository) -> HumanTaskInboxMetadata:
+            filtered_rows, metadata_rows, status_counts, overdue_count = await _build_human_task_summary(
+                repo=repo,
+                profile_id=profile_id,
+                owner_ref=normalized_owner_ref,
+                limit=max(task_limit, 1),
+            )
+            recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
+            unseen_event_count = 0
+            if filtered_rows:
+                task_ids = tuple(row.id for row in filtered_rows)
+                title_by_task_id = {row.id: row.title for row in filtered_rows}
+                cursor = None
+                if normalized_channel is not None:
+                    cursor = await repo.get_task_notification_cursor(
+                        profile_id=profile_id,
+                        actor_type="human",
+                        actor_ref=normalized_owner_ref,
+                        channel=normalized_channel,
+                    )
+                last_seen_event_id = cursor.last_seen_event_id if cursor is not None else None
+                event_rows = await repo.list_task_events_for_tasks(
+                    task_ids=task_ids,
+                    after_event_id=last_seen_event_id,
+                    limit=None,
+                )
+                acknowledge_event_id = event_rows[0].id if event_rows else last_seen_event_id
+                should_suppress_initial_preview = normalized_channel is not None and cursor is None
+                relevant_rows = [row for row in event_rows if _is_human_inbox_notification_event(row)]
+                preview_rows = (
+                    []
+                    if should_suppress_initial_preview
+                    else relevant_rows[: max(event_limit, 1)]
+                )
+                recent_events = tuple(
+                    _to_human_inbox_event_metadata(
+                        row,
+                        task_title=title_by_task_id.get(row.task_id, row.task_id),
+                    )
+                    for row in preview_rows
+                )
+                unseen_event_count = 0 if should_suppress_initial_preview else len(relevant_rows)
+                if normalized_channel is not None and mark_seen and acknowledge_event_id is not None:
+                    await repo.upsert_task_notification_cursor(
+                        profile_id=profile_id,
+                        actor_type="human",
+                        actor_ref=normalized_owner_ref,
+                        channel=normalized_channel,
+                        last_seen_event_id=acknowledge_event_id,
+                    )
+            return HumanTaskInboxMetadata(
+                owner_ref=normalized_owner_ref,
+                channel=normalized_channel,
+                total_count=len(filtered_rows),
+                todo_count=status_counts.get("todo", 0),
+                blocked_count=status_counts.get("blocked", 0),
+                review_count=status_counts.get("review", 0),
+                overdue_count=overdue_count,
+                unseen_event_count=unseen_event_count,
+                tasks=metadata_rows,
+                recent_events=recent_events,
+            )
+
+        return await self._with_repo(_op)
+
     async def summarize_human_tasks(
         self,
         *,
@@ -657,25 +1150,19 @@ class TaskFlowService:
         normalized_owner_ref = _normalize_required_text(owner_ref, field_name="owner_ref")
 
         async def _op(repo: TaskFlowRepository) -> HumanTaskStartupSummary:
-            await _ensure_profile_exists(repo, profile_id)
-            all_rows = await repo.list_tasks(
+            filtered_rows, metadata_rows, status_counts, overdue_count = await _build_human_task_summary(
+                repo=repo,
                 profile_id=profile_id,
-                statuses=_VISIBLE_HUMAN_STATUSES,
+                owner_ref=normalized_owner_ref,
+                limit=max(limit, 1),
             )
-            filtered_rows = [
-                row for row in all_rows if _task_matches_human_inbox(row=row, owner_ref=normalized_owner_ref)
-            ]
-            preview_rows = filtered_rows[: max(limit, 1)]
-            metadata_rows = tuple([await _build_task_metadata(repo, row) for row in preview_rows])
-            status_counts = {status_name: 0 for status_name in _VISIBLE_HUMAN_STATUSES}
-            for row in filtered_rows:
-                status_counts[row.status] = status_counts.get(row.status, 0) + 1
             return HumanTaskStartupSummary(
                 owner_ref=normalized_owner_ref,
                 total_count=len(filtered_rows),
                 todo_count=status_counts.get("todo", 0),
                 blocked_count=status_counts.get("blocked", 0),
                 review_count=status_counts.get("review", 0),
+                overdue_count=overdue_count,
                 tasks=metadata_rows,
             )
 
@@ -915,6 +1402,75 @@ def _to_task_run_metadata(row: TaskRun) -> TaskRunMetadata:
     )
 
 
+def _to_task_event_metadata(row: TaskEvent) -> TaskEventMetadata:
+    return TaskEventMetadata(
+        id=row.id,
+        task_id=row.task_id,
+        task_run_id=row.task_run_id,
+        event_type=row.event_type,
+        actor_type=row.actor_type,
+        actor_ref=row.actor_ref,
+        message=row.message,
+        from_status=row.from_status,
+        to_status=row.to_status,
+        details=_decode_json_object(row.details_json),
+        created_at=row.created_at,
+    )
+
+
+def _to_human_inbox_event_metadata(
+    row: TaskEvent,
+    *,
+    task_title: str,
+) -> HumanTaskInboxEventMetadata:
+    return HumanTaskInboxEventMetadata(
+        id=row.id,
+        task_id=row.task_id,
+        task_title=task_title,
+        event_type=row.event_type,
+        actor_type=row.actor_type,
+        actor_ref=row.actor_ref,
+        message=row.message,
+        from_status=row.from_status,
+        to_status=row.to_status,
+        details=_decode_json_object(row.details_json),
+        created_at=row.created_at,
+    )
+
+
+def _to_task_comment_metadata(row: TaskEvent) -> TaskCommentMetadata:
+    details = _decode_json_object(row.details_json)
+    comment_type = str(details.get("comment_type") or "note").strip() or "note"
+    return TaskCommentMetadata(
+        id=row.id,
+        task_id=row.task_id,
+        task_run_id=row.task_run_id,
+        comment_type=comment_type,
+        actor_type=row.actor_type,
+        actor_ref=row.actor_ref,
+        message=str(row.message or "").strip(),
+        created_at=row.created_at,
+    )
+
+
+async def _to_stale_task_claim_metadata(
+    repo: TaskFlowRepository,
+    *,
+    row: Task,
+    now_utc: datetime,
+) -> StaleTaskClaimMetadata:
+    lease_until = row.lease_until or now_utc
+    if lease_until.tzinfo is None:
+        lease_until = lease_until.replace(tzinfo=timezone.utc)
+    stale_for_sec = max(0, int((now_utc - lease_until).total_seconds()))
+    return StaleTaskClaimMetadata(
+        task=await _build_task_metadata(repo, row),
+        claimed_by=row.claimed_by,
+        lease_until=lease_until,
+        stale_for_sec=stale_for_sec,
+    )
+
+
 def _decode_labels(raw_json: str) -> list[str]:
     try:
         payload = json.loads(raw_json)
@@ -923,6 +1479,82 @@ def _decode_labels(raw_json: str) -> list[str]:
     if not isinstance(payload, list):
         return []
     return [str(item) for item in payload if str(item).strip()]
+
+
+def _decode_json_object(raw_json: str) -> dict[str, object]:
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(key): value for key, value in payload.items()}
+
+
+def _build_task_update_event_details(
+    *,
+    before: _TaskSnapshot,
+    after: Task,
+    labels: Sequence[str] | None,
+) -> dict[str, object]:
+    details: dict[str, object] = {}
+    if before.title != after.title:
+        details["title"] = {"before": before.title, "after": after.title}
+    if before.prompt != after.prompt:
+        details["prompt_changed"] = True
+    if before.priority != after.priority:
+        details["priority"] = {"before": before.priority, "after": after.priority}
+    if before.due_at != after.due_at:
+        details["due_at"] = {
+            "before": before.due_at.isoformat() if before.due_at is not None else None,
+            "after": after.due_at.isoformat() if after.due_at is not None else None,
+        }
+    if before.owner_type != after.owner_type or before.owner_ref != after.owner_ref:
+        details["owner"] = {
+            "before": {"type": before.owner_type, "ref": before.owner_ref},
+            "after": {"type": after.owner_type, "ref": after.owner_ref},
+        }
+    if before.reviewer_type != after.reviewer_type or before.reviewer_ref != after.reviewer_ref:
+        details["reviewer"] = {
+            "before": {"type": before.reviewer_type, "ref": before.reviewer_ref},
+            "after": {"type": after.reviewer_type, "ref": after.reviewer_ref},
+        }
+    if before.requires_review != after.requires_review:
+        details["requires_review"] = {
+            "before": bool(before.requires_review),
+            "after": bool(after.requires_review),
+        }
+    if labels is not None:
+        before_labels = before.labels
+        after_labels = tuple(_decode_labels(after.labels_json))
+        if before_labels != after_labels:
+            details["labels"] = {"before": list(before_labels), "after": list(after_labels)}
+    if before.status != after.status:
+        details["status"] = {"before": before.status, "after": after.status}
+    if before.blocked_reason_code != after.blocked_reason_code or before.blocked_reason_text != after.blocked_reason_text:
+        details["blocked_reason"] = {
+            "before": {"code": before.blocked_reason_code, "text": before.blocked_reason_text},
+            "after": {"code": after.blocked_reason_code, "text": after.blocked_reason_text},
+        }
+    return details
+
+
+def _snapshot_task(row: Task) -> _TaskSnapshot:
+    return _TaskSnapshot(
+        title=row.title,
+        prompt=row.prompt,
+        priority=row.priority,
+        due_at=row.due_at,
+        owner_type=row.owner_type,
+        owner_ref=row.owner_ref,
+        reviewer_type=row.reviewer_type,
+        reviewer_ref=row.reviewer_ref,
+        requires_review=bool(row.requires_review),
+        labels=tuple(_decode_labels(row.labels_json)),
+        status=row.status,
+        blocked_reason_code=row.blocked_reason_code,
+        blocked_reason_text=row.blocked_reason_text,
+    )
 
 
 def _task_matches_required_labels(*, row: Task, labels: Sequence[str]) -> bool:
@@ -962,6 +1594,65 @@ def _task_matches_human_inbox(*, row: Task, owner_ref: str) -> bool:
     return False
 
 
+def _task_matches_review_inbox(*, row: Task, actor_type: str, actor_ref: str) -> bool:
+    if row.status != "review":
+        return False
+    if row.reviewer_type is not None and row.reviewer_ref is not None:
+        return row.reviewer_type == actor_type and row.reviewer_ref == actor_ref
+    return row.owner_type == actor_type and row.owner_ref == actor_ref
+
+
+def _is_human_inbox_notification_event(row: TaskEvent) -> bool:
+    event_type = str(row.event_type or "").strip()
+    if event_type not in _HUMAN_INBOX_NOTIFICATION_EVENT_TYPES:
+        return False
+    if event_type != "updated":
+        return True
+    details = _decode_json_object(row.details_json)
+    return (
+        row.to_status in _VISIBLE_HUMAN_STATUSES
+        or "owner" in details
+        or "reviewer" in details
+        or "blocked_reason" in details
+    )
+
+
+def _ensure_review_actor_matches_task(*, row: Task, actor_type: str, actor_ref: str) -> None:
+    if _task_matches_review_inbox(row=row, actor_type=actor_type, actor_ref=actor_ref):
+        return
+    raise TaskFlowServiceError(
+        error_code="task_review_actor_mismatch",
+        reason="Task review is not assigned to the selected actor",
+    )
+
+
+async def _build_human_task_summary(
+    *,
+    repo: TaskFlowRepository,
+    profile_id: str,
+    owner_ref: str,
+    limit: int,
+) -> tuple[list[Task], tuple[TaskMetadata, ...], dict[str, int], int]:
+    await _ensure_profile_exists(repo, profile_id)
+    all_rows = await repo.list_tasks(
+        profile_id=profile_id,
+        statuses=_VISIBLE_HUMAN_STATUSES,
+    )
+    filtered_rows = [
+        row for row in all_rows if _task_matches_human_inbox(row=row, owner_ref=owner_ref)
+    ]
+    now_utc = datetime.now(timezone.utc)
+    preview_rows = filtered_rows[:limit]
+    metadata_rows = tuple([await _build_task_metadata(repo, row) for row in preview_rows])
+    status_counts = {status_name: 0 for status_name in _VISIBLE_HUMAN_STATUSES}
+    overdue_count = 0
+    for row in filtered_rows:
+        status_counts[row.status] = status_counts.get(row.status, 0) + 1
+        if _is_task_overdue(row=row, now_utc=now_utc):
+            overdue_count += 1
+    return filtered_rows, metadata_rows, status_counts, overdue_count
+
+
 async def _reconcile_dependent_tasks(
     *,
     repo: TaskFlowRepository,
@@ -996,6 +1687,7 @@ async def _reconcile_task_readiness(
             return task
     if task.status != "blocked" or task.blocked_reason_code != "dependency_wait":
         return task
+    before_status = task.status
     promoted = await repo.update_task(
         profile_id=task.profile_id,
         task_id=task.id,
@@ -1003,6 +1695,14 @@ async def _reconcile_task_readiness(
         blocked_reason_code=None,
         blocked_reason_text=None,
     )
+    if promoted is not None:
+        await record_task_event(
+            repo=repo,
+            task_id=promoted.id,
+            event_type="dependencies_satisfied",
+            from_status=before_status,
+            to_status=promoted.status,
+        )
     return task if promoted is None else promoted
 
 
@@ -1016,6 +1716,7 @@ async def _reconcile_task_readiness_after_dependency_change(
     dependencies = await repo.list_dependencies(task_id=task.id)
     if not dependencies:
         if task.status == "blocked" and task.blocked_reason_code == "dependency_wait":
+            before_status = task.status
             promoted = await repo.update_task(
                 profile_id=task.profile_id,
                 task_id=task.id,
@@ -1023,12 +1724,21 @@ async def _reconcile_task_readiness_after_dependency_change(
                 blocked_reason_code=None,
                 blocked_reason_text=None,
             )
+            if promoted is not None:
+                await record_task_event(
+                    repo=repo,
+                    task_id=promoted.id,
+                    event_type="dependencies_satisfied",
+                    from_status=before_status,
+                    to_status=promoted.status,
+                )
             return task if promoted is None else promoted
         return task
     for edge in dependencies:
         dependency_row = await repo.get_task(profile_id=task.profile_id, task_id=edge.depends_on_task_id)
         if dependency_row is None or dependency_row.status != edge.satisfied_on_status:
             if task.status != "blocked" or task.blocked_reason_code != "dependency_wait":
+                before_status = task.status
                 blocked = await repo.update_task(
                     profile_id=task.profile_id,
                     task_id=task.id,
@@ -1036,6 +1746,15 @@ async def _reconcile_task_readiness_after_dependency_change(
                     blocked_reason_code="dependency_wait",
                     blocked_reason_text="Waiting for dependent tasks to complete.",
                 )
+                if blocked is not None:
+                    await record_task_event(
+                        repo=repo,
+                        task_id=blocked.id,
+                        event_type="dependencies_blocked",
+                        from_status=before_status,
+                        to_status=blocked.status,
+                        details={"blocked_reason_code": "dependency_wait"},
+                    )
                 return task if blocked is None else blocked
             return task
     return await _reconcile_task_readiness(repo=repo, task=task)

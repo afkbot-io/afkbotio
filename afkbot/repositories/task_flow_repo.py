@@ -6,12 +6,15 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import cast
 
-from sqlalchemy import Delete, Select, delete, or_, select, update
+from sqlalchemy import Delete, Select, delete, func, or_, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.models.task import Task
 from afkbot.models.task_dependency import TaskDependency
+from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
+from afkbot.models.task_notification_cursor import TaskNotificationCursor
 from afkbot.models.task_run import TaskRun
 
 _UNSET = object()
@@ -268,6 +271,136 @@ class TaskFlowRepository:
         await self._session.flush()
         return row
 
+    async def create_task_event(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        task_run_id: int | None = None,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
+        message: str | None = None,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        details_json: str = "{}",
+    ) -> TaskEvent:
+        """Append one immutable task event row."""
+
+        row = TaskEvent(
+            task_id=task_id,
+            task_run_id=task_run_id,
+            event_type=event_type,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            message=message,
+            from_status=from_status,
+            to_status=to_status,
+            details_json=details_json,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_task_events(
+        self,
+        *,
+        task_id: str,
+        limit: int | None = None,
+    ) -> list[TaskEvent]:
+        """Return task events ordered from newest to oldest."""
+
+        statement: Select[tuple[TaskEvent]] = (
+            select(TaskEvent)
+            .where(TaskEvent.task_id == task_id)
+            .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def list_task_events_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+        after_event_id: int | None = None,
+        limit: int | None = None,
+    ) -> list[TaskEvent]:
+        """Return recent task events across one task id slice."""
+
+        normalized_ids = tuple(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        if not normalized_ids:
+            return []
+        statement: Select[tuple[TaskEvent]] = (
+            select(TaskEvent)
+            .where(TaskEvent.task_id.in_(normalized_ids))
+            .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        )
+        if after_event_id is not None:
+            statement = statement.where(TaskEvent.id > after_event_id)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def get_task_notification_cursor(
+        self,
+        *,
+        profile_id: str,
+        actor_type: str,
+        actor_ref: str,
+        channel: str,
+    ) -> TaskNotificationCursor | None:
+        """Return one notification cursor for actor/channel scope."""
+
+        statement: Select[tuple[TaskNotificationCursor]] = select(TaskNotificationCursor).where(
+            TaskNotificationCursor.profile_id == profile_id,
+            TaskNotificationCursor.actor_type == actor_type,
+            TaskNotificationCursor.actor_ref == actor_ref,
+            TaskNotificationCursor.channel == channel,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def upsert_task_notification_cursor(
+        self,
+        *,
+        profile_id: str,
+        actor_type: str,
+        actor_ref: str,
+        channel: str,
+        last_seen_event_id: int | None,
+    ) -> TaskNotificationCursor:
+        """Create or update one notification cursor row."""
+
+        statement = sqlite_insert(TaskNotificationCursor).values(
+            profile_id=profile_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            channel=channel,
+            last_seen_event_id=last_seen_event_id,
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[
+                TaskNotificationCursor.profile_id,
+                TaskNotificationCursor.actor_type,
+                TaskNotificationCursor.actor_ref,
+                TaskNotificationCursor.channel,
+            ],
+            set_={
+                "last_seen_event_id": last_seen_event_id,
+                "updated_at": func.now(),
+            },
+        )
+        await self._session.execute(statement)
+        await self._session.flush()
+        row = await self.get_task_notification_cursor(
+            profile_id=profile_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            channel=channel,
+        )
+        if row is None:
+            raise RuntimeError("Failed to persist task notification cursor")
+        return row
+
     async def list_dependencies(self, *, task_id: str) -> list[TaskDependency]:
         """Return dependencies for one task."""
 
@@ -392,18 +525,12 @@ class TaskFlowRepository:
     ) -> Task | None:
         """Atomically claim one runnable AI-owned task."""
 
-        reclaimable_statuses = ("todo", "claimed", "running")
         eligible_subquery = (
             select(Task.id)
             .where(
                 Task.owner_type == "ai_profile",
-                Task.status.in_(reclaimable_statuses),
+                Task.status == "todo",
                 or_(Task.ready_at.is_(None), Task.ready_at <= now_utc),
-                or_(
-                    Task.status == "todo",
-                    Task.lease_until.is_(None),
-                    Task.lease_until <= now_utc,
-                ),
             )
             .order_by(
                 Task.priority.desc(),
@@ -441,6 +568,33 @@ class TaskFlowRepository:
             return None
         statement_select: Select[tuple[Task]] = select(Task).where(Task.claim_token == claim_token)
         return (await self._session.execute(statement_select)).scalar_one_or_none()
+
+    async def list_expired_claimed_tasks(
+        self,
+        *,
+        now_utc: datetime,
+        profile_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[Task]:
+        """Return AI-owned claimed/running tasks whose lease has expired."""
+
+        conditions = [
+            Task.owner_type == "ai_profile",
+            Task.status.in_(("claimed", "running")),
+            Task.claim_token.is_not(None),
+            Task.lease_until.is_not(None),
+            Task.lease_until <= now_utc,
+        ]
+        if profile_id is not None:
+            conditions.append(Task.profile_id == profile_id)
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(*conditions)
+            .order_by(Task.lease_until.asc(), Task.updated_at.asc(), Task.created_at.asc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
 
     async def get_task_by_claim_token(self, *, claim_token: str) -> Task | None:
         """Return one claimed task row by claim token."""
@@ -517,6 +671,46 @@ class TaskFlowRepository:
                 Task.status.in_(("claimed", "running")),
             )
             .values(lease_until=lease_until)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return _result_succeeded(result)
+
+    async def release_expired_task_claim(
+        self,
+        *,
+        task_id: str,
+        claim_token: str,
+        now_utc: datetime,
+        ready_at: datetime,
+        error_code: str | None = None,
+        error_text: str | None = None,
+    ) -> bool:
+        """Release one expired in-flight task claim back into todo."""
+
+        statement = (
+            update(Task)
+            .where(
+                Task.id == task_id,
+                Task.claim_token == claim_token,
+                Task.status.in_(("claimed", "running")),
+                Task.lease_until.is_not(None),
+                Task.lease_until <= now_utc,
+            )
+            .values(
+                status="todo",
+                claim_token=None,
+                claimed_by=None,
+                lease_until=None,
+                ready_at=ready_at,
+                started_at=None,
+                blocked_reason_code=None,
+                blocked_reason_text=None,
+                last_error_code=error_code,
+                last_error_text=error_text,
+                finished_at=None,
+            )
             .execution_options(synchronize_session=False)
         )
         result = await self._session.execute(statement)

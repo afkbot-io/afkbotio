@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -243,6 +244,12 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert len(listed_runs) == 1
         assert listed_runs[0].id == updated.last_run_id
         assert listed_runs[0].status == "completed"
+        listed_events = await service.list_task_events(profile_id="default", task_id=first.id)
+        assert listed_events[0].event_type == "execution_completed"
+        assert listed_events[0].actor_type == "runtime"
+        assert listed_events[0].actor_ref == "worker-a"
+        assert listed_events[0].to_status == "completed"
+        assert listed_events[0].details["run_id"] == listed_runs[0].run_id
         fetched_run = await service.get_task_run(
             profile_id="default",
             task_run_id=updated.last_run_id,
@@ -309,6 +316,10 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         assert updated.status == "blocked"
         assert updated.blocked_reason_code == "task_action_ask_question"
         assert updated.blocked_reason_text == "Need human approval"
+        listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert listed_events[0].event_type == "execution_blocked"
+        assert listed_events[0].message == "Need human approval"
+        assert listed_events[0].details["blocked_reason_code"] == "task_action_ask_question"
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -424,6 +435,10 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
         assert updated.status == "failed"
         assert updated.last_error_code == "llm_timeout"
         assert updated.last_error_text == "Task run timed out while waiting for the LLM provider."
+        listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert listed_events[0].event_type == "execution_failed"
+        assert listed_events[0].actor_ref == "worker-c"
+        assert listed_events[0].details["error_code"] == "llm_timeout"
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -496,6 +511,204 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert completed.status == "completed"
         assert completed.current_attempt == 2
         assert len(observed_calls) == 1
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
+    tmp_path: Path,
+) -> None:
+    """Expired claims should be released and retried before a worker takes new work."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_sweep.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_sweep.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Recover stale runtime claim",
+            prompt="Recover a stale claim and finish the work.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        stale_now = datetime.now(timezone.utc)
+        stale_session_id = f"taskflow:{task.id}"
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=stale_now,
+                lease_until=stale_now - timedelta(minutes=5),
+                claim_token="stale-claim",
+                claimed_by="taskflow-runtime:stale",
+            )
+            assert claimed is not None
+            task_run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=claimed.current_attempt,
+                owner_type=claimed.owner_type,
+                owner_ref=claimed.owner_ref,
+                execution_mode="detached",
+                status="running",
+                session_id=stale_session_id,
+                run_id=None,
+                worker_id="taskflow-runtime:stale",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            attached = await repo.attach_task_run(
+                task_id=task.id,
+                claim_token="stale-claim",
+                task_run_id=task_run.id,
+                session_id=stale_session_id,
+            )
+            assert attached is True
+            started = await repo.mark_task_started(
+                task_id=task.id,
+                claim_token="stale-claim",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            assert started is True
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-sweep")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "completed"
+        assert updated.current_attempt == 2
+        task_runs = await service.list_task_runs(profile_id="default", task_id=task.id)
+        assert len(task_runs) == 2
+        stale_run = next(item for item in task_runs if item.worker_id == "taskflow-runtime:stale")
+        fresh_run = next(item for item in task_runs if item.worker_id == "worker-sweep")
+        assert stale_run.status == "cancelled"
+        assert stale_run.error_code == "task_lease_expired"
+        assert fresh_run.status == "completed"
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert events[0].event_type == "execution_completed"
+        assert {item.event_type for item in events} >= {"created", "lease_expired", "execution_completed"}
+        assert len(observed_calls) == 1
+        assert observed_calls[0].session_id == f"taskflow:{task.id}"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -> None:
+    """Manual stale-claim maintenance should only repair work inside the selected profile."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_profile_sweep.db",
+        profile_ids=("default", "ops"),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_profile_sweep.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default stale task",
+            prompt="Repair the default-profile stale task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        ops_task = await service.create_task(
+            profile_id="ops",
+            title="Ops stale task",
+            prompt="Leave the ops-profile stale task untouched for now.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="ops",
+        )
+        stale_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            for task_id, claim_token, claimed_by in (
+                (default_task.id, "stale-default-claim", "taskflow-runtime:default"),
+                (ops_task.id, "stale-ops-claim", "taskflow-runtime:ops"),
+            ):
+                claimed = await repo.claim_next_runnable_task(
+                    now_utc=stale_now,
+                    lease_until=stale_now - timedelta(minutes=5),
+                    claim_token=claim_token,
+                    claimed_by=claimed_by,
+                )
+                assert claimed is not None
+                task_run = await repo.create_task_run(
+                    task_id=task_id,
+                    attempt=claimed.current_attempt,
+                    owner_type=claimed.owner_type,
+                    owner_ref=claimed.owner_ref,
+                    execution_mode="detached",
+                    status="running",
+                    session_id=f"taskflow:{task_id}",
+                    run_id=None,
+                    worker_id=claimed_by,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                attached = await repo.attach_task_run(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    task_run_id=task_run.id,
+                    session_id=f"taskflow:{task_id}",
+                )
+                assert attached is True
+                started = await repo.mark_task_started(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                assert started is True
+
+        released_count = await runtime.sweep_expired_claims(
+            worker_id="taskflow-cli-maintenance",
+            profile_id="default",
+            limit=10,
+        )
+
+        assert released_count == 1
+        default_after = await service.get_task(profile_id="default", task_id=default_task.id)
+        ops_after = await service.get_task(profile_id="ops", task_id=ops_task.id)
+        assert default_after.status == "todo"
+        assert default_after.last_error_code == "task_lease_expired"
+        assert ops_after.status == "running"
+
+        default_events = await service.list_task_events(profile_id="default", task_id=default_task.id)
+        ops_events = await service.list_task_events(profile_id="ops", task_id=ops_task.id)
+        assert default_events[0].event_type == "lease_expired"
+        assert all(item.event_type != "lease_expired" for item in ops_events)
     finally:
         await runtime.shutdown()
         await engine.dispose()

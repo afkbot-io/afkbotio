@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -11,7 +11,12 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
-from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
+from afkbot.services.task_flow import (
+    TaskFlowServiceError,
+    TaskMaintenanceSweepMetadata,
+    get_task_flow_service,
+)
+from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.settings import get_settings
 
 
@@ -212,6 +217,229 @@ async def build_board_payload(
         await engine.dispose()
 
 
+async def build_human_inbox_payload(
+    *,
+    profile_id: str,
+    owner_ref: str,
+    task_limit: int = 5,
+    event_limit: int = 5,
+    channel: str | None = None,
+    mark_seen: bool = False,
+) -> str:
+    """Build one notification-ready human inbox payload."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        inbox = await service.build_human_inbox(
+            profile_id=profile_id,
+            owner_ref=owner_ref,
+            task_limit=task_limit,
+            event_limit=event_limit,
+            channel=channel,
+            mark_seen=mark_seen,
+        )
+        return json.dumps({"inbox": inbox.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def list_stale_task_claims_payload(
+    *,
+    profile_id: str,
+    limit: int | None = None,
+) -> str:
+    """List stale Task Flow claims for one profile."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        items = await service.list_stale_task_claims(profile_id=profile_id, limit=limit)
+        return json.dumps(
+            {"stale_task_claims": [item.model_dump(mode="json") for item in items]},
+            ensure_ascii=True,
+        )
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def sweep_stale_task_claims_payload(
+    *,
+    profile_id: str,
+    limit: int | None = None,
+) -> str:
+    """Force one maintenance sweep for stale Task Flow claims in one profile."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    runtime = TaskFlowRuntimeService(settings=settings, session_factory=session_factory)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        effective_limit = (
+            max(1, limit)
+            if limit is not None
+            else max(settings.taskflow_runtime_maintenance_batch_size, 1)
+        )
+        released_count = await runtime.sweep_expired_claims(
+            worker_id="taskflow-cli-maintenance",
+            limit=effective_limit,
+            profile_id=profile_id,
+        )
+        service = get_task_flow_service(settings)
+        remaining = await service.list_stale_task_claims(profile_id=profile_id, limit=effective_limit)
+        metadata = TaskMaintenanceSweepMetadata(
+            generated_at=datetime.now(timezone.utc),
+            profile_id=profile_id,
+            limit=effective_limit,
+            repaired_count=released_count,
+            remaining_count=len(remaining),
+            remaining=remaining,
+        )
+        return json.dumps(
+            {"maintenance": metadata.model_dump(mode="json")},
+            ensure_ascii=True,
+        )
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def list_review_tasks_payload(
+    *,
+    profile_id: str,
+    actor_type: str,
+    actor_ref: str,
+    flow_id: str | None = None,
+    labels: tuple[str, ...] = (),
+    limit: int | None = None,
+) -> str:
+    """List review inbox tasks for one actor."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        items = await service.list_review_tasks(
+            profile_id=profile_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            flow_id=flow_id,
+            labels=labels,
+            limit=limit,
+        )
+        return json.dumps({"review_tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def list_task_events_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    limit: int | None = None,
+) -> str:
+    """List append-only task events for one task."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        items = await service.list_task_events(
+            profile_id=profile_id,
+            task_id=task_id,
+            limit=limit,
+        )
+        return json.dumps({"task_events": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def list_task_comments_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    limit: int | None = None,
+) -> str:
+    """List append-only task comments for one task."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        items = await service.list_task_comments(
+            profile_id=profile_id,
+            task_id=task_id,
+            limit=limit,
+        )
+        return json.dumps({"task_comments": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def add_task_comment_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    message: str,
+    actor_type: str,
+    actor_ref: str,
+    comment_type: str = "note",
+    task_run_id: int | None = None,
+) -> str:
+    """Append one comment to the selected task."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        item = await service.add_task_comment(
+            profile_id=profile_id,
+            task_id=task_id,
+            message=message,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            comment_type=comment_type,
+            task_run_id=task_run_id,
+        )
+        return json.dumps({"task_comment": item.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
 async def get_task_payload(*, profile_id: str, task_id: str) -> str:
     """Get one task and return JSON payload."""
 
@@ -247,6 +475,8 @@ async def update_task_payload(
     labels: tuple[str, ...] | None = None,
     blocked_reason_code: str | None = None,
     blocked_reason_text: str | None = None,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
 ) -> str:
     """Update one task and return JSON payload."""
 
@@ -273,6 +503,8 @@ async def update_task_payload(
             labels=labels,
             blocked_reason_code=blocked_reason_code,
             blocked_reason_text=blocked_reason_text,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
         )
         return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
@@ -296,6 +528,72 @@ async def list_dependencies_payload(*, profile_id: str, task_id: str) -> str:
             {"dependencies": [item.model_dump(mode="json") for item in items]},
             ensure_ascii=True,
         )
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def approve_review_task_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
+) -> str:
+    """Approve one review task."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        item = await service.approve_review_task(
+            profile_id=profile_id,
+            task_id=task_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+        )
+        return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def request_review_changes_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    reason_text: str,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
+    owner_type: str | None = None,
+    owner_ref: str | None = None,
+    reason_code: str = "review_changes_requested",
+) -> str:
+    """Request changes for one review task."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        item = await service.request_review_changes(
+            profile_id=profile_id,
+            task_id=task_id,
+            reason_text=reason_text,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            reason_code=reason_code,
+        )
+        return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
