@@ -20,6 +20,7 @@ from afkbot.cli.commands.profile import register as register_profile
 from afkbot.cli.commands.skill import register as register_skill
 from afkbot.cli.commands.start import register as register_start
 from afkbot.cli.commands.subagent import register as register_subagent
+from afkbot.cli.commands.task import register as register_task
 from afkbot.cli.commands.uninstall import register as register_uninstall
 from afkbot.cli.commands.update import register as register_update
 from afkbot.cli.commands.upgrade import register as register_upgrade
@@ -33,7 +34,7 @@ app = typer.Typer(
         "Use `afk start` to run the full local stack, `afk chat` for interactive or one-shot "
         "chat turns, `afk doctor` to verify local readiness, `afk bootstrap` to edit global "
         "system-prompt files, `afk update` to refresh the active AFKBOT install, `afk automation` to "
-        "manage scheduled tasks, `afk channel` to operate external adapters, `afk memory` to "
+        "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk channel` to operate external adapters, `afk memory` to "
         "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, and `afk browser install` "
         "to prepare browser automation runtime."
@@ -46,6 +47,7 @@ register_uninstall(app)
 register_update(app)
 register_bootstrap(app)
 register_automation(app)
+register_task(app)
 register_browser(app)
 register_channel(app)
 register_chat(app)

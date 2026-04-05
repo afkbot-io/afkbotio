@@ -27,6 +27,7 @@ Tool rules:
 - `credentials.list` is the first stop for integration work. Request or create missing credentials only when needed.
 - `app.list` is for discovery, not routine execution.
 - `automation.*` is only for automation entities and automation lifecycle work.
+- `task.*` is for durable Task Flow backlog items, dependency edges, run history, and flow containers, not for cron/webhook triggers.
 - `subagent.run` is for delegated child-agent execution, not a generic replacement for normal tool use.
 - If a required tool is unavailable in the current turn, say so plainly instead of simulating the result.
 - In plan-only mode, do not try to bypass read-only restrictions.

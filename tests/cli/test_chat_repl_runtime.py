@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.cli.commands.chat_repl_runtime import _run_repl_sequential, run_repl_transport
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.services.chat_session.input_catalog import ChatInputCatalog, ChatInputCatalogStore
@@ -12,6 +14,7 @@ from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.task_flow import HumanTaskStartupSummary, TaskMetadata
 from afkbot.settings import Settings
 
 
@@ -146,8 +149,9 @@ def test_run_repl_transport_routes_interactive_tty_into_fullscreen_workspace(
         catalog_getter,
         refresh_catalog,
         run_turn,
+        startup_assistant_message=None,
     ) -> None:
-        _ = repl_state, run_turn
+        _ = repl_state, run_turn, startup_assistant_message
         captured["profile_id"] = profile_id
         captured["session_id"] = session_id
         captured["catalog_before"] = catalog_getter()
@@ -278,6 +282,95 @@ def test_run_repl_sequential_reuses_one_queue_across_inputs(monkeypatch) -> None
     assert seen_messages == ["hello"]
     assert len(queue_ids) == 2
     assert len(set(queue_ids)) == 1
+
+
+def test_render_human_task_startup_summary_renders_ru_notice(monkeypatch) -> None:
+    """Human startup summary should render task titles and localized summary copy."""
+
+    from afkbot.cli.commands import chat_repl_runtime as module
+
+    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    summary = HumanTaskStartupSummary(
+        owner_ref="cli_user:alice",
+        total_count=2,
+        todo_count=1,
+        blocked_count=1,
+        review_count=0,
+        tasks=(
+            TaskMetadata(
+                id="task_1",
+                profile_id="default",
+                flow_id=None,
+                title="Подготовить релиз",
+                prompt="Собрать changelog",
+                status="todo",
+                priority=70,
+                due_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
+                ready_at=datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc),
+                owner_type="human",
+                owner_ref="cli_user:alice",
+                reviewer_type=None,
+                reviewer_ref=None,
+                source_type="manual",
+                source_ref=None,
+                created_by_type="human",
+                created_by_ref="cli",
+                labels=("release",),
+                requires_review=False,
+                blocked_reason_code=None,
+                blocked_reason_text=None,
+                current_attempt=0,
+                last_session_id=None,
+                last_run_id=None,
+                last_error_code=None,
+                last_error_text=None,
+                started_at=None,
+                finished_at=None,
+                created_at=datetime(2026, 4, 5, 10, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 4, 5, 10, 5, tzinfo=timezone.utc),
+            ),
+            TaskMetadata(
+                id="task_2",
+                profile_id="default",
+                flow_id=None,
+                title="Дождаться дизайна",
+                prompt="Ждём финальный макет",
+                status="blocked",
+                priority=50,
+                due_at=None,
+                ready_at=None,
+                owner_type="human",
+                owner_ref="cli_user:alice",
+                reviewer_type=None,
+                reviewer_ref=None,
+                source_type="manual",
+                source_ref=None,
+                created_by_type="human",
+                created_by_ref="cli",
+                labels=(),
+                requires_review=False,
+                blocked_reason_code="dependency_wait",
+                blocked_reason_text="Waiting",
+                current_attempt=0,
+                last_session_id=None,
+                last_run_id=None,
+                last_error_code=None,
+                last_error_text=None,
+                started_at=None,
+                finished_at=None,
+                created_at=datetime(2026, 4, 5, 11, 0, tzinfo=timezone.utc),
+                updated_at=datetime(2026, 4, 5, 11, 5, tzinfo=timezone.utc),
+            ),
+        ),
+    )
+
+    rendered = module._render_human_task_startup_summary(summary)
+
+    assert rendered is not None
+    assert "Для вас есть 2 открытых задач" in rendered
+    assert "Подготовить релиз" in rendered
+    assert "Дождаться дизайна" in rendered
+    assert "Используйте `afk task list`" in rendered
 
 
 async def _async_noop() -> None:

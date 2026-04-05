@@ -65,6 +65,19 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "subagent.result",
         "subagent.run",
         "subagent.wait",
+        "task.board",
+        "task.create",
+        "task.dependency.add",
+        "task.dependency.list",
+        "task.dependency.remove",
+        "task.flow.create",
+        "task.flow.get",
+        "task.flow.list",
+        "task.get",
+        "task.list",
+        "task.run.get",
+        "task.run.list",
+        "task.update",
         "web.fetch",
         "web.search",
     )
@@ -80,6 +93,9 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("web.fetch") is not None
     assert registry.get("browser.control") is not None
     assert registry.get("mcp.profile.upsert") is not None
+    assert registry.get("task.board") is not None
+    assert registry.get("task.flow.create") is not None
+    assert registry.get("task.run.list") is not None
     assert registry.get("mcp.debug.echo") is None
 
 

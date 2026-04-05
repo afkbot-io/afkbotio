@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import getpass
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol
 
@@ -12,8 +13,10 @@ from afkbot.cli.commands.chat_planning import ChatPlanningMode
 from afkbot.cli.commands.chat_fullscreen_runtime import (
     run_fullscreen_chat_workspace_session,
 )
+from afkbot.cli.commands.chat_startup_notices import render_startup_assistant_message
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.cli.presentation.chat_interactive import InteractiveChatUX
+from afkbot.cli.presentation.prompt_i18n import detect_system_prompt_language, msg
 from afkbot.cli.presentation.chat_workspace.runtime import (
     build_chat_workspace_catalog_store,
     build_chat_workspace_catalog_refresher,
@@ -28,6 +31,7 @@ from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
 from afkbot.services.llm.reasoning import ThinkingLevel
+from afkbot.services.task_flow import HumanTaskStartupSummary, get_task_flow_service
 from afkbot.settings import Settings
 
 RunReplTurnFn = Callable[
@@ -78,6 +82,13 @@ def run_repl_transport(
             await catalog_refresher()
             repl_state.latest_catalog = catalog_store.current()
 
+        startup_assistant_message = runner.run(
+            _load_task_startup_assistant_message(
+                settings=settings,
+                profile_id=profile_id,
+            )
+        )
+
         try:
             if not supports_interactive_tty():
                 ux = InteractiveChatUX.create()
@@ -100,6 +111,7 @@ def run_repl_transport(
                     repl_state=repl_state,
                     progress_sink=_sequential_progress_sink,
                     refresh_catalog=_refresh_catalog,
+                    startup_assistant_message=startup_assistant_message,
                 )
             else:
                 runner.run(
@@ -110,6 +122,7 @@ def run_repl_transport(
                         repl_state=repl_state,
                         catalog_getter=catalog_store.current,
                         refresh_catalog=_refresh_catalog,
+                        startup_assistant_message=startup_assistant_message,
                     )
                 )
         finally:
@@ -132,10 +145,19 @@ def _run_repl_sequential(
     repl_state: ChatReplSessionState,
     progress_sink: Callable[[ProgressEvent], None],
     refresh_catalog: Callable[[], Coroutine[Any, Any, None]],
+    startup_assistant_message: str | None = None,
 ) -> None:
     """Run the sequential REPL path for non-interactive stdin/stdout."""
 
     turn_queue = ChatReplTurnQueue()
+    if startup_assistant_message:
+        rendered_notice = render_startup_assistant_message(
+            message=startup_assistant_message,
+            profile_id=profile_id,
+            session_id=session_id,
+        )
+        if rendered_notice is not None:
+            typer.echo(rendered_notice)
 
     while True:
         try:
@@ -232,3 +254,86 @@ def _build_repl_interrupt_notifier(ux: _InterruptNotifiableUX) -> Callable[[], N
         typer.echo("  Interrupt received. Cancelling current turn. Press Ctrl-C again to exit.")
 
     return _notify
+
+
+async def _load_task_startup_assistant_message(
+    *,
+    settings: Settings,
+    profile_id: str,
+) -> str | None:
+    """Build one assistant-style startup message for the current human task inbox, failing open."""
+
+    owner_ref = _resolve_chat_human_owner_ref(settings)
+    try:
+        async with asyncio.timeout(2.0):
+            summary = await get_task_flow_service(settings).summarize_human_tasks(
+                profile_id=profile_id,
+                owner_ref=owner_ref,
+            )
+    except Exception:
+        return None
+    return _render_human_task_startup_summary(summary)
+
+
+def _resolve_chat_human_owner_ref(settings: Settings) -> str:
+    """Resolve the current local human owner reference for chat startup lookups."""
+
+    explicit_ref = str(settings.chat_human_owner_ref or "").strip()
+    if explicit_ref:
+        return explicit_ref
+    try:
+        username = getpass.getuser().strip()
+    except Exception:
+        username = ""
+    return f"cli_user:{username or 'local'}"
+
+
+def _render_human_task_startup_summary(summary: HumanTaskStartupSummary) -> str | None:
+    """Render one localized assistant message summarizing current human tasks."""
+
+    if summary.total_count <= 0:
+        return None
+    lang = detect_system_prompt_language()
+    lines = [
+        msg(
+            lang,
+            en=f"You have {summary.total_count} open Task Flow items for you.",
+            ru=f"Для вас есть {summary.total_count} открытых задач в Task Flow.",
+        )
+    ]
+    counts: list[str] = []
+    if summary.todo_count:
+        counts.append(msg(lang, en=f"todo: {summary.todo_count}", ru=f"todo: {summary.todo_count}"))
+    if summary.blocked_count:
+        counts.append(
+            msg(lang, en=f"blocked: {summary.blocked_count}", ru=f"blocked: {summary.blocked_count}")
+        )
+    if summary.review_count:
+        counts.append(msg(lang, en=f"review: {summary.review_count}", ru=f"review: {summary.review_count}"))
+    if counts:
+        lines.append(", ".join(counts))
+    for task in summary.tasks:
+        details: list[str] = [task.status]
+        if task.priority != 50:
+            details.append(msg(lang, en=f"priority {task.priority}", ru=f"приоритет {task.priority}"))
+        if task.due_at is not None:
+            due_text = task.due_at.astimezone().strftime("%Y-%m-%d %H:%M")
+            details.append(msg(lang, en=f"due {due_text}", ru=f"срок {due_text}"))
+        lines.append(f"- {task.title} ({'; '.join(details)})")
+    remaining_count = max(summary.total_count - len(summary.tasks), 0)
+    if remaining_count:
+        lines.append(
+            msg(
+                lang,
+                en=f"And {remaining_count} more task(s) are waiting in the backlog.",
+                ru=f"И ещё {remaining_count} задач ждут в backlog.",
+            )
+        )
+    lines.append(
+        msg(
+            lang,
+            en="Use `afk task list` if you want the full backlog.",
+            ru="Используйте `afk task list`, если нужен полный список.",
+        )
+    )
+    return "\n".join(lines)

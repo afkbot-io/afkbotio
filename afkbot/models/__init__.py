@@ -32,6 +32,10 @@ _MODEL_EXPORT_MODULES = {
     "RunlogEvent": "runlog_event",
     "Secret": "secret",
     "SubagentTask": "subagent_task",
+    "Task": "task",
+    "TaskDependency": "task_dependency",
+    "TaskFlow": "task_flow",
+    "TaskRun": "task_run",
     "ToolCredentialBinding": "tool_credential_binding",
 }
 

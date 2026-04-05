@@ -962,6 +962,58 @@ async def test_llm_fail_closes_when_explicit_skill_has_no_executable_surface(tmp
     await engine.dispose()
 
 
+async def test_llm_taskflow_runtime_keeps_background_broad_tool_surface(tmp_path: Path) -> None:
+    """Task Flow transport should keep the same broad background tool surface as automation."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_taskflow_runtime_broad_surface.db")
+    automation_skill = tmp_path / "afkbot/skills/automation"
+    automation_skill.mkdir(parents=True, exist_ok=True)
+    (automation_skill / "SKILL.md").write_text(
+        "\n".join(
+            [
+                "---",
+                "description: \"Automation management.\"",
+                "triggers:",
+                "  - telegram",
+                "tool_names:",
+                "  - automation.create",
+                "  - app.run",
+                'execution_mode: "executable"',
+                "---",
+                "# automation",
+            ],
+        ),
+        encoding="utf-8",
+    )
+
+    scripted = MockLLMProvider([LLMResponse.final("done")])
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=scripted,
+            llm_max_iterations=1,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-llm-taskflow-runtime-broad-surface",
+            message="Отправь ПРИВЕТ в Telegram",
+            context_overrides=TurnContextOverrides(runtime_metadata={"transport": "taskflow"}),
+        )
+        assert result.envelope.action == "finalize"
+
+    assert len(scripted.requests) == 1
+    request = scripted.requests[0]
+    names = {tool.name for tool in request.available_tools}
+    assert "app.run" in names
+    assert "bash.exec" in names
+    assert "http.request" in names
+    await engine.dispose()
+
+
 async def test_llm_fail_closes_when_explicit_skill_is_unavailable(tmp_path: Path) -> None:
     """Explicit unavailable skill invoke must not fall back to generic tools."""
 

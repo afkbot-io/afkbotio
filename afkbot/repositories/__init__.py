@@ -24,6 +24,7 @@ __all__ = [
     "RunRepository",
     "RunlogRepository",
     "SubagentTaskRepository",
+    "TaskFlowRepository",
 ]
 
 _EXPORTS = {
@@ -39,6 +40,7 @@ _EXPORTS = {
     "RunRepository": "afkbot.repositories.run_repo",
     "RunlogRepository": "afkbot.repositories.runlog_repo",
     "SubagentTaskRepository": "afkbot.repositories.subagent_task_repo",
+    "TaskFlowRepository": "afkbot.repositories.task_flow_repo",
 }
 
 
@@ -67,3 +69,4 @@ if TYPE_CHECKING:
     from afkbot.repositories.run_repo import RunRepository
     from afkbot.repositories.runlog_repo import RunlogRepository
     from afkbot.repositories.subagent_task_repo import SubagentTaskRepository
+    from afkbot.repositories.task_flow_repo import TaskFlowRepository

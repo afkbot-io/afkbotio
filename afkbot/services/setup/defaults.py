@@ -18,6 +18,7 @@ _RECOMMENDED_POLICY_CAPABILITY_IDS: tuple[PolicyCapabilityId, ...] = (
     PolicyCapabilityId.CREDENTIALS,
     PolicyCapabilityId.SUBAGENTS,
     PolicyCapabilityId.AUTOMATION,
+    PolicyCapabilityId.TASKFLOW,
     PolicyCapabilityId.HTTP,
     PolicyCapabilityId.WEB,
     PolicyCapabilityId.BROWSER,

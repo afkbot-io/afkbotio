@@ -477,7 +477,7 @@ class ToolExposureBuilder:
 
         if self._tool_registry is None or skill_route is None or not skill_route.has_selection:
             return tuple(allowed_names)
-        if self._is_automation_runtime(runtime_metadata=runtime_metadata):
+        if self._is_background_runtime(runtime_metadata=runtime_metadata):
             if skill_route.has_explicit_selection and skill_route.has_unavailable_blocking_selection:
                 return ()
             return self._ordered_tool_names(
@@ -567,9 +567,10 @@ class ToolExposureBuilder:
         )
 
     @staticmethod
-    def _is_automation_runtime(*, runtime_metadata: dict[str, object] | None) -> bool:
-        """Return whether current turn was entered through automation runtime."""
+    def _is_background_runtime(*, runtime_metadata: dict[str, object] | None) -> bool:
+        """Return whether current turn was entered through trusted detached runtime."""
 
         if not isinstance(runtime_metadata, dict):
             return False
-        return str(runtime_metadata.get("transport") or "").strip().lower() == "automation"
+        transport = str(runtime_metadata.get("transport") or "").strip().lower()
+        return transport in {"automation", "taskflow"}
