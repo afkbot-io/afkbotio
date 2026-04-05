@@ -50,6 +50,28 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "automation_get",
         "automation_update",
         "automation_delete",
+        "task_board",
+        "task_comment_add",
+        "task_comment_list",
+        "task_create",
+        "task_dependency_add",
+        "task_dependency_list",
+        "task_dependency_remove",
+        "task_event_list",
+        "task_flow_create",
+        "task_flow_list",
+        "task_flow_get",
+        "task_list",
+        "task_maintenance_sweep",
+        "task_get",
+        "task_inbox",
+        "task_review_list",
+        "task_review_approve",
+        "task_review_request_changes",
+        "task_run_list",
+        "task_run_get",
+        "task_stale_list",
+        "task_update",
         "credentials_create",
         "credentials_update",
         "credentials_delete",
@@ -138,6 +160,9 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.runtime_read_timeout_sec == 5.0
     assert settings.runtime_max_header_bytes == 16384
     assert settings.runtime_max_body_bytes == 262144
+    assert settings.taskflow_runtime_poll_interval_sec == 5.0
+    assert settings.taskflow_runtime_maintenance_batch_size == 32
+    assert settings.taskflow_runtime_claim_ttl_sec == 900
     assert settings.browser_headless is True
     assert settings.diffs_artifact_ttl_sec == 86400
     assert settings.nginx_enabled is False
@@ -233,6 +258,12 @@ def test_settings_runtime_limits_validation() -> None:
         Settings(runtime_worker_count=0)
     with pytest.raises(ValueError):
         Settings(runtime_read_timeout_sec=0.0)
+    with pytest.raises(ValueError):
+        Settings(taskflow_runtime_poll_interval_sec=0.0)
+    with pytest.raises(ValueError):
+        Settings(taskflow_runtime_maintenance_batch_size=0)
+    with pytest.raises(ValueError):
+        Settings(taskflow_runtime_claim_ttl_sec=0)
     with pytest.raises(ValueError):
         Settings(llm_request_timeout_sec=0.0)
     with pytest.raises(ValueError):

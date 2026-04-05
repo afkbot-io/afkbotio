@@ -1,0 +1,742 @@
+"""Tests for detached Task Flow runtime execution."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from afkbot.db.session import session_scope
+from afkbot.models.task_run import TaskRun
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.run_repo import RunRepository
+from afkbot.repositories.runlog_repo import RunlogRepository
+from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.task_flow.context_overrides import build_task_flow_context_overrides
+from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
+from afkbot.services.task_flow.service import TaskFlowService
+from afkbot.settings import Settings
+from tests.repositories._harness import build_repository_factory
+
+
+@dataclass
+class _ObservedCall:
+    profile_id: str
+    session_id: str
+    transport: str | None
+    account_id: str | None
+    task_id: str | None
+    task_profile_id: str | None
+    prompt_overlay: str | None
+
+
+class _FakeLoop:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        behavior: str,
+        observed_calls: list[_ObservedCall],
+    ) -> None:
+        self._session = session
+        self._behavior = behavior
+        self._observed_calls = observed_calls
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        context_overrides: object | None = None,
+    ) -> TurnResult:
+        del message
+        metadata = (
+            context_overrides.runtime_metadata
+            if isinstance(context_overrides, TurnContextOverrides)
+            else None
+        )
+        taskflow_payload = metadata.get("taskflow") if isinstance(metadata, dict) else None
+        self._observed_calls.append(
+            _ObservedCall(
+                profile_id=profile_id,
+                session_id=session_id,
+                transport=(
+                    str(metadata.get("transport") or "").strip() if isinstance(metadata, dict) else None
+                ),
+                account_id=(
+                    str(metadata.get("account_id") or "").strip()
+                    if isinstance(metadata, dict)
+                    else None
+                ),
+                task_id=(
+                    str(taskflow_payload.get("task_id") or "").strip()
+                    if isinstance(taskflow_payload, dict)
+                    else None
+                ),
+                task_profile_id=(
+                    str(taskflow_payload.get("task_profile_id") or "").strip()
+                    if isinstance(taskflow_payload, dict)
+                    else None
+                ),
+                prompt_overlay=(
+                    context_overrides.prompt_overlay
+                    if isinstance(context_overrides, TurnContextOverrides)
+                    else None
+                ),
+            )
+        )
+        sessions = ChatSessionRepository(self._session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        run = await RunRepository(self._session).create_run(
+            session_id=session_id,
+            profile_id=profile_id,
+            status="completed",
+        )
+        runlog = RunlogRepository(self._session)
+        if self._behavior == "complete":
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "analysis complete",
+                    "blocked_reason": None,
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(action="finalize", message="analysis complete"),
+            )
+        if self._behavior == "ask_question":
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.ask_question",
+                payload={"assistant_message": "Need human approval"},
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(
+                    action="ask_question",
+                    message="Need human approval",
+                    question_id="q-review",
+                ),
+            )
+        if self._behavior == "handoff_human":
+            assert isinstance(taskflow_payload, dict)
+            updated = await TaskFlowRepository(self._session).update_task(
+                profile_id=str(taskflow_payload.get("task_profile_id") or ""),
+                task_id=str(taskflow_payload.get("task_id") or ""),
+                owner_type="human",
+                owner_ref="cli_user:alice",
+                status="review",
+                blocked_reason_code="awaiting_human_review",
+                blocked_reason_text="Ready for human review.",
+            )
+            assert updated is not None
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "Handoff completed",
+                    "blocked_reason": None,
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(action="finalize", message="Handoff completed"),
+            )
+        if self._behavior == "llm_timeout":
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="llm.call.timeout",
+                payload={"error_code": "llm_timeout"},
+            )
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "finalized: timeout",
+                    "blocked_reason": None,
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(action="finalize", message="finalized: timeout"),
+            )
+        raise AssertionError(f"Unsupported fake loop behavior: {self._behavior}")
+
+
+async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should complete AI-owned work and unblock dependent tasks."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_complete.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_complete.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        first = await service.create_task(
+            profile_id="default",
+            title="Analyze support backlog",
+            prompt="Summarize the last ten support tickets.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        dependent = await service.create_task(
+            profile_id="default",
+            title="Send triage summary",
+            prompt="Send the triage summary after analysis is ready.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            depends_on_task_ids=(first.id,),
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-a")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=first.id)
+        assert updated.status == "completed"
+        assert updated.last_session_id == f"taskflow:{first.id}"
+        assert updated.last_run_id is not None
+        listed_runs = await service.list_task_runs(profile_id="default", task_id=first.id)
+        assert len(listed_runs) == 1
+        assert listed_runs[0].id == updated.last_run_id
+        assert listed_runs[0].status == "completed"
+        listed_events = await service.list_task_events(profile_id="default", task_id=first.id)
+        assert listed_events[0].event_type == "execution_completed"
+        assert listed_events[0].actor_type == "runtime"
+        assert listed_events[0].actor_ref == "worker-a"
+        assert listed_events[0].to_status == "completed"
+        assert listed_events[0].details["run_id"] == listed_runs[0].run_id
+        fetched_run = await service.get_task_run(
+            profile_id="default",
+            task_run_id=updated.last_run_id,
+        )
+        assert fetched_run.id == updated.last_run_id
+        assert fetched_run.session_id == f"taskflow:{first.id}"
+        assert fetched_run.run_id is not None
+        unblocked = await service.get_task(profile_id="default", task_id=dependent.id)
+        assert unblocked.status == "todo"
+        assert len(observed_calls) == 1
+        observed = observed_calls[0]
+        assert observed.profile_id == "analyst"
+        assert observed.session_id == f"taskflow:{first.id}"
+        assert observed.transport == "taskflow"
+        assert observed.account_id == first.id
+        assert observed.task_id == first.id
+        assert observed.task_profile_id == "default"
+        assert observed.prompt_overlay is not None
+        assert "Task Flow execution context." in observed.prompt_overlay
+        assert "This runtime is non-interactive." in observed.prompt_overlay
+        assert "Do not rely on the final assistant message alone" in observed.prompt_overlay
+        assert "task.update" in observed.prompt_overlay
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_question(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should mark tasks blocked when the agent requires human input."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_blocked.db",
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_blocked.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="ask_question",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review risky deployment",
+            prompt="Review the deployment checklist and proceed.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-b")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "task_action_ask_question"
+        assert updated.blocked_reason_text == "Need human approval"
+        listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert listed_events[0].event_type == "execution_blocked"
+        assert listed_events[0].message == "Need human approval"
+        assert listed_events[0].details["blocked_reason_code"] == "task_action_ask_question"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should not overwrite a durable human handoff made during the task run."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_handoff.db",
+        profile_ids=("default", "analyst"),
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_handoff.db'}",
+        ),
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="handoff_human",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Escalate incident summary",
+            prompt="Prepare the incident summary and route it to the on-call human reviewer.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        dependent = await service.create_task(
+            profile_id="default",
+            title="Send escalation outcome",
+            prompt="Send the incident outcome after the AI task fully completes.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:bob",
+            depends_on_task_ids=(task.id,),
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-handoff")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "review"
+        assert updated.owner_type == "human"
+        assert updated.owner_ref == "cli_user:alice"
+        assert updated.blocked_reason_code == "awaiting_human_review"
+        assert updated.blocked_reason_text == "Ready for human review."
+        assert updated.last_run_id is not None
+        async with session_scope(factory) as session:
+            task_run = await session.get(TaskRun, updated.last_run_id)
+        assert task_run is not None
+        assert task_run.status == "review"
+        assert task_run.error_code == "awaiting_human_review"
+
+        dependent_after = await service.get_task(profile_id="default", task_id=dependent.id)
+        assert dependent_after.status == "blocked"
+        assert dependent_after.blocked_reason_code == "dependency_wait"
+
+        processed_again = await runtime.execute_next_claimable_task(worker_id="worker-handoff-2")
+        assert processed_again is False
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_marks_llm_timeout_as_failed(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should persist failed status when the LLM runtime times out."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_failed.db",
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_failed.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="llm_timeout",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Run long market scan",
+            prompt="Analyze the competitive landscape and summarize the result.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-c")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "failed"
+        assert updated.last_error_code == "llm_timeout"
+        assert updated.last_error_text == "Task run timed out while waiting for the LLM provider."
+        listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert listed_events[0].event_type == "execution_failed"
+        assert listed_events[0].actor_ref == "worker-c"
+        assert listed_events[0].details["error_code"] == "llm_timeout"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Detached runtime should release claimed work back to todo when start transition fails."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_release.db",
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_release.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Retryable start transition",
+            prompt="Verify that a lost claim during start is safely retried.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        async def _fail_mark_started(*, claimed):
+            del claimed
+            return False
+
+        original_mark_started = runtime._mark_started
+        monkeypatch.setattr(runtime, "_mark_started", _fail_mark_started)
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-release")
+
+        assert processed is True
+        released = await service.get_task(profile_id="default", task_id=task.id)
+        assert released.status == "todo"
+        assert released.started_at is None
+        assert released.last_error_code == "task_claim_lost"
+        assert released.last_error_text == "Failed to transition claimed task into running state"
+        assert released.current_attempt == 0
+        assert released.last_run_id is not None
+        assert observed_calls == []
+
+        async with session_scope(factory) as session:
+            task_run = await session.get(TaskRun, released.last_run_id)
+        assert task_run is not None
+        assert task_run.status == "cancelled"
+        assert task_run.error_code == "task_claim_lost"
+
+        monkeypatch.setattr(runtime, "_mark_started", original_mark_started)
+        processed_retry = await runtime.execute_next_claimable_task(worker_id="worker-release-retry")
+
+        assert processed_retry is True
+        completed = await service.get_task(profile_id="default", task_id=task.id)
+        assert completed.status == "completed"
+        assert completed.current_attempt == 1
+        assert len(observed_calls) == 1
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
+    tmp_path: Path,
+) -> None:
+    """Expired claims should be released and retried before a worker takes new work."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_sweep.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_sweep.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Recover stale runtime claim",
+            prompt="Recover a stale claim and finish the work.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        stale_now = datetime.now(timezone.utc)
+        stale_session_id = f"taskflow:{task.id}"
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=stale_now,
+                lease_until=stale_now - timedelta(minutes=5),
+                claim_token="stale-claim",
+                claimed_by="taskflow-runtime:stale",
+            )
+            assert claimed is not None
+            task_run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=claimed.current_attempt + 1,
+                owner_type=claimed.owner_type,
+                owner_ref=claimed.owner_ref,
+                execution_mode="detached",
+                status="running",
+                session_id=stale_session_id,
+                run_id=None,
+                worker_id="taskflow-runtime:stale",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            attached = await repo.attach_task_run(
+                task_id=task.id,
+                claim_token="stale-claim",
+                task_run_id=task_run.id,
+                session_id=stale_session_id,
+            )
+            assert attached is True
+            started = await repo.mark_task_started(
+                task_id=task.id,
+                claim_token="stale-claim",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            assert started is True
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-sweep")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "completed"
+        assert updated.current_attempt == 2
+        task_runs = await service.list_task_runs(profile_id="default", task_id=task.id)
+        assert len(task_runs) == 2
+        stale_run = next(item for item in task_runs if item.worker_id == "taskflow-runtime:stale")
+        fresh_run = next(item for item in task_runs if item.worker_id == "worker-sweep")
+        assert stale_run.status == "cancelled"
+        assert stale_run.error_code == "task_lease_expired"
+        assert fresh_run.status == "completed"
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert events[0].event_type == "execution_completed"
+        assert {item.event_type for item in events} >= {"created", "lease_expired", "execution_completed"}
+        assert len(observed_calls) == 1
+        assert observed_calls[0].session_id == f"taskflow:{task.id}"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -> None:
+    """Manual stale-claim maintenance should only repair work inside the selected profile."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_profile_sweep.db",
+        profile_ids=("default", "ops"),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_profile_sweep.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default stale task",
+            prompt="Repair the default-profile stale task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        ops_task = await service.create_task(
+            profile_id="ops",
+            title="Ops stale task",
+            prompt="Leave the ops-profile stale task untouched for now.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="ops",
+        )
+        stale_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            for task_id, claim_token, claimed_by in (
+                (default_task.id, "stale-default-claim", "taskflow-runtime:default"),
+                (ops_task.id, "stale-ops-claim", "taskflow-runtime:ops"),
+            ):
+                claimed = await repo.claim_next_runnable_task(
+                    now_utc=stale_now,
+                    lease_until=stale_now - timedelta(minutes=5),
+                    claim_token=claim_token,
+                    claimed_by=claimed_by,
+                )
+                assert claimed is not None
+                task_run = await repo.create_task_run(
+                    task_id=task_id,
+                    attempt=claimed.current_attempt + 1,
+                    owner_type=claimed.owner_type,
+                    owner_ref=claimed.owner_ref,
+                    execution_mode="detached",
+                    status="running",
+                    session_id=f"taskflow:{task_id}",
+                    run_id=None,
+                    worker_id=claimed_by,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                attached = await repo.attach_task_run(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    task_run_id=task_run.id,
+                    session_id=f"taskflow:{task_id}",
+                )
+                assert attached is True
+                started = await repo.mark_task_started(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                assert started is True
+
+        released_count = await runtime.sweep_expired_claims(
+            worker_id="taskflow-cli-maintenance",
+            profile_id="default",
+            limit=10,
+        )
+
+        assert released_count == 1
+        default_after = await service.get_task(profile_id="default", task_id=default_task.id)
+        ops_after = await service.get_task(profile_id="ops", task_id=ops_task.id)
+        assert default_after.status == "todo"
+        assert default_after.last_error_code == "task_lease_expired"
+        assert ops_after.status == "running"
+
+        default_events = await service.list_task_events(profile_id="default", task_id=default_task.id)
+        ops_events = await service.list_task_events(profile_id="ops", task_id=ops_task.id)
+        assert default_events[0].event_type == "lease_expired"
+        assert all(item.event_type != "lease_expired" for item in ops_events)
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
+    """Task Flow prompt overlay should teach decomposition and human handoff rules."""
+
+    overrides = build_task_flow_context_overrides(
+        task_id="task_demo",
+        task_profile_id="default",
+        owner_type="ai_profile",
+        owner_ref="analyst",
+        flow_id="flow_demo",
+        source_type="manual",
+        source_ref="source_demo",
+        priority=75,
+        attempt=2,
+        requires_review=True,
+        labels=("ops", "launch"),
+    )
+
+    assert isinstance(overrides.runtime_metadata, dict)
+    taskflow_payload = overrides.runtime_metadata.get("taskflow")
+    assert isinstance(taskflow_payload, dict)
+    assert taskflow_payload["task_id"] == "task_demo"
+    assert taskflow_payload["task_profile_id"] == "default"
+    assert overrides.prompt_overlay is not None
+    assert "This runtime is non-interactive." in overrides.prompt_overlay
+    assert "task.update" in overrides.prompt_overlay
+    assert "task.flow.create" in overrides.prompt_overlay

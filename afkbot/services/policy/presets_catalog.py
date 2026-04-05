@@ -17,6 +17,7 @@ CAPABILITY_ORDER: tuple[PolicyCapabilityId, ...] = (
     PolicyCapabilityId.CREDENTIALS,
     PolicyCapabilityId.SUBAGENTS,
     PolicyCapabilityId.AUTOMATION,
+    PolicyCapabilityId.TASKFLOW,
     PolicyCapabilityId.HTTP,
     PolicyCapabilityId.WEB,
     PolicyCapabilityId.BROWSER,
@@ -63,6 +64,12 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
         label="Automations",
         description="Create and manage cron/webhook automations.",
         tool_prefixes=("automation.",),
+    ),
+    PolicyCapabilityId.TASKFLOW: PolicyCapabilitySpec(
+        id=PolicyCapabilityId.TASKFLOW,
+        label="Task Flow",
+        description="Create and manage durable task backlog items and flows.",
+        tool_prefixes=("task.",),
     ),
     PolicyCapabilityId.HTTP: PolicyCapabilitySpec(
         id=PolicyCapabilityId.HTTP,
@@ -135,6 +142,7 @@ PRESETS: dict[PolicyPresetLevel, PolicyPresetSpec] = {
             PolicyCapabilityId.CREDENTIALS,
             PolicyCapabilityId.SUBAGENTS,
             PolicyCapabilityId.AUTOMATION,
+            PolicyCapabilityId.TASKFLOW,
             PolicyCapabilityId.HTTP,
             PolicyCapabilityId.WEB,
             PolicyCapabilityId.SKILLS,

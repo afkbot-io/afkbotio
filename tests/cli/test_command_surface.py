@@ -50,6 +50,7 @@ def test_legacy_groups_are_not_exposed() -> None:
     assert "skill" in output
     assert "start" in output
     assert "automation" in output
+    assert "task" in output
     assert "subagent" in output
     assert "version" in output
     assert re.search(r"^\s*llm-set-provider\s", output, re.MULTILINE) is None
@@ -76,6 +77,7 @@ def test_root_help_explains_primary_entrypoints() -> None:
     assert "`afk update`" in output
     assert "global system-prompt files" in output
     assert "`afk automation`" in output
+    assert "`afk task`" in output
     assert "`afk channel`" in output
     assert "`afk memory`" in output
     assert "`afk mcp`" in output
@@ -83,3 +85,54 @@ def test_root_help_explains_primary_entrypoints() -> None:
     assert "`afk browser install`" in output
     assert "browser automation runtime" in output
     assert "afk doctor" in output
+
+
+def test_task_help_exposes_dependency_and_run_management() -> None:
+    """Task help should expose Task Flow dependency and run-history operator commands."""
+
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["task", "--help"])
+
+    assert result.exit_code == 0
+    output = result.stdout
+    assert "board" in output
+    assert "comment-add" in output
+    assert "comment-list" in output
+    assert "inbox" in output
+    assert "dependency-add" in output
+    assert "dependency-list" in output
+    assert "dependency-remove" in output
+    assert "event-list" in output
+    assert "review-list" in output
+    assert "review-approve" in output
+    assert "review-request-changes" in output
+    assert "run-list" in output
+    assert "run-get" in output
+    assert "stale-list" in output
+    assert "stale-sweep" in output
+
+
+def test_task_help_exposes_dependency_and_run_surfaces() -> None:
+    """Task CLI help should expose dependency management and run history commands."""
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["task", "--help"])
+
+    assert result.exit_code == 0
+    output = result.stdout
+    assert "board" in output
+    assert "comment-add" in output
+    assert "comment-list" in output
+    assert "inbox" in output
+    assert "dependency-add" in output
+    assert "dependency-list" in output
+    assert "dependency-remove" in output
+    assert "event-list" in output
+    assert "review-list" in output
+    assert "review-approve" in output
+    assert "review-request-changes" in output
+    assert "run-list" in output
+    assert "run-get" in output
+    assert "stale-list" in output
+    assert "stale-sweep" in output

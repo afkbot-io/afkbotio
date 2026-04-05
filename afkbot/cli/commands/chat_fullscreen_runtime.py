@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from afkbot.cli.commands.chat_planning_runtime import PLAN_EXECUTION_PROMPT
+from afkbot.cli.commands.chat_startup_notices import build_startup_assistant_outcome
 from afkbot.cli.commands.chat_fullscreen_support import (
     FullscreenChatWorkspaceUX,
     build_workspace_turn_options,
@@ -61,6 +62,7 @@ async def run_fullscreen_chat_workspace_session(
     catalog_getter: Callable[[], ChatInputCatalog],
     refresh_catalog: RefreshCatalogFn,
     run_turn: RunReplTurnFn,
+    startup_assistant_message: str | None = None,
 ) -> None:
     """Run the interactive chat session inside the prompt-session workspace."""
 
@@ -153,6 +155,15 @@ async def run_fullscreen_chat_workspace_session(
         entry = build_chat_workspace_outcome_entry(outcome)
         if entry is not None:
             workspace.append_transcript_entry(entry)
+
+    def _emit_startup_assistant_message(message: str) -> None:
+        _emit_turn_output(
+            build_startup_assistant_outcome(
+                message=message,
+                profile_id=profile_id,
+                session_id=session_id,
+            )
+        )
 
     async def _confirm_plan_execution() -> bool:
         return await workspace.confirm(
@@ -276,6 +287,8 @@ async def run_fullscreen_chat_workspace_session(
             )
 
         _sync_workspace_from_state()
+        if startup_assistant_message:
+            _emit_startup_assistant_message(startup_assistant_message)
         await run_queueable_chat_session(
             ux=ux,
             read_input=_read_input,

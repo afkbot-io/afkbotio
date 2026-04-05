@@ -23,6 +23,7 @@ class PolicyCapabilityId(StrEnum):
     CREDENTIALS = "credentials"
     SUBAGENTS = "subagents"
     AUTOMATION = "automation"
+    TASKFLOW = "taskflow"
     HTTP = "http"
     WEB = "web"
     BROWSER = "browser"

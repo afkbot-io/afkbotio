@@ -372,3 +372,79 @@ def test_start_help_mentions_full_stack(monkeypatch) -> None:  # type: ignore[no
     assert "--channel" in output
     assert "--allow-pending-" in output
     get_settings.cache_clear()
+
+
+async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Internal launcher should manage both automation and Task Flow runtimes."""
+
+    lifecycle: list[str] = []
+
+    class _FakeAutomationDaemon:
+        def __init__(self, *, host: str, port: int) -> None:
+            lifecycle.append(f"automation:init:{host}:{port}")
+
+        def begin_shutdown(self) -> None:
+            lifecycle.append("automation:begin_shutdown")
+
+        async def start(self) -> None:
+            lifecycle.append("automation:start")
+
+        async def stop(self) -> None:
+            lifecycle.append("automation:stop")
+
+    class _FakeTaskFlowDaemon:
+        def __init__(self, *, settings) -> None:  # type: ignore[no-untyped-def]
+            lifecycle.append(f"taskflow:init:{settings.root_dir}")
+
+        def begin_shutdown(self) -> None:
+            lifecycle.append("taskflow:begin_shutdown")
+
+        async def start(self) -> None:
+            lifecycle.append("taskflow:start")
+
+        async def stop(self) -> None:
+            lifecycle.append("taskflow:stop")
+
+    class _FakeChannelManager:
+        def __init__(self, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        async def stop(self) -> None:
+            lifecycle.append("channels:stop")
+
+    class _FakeServer:
+        def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
+            del config
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            lifecycle.append("api:serve")
+
+    monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
+    monkeypatch.setattr("afkbot.cli.commands.start._ManagedUvicornServer", _FakeServer)
+    monkeypatch.setattr("afkbot.cli.commands.start.create_app", lambda: object())
+
+    from afkbot.cli.commands.start import _run_full_stack
+    from afkbot.settings import Settings
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'start_runtime.db'}",
+    )
+    await _run_full_stack(
+        host="127.0.0.1",
+        runtime_port=18080,
+        api_port=18081,
+        start_channels=False,
+        channel_ids=(),
+        strict_channels=False,
+        persist_runtime_bind=False,
+        settings=settings,
+    )
+
+    assert "automation:start" in lifecycle
+    assert "taskflow:start" in lifecycle
+    assert "api:serve" in lifecycle
+    assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]

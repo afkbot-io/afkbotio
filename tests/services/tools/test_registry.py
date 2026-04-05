@@ -65,6 +65,28 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "subagent.result",
         "subagent.run",
         "subagent.wait",
+        "task.board",
+        "task.comment.add",
+        "task.comment.list",
+        "task.create",
+        "task.dependency.add",
+        "task.dependency.list",
+        "task.dependency.remove",
+        "task.event.list",
+        "task.flow.create",
+        "task.flow.get",
+        "task.flow.list",
+        "task.get",
+        "task.inbox",
+        "task.list",
+        "task.review.approve",
+        "task.review.list",
+        "task.review.request_changes",
+        "task.run.get",
+        "task.run.list",
+        "task.stale.list",
+        "task.stale.sweep",
+        "task.update",
         "web.fetch",
         "web.search",
     )
@@ -80,6 +102,17 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("web.fetch") is not None
     assert registry.get("browser.control") is not None
     assert registry.get("mcp.profile.upsert") is not None
+    assert registry.get("task.board") is not None
+    assert registry.get("task.comment.add") is not None
+    assert registry.get("task.comment.list") is not None
+    assert registry.get("task.event.list") is not None
+    assert registry.get("task.review.list") is not None
+    assert registry.get("task.review.approve") is not None
+    assert registry.get("task.flow.create") is not None
+    assert registry.get("task.inbox") is not None
+    assert registry.get("task.stale.list") is not None
+    assert registry.get("task.stale.sweep") is not None
+    assert registry.get("task.run.list") is not None
     assert registry.get("mcp.debug.echo") is None
 
 

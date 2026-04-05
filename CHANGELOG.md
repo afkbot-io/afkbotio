@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6] - 2026-04-05
+
+### Added
+
+- Full `Task Flow` domain with durable `task_flow`, `task`, `task_dependency`, `task_run`, and `task_event` persistence.
+- Detached `taskflow` runtime for AI-owned backlog execution, including dependency unblocking, review handoff, and stale-lease recovery.
+- CLI and tool surfaces for board/inbox/review/run history/event history/comments/stale-claim repair across `afk task ...` and `task.*`.
+- Human startup digest for Task Flow work at `afk chat` start, including reviewer-routed items and inbox dedupe cursors.
+- Release verification artifacts for Task Flow: a deterministic smoke script and a manual release checklist.
+
+### Changed
+
+- `afk start` now launches the dedicated Task Flow runtime alongside existing automation runtime services.
+- Background Task Flow execution now uses its own `transport="taskflow"` prompt overlay and runtime context.
+- Operator maintenance now exposes explicit stale-claim inspection and repair flows instead of relying only on automatic runtime sweep.
+
+### Fixed
+
+- Human inbox unseen counts are now lossless even when relevant events are buried behind newer irrelevant runtime noise.
+- Human inbox unread summary no longer materializes the full unseen event tail in Python; count and preview queries now stay bounded at the repository layer.
+- Notification cursor writes are atomic and trusted-only for `mark_seen` flows.
+- Expired Task Flow claims are repaired safely without clobbering refreshed live leases.
+
 ## [1.0.5] - 2026-04-04
 
 ### Added

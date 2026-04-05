@@ -1,4 +1,4 @@
-"""Unified runtime starter for API and automations daemon."""
+"""Unified runtime starter for API, automations daemon, and Task Flow runtime."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from afkbot.services.channels.runtime_manager import (
 )
 from afkbot.services.runtime_ports import resolve_default_runtime_port
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
+from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
 
@@ -119,7 +120,7 @@ def register(app: typer.Typer) -> None:
 
         typer.echo(
             f"runtime daemon: http://{resolved_host}:{resolved_runtime_port} "
-            "(webhook + cron scheduler)"
+            "(webhook + cron scheduler + task flow workers)"
         )
         typer.echo(f"chat api/ws: http://{resolved_host}:{resolved_api_port}")
         typer.echo("Press Ctrl+C to stop.")
@@ -163,9 +164,10 @@ async def _run_full_stack(
     persist_runtime_bind: bool,
     settings: Settings,
 ) -> None:
-    """Run runtime daemon and API server concurrently with shared shutdown."""
+    """Run background runtimes and API server concurrently with shared shutdown."""
 
-    daemon = RuntimeDaemon(host=host, port=runtime_port)
+    automation_daemon = RuntimeDaemon(host=host, port=runtime_port)
+    taskflow_daemon = TaskFlowRuntimeDaemon(settings=settings)
     app = create_app()
     channel_manager = ChannelRuntimeManager(settings)
     server = _ManagedUvicornServer(
@@ -184,7 +186,8 @@ async def _run_full_stack(
     stop_wait_task: asyncio.Task[object] | None = None
 
     def _request_shutdown() -> None:
-        daemon.begin_shutdown()
+        automation_daemon.begin_shutdown()
+        taskflow_daemon.begin_shutdown()
         server.should_exit = True
         stop_event.set()
 
@@ -196,7 +199,8 @@ async def _run_full_stack(
         registered_signals.append(sig)
 
     try:
-        await daemon.start()
+        await automation_daemon.start()
+        await taskflow_daemon.start()
         if persist_runtime_bind:
             _persist_runtime_bind_defaults(
                 settings=settings,
@@ -232,7 +236,8 @@ async def _run_full_stack(
             stop_wait_task.cancel()
             with suppress(asyncio.CancelledError):
                 await stop_wait_task
-        await daemon.stop()
+        await taskflow_daemon.stop()
+        await automation_daemon.stop()
 
 
 async def _start_channels(
