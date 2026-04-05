@@ -52,6 +52,7 @@ def collect_profile_mutation_inputs(
     llm_api_key_file: Path | None,
     llm_api_key: str | None,
     provider_api_key: str | None,
+    minimax_region: str | None,
     planning_mode: str | None,
     current_runtime_secrets: dict[str, str] | None,
     policy_enabled: bool | None,
@@ -103,7 +104,7 @@ def collect_profile_mutation_inputs(
     )
     resolved_provider_key_input: ResolvedProviderApiKeyInput | None = None
 
-    def _resolve_provider_token(provider_id: LLMProviderId, provider_name: str) -> None:
+    def _resolve_provider_token(provider_id: LLMProviderId, provider_name: str) -> str | None:
         nonlocal resolved_provider_key_input
         resolved_provider_key_input = resolve_profile_provider_api_key(
             provider_id=provider_id,
@@ -115,8 +116,10 @@ def collect_profile_mutation_inputs(
             current_runtime_secrets=current_runtime_secrets,
             generic_api_key=llm_api_key,
             provider_api_key=provider_api_key,
+            minimax_region=minimax_region,
             required=interactive,
         )
+        return resolved_provider_key_input.preferred_base_url
 
     runtime_core = resolve_profile_runtime_core(
         interactive=interactive,
@@ -171,6 +174,7 @@ def collect_profile_mutation_inputs(
             current_runtime_secrets=current_runtime_secrets,
             generic_api_key=llm_api_key,
             provider_api_key=provider_api_key,
+            minimax_region=minimax_region,
             required=interactive,
         )
     explicit_policy_overrides = has_explicit_policy_overrides(
@@ -261,6 +265,7 @@ def collect_setup_profile_inputs(
     llm_proxy_type: str | None,
     llm_proxy_url: str | None,
     llm_api_key_file: Path | None,
+    minimax_region: str | None,
     policy_enabled: bool | None,
     policy_preset: str | None,
     policy_capability: tuple[str, ...],
@@ -288,6 +293,7 @@ def collect_setup_profile_inputs(
         llm_api_key_file=llm_api_key_file,
         llm_api_key=None,
         provider_api_key=None,
+        minimax_region=minimax_region,
         planning_mode=None,
         current_runtime_secrets=current_runtime_secrets,
         policy_enabled=policy_enabled,

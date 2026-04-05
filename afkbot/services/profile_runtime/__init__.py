@@ -22,6 +22,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "reset_profile_runtime_config_services": ("afkbot.services.profile_runtime.runtime_config", "reset_profile_runtime_config_services"),
     "ProfileRuntimeSecretsService": ("afkbot.services.profile_runtime.runtime_secrets", "ProfileRuntimeSecretsService"),
     "get_profile_runtime_secrets_service": ("afkbot.services.profile_runtime.runtime_secrets", "get_profile_runtime_secrets_service"),
+    "provider_oauth_metadata_fields": ("afkbot.services.profile_runtime.runtime_secrets", "provider_oauth_metadata_fields"),
     "provider_secret_field": ("afkbot.services.profile_runtime.runtime_secrets", "provider_secret_field"),
     "reset_profile_runtime_secrets_services": ("afkbot.services.profile_runtime.runtime_secrets", "reset_profile_runtime_secrets_services"),
     "ProfileService": ("afkbot.services.profile_runtime.service", "ProfileService"),

@@ -25,11 +25,18 @@ _PROFILE_RUNTIME_SECRET_FIELDS = frozenset(
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "openai_codex_api_key",
         "claude_api_key",
         "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
+        "minimax_portal_api_key",
+        "minimax_portal_refresh_token",
+        "minimax_portal_token_expires_at",
+        "minimax_portal_resource_url",
+        "minimax_portal_region",
+        "github_copilot_api_key",
         "custom_api_key",
         "brave_api_key",
     }
@@ -213,6 +220,8 @@ def provider_secret_field(provider_id: str) -> str:
         return "openrouter_api_key"
     if normalized == "openai":
         return "openai_api_key"
+    if normalized == "openai-codex":
+        return "openai_codex_api_key"
     if normalized == "claude":
         return "claude_api_key"
     if normalized == "moonshot":
@@ -223,9 +232,27 @@ def provider_secret_field(provider_id: str) -> str:
         return "xai_api_key"
     if normalized == "qwen":
         return "qwen_api_key"
+    if normalized == "minimax-portal":
+        return "minimax_portal_api_key"
+    if normalized == "github-copilot":
+        return "github_copilot_api_key"
     if normalized == "custom":
         return "custom_api_key"
     return "llm_api_key"
+
+
+def provider_oauth_metadata_fields(provider_id: str) -> tuple[str, ...]:
+    """Return provider-specific OAuth metadata secret fields."""
+
+    normalized = provider_id.strip().lower()
+    if normalized == "minimax-portal":
+        return (
+            "minimax_portal_refresh_token",
+            "minimax_portal_token_expires_at",
+            "minimax_portal_resource_url",
+            "minimax_portal_region",
+        )
+    return ()
 
 
 def get_profile_runtime_secrets_service(settings: Settings) -> ProfileRuntimeSecretsService:

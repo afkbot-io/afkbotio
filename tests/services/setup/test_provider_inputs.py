@@ -22,6 +22,21 @@ def test_resolve_provider_base_url_default_prefers_claude_provider_value(tmp_pat
     assert resolved == "https://claude.example/v1"
 
 
+def test_resolve_provider_base_url_default_prefers_openai_codex_provider_value(
+    tmp_path: Path,
+) -> None:
+    """OpenAI Codex setup should read provider-specific base URL default first."""
+
+    settings = Settings(root_dir=tmp_path)
+    resolved = resolve_provider_base_url_default(
+        defaults={"AFKBOT_OPENAI_CODEX_BASE_URL": "https://chatgpt.com/backend-api/codex"},
+        settings=settings,
+        provider_id=LLMProviderId.OPENAI_CODEX,
+    )
+
+    assert resolved == "https://chatgpt.com/backend-api/codex"
+
+
 def test_resolve_provider_base_url_default_prefers_moonshot_provider_value(tmp_path: Path) -> None:
     """Moonshot setup should read provider-specific base URL default first."""
 

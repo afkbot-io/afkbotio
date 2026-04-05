@@ -12,6 +12,7 @@ from afkbot.services.llm.contracts import LLMProvider
 from afkbot.services.llm.provider import build_llm_provider
 from afkbot.services.policy import PolicyEngine
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
+from afkbot.services.profile_runtime.runtime_secrets import get_profile_runtime_secrets_service
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.tools.workspace import resolve_tool_workspace_base_dir
@@ -74,6 +75,14 @@ def build_agent_loop_from_settings(
     """Build AgentLoop from already-resolved settings."""
 
     effective_settings = settings
+    runtime_secrets_update_hook = None
+    if profile_id is not None:
+        runtime_secrets_service = get_profile_runtime_secrets_service(effective_settings)
+
+        def _persist_runtime_secrets(update: dict[str, str]) -> None:
+            runtime_secrets_service.merge(profile_id, update)
+
+        runtime_secrets_update_hook = _persist_runtime_secrets
     return AgentLoop(
         session,
         ContextBuilder(effective_settings, SkillLoader(effective_settings)),
@@ -85,7 +94,10 @@ def build_agent_loop_from_settings(
                 profile_id=profile_id,
             )
         ),
-        llm_provider=build_llm_provider(effective_settings)
+        llm_provider=build_llm_provider(
+            effective_settings,
+            runtime_secrets_update_hook=runtime_secrets_update_hook,
+        )
         if llm_provider_override is None
         else llm_provider_override,
         llm_request_timeout_sec=effective_settings.llm_request_timeout_sec,

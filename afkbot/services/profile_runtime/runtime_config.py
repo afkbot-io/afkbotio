@@ -137,11 +137,14 @@ class ProfileRuntimeConfigService:
             provider_field_by_id = {
                 "openrouter": "openrouter_base_url",
                 "openai": "openai_base_url",
+                "openai-codex": "openai_codex_base_url",
                 "claude": "claude_base_url",
                 "moonshot": "moonshot_base_url",
                 "deepseek": "deepseek_base_url",
                 "xai": "xai_base_url",
                 "qwen": "qwen_base_url",
+                "minimax-portal": "minimax_portal_base_url",
+                "github-copilot": "github_copilot_base_url",
                 "custom": "custom_base_url",
             }
             provider_field = provider_field_by_id.get(config.llm_provider)

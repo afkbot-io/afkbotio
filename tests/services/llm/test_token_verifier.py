@@ -146,3 +146,45 @@ def test_verify_provider_token_reports_network_error(monkeypatch) -> None:
 
     assert result.ok is False
     assert result.error_code == "llm_token_verify_network_error"
+
+
+def test_verify_provider_token_skips_http_probe_for_openai_codex(monkeypatch) -> None:
+    """OpenAI Codex OAuth verification should skip HTTP verify-path probing."""
+
+    def _fail_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        del request, proxy_url, timeout_sec
+        raise AssertionError("HTTP verifier must be skipped for openai-codex")
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fail_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        api_key="oauth-token",
+        base_url="",
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+
+
+def test_verify_provider_token_uses_github_copilot_exchange(monkeypatch) -> None:
+    """GitHub Copilot verification should use token exchange instead of verify-path GET."""
+
+    def _fake_exchange(*, github_token, proxy_url, timeout_sec):  # noqa: ANN001
+        assert github_token == "gh-oauth-token"
+        assert proxy_url is None
+        assert timeout_sec == 10.0
+        return object()
+
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier.resolve_copilot_api_token",
+        _fake_exchange,
+    )
+    result = verify_provider_token(
+        provider_id=LLMProviderId.GITHUB_COPILOT,
+        api_key="gh-oauth-token",
+        base_url="",
+    )
+
+    assert result.ok is True
+    assert result.error_code is None
+    assert result.status_code == 200

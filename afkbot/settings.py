@@ -143,11 +143,14 @@ class Settings(BaseSettings):
     llm_provider: Literal[
         "openrouter",
         "openai",
+        "openai-codex",
         "claude",
         "moonshot",
         "deepseek",
         "xai",
         "qwen",
+        "minimax-portal",
+        "github-copilot",
         "custom",
     ] = "openrouter"
     llm_model: str = "minimax/minimax-m2.5"
@@ -157,6 +160,8 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
+    openai_codex_api_key: str | None = None
+    openai_codex_base_url: str = "https://chatgpt.com/backend-api/codex"
     claude_api_key: str | None = None
     claude_base_url: str = "https://api.anthropic.com/v1"
     moonshot_api_key: str | None = None
@@ -167,6 +172,14 @@ class Settings(BaseSettings):
     xai_base_url: str = "https://api.x.ai/v1"
     qwen_api_key: str | None = None
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    minimax_portal_api_key: str | None = None
+    minimax_portal_base_url: str = "https://api.minimax.io/v1"
+    minimax_portal_refresh_token: str | None = None
+    minimax_portal_token_expires_at: str | None = None
+    minimax_portal_resource_url: str | None = None
+    minimax_portal_region: Literal["global", "cn"] | None = None
+    github_copilot_api_key: str | None = None
+    github_copilot_base_url: str = "https://api.individual.githubcopilot.com"
     custom_api_key: str | None = None
     brave_api_key: str | None = None
     custom_base_url: str = ""
@@ -278,11 +291,15 @@ class Settings(BaseSettings):
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "openai_codex_api_key",
         "claude_api_key",
         "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
+        "minimax_portal_api_key",
+        "minimax_portal_refresh_token",
+        "github_copilot_api_key",
         "custom_api_key",
         "brave_api_key",
         mode="before",
@@ -294,6 +311,26 @@ class Settings(BaseSettings):
         if value is None:
             return None
         normalized = value.strip()
+        return normalized or None
+
+    @field_validator("minimax_portal_token_expires_at", "minimax_portal_resource_url", mode="before")
+    @classmethod
+    def _normalize_optional_secret_metadata_text(cls, value: str | None) -> str | None:
+        """Normalize optional profile-local secret metadata text values."""
+
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("minimax_portal_region", mode="before")
+    @classmethod
+    def _normalize_minimax_portal_region(cls, value: str | None) -> str | None:
+        """Normalize optional MiniMax region values before enum validation."""
+
+        if value is None:
+            return None
+        normalized = value.strip().lower()
         return normalized or None
 
     @field_validator(
@@ -583,11 +620,14 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
         "llm_api_key",
         "openrouter_api_key",
         "openai_api_key",
+        "openai_codex_api_key",
         "claude_api_key",
         "moonshot_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
+        "minimax_portal_api_key",
+        "github_copilot_api_key",
         "custom_api_key",
         "brave_api_key",
     }

@@ -115,7 +115,7 @@ class SubagentRunner:
         raise SubagentExecutionError(
             error_code="subagent_llm_not_configured",
             reason=(
-                "Subagent runtime requires a configured provider API key for the target profile."
+                "Subagent runtime requires configured provider credentials for the target profile."
             ),
         )
 

@@ -70,7 +70,10 @@ def register(app: typer.Typer) -> None:
         llm_provider: str | None = typer.Option(
             None,
             "--llm-provider",
-            help="Default chat provider: openrouter, openai, claude, moonshot, deepseek, xai, qwen, or custom.",
+            help=(
+                "Default chat provider: openrouter, openai, openai-codex, claude, moonshot, "
+                "deepseek, xai, qwen, minimax-portal, github-copilot, or custom."
+            ),
         ),
         chat_model: str | None = typer.Option(
             None,
@@ -89,7 +92,7 @@ def register(app: typer.Typer) -> None:
             dir_okay=False,
             file_okay=True,
             exists=True,
-            help="Path to file containing provider API key.",
+            help="Path to file containing provider credential (API key or OAuth token).",
         ),
         llm_base_url: str | None = typer.Option(
             None,
@@ -101,6 +104,11 @@ def register(app: typer.Typer) -> None:
             None,
             "--custom-interface",
             help="API interface for custom providers. Currently only `openai` is supported.",
+        ),
+        minimax_region: str | None = typer.Option(
+            None,
+            "--minimax-region",
+            help="MiniMax OAuth region for minimax-portal: global or cn.",
         ),
         skip_llm_token_verify: bool = typer.Option(
             False,
@@ -207,6 +215,7 @@ def register(app: typer.Typer) -> None:
                 chat_model=chat_model,
                 thinking_level=thinking_level,
                 llm_api_key_file=llm_api_key_file,
+                minimax_region=minimax_region,
                 llm_base_url=llm_base_url,
                 custom_interface=custom_interface,
                 llm_proxy_type=llm_proxy_type,
@@ -241,6 +250,9 @@ def register(app: typer.Typer) -> None:
             ),
             resolved_api_key=(
                 setup_profile_inputs.provider_api_key if setup_profile_inputs is not None else None
+            ),
+            resolved_runtime_secrets_update=(
+                setup_profile_inputs.runtime_secrets_update if setup_profile_inputs is not None else None
             ),
             llm_api_key_file=llm_api_key_file,
             llm_base_url=(

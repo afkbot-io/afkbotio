@@ -15,11 +15,14 @@ class ProfileRuntimeConfig(BaseModel):
     llm_provider: Literal[
         "openrouter",
         "openai",
+        "openai-codex",
         "claude",
         "moonshot",
         "deepseek",
         "xai",
         "qwen",
+        "minimax-portal",
+        "github-copilot",
         "custom",
     ]
     llm_model: str = Field(min_length=1)

@@ -11,11 +11,14 @@ class LLMProviderId(StrEnum):
 
     OPENROUTER = "openrouter"
     OPENAI = "openai"
+    OPENAI_CODEX = "openai-codex"
     CLAUDE = "claude"
     MOONSHOT = "moonshot"
     DEEPSEEK = "deepseek"
     XAI = "xai"
     QWEN = "qwen"
+    MINIMAX_PORTAL = "minimax-portal"
+    GITHUB_COPILOT = "github-copilot"
     CUSTOM = "custom"
 
 
@@ -77,6 +80,24 @@ _PROVIDER_SPECS: dict[LLMProviderId, ProviderSpec] = {
             "o4-mini",
         ),
         api_key_env_names=("AFKBOT_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    ),
+    LLMProviderId.OPENAI_CODEX: ProviderSpec(
+        id=LLMProviderId.OPENAI_CODEX,
+        label="OpenAI Codex (ChatGPT OAuth)",
+        default_base_url="https://chatgpt.com/backend-api/codex",
+        base_url_env_name="AFKBOT_OPENAI_CODEX_BASE_URL",
+        verify_path="",
+        model_choices=(
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-spark",
+            "gpt-5.2-codex",
+            "gpt-5.2",
+            "gpt-5.1-codex-max",
+            "gpt-5.1-codex-mini",
+        ),
+        api_key_env_names=("AFKBOT_OPENAI_CODEX_API_KEY", "OPENAI_CODEX_OAUTH_TOKEN"),
     ),
     LLMProviderId.CLAUDE: ProviderSpec(
         id=LLMProviderId.CLAUDE,
@@ -141,6 +162,38 @@ _PROVIDER_SPECS: dict[LLMProviderId, ProviderSpec] = {
         ),
         api_key_env_names=("AFKBOT_QWEN_API_KEY", "DASHSCOPE_API_KEY"),
     ),
+    LLMProviderId.MINIMAX_PORTAL: ProviderSpec(
+        id=LLMProviderId.MINIMAX_PORTAL,
+        label="MiniMax Portal (OAuth)",
+        default_base_url="https://api.minimax.io/v1",
+        base_url_env_name="AFKBOT_MINIMAX_PORTAL_BASE_URL",
+        verify_path="",
+        model_choices=(
+            "MiniMax-M2.7",
+            "MiniMax-M2.7-highspeed",
+        ),
+        api_key_env_names=("AFKBOT_MINIMAX_PORTAL_API_KEY", "MINIMAX_OAUTH_TOKEN"),
+    ),
+    LLMProviderId.GITHUB_COPILOT: ProviderSpec(
+        id=LLMProviderId.GITHUB_COPILOT,
+        label="GitHub Copilot",
+        default_base_url="https://api.individual.githubcopilot.com",
+        base_url_env_name="AFKBOT_GITHUB_COPILOT_BASE_URL",
+        verify_path="",
+        model_choices=(
+            "gpt-4o",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.2",
+        ),
+        api_key_env_names=(
+            "AFKBOT_GITHUB_COPILOT_API_KEY",
+            "COPILOT_GITHUB_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+        ),
+    ),
     LLMProviderId.CUSTOM: ProviderSpec(
         id=LLMProviderId.CUSTOM,
         label="Custom",
@@ -161,11 +214,14 @@ def list_supported_providers(*, include_none: bool = True) -> tuple[LLMProviderI
     return (
         LLMProviderId.OPENROUTER,
         LLMProviderId.OPENAI,
+        LLMProviderId.OPENAI_CODEX,
         LLMProviderId.CLAUDE,
         LLMProviderId.MOONSHOT,
         LLMProviderId.DEEPSEEK,
         LLMProviderId.XAI,
         LLMProviderId.QWEN,
+        LLMProviderId.MINIMAX_PORTAL,
+        LLMProviderId.GITHUB_COPILOT,
         LLMProviderId.CUSTOM,
     )
 
@@ -190,3 +246,40 @@ def provider_choices(*, include_none: bool = True) -> tuple[str, ...]:
     """Return provider values for CLI choices."""
 
     return tuple(item.value for item in list_supported_providers(include_none=include_none))
+
+
+_OAUTH_TOKEN_PROVIDERS = frozenset(
+    {
+        LLMProviderId.OPENAI_CODEX,
+        LLMProviderId.MINIMAX_PORTAL,
+        LLMProviderId.GITHUB_COPILOT,
+    }
+)
+_DEVICE_CODE_FLOW_PROVIDERS = frozenset(
+    {
+        LLMProviderId.MINIMAX_PORTAL,
+        LLMProviderId.GITHUB_COPILOT,
+    }
+)
+
+
+def provider_uses_oauth_token(provider: LLMProviderId) -> bool:
+    """Return whether provider is configured with OAuth-style access token."""
+
+    return provider in _OAUTH_TOKEN_PROVIDERS
+
+
+def provider_supports_device_code_flow(provider: LLMProviderId) -> bool:
+    """Return whether provider supports interactive OAuth device-code login."""
+
+    return provider in _DEVICE_CODE_FLOW_PROVIDERS
+
+
+def provider_token_verify_mode(provider: LLMProviderId) -> str:
+    """Return token verification strategy for one provider."""
+
+    if provider == LLMProviderId.GITHUB_COPILOT:
+        return "github_copilot_exchange"
+    if provider in {LLMProviderId.OPENAI_CODEX, LLMProviderId.MINIMAX_PORTAL}:
+        return "skip"
+    return "http_get"

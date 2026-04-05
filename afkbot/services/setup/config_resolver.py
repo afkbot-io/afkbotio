@@ -189,6 +189,7 @@ def collect_setup_config(
     default_profile_base_runtime_config: ProfileRuntimeConfig | None = None,
     resolved_runtime_core: ResolvedProfileRuntimeCore | None = None,
     resolved_api_key: str | None = None,
+    resolved_runtime_secrets_update: dict[str, str] | None = None,
     resolved_policy_inputs: ResolvedProfilePolicyInputs | None = None,
     default_profile_runtime_config_override: ProfileRuntimeConfig | None = None,
     profile_setup_only: bool = False,
@@ -258,8 +259,8 @@ def collect_setup_config(
                 verification.reason
                 or msg(
                     lang,
-                    en="Provider API key verification failed.",
-                    ru="Не удалось проверить API key провайдера.",
+                    en="Provider credential verification failed.",
+                    ru="Не удалось проверить credential провайдера.",
                 )
             )
 
@@ -514,4 +515,5 @@ def collect_setup_config(
             )
         ),
         auto_install_deps=auto_install_deps_resolved,
+        runtime_secrets_update=dict(resolved_runtime_secrets_update or {}),
     )
