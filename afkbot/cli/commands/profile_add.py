@@ -50,7 +50,10 @@ def register_add(profile_app: typer.Typer) -> None:
         llm_provider: str | None = typer.Option(
             None,
             "--llm-provider",
-            help="Chat provider: openrouter, openai, claude, moonshot, deepseek, xai, qwen, or custom.",
+            help=(
+                "Chat provider: openrouter, openai, openai-codex, claude, moonshot, deepseek, "
+                "xai, qwen, minimax-portal, github-copilot, or custom."
+            ),
         ),
         chat_model: str | None = typer.Option(
             None,
@@ -67,6 +70,11 @@ def register_add(profile_app: typer.Typer) -> None:
             "--custom-interface",
             help="API interface for custom providers. Currently only `openai` is supported.",
         ),
+        minimax_region: str | None = typer.Option(
+            None,
+            "--minimax-region",
+            help="MiniMax OAuth region for minimax-portal: global or cn.",
+        ),
         llm_proxy_type: str | None = typer.Option(
             None,
             "--llm-proxy-type",
@@ -80,13 +88,13 @@ def register_add(profile_app: typer.Typer) -> None:
         llm_api_key: str | None = typer.Option(
             None,
             "--llm-api-key",
-            help="Optional generic API key fallback stored only for this profile.",
+            help="Optional generic provider credential fallback (API key or OAuth token) for this profile.",
             hide_input=True,
         ),
         provider_api_key: str | None = typer.Option(
             None,
             "--provider-api-key",
-            help="Optional provider-specific API key stored only for this profile.",
+            help="Optional provider-specific credential (API key or OAuth token) stored only for this profile.",
             hide_input=True,
         ),
         skip_llm_token_verify: bool = typer.Option(
@@ -279,6 +287,7 @@ def register_add(profile_app: typer.Typer) -> None:
                 llm_api_key_file=None,
                 llm_api_key=llm_api_key,
                 provider_api_key=provider_api_key,
+                minimax_region=minimax_region,
                 planning_mode=planning_mode,
                 current_runtime_secrets=None,
                 policy_enabled=policy_enabled,

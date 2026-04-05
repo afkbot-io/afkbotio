@@ -111,7 +111,7 @@ def resolve_profile_runtime_core(
     default_proxy_type: str,
     default_proxy_url: str,
     default_planning_mode: str | None,
-    provider_api_key_hook: Callable[[LLMProviderId, str], None] | None = None,
+    provider_api_key_hook: Callable[[LLMProviderId, str], str | None] | None = None,
 ) -> ResolvedProfileRuntimeCore:
     """Resolve provider/model/runtime inputs with identical create/update semantics."""
 
@@ -129,8 +129,9 @@ def resolve_profile_runtime_core(
         default=default_model,
         lang=lang,
     )
+    provider_default_base_url_override: str | None = None
     if provider_api_key_hook is not None:
-        provider_api_key_hook(provider_id, resolved_provider)
+        provider_default_base_url_override = provider_api_key_hook(provider_id, resolved_provider)
     resolved_thinking_level = resolve_profile_thinking_level(
         value=thinking_level_value,
         interactive=interactive,
@@ -146,12 +147,17 @@ def resolve_profile_runtime_core(
             default=default_custom_interface,
             lang=lang,
         )
-    provider_default_base_url = resolve_provider_base_url_default(
+    provider_default_base_url = provider_default_base_url_override or resolve_provider_base_url_default(
         defaults={},
         settings=settings,
         provider_id=provider_id,
     )
-    effective_default_base_url = default_base_url or provider_default_base_url
+    provider_changed = resolved_provider.strip().lower() != default_provider.strip().lower()
+    if provider_changed and base_url_value is None:
+        # When provider changes, prefer the new provider default instead of carrying stale URL.
+        effective_default_base_url = provider_default_base_url
+    else:
+        effective_default_base_url = default_base_url or provider_default_base_url
     should_prompt_base_url = interactive and (
         base_url_value is not None
         or provider_id == LLMProviderId.CUSTOM

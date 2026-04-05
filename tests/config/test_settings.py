@@ -101,6 +101,8 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
     assert settings.openai_api_key is None
     assert settings.openai_base_url == "https://api.openai.com/v1"
+    assert settings.openai_codex_api_key is None
+    assert settings.openai_codex_base_url == "https://chatgpt.com/backend-api/codex"
     assert settings.claude_api_key is None
     assert settings.claude_base_url == "https://api.anthropic.com/v1"
     assert settings.moonshot_api_key is None
@@ -111,6 +113,10 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.xai_base_url == "https://api.x.ai/v1"
     assert settings.qwen_api_key is None
     assert settings.qwen_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert settings.minimax_portal_api_key is None
+    assert settings.minimax_portal_base_url == "https://api.minimax.io/v1"
+    assert settings.github_copilot_api_key is None
+    assert settings.github_copilot_base_url == "https://api.individual.githubcopilot.com"
     assert settings.brave_api_key is None
     assert settings.llm_proxy_type == "none"
     assert settings.llm_proxy_url is None

@@ -20,7 +20,11 @@ from afkbot.services.setup.runtime_store import (
     write_runtime_secrets,
 )
 from afkbot.services.setup.state import SetupStateSnapshot, write_setup_state
-from afkbot.services.llm.provider_catalog import get_provider_spec, parse_provider
+from afkbot.services.llm.provider_catalog import (
+    get_provider_spec,
+    parse_provider,
+    provider_uses_oauth_token,
+)
 from afkbot.services.profile_runtime import provider_secret_field, run_profile_service_sync
 from afkbot.services.profile_runtime.service import reset_profile_services_async
 from afkbot.settings import Settings, get_settings
@@ -323,21 +327,38 @@ def _build_runtime_secrets_payload(
     existing_runtime_secrets: dict[str, str],
 ) -> dict[str, str]:
     payload = dict(existing_runtime_secrets)
+    payload.update(
+        {
+            key: value.strip()
+            for key, value in config.runtime_secrets_update.items()
+            if isinstance(value, str) and value.strip()
+        }
+    )
+    provider_id = parse_provider(config.llm_provider)
+    uses_oauth = provider_uses_oauth_token(provider_id)
     if config.credentials_master_keys:
         payload["credentials_master_keys"] = config.credentials_master_keys
     if config.llm_api_key:
-        payload["llm_api_key"] = config.llm_api_key
+        if not uses_oauth:
+            payload["llm_api_key"] = config.llm_api_key
         payload[provider_secret_field(config.llm_provider)] = config.llm_api_key
     return payload
 
 
 def _build_default_profile_runtime_secrets(*, config: SetupConfig) -> dict[str, str] | None:
-    if not config.llm_api_key:
-        return None
-    return {
-        "llm_api_key": config.llm_api_key,
-        provider_secret_field(config.llm_provider): config.llm_api_key,
+    payload = {
+        key: value.strip()
+        for key, value in config.runtime_secrets_update.items()
+        if isinstance(value, str) and value.strip()
     }
+    provider_id = parse_provider(config.llm_provider)
+    if config.llm_api_key:
+        payload[provider_secret_field(config.llm_provider)] = config.llm_api_key
+        if not provider_uses_oauth_token(provider_id):
+            payload["llm_api_key"] = config.llm_api_key
+    if not payload:
+        return None
+    return payload
 
 
 def _build_setup_response(

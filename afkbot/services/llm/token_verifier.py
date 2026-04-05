@@ -9,7 +9,12 @@ from urllib.request import Request
 
 import httpx
 
-from afkbot.services.llm.provider_catalog import LLMProviderId, get_provider_spec
+from afkbot.services.llm.github_copilot_token import resolve_copilot_api_token
+from afkbot.services.llm.provider_catalog import (
+    LLMProviderId,
+    get_provider_spec,
+    provider_token_verify_mode,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -37,9 +42,57 @@ def verify_provider_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_missing",
-            reason="LLM API key is required.",
+            reason="LLM provider credential is required.",
             status_code=None,
         )
+
+    verify_mode = provider_token_verify_mode(provider_id)
+    if verify_mode == "skip":
+        return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=None)
+    if verify_mode == "github_copilot_exchange":
+        try:
+            _ = resolve_copilot_api_token(
+                github_token=normalized_key,
+                proxy_url=(proxy_url or "").strip() or None,
+                timeout_sec=timeout_sec,
+            )
+        except httpx.TimeoutException:
+            return TokenVerificationResult(
+                ok=False,
+                error_code="llm_token_verify_timeout",
+                reason="LLM token verification timed out.",
+                status_code=None,
+            )
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status in {401, 403}:
+                return TokenVerificationResult(
+                    ok=False,
+                    error_code="llm_token_invalid",
+                    reason=f"Provider rejected credentials (HTTP {status}).",
+                    status_code=status,
+                )
+            return TokenVerificationResult(
+                ok=False,
+                error_code="llm_token_verify_failed",
+                reason=f"LLM token verification failed (HTTP {status}).",
+                status_code=status,
+            )
+        except (httpx.RequestError, OSError) as exc:
+            return TokenVerificationResult(
+                ok=False,
+                error_code="llm_token_verify_network_error",
+                reason=f"LLM token verification failed due to network error: {exc}",
+                status_code=None,
+            )
+        except ValueError as exc:
+            return TokenVerificationResult(
+                ok=False,
+                error_code="llm_token_verify_failed",
+                reason=f"LLM token verification failed: {exc}",
+                status_code=None,
+            )
+        return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=200)
 
     normalized_base_url = base_url.strip().rstrip("/")
     if not _is_allowed_base_url(normalized_base_url):
@@ -99,7 +152,7 @@ def verify_provider_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_invalid",
-            reason=f"Provider rejected API key (HTTP {status_code}).",
+            reason=f"Provider rejected credentials (HTTP {status_code}).",
             status_code=status_code,
         )
     if status_code == 404:

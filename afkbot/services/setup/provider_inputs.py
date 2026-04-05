@@ -197,6 +197,8 @@ def resolve_provider_base_url_default(
         provider_value = defaults.get("AFKBOT_OPENROUTER_BASE_URL", settings.openrouter_base_url).strip()
     elif provider_id == LLMProviderId.OPENAI:
         provider_value = defaults.get("AFKBOT_OPENAI_BASE_URL", settings.openai_base_url).strip()
+    elif provider_id == LLMProviderId.OPENAI_CODEX:
+        provider_value = defaults.get("AFKBOT_OPENAI_CODEX_BASE_URL", settings.openai_codex_base_url).strip()
     elif provider_id == LLMProviderId.CLAUDE:
         provider_value = defaults.get("AFKBOT_CLAUDE_BASE_URL", settings.claude_base_url).strip()
     elif provider_id == LLMProviderId.MOONSHOT:
@@ -207,6 +209,16 @@ def resolve_provider_base_url_default(
         provider_value = defaults.get("AFKBOT_XAI_BASE_URL", settings.xai_base_url).strip()
     elif provider_id == LLMProviderId.QWEN:
         provider_value = defaults.get("AFKBOT_QWEN_BASE_URL", settings.qwen_base_url).strip()
+    elif provider_id == LLMProviderId.MINIMAX_PORTAL:
+        provider_value = defaults.get(
+            "AFKBOT_MINIMAX_PORTAL_BASE_URL",
+            settings.minimax_portal_base_url,
+        ).strip()
+    elif provider_id == LLMProviderId.GITHUB_COPILOT:
+        provider_value = defaults.get(
+            "AFKBOT_GITHUB_COPILOT_BASE_URL",
+            settings.github_copilot_base_url,
+        ).strip()
     elif provider_id == LLMProviderId.CUSTOM:
         provider_value = defaults.get("AFKBOT_CUSTOM_BASE_URL", settings.custom_base_url).strip()
     else:

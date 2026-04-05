@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -81,3 +81,4 @@ class SetupConfig:
     policy_network_allowlist: tuple[str, ...]
     default_profile_runtime_config: ProfileRuntimeConfig
     auto_install_deps: bool
+    runtime_secrets_update: dict[str, str] = field(default_factory=dict)

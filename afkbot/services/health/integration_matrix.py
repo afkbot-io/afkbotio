@@ -290,8 +290,8 @@ async def _llm_runtime_check(
         integration=spec.integration,
         status="skip",
         mode=mode,
-        reason=f"Provider API key is missing for {provider_label}.",
-        error_code="llm_api_key_missing",
+        reason=f"Provider credentials are missing for {provider_label}.",
+        error_code="llm_credentials_missing",
     )
 
 

@@ -17,21 +17,27 @@ def test_supported_providers_include_claude_and_moonshot_in_stable_order() -> No
     assert list_supported_providers(include_none=False) == (
         LLMProviderId.OPENROUTER,
         LLMProviderId.OPENAI,
+        LLMProviderId.OPENAI_CODEX,
         LLMProviderId.CLAUDE,
         LLMProviderId.MOONSHOT,
         LLMProviderId.DEEPSEEK,
         LLMProviderId.XAI,
         LLMProviderId.QWEN,
+        LLMProviderId.MINIMAX_PORTAL,
+        LLMProviderId.GITHUB_COPILOT,
         LLMProviderId.CUSTOM,
     )
     assert provider_choices(include_none=False) == (
         "openrouter",
         "openai",
+        "openai-codex",
         "claude",
         "moonshot",
         "deepseek",
         "xai",
         "qwen",
+        "minimax-portal",
+        "github-copilot",
         "custom",
     )
 
@@ -85,3 +91,6 @@ def test_parse_provider_accepts_new_provider_ids() -> None:
 
     assert parse_provider("claude") == LLMProviderId.CLAUDE
     assert parse_provider("moonshot") == LLMProviderId.MOONSHOT
+    assert parse_provider("openai-codex") == LLMProviderId.OPENAI_CODEX
+    assert parse_provider("minimax-portal") == LLMProviderId.MINIMAX_PORTAL
+    assert parse_provider("github-copilot") == LLMProviderId.GITHUB_COPILOT

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import time
 from pytest import CaptureFixture
 
 from afkbot.services.llm.contracts import (
@@ -11,6 +12,11 @@ from afkbot.services.llm.contracts import (
     LLMRequest,
     LLMToolDefinition,
     ToolCallRequest,
+)
+from afkbot.services.llm.minimax_portal_oauth import (
+    MINIMAX_PORTAL_OAUTH_BASE_URL_CN,
+    MINIMAX_PORTAL_PROVIDER_BASE_URL_CN,
+    MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL,
 )
 from afkbot.services.llm.provider import OpenAICompatibleChatProvider, build_llm_provider
 from afkbot.services.llm.provider_catalog import LLMProviderId
@@ -290,6 +296,44 @@ def test_build_llm_provider_prefers_provider_specific_over_global_values() -> No
     assert provider._base_url == "https://api.openai.com/v1"  # noqa: SLF001
 
 
+def test_build_llm_provider_supports_openai_codex_provider_specific_settings() -> None:
+    """OpenAI Codex provider should resolve provider-specific OAuth token/base URL fields."""
+
+    settings = Settings(
+        llm_provider="openai-codex",
+        llm_model="gpt-5.4",
+        llm_api_key="stale-global-token",
+        llm_base_url="https://stale-global.example/v1",
+        openai_codex_api_key="chatgpt-oauth-token",
+        openai_codex_base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "chatgpt-oauth-token"  # noqa: SLF001
+    assert provider._base_url == "https://chatgpt.com/backend-api/codex"  # noqa: SLF001
+
+
+def test_build_llm_provider_supports_minimax_portal_provider_specific_settings() -> None:
+    """MiniMax Portal provider should resolve provider-specific OAuth token/base URL fields."""
+
+    settings = Settings(
+        llm_provider="minimax-portal",
+        llm_model="MiniMax-M2.7",
+        llm_api_key="stale-global-token",
+        llm_base_url="https://stale-global.example/v1",
+        minimax_portal_api_key="minimax-oauth-token",
+        minimax_portal_base_url="https://api.minimax.io/v1",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "minimax-oauth-token"  # noqa: SLF001
+    assert provider._base_url == "https://api.minimax.io/v1"  # noqa: SLF001
+
+
 def test_build_llm_provider_uses_global_fallback_when_provider_specific_absent() -> None:
     """Global key/base URL should be used as fallback for selected provider."""
 
@@ -345,6 +389,134 @@ def test_build_llm_provider_supports_moonshot_provider_specific_settings() -> No
     assert provider is not None
     assert provider._api_key == "moonshot-key"  # noqa: SLF001
     assert provider._base_url == "https://api.moonshot.ai/v1"  # noqa: SLF001
+
+
+def test_minimax_provider_refreshes_expired_token_and_persists_runtime_secrets(monkeypatch) -> None:
+    """MiniMax provider should refresh near-expired OAuth token and persist updated secrets."""
+
+    refresh_calls: list[tuple[str, object]] = []
+    persisted_updates: list[dict[str, str]] = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args
+            _ = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            _ = exc_type
+            _ = exc
+            _ = tb
+            return False
+
+        async def post(self, url: str, **kwargs) -> httpx.Response:
+            refresh_calls.append((url, kwargs.get("data")))
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "status": "success",
+                    "access_token": "new-access-token",
+                    "refresh_token": "new-refresh-token",
+                    "expired_in": 3600,
+                    "resource_url": "https://api.minimaxi.com/v1",
+                },
+            )
+
+    monkeypatch.setattr("afkbot.services.llm.provider.httpx.AsyncClient", _FakeAsyncClient)
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MINIMAX_PORTAL,
+        model="MiniMax-M2.7",
+        api_key="old-access-token",
+        base_url=MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL,
+        minimax_portal_refresh_token="old-refresh-token",
+        minimax_portal_token_expires_at=str(int(time.time()) - 5),
+        minimax_portal_region="cn",
+        runtime_secrets_update_hook=persisted_updates.append,
+    )
+
+    asyncio.run(provider._maybe_refresh_minimax_portal_token(timeout_sec=5.0))  # noqa: SLF001
+
+    assert len(refresh_calls) == 1
+    refresh_url, refresh_payload = refresh_calls[0]
+    assert refresh_url == f"{MINIMAX_PORTAL_OAUTH_BASE_URL_CN}/oauth/token"
+    assert isinstance(refresh_payload, dict)
+    assert refresh_payload["refresh_token"] == "old-refresh-token"
+    assert provider._api_key == "new-access-token"  # noqa: SLF001
+    assert provider._minimax_portal_refresh_token == "new-refresh-token"  # noqa: SLF001
+    assert provider._base_url == MINIMAX_PORTAL_PROVIDER_BASE_URL_CN  # noqa: SLF001
+    assert persisted_updates
+    assert persisted_updates[-1]["minimax_portal_api_key"] == "new-access-token"
+    assert persisted_updates[-1]["minimax_portal_refresh_token"] == "new-refresh-token"
+    assert persisted_updates[-1]["minimax_portal_region"] == "cn"
+    assert persisted_updates[-1]["minimax_portal_resource_url"] == "https://api.minimaxi.com/v1"
+
+
+def test_minimax_provider_skips_refresh_when_token_not_expired(monkeypatch) -> None:
+    """MiniMax provider should not call refresh endpoint when token expiry is far in the future."""
+
+    class _FailAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = args
+            _ = kwargs
+            raise AssertionError("Refresh client should not be created for non-expired token")
+
+    monkeypatch.setattr("afkbot.services.llm.provider.httpx.AsyncClient", _FailAsyncClient)
+    persisted_updates: list[dict[str, str]] = []
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MINIMAX_PORTAL,
+        model="MiniMax-M2.7",
+        api_key="stable-access-token",
+        base_url=MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL,
+        minimax_portal_refresh_token="stable-refresh-token",
+        minimax_portal_token_expires_at=str(int(time.time()) + 3600),
+        minimax_portal_region="cn",
+        runtime_secrets_update_hook=persisted_updates.append,
+    )
+
+    asyncio.run(provider._maybe_refresh_minimax_portal_token(timeout_sec=5.0))  # noqa: SLF001
+
+    assert provider._api_key == "stable-access-token"  # noqa: SLF001
+    assert provider._base_url == MINIMAX_PORTAL_PROVIDER_BASE_URL_CN  # noqa: SLF001
+    assert persisted_updates == []
+
+
+def test_openai_codex_provider_uses_responses_surface() -> None:
+    """OpenAI Codex provider should always call the Responses API surface."""
+
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+    )
+
+    response = asyncio.run(provider.complete(_request()))
+
+    assert response.kind == "final"
+    assert provider.last_responses_payload is not None
+    assert provider.last_responses_payload.get("store") is False
+    assert provider.last_responses_payload.get("stream") is True
+    assert provider.last_chat_payload is None
+
+
+def test_openai_codex_sse_decoder_returns_completed_response_object() -> None:
+    """Codex SSE decoder should return the response object from response.completed event."""
+
+    sse_payload = (
+        'event: response.created\n'
+        'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}\n'
+        "\n"
+        'event: response.completed\n'
+        'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}}\n'
+        "\n"
+    )
+
+    decoded = OpenAICompatibleChatProvider._decode_openai_codex_sse_response(sse_payload)  # noqa: SLF001
+
+    assert decoded["id"] == "resp_1"
+    assert decoded["status"] == "completed"
 
 
 def test_build_llm_provider_uses_runtime_timeout_setting() -> None:

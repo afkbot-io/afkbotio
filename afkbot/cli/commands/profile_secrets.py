@@ -14,6 +14,7 @@ from afkbot.services.profile_runtime import (
     ProfileServiceError,
     get_profile_runtime_secrets_service,
     get_profile_service,
+    provider_oauth_metadata_fields,
     provider_secret_field,
 )
 from afkbot.settings import get_settings
@@ -56,13 +57,13 @@ def register_secrets(profile_app: typer.Typer) -> None:
         llm_api_key: str | None = typer.Option(
             None,
             "--llm-api-key",
-            help="Generic fallback API key for this profile.",
+            help="Generic fallback provider credential (API key or OAuth token) for this profile.",
             hide_input=True,
         ),
         provider_api_key: str | None = typer.Option(
             None,
             "--provider-api-key",
-            help="Provider-specific API key for this profile's current provider.",
+            help="Provider-specific credential (API key or OAuth token) for this profile's current provider.",
             hide_input=True,
         ),
         brave_api_key: str | None = typer.Option(
@@ -121,7 +122,7 @@ def register_secrets(profile_app: typer.Typer) -> None:
         provider_api_key: bool = typer.Option(
             False,
             "--provider-api-key",
-            help="Clear the provider-specific API key for the profile's current provider.",
+            help="Clear the provider-specific credential for the profile's current provider.",
         ),
         brave_api_key: bool = typer.Option(
             False,
@@ -143,6 +144,9 @@ def register_secrets(profile_app: typer.Typer) -> None:
                     requested_fields.append("llm_api_key")
                 if provider_api_key:
                     requested_fields.append(provider_secret_field(profile.effective_runtime.llm_provider))
+                    requested_fields.extend(
+                        provider_oauth_metadata_fields(profile.effective_runtime.llm_provider)
+                    )
                 if brave_api_key:
                     requested_fields.append("brave_api_key")
                 if not requested_fields:

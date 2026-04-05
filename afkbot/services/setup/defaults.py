@@ -99,6 +99,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             runtime_config.get("openrouter_base_url", settings.openrouter_base_url)
         ),
         "AFKBOT_OPENAI_BASE_URL": str(runtime_config.get("openai_base_url", settings.openai_base_url)),
+        "AFKBOT_OPENAI_CODEX_BASE_URL": str(
+            runtime_config.get("openai_codex_base_url", settings.openai_codex_base_url)
+        ),
         "AFKBOT_CLAUDE_BASE_URL": str(runtime_config.get("claude_base_url", settings.claude_base_url)),
         "AFKBOT_MOONSHOT_BASE_URL": str(runtime_config.get("moonshot_base_url", settings.moonshot_base_url)),
         "AFKBOT_DEEPSEEK_BASE_URL": str(
@@ -106,6 +109,12 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         ),
         "AFKBOT_XAI_BASE_URL": str(runtime_config.get("xai_base_url", settings.xai_base_url)),
         "AFKBOT_QWEN_BASE_URL": str(runtime_config.get("qwen_base_url", settings.qwen_base_url)),
+        "AFKBOT_MINIMAX_PORTAL_BASE_URL": str(
+            runtime_config.get("minimax_portal_base_url", settings.minimax_portal_base_url)
+        ),
+        "AFKBOT_GITHUB_COPILOT_BASE_URL": str(
+            runtime_config.get("github_copilot_base_url", settings.github_copilot_base_url)
+        ),
         "AFKBOT_CUSTOM_BASE_URL": str(runtime_config.get("custom_base_url", settings.custom_base_url)),
         "AFKBOT_CUSTOM_INTERFACE": str(runtime_config.get("custom_interface", settings.custom_interface)),
         "AFKBOT_LLM_API_KEY": str(runtime_secrets.get("llm_api_key", settings.llm_api_key or "")),
@@ -113,6 +122,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             runtime_secrets.get("openrouter_api_key", settings.openrouter_api_key or "")
         ),
         "AFKBOT_OPENAI_API_KEY": str(runtime_secrets.get("openai_api_key", settings.openai_api_key or "")),
+        "AFKBOT_OPENAI_CODEX_API_KEY": str(
+            runtime_secrets.get("openai_codex_api_key", settings.openai_codex_api_key or "")
+        ),
         "AFKBOT_CLAUDE_API_KEY": str(runtime_secrets.get("claude_api_key", settings.claude_api_key or "")),
         "AFKBOT_MOONSHOT_API_KEY": str(
             runtime_secrets.get("moonshot_api_key", settings.moonshot_api_key or "")
@@ -122,6 +134,33 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         ),
         "AFKBOT_XAI_API_KEY": str(runtime_secrets.get("xai_api_key", settings.xai_api_key or "")),
         "AFKBOT_QWEN_API_KEY": str(runtime_secrets.get("qwen_api_key", settings.qwen_api_key or "")),
+        "AFKBOT_MINIMAX_PORTAL_API_KEY": str(
+            runtime_secrets.get("minimax_portal_api_key", settings.minimax_portal_api_key or "")
+        ),
+        "AFKBOT_MINIMAX_PORTAL_REFRESH_TOKEN": str(
+            runtime_secrets.get(
+                "minimax_portal_refresh_token",
+                settings.minimax_portal_refresh_token or "",
+            )
+        ),
+        "AFKBOT_MINIMAX_PORTAL_TOKEN_EXPIRES_AT": str(
+            runtime_secrets.get(
+                "minimax_portal_token_expires_at",
+                settings.minimax_portal_token_expires_at or "",
+            )
+        ),
+        "AFKBOT_MINIMAX_PORTAL_RESOURCE_URL": str(
+            runtime_secrets.get(
+                "minimax_portal_resource_url",
+                settings.minimax_portal_resource_url or "",
+            )
+        ),
+        "AFKBOT_MINIMAX_PORTAL_REGION": str(
+            runtime_secrets.get("minimax_portal_region", settings.minimax_portal_region or "")
+        ),
+        "AFKBOT_GITHUB_COPILOT_API_KEY": str(
+            runtime_secrets.get("github_copilot_api_key", settings.github_copilot_api_key or "")
+        ),
         "AFKBOT_CUSTOM_API_KEY": str(runtime_secrets.get("custom_api_key", settings.custom_api_key or "")),
     }
     for key in tuple(merged.keys()):

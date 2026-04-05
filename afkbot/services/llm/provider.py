@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 import sys
 import json
+import time
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any, Literal
@@ -19,7 +20,23 @@ from afkbot.services.llm.contracts import (
     LLMResponse,
 )
 from afkbot.services.llm.provider_catalog import LLMProviderId, parse_provider
+from afkbot.services.llm.minimax_portal_oauth import (
+    MINIMAX_PORTAL_OAUTH_CLIENT_ID,
+    MINIMAX_PORTAL_PROVIDER_BASE_URL_CN,
+    MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL,
+    extract_minimax_oauth_error_message,
+    infer_minimax_portal_region_from_base_url,
+    minimax_portal_oauth_base_url_for_region,
+    minimax_portal_provider_base_url_for_region,
+    normalize_minimax_portal_region,
+    normalize_minimax_portal_resource_url,
+    parse_minimax_portal_token_payload,
+)
 from afkbot.services.llm.provider_payload_runtime import OpenAICompatiblePayloadRuntime
+from afkbot.services.llm.github_copilot_token import (
+    build_copilot_ide_headers,
+    resolve_copilot_api_token,
+)
 from afkbot.services.llm.tool_name_codec import build_tool_name_codec
 from afkbot.services.llm.provider_settings import (
     ResolvedProviderDebugInfo,
@@ -56,6 +73,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         timeout_sec: float = DEFAULT_LLM_REQUEST_TIMEOUT_SEC,
         debug_diagnostics_enabled: bool = False,
         debug_info: ResolvedProviderDebugInfo | None = None,
+        minimax_portal_refresh_token: str | None = None,
+        minimax_portal_token_expires_at: str | None = None,
+        minimax_portal_resource_url: str | None = None,
+        minimax_portal_region: str | None = None,
+        runtime_secrets_update_hook: Callable[[dict[str, str]], None] | None = None,
     ) -> None:
         self._provider_id = provider_id
         self._model = model.strip()
@@ -65,6 +87,14 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         self._timeout_sec = clamp_llm_request_timeout_sec(timeout_sec)
         self._debug_diagnostics_enabled = debug_diagnostics_enabled
         self._debug_info = debug_info
+        self._minimax_portal_refresh_token = (minimax_portal_refresh_token or "").strip()
+        self._minimax_portal_token_expires_at = (minimax_portal_token_expires_at or "").strip()
+        self._minimax_portal_resource_url = (minimax_portal_resource_url or "").strip()
+        self._minimax_portal_region = normalize_minimax_portal_region(
+            minimax_portal_region,
+            default=infer_minimax_portal_region_from_base_url(self._base_url),
+        )
+        self._runtime_secrets_update_hook = runtime_secrets_update_hook
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Request one completion from provider or fallback deterministically."""
@@ -182,6 +212,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             payload["tools"] = tools
         if request.reasoning_effort is not None:
             payload["reasoning"] = {"effort": request.reasoning_effort}
+        if self._provider_id == LLMProviderId.OPENAI_CODEX:
+            # Codex backend requires explicit opt-out from transcript persistence.
+            payload["store"] = False
+            # Codex backend currently serves Responses via SSE-only transport.
+            payload["stream"] = True
         return payload
 
     async def _post_chat(
@@ -201,7 +236,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         return await self._post_json(path="/responses", payload=payload, timeout_sec=timeout_sec)
 
     def _assistant_tool_call_content_mode(self) -> Literal["omit", "null"]:
-        if self._provider_id == LLMProviderId.OPENAI:
+        if self._provider_id in {
+            LLMProviderId.OPENAI,
+            LLMProviderId.OPENAI_CODEX,
+            LLMProviderId.GITHUB_COPILOT,
+        }:
             return "null"
         return "omit"
 
@@ -212,11 +251,23 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         payload: Mapping[str, object],
         timeout_sec: float,
     ) -> dict[str, Any]:
-        url = f"{self._base_url}{path}"
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        if self._provider_id == LLMProviderId.MINIMAX_PORTAL:
+            self._apply_minimax_region_default_base_url()
+            await self._maybe_refresh_minimax_portal_token(timeout_sec=timeout_sec)
+        resolved_base_url = self._base_url
+        resolved_api_key = self._api_key
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._provider_id == LLMProviderId.GITHUB_COPILOT:
+            copilot_auth = resolve_copilot_api_token(
+                github_token=self._api_key,
+                proxy_url=self._proxy_url or None,
+                timeout_sec=timeout_sec,
+            )
+            resolved_base_url = copilot_auth.base_url.rstrip("/")
+            resolved_api_key = copilot_auth.token
+            headers.update(build_copilot_ide_headers())
+        headers["Authorization"] = f"Bearer {resolved_api_key}"
+        url = f"{resolved_base_url}{path}"
         self._emit_debug_diagnostics(stage="request", path=path, timeout_sec=timeout_sec)
 
         async with httpx.AsyncClient(
@@ -232,10 +283,182 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 http_status=response.status_code,
             )
             response.raise_for_status()
-            data = response.json()
+            if self._provider_id == LLMProviderId.OPENAI_CODEX and path == "/responses":
+                data = self._decode_openai_codex_sse_response(response.text)
+            else:
+                data = response.json()
             if not isinstance(data, dict):
                 raise ValueError("Provider response is not an object")
             return data
+
+    @staticmethod
+    def _decode_openai_codex_sse_response(body: str) -> dict[str, object]:
+        """Decode one Codex SSE response body into the final Responses object."""
+
+        compact = body.strip()
+        if not compact:
+            raise ValueError("Codex response is empty")
+        if compact.startswith("{"):
+            parsed = json.loads(compact)
+            if not isinstance(parsed, dict):
+                raise ValueError("Codex response is not a JSON object")
+            return parsed
+
+        latest_response: dict[str, object] | None = None
+        completed_response: dict[str, object] | None = None
+        data_lines: list[str] = []
+
+        def _consume_event_data(lines: list[str]) -> tuple[dict[str, object] | None, bool]:
+            if not lines:
+                return None, False
+            joined = "\n".join(lines).strip()
+            if not joined or joined == "[DONE]":
+                return None, joined == "[DONE]"
+            try:
+                payload = json.loads(joined)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Codex SSE response contains invalid JSON event payload") from exc
+            if not isinstance(payload, dict):
+                return None, False
+            response_obj = payload.get("response")
+            if isinstance(response_obj, dict):
+                event_type = str(payload.get("type") or "").strip()
+                is_completed = event_type == "response.completed" or str(response_obj.get("status") or "").strip() == "completed"
+                return response_obj, is_completed
+            return None, False
+
+        for raw_line in compact.splitlines():
+            line = raw_line.rstrip("\r")
+            if not line:
+                response_obj, is_completed = _consume_event_data(data_lines)
+                data_lines = []
+                if response_obj is not None:
+                    latest_response = response_obj
+                    if is_completed:
+                        completed_response = response_obj
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+
+        response_obj, is_completed = _consume_event_data(data_lines)
+        if response_obj is not None:
+            latest_response = response_obj
+            if is_completed:
+                completed_response = response_obj
+
+        resolved = completed_response or latest_response
+        if resolved is None:
+            raise ValueError("Codex SSE response did not include any response payload")
+        return resolved
+
+    async def _maybe_refresh_minimax_portal_token(self, *, timeout_sec: float) -> None:
+        """Refresh MiniMax OAuth access token when expiry metadata indicates staleness."""
+
+        refresh_token = self._minimax_portal_refresh_token.strip()
+        if not refresh_token:
+            return
+        expires_at_epoch = self._resolve_minimax_portal_expiry_epoch()
+        now_epoch = int(time.time())
+        # Refresh slightly early to avoid race between token expiry and in-flight requests.
+        if expires_at_epoch is None or (expires_at_epoch - now_epoch) > 60:
+            self._apply_minimax_region_default_base_url()
+            return
+
+        region = self._minimax_portal_region
+        oauth_base_url = minimax_portal_oauth_base_url_for_region(region)
+        refresh_url = f"{oauth_base_url}/oauth/token"
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout_sec,
+                proxy=self._proxy_url or None,
+                trust_env=False,
+            ) as client:
+                response = await client.post(
+                    refresh_url,
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    },
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": MINIMAX_PORTAL_OAUTH_CLIENT_ID,
+                        "refresh_token": refresh_token,
+                    },
+                )
+                body_text = response.text.strip()
+                token_payload: object = {}
+                if body_text:
+                    try:
+                        token_payload = response.json()
+                    except ValueError:
+                        token_payload = {}
+                if not response.is_success:
+                    message = extract_minimax_oauth_error_message(token_payload)
+                    raise ValueError(
+                        message or f"MiniMax OAuth refresh failed (HTTP {response.status_code})."
+                    )
+                token = parse_minimax_portal_token_payload(
+                    token_payload,
+                    default_refresh_token=refresh_token,
+                    now_epoch_sec=now_epoch,
+                )
+        except (httpx.RequestError, OSError, ValueError):
+            self._emit_debug_diagnostics(
+                stage="oauth_refresh_failed",
+                path="/oauth/token",
+                timeout_sec=timeout_sec,
+            )
+            return
+
+        self._api_key = token.access_token
+        self._minimax_portal_refresh_token = token.refresh_token
+        self._minimax_portal_token_expires_at = str(token.expires_at_epoch_sec)
+        normalized_resource_url = normalize_minimax_portal_resource_url(token.resource_url)
+        if normalized_resource_url:
+            self._minimax_portal_resource_url = normalized_resource_url
+        self._apply_minimax_region_default_base_url()
+        self._persist_minimax_runtime_secrets()
+
+    def _resolve_minimax_portal_expiry_epoch(self) -> int | None:
+        raw = self._minimax_portal_token_expires_at.strip()
+        if not raw:
+            return None
+        try:
+            return int(float(raw))
+        except ValueError:
+            return None
+
+    def _apply_minimax_region_default_base_url(self) -> None:
+        """Keep default MiniMax base URL aligned with selected region without overriding custom URLs."""
+
+        normalized_current = self._base_url.rstrip("/")
+        if normalized_current in {
+            MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL.rstrip("/"),
+            MINIMAX_PORTAL_PROVIDER_BASE_URL_CN.rstrip("/"),
+        }:
+            self._base_url = minimax_portal_provider_base_url_for_region(self._minimax_portal_region).rstrip(
+                "/"
+            )
+
+    def _persist_minimax_runtime_secrets(self) -> None:
+        if self._runtime_secrets_update_hook is None:
+            return
+        updates: dict[str, str] = {
+            "minimax_portal_api_key": self._api_key,
+            "minimax_portal_refresh_token": self._minimax_portal_refresh_token,
+            "minimax_portal_token_expires_at": self._minimax_portal_token_expires_at,
+            "minimax_portal_region": self._minimax_portal_region,
+        }
+        if self._minimax_portal_resource_url:
+            updates["minimax_portal_resource_url"] = self._minimax_portal_resource_url
+        try:
+            self._runtime_secrets_update_hook(updates)
+        except (OSError, ValueError):
+            self._emit_debug_diagnostics(
+                stage="oauth_refresh_persist_failed",
+                path="/oauth/token",
+                timeout_sec=self._timeout_sec,
+            )
 
     def _emit_debug_diagnostics(
         self,
@@ -269,7 +492,9 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         normalized = model.strip().lower()
         if "/" in normalized:
             normalized = normalized.rsplit("/", 1)[-1]
-        if self._provider_id != LLMProviderId.OPENAI:
+        if self._provider_id == LLMProviderId.OPENAI_CODEX:
+            return ModelAPISurface(kind="responses")
+        if self._provider_id not in {LLMProviderId.OPENAI, LLMProviderId.GITHUB_COPILOT}:
             return ModelAPISurface(kind="chat_completions")
         if normalized.startswith("gpt-5") or normalized.startswith(("o1", "o3", "o4")):
             return ModelAPISurface(kind="responses")
@@ -289,7 +514,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                     f"{detail_suffix} The runtime may need to compact older context before retrying."
                 ),
             )
-        if self._provider_id != LLMProviderId.OPENAI:
+        if self._provider_id not in {
+            LLMProviderId.OPENAI,
+            LLMProviderId.OPENAI_CODEX,
+            LLMProviderId.GITHUB_COPILOT,
+        }:
             return self._fallback_response(
                 request,
                 error_code=f"llm_provider_http_{status_code}",
@@ -299,7 +528,7 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             return self._fallback_response(
                 request,
                 error_code="llm_provider_auth_error",
-                message="LLM provider rejected the configured credentials. Check the API key and provider settings.",
+                message="LLM provider rejected the configured credentials. Check provider auth settings.",
             )
         if status_code == 404:
             return self._fallback_response(
@@ -371,7 +600,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         return compact[:300]
 
 
-def build_llm_provider(settings: Settings) -> LLMProvider:
+def build_llm_provider(
+    settings: Settings,
+    *,
+    runtime_secrets_update_hook: Callable[[dict[str, str]], None] | None = None,
+) -> LLMProvider:
     """Build configured LLM provider from runtime settings."""
 
     provider_id = parse_provider(settings.llm_provider)
@@ -386,6 +619,11 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
         timeout_sec=float(settings.llm_request_timeout_sec),
         debug_diagnostics_enabled=settings.llm_debug_diagnostics_enabled,
         debug_info=debug_info,
+        minimax_portal_refresh_token=settings.minimax_portal_refresh_token,
+        minimax_portal_token_expires_at=settings.minimax_portal_token_expires_at,
+        minimax_portal_resource_url=settings.minimax_portal_resource_url,
+        minimax_portal_region=settings.minimax_portal_region,
+        runtime_secrets_update_hook=runtime_secrets_update_hook,
     )
 
 
