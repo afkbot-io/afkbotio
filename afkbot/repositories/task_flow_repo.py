@@ -629,7 +629,6 @@ class TaskFlowRepository:
                 claim_token=claim_token,
                 claimed_by=claimed_by,
                 lease_until=lease_until,
-                current_attempt=Task.current_attempt + 1,
                 last_run_id=None,
                 last_error_code=None,
                 last_error_text=None,
@@ -725,6 +724,7 @@ class TaskFlowRepository:
             .values(
                 status="running",
                 started_at=started_at,
+                current_attempt=Task.current_attempt + 1,
             )
             .execution_options(synchronize_session=False)
         )

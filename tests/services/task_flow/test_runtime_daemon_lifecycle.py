@@ -50,6 +50,15 @@ class _FlakyTaskFlowRuntimeService(_FakeTaskFlowRuntimeService):
         return False
 
 
+async def _slow_cancel_worker_loop(*, worker_index: int) -> None:
+    del worker_index
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        await asyncio.sleep(0.02)
+        raise
+
+
 class _CompletingLoop:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -138,6 +147,30 @@ async def test_taskflow_runtime_daemon_survives_worker_errors(tmp_path: Path) ->
     assert service.execute_calls >= 2
     assert service.worker_ids
     assert set(service.worker_ids) == {"taskflow-runtime:0"}
+
+
+async def test_taskflow_runtime_daemon_waits_for_cancelled_workers_before_shutdown(
+    tmp_path: Path,
+) -> None:
+    """Shutdown should keep draining cancelled workers before clearing runtime state."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_daemon_slow_stop.db'}",
+        runtime_worker_count=1,
+        taskflow_runtime_poll_interval_sec=0.01,
+        runtime_shutdown_timeout_sec=0.01,
+    )
+    service = _FakeTaskFlowRuntimeService()
+    daemon = TaskFlowRuntimeDaemon(settings=settings, service=service)
+    daemon._worker_loop = _slow_cancel_worker_loop  # type: ignore[method-assign]
+
+    await daemon.start()
+    await daemon.stop()
+
+    assert service.started == 1
+    assert service.stopped == 1
+    assert daemon._worker_tasks == []
 
 
 async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(

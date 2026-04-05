@@ -79,21 +79,35 @@ class TaskFlowRuntimeDaemon:
 
         self.begin_shutdown()
         shutdown_timeout = max(self._settings.runtime_shutdown_timeout_sec, 0.0)
-        if self._worker_tasks:
-            for task in self._worker_tasks:
-                task.cancel()
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*self._worker_tasks, return_exceptions=True),
-                    timeout=shutdown_timeout,
-                )
-            except asyncio.TimeoutError as exc:
-                pending = [task for task in self._worker_tasks if not task.done()]
-                if pending:
-                    raise RuntimeError("Task Flow runtime worker shutdown timed out") from exc
-            finally:
-                self._worker_tasks = []
-        await self._service.shutdown()
+        worker_tasks = tuple(self._worker_tasks)
+        self._worker_tasks = []
+        try:
+            if worker_tasks:
+                for task in worker_tasks:
+                    task.cancel()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*worker_tasks, return_exceptions=True),
+                        timeout=shutdown_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    pending = [task for task in worker_tasks if not task.done()]
+                    if pending:
+                        for task in pending:
+                            task.cancel()
+                        cleanup_timeout = max(0.05, shutdown_timeout)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.gather(*pending, return_exceptions=True),
+                                timeout=cleanup_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+                    pending = [task for task in worker_tasks if not task.done()]
+                    if pending:
+                        raise RuntimeError("Task Flow runtime worker shutdown timed out") from exc
+        finally:
+            await self._service.shutdown()
 
     async def _worker_loop(self, *, worker_index: int) -> None:
         worker_id = f"taskflow-runtime:{worker_index}"

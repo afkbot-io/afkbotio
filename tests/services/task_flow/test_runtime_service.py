@@ -493,7 +493,7 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert released.started_at is None
         assert released.last_error_code == "task_claim_lost"
         assert released.last_error_text == "Failed to transition claimed task into running state"
-        assert released.current_attempt == 1
+        assert released.current_attempt == 0
         assert released.last_run_id is not None
         assert observed_calls == []
 
@@ -509,7 +509,7 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert processed_retry is True
         completed = await service.get_task(profile_id="default", task_id=task.id)
         assert completed.status == "completed"
-        assert completed.current_attempt == 2
+        assert completed.current_attempt == 1
         assert len(observed_calls) == 1
     finally:
         await runtime.shutdown()
@@ -564,7 +564,7 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
             assert claimed is not None
             task_run = await repo.create_task_run(
                 task_id=task.id,
-                attempt=claimed.current_attempt,
+                attempt=claimed.current_attempt + 1,
                 owner_type=claimed.owner_type,
                 owner_ref=claimed.owner_ref,
                 execution_mode="detached",
@@ -668,7 +668,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
                 assert claimed is not None
                 task_run = await repo.create_task_run(
                     task_id=task_id,
-                    attempt=claimed.current_attempt,
+                    attempt=claimed.current_attempt + 1,
                     owner_type=claimed.owner_type,
                     owner_ref=claimed.owner_ref,
                     execution_mode="detached",

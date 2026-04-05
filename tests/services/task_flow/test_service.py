@@ -304,7 +304,7 @@ async def test_task_flow_service_lists_stale_task_claims(tmp_path: Path) -> None
             assert claimed is not None
             task_run = await repo.create_task_run(
                 task_id=task.id,
-                attempt=claimed.current_attempt,
+                attempt=claimed.current_attempt + 1,
                 owner_type=claimed.owner_type,
                 owner_ref=claimed.owner_ref,
                 execution_mode="detached",

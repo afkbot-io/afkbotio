@@ -229,9 +229,10 @@ class TaskFlowRuntimeService:
             if row is None:
                 return None
             session_id = task_session_id(task_id=row.id)
+            next_attempt = row.current_attempt + 1
             task_run = await repo.create_task_run(
                 task_id=row.id,
-                attempt=row.current_attempt,
+                attempt=next_attempt,
                 owner_type=row.owner_type,
                 owner_ref=row.owner_ref,
                 execution_mode="detached",
@@ -260,7 +261,7 @@ class TaskFlowRuntimeService:
                 source_type=row.source_type,
                 source_ref=row.source_ref,
                 priority=row.priority,
-                attempt=row.current_attempt,
+                attempt=next_attempt,
                 requires_review=bool(row.requires_review),
                 labels=tuple(_decode_labels(row.labels_json)),
                 claim_token=claim_token,

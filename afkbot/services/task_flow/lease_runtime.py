@@ -5,22 +5,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import timedelta
 from typing import TypeVar
 
 TValue = TypeVar("TValue")
 
 
-@dataclass(slots=True)
 class TaskFlowLeaseError(RuntimeError):
     """Structured error raised when a task lease is lost or cannot refresh."""
 
-    error_code: str
-    reason: str
-
-    def __post_init__(self) -> None:
-        super().__init__(self.reason)
+    def __init__(self, *, error_code: str, reason: str) -> None:
+        self.error_code = error_code
+        self.reason = reason
+        super().__init__(reason)
 
 
 async def run_with_lease_refresh(
@@ -45,9 +42,14 @@ async def run_with_lease_refresh(
             try:
                 refreshed = await refresh()
             except Exception as exc:
+                cause = _lease_refresh_cause(exc)
                 lease_error = TaskFlowLeaseError(
                     error_code="taskflow_lease_refresh_failed",
-                    reason="Failed to refresh task claim lease",
+                    reason=(
+                        f"Failed to refresh task claim lease: {cause}"
+                        if cause
+                        else "Failed to refresh task claim lease"
+                    ),
                 )
                 if not run_task.done():
                     run_task.cancel()
@@ -77,3 +79,14 @@ async def run_with_lease_refresh(
         refresh_task.cancel()
         with suppress(asyncio.CancelledError):
             await refresh_task
+
+
+def _lease_refresh_cause(exc: BaseException) -> str:
+    """Return one short diagnostic cause for lease refresh failures."""
+
+    reason = str(getattr(exc, "reason", "") or "").strip()
+    if not reason:
+        reason = str(exc).strip()
+    if not reason:
+        reason = type(exc).__name__
+    return reason[:200]
