@@ -1094,27 +1094,35 @@ class TaskFlowService:
                         channel=normalized_channel,
                     )
                 last_seen_event_id = cursor.last_seen_event_id if cursor is not None else None
-                event_rows = await repo.list_task_events_for_tasks(
+                acknowledge_event_id = await repo.get_latest_task_event_id_for_tasks(
                     task_ids=task_ids,
                     after_event_id=last_seen_event_id,
-                    limit=None,
                 )
-                acknowledge_event_id = event_rows[0].id if event_rows else last_seen_event_id
                 should_suppress_initial_preview = normalized_channel is not None and cursor is None
-                relevant_rows = [row for row in event_rows if _is_human_inbox_notification_event(row)]
-                preview_rows = (
-                    []
-                    if should_suppress_initial_preview
-                    else relevant_rows[: max(event_limit, 1)]
-                )
+                relevant_rows = []
+                if not should_suppress_initial_preview:
+                    relevant_rows = await repo.list_filtered_task_events_for_tasks(
+                        task_ids=task_ids,
+                        after_event_id=last_seen_event_id,
+                        event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
+                        updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
+                        updated_detail_keys=("owner", "reviewer", "blocked_reason"),
+                        limit=max(event_limit, 1),
+                    )
                 recent_events = tuple(
                     _to_human_inbox_event_metadata(
                         row,
                         task_title=title_by_task_id.get(row.task_id, row.task_id),
                     )
-                    for row in preview_rows
+                    for row in relevant_rows
                 )
-                unseen_event_count = 0 if should_suppress_initial_preview else len(relevant_rows)
+                unseen_event_count = 0 if should_suppress_initial_preview else await repo.count_filtered_task_events_for_tasks(
+                    task_ids=task_ids,
+                    after_event_id=last_seen_event_id,
+                    event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
+                    updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
+                    updated_detail_keys=("owner", "reviewer", "blocked_reason"),
+                )
                 if normalized_channel is not None and mark_seen and acknowledge_event_id is not None:
                     await repo.upsert_task_notification_cursor(
                         profile_id=profile_id,
@@ -1600,21 +1608,6 @@ def _task_matches_review_inbox(*, row: Task, actor_type: str, actor_ref: str) ->
     if row.reviewer_type is not None and row.reviewer_ref is not None:
         return row.reviewer_type == actor_type and row.reviewer_ref == actor_ref
     return row.owner_type == actor_type and row.owner_ref == actor_ref
-
-
-def _is_human_inbox_notification_event(row: TaskEvent) -> bool:
-    event_type = str(row.event_type or "").strip()
-    if event_type not in _HUMAN_INBOX_NOTIFICATION_EVENT_TYPES:
-        return False
-    if event_type != "updated":
-        return True
-    details = _decode_json_object(row.details_json)
-    return (
-        row.to_status in _VISIBLE_HUMAN_STATUSES
-        or "owner" in details
-        or "reviewer" in details
-        or "blocked_reason" in details
-    )
 
 
 def _ensure_review_actor_matches_task(*, row: Task, actor_type: str, actor_ref: str) -> None:

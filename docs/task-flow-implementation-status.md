@@ -79,6 +79,7 @@ Current model:
 - task event history is queryable per task and captures create/update/review/dependency/runtime outcome transitions
 - human inbox summary is queryable directly and powers startup-style notifications
 - human inbox unseen counts are lossless even when relevant events are buried behind newer irrelevant runtime noise
+- human inbox unread count/preview queries stay bounded and no longer materialize the full unseen event tail in Python
 - stale task claims are released back to `todo` and the abandoned `task_run` attempt is marked `cancelled`
 - operator stale-claim surfaces can inspect and repair only the selected profile backlog
 

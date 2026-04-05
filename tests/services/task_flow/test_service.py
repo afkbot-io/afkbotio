@@ -1047,6 +1047,62 @@ async def test_task_flow_service_human_inbox_counts_all_relevant_events_beyond_p
         await engine.dispose()
 
 
+async def test_task_flow_service_human_inbox_avoids_materializing_full_unseen_event_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Human inbox should use filtered count/preview queries instead of bulk event fetches."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_human_inbox_no_bulk_fetch.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review optimized inbox",
+            prompt="Make sure inbox queries stay bounded.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+        )
+        await service.build_human_inbox(
+            profile_id="default",
+            owner_ref="cli_user:alice",
+            channel="chat_startup",
+            mark_seen=True,
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+            actor_type="human",
+            actor_ref="cli_user:alice",
+        )
+
+        async def _unexpected_bulk_fetch(*args, **kwargs):
+            raise AssertionError("build_human_inbox should not materialize the full unseen event tail")
+
+        monkeypatch.setattr(TaskFlowRepository, "list_task_events_for_tasks", _unexpected_bulk_fetch)
+
+        inbox = await service.build_human_inbox(
+            profile_id="default",
+            owner_ref="cli_user:alice",
+            channel="chat_startup",
+            event_limit=1,
+            mark_seen=False,
+        )
+
+        assert inbox.unseen_event_count == 1
+        assert len(inbox.recent_events) == 1
+        assert inbox.recent_events[0].event_type == "updated"
+        assert inbox.recent_events[0].to_status == "review"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_human_inbox_mark_seen_is_concurrency_safe(tmp_path: Path) -> None:
     """Concurrent inbox mark-seen calls should not race the notification cursor insert."""
 

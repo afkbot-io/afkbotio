@@ -6,9 +6,10 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import cast
 
-from sqlalchemy import Delete, Select, delete, func, or_, select, update
+from sqlalchemy import Delete, Select, and_, delete, false, func, or_, select, true, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from afkbot.models.task import Task
 from afkbot.models.task_dependency import TaskDependency
@@ -340,6 +341,83 @@ class TaskFlowRepository:
         if limit is not None:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
+
+    async def count_filtered_task_events_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+        after_event_id: int | None = None,
+        event_types: Sequence[str] | None = None,
+        updated_visible_statuses: Sequence[str] = (),
+        updated_detail_keys: Sequence[str] = (),
+    ) -> int:
+        """Count task events for one task slice using the selected visibility filter."""
+
+        normalized_ids = tuple(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        if not normalized_ids:
+            return 0
+        statement = select(func.count(TaskEvent.id)).where(TaskEvent.task_id.in_(normalized_ids))
+        if after_event_id is not None:
+            statement = statement.where(TaskEvent.id > after_event_id)
+        statement = statement.where(
+            _task_event_visibility_predicate(
+                event_types=event_types,
+                updated_visible_statuses=updated_visible_statuses,
+                updated_detail_keys=updated_detail_keys,
+            )
+        )
+        count_value = (await self._session.execute(statement)).scalar_one()
+        return int(count_value)
+
+    async def list_filtered_task_events_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+        after_event_id: int | None = None,
+        event_types: Sequence[str] | None = None,
+        updated_visible_statuses: Sequence[str] = (),
+        updated_detail_keys: Sequence[str] = (),
+        limit: int | None = None,
+    ) -> list[TaskEvent]:
+        """List filtered task events for one task slice ordered from newest to oldest."""
+
+        normalized_ids = tuple(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        if not normalized_ids:
+            return []
+        statement: Select[tuple[TaskEvent]] = (
+            select(TaskEvent)
+            .where(TaskEvent.task_id.in_(normalized_ids))
+            .where(
+                _task_event_visibility_predicate(
+                    event_types=event_types,
+                    updated_visible_statuses=updated_visible_statuses,
+                    updated_detail_keys=updated_detail_keys,
+                )
+            )
+            .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        )
+        if after_event_id is not None:
+            statement = statement.where(TaskEvent.id > after_event_id)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def get_latest_task_event_id_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+        after_event_id: int | None = None,
+    ) -> int | None:
+        """Return the newest event id across one task slice after the selected cursor."""
+
+        normalized_ids = tuple(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        if not normalized_ids:
+            return None
+        statement = select(func.max(TaskEvent.id)).where(TaskEvent.task_id.in_(normalized_ids))
+        if after_event_id is not None:
+            statement = statement.where(TaskEvent.id > after_event_id)
+        latest_event_id = (await self._session.execute(statement)).scalar_one()
+        return None if latest_event_id is None else int(latest_event_id)
 
     async def get_task_notification_cursor(
         self,
@@ -871,3 +949,40 @@ class TaskFlowRepository:
 def _result_succeeded(result: object) -> bool:
     rowcount = int(getattr(result, "rowcount", 0) or 0)
     return rowcount > 0
+
+
+def _task_event_visibility_predicate(
+    *,
+    event_types: Sequence[str] | None,
+    updated_visible_statuses: Sequence[str],
+    updated_detail_keys: Sequence[str],
+) -> ColumnElement[bool]:
+    """Build a SQL predicate that mirrors the selected task-event visibility rules."""
+
+    if not event_types:
+        return true()
+    normalized_event_types = tuple(str(item).strip() for item in event_types if str(item).strip())
+    non_updated_types = tuple(item for item in normalized_event_types if item != "updated")
+    clauses: list[ColumnElement[bool]] = []
+    if non_updated_types:
+        clauses.append(TaskEvent.event_type.in_(non_updated_types))
+    if "updated" in normalized_event_types:
+        normalized_statuses = tuple(str(item).strip() for item in updated_visible_statuses if str(item).strip())
+        updated_visibility_clauses: list[ColumnElement[bool]] = []
+        if normalized_statuses:
+            updated_visibility_clauses.append(TaskEvent.to_status.in_(normalized_statuses))
+        updated_visibility_clauses.extend(
+            TaskEvent.details_json.like(f'%"{detail_key}"%')
+            for detail_key in updated_detail_keys
+            if str(detail_key).strip()
+        )
+        if updated_visibility_clauses:
+            clauses.append(
+                and_(
+                    TaskEvent.event_type == "updated",
+                    or_(*updated_visibility_clauses),
+                )
+            )
+    if not clauses:
+        return false()
+    return or_(*clauses)

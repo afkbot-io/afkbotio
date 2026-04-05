@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Human inbox unseen counts are now lossless even when relevant events are buried behind newer irrelevant runtime noise.
+- Human inbox unread summary no longer materializes the full unseen event tail in Python; count and preview queries now stay bounded at the repository layer.
 - Notification cursor writes are atomic and trusted-only for `mark_seen` flows.
 - Expired Task Flow claims are repaired safely without clobbering refreshed live leases.
 
