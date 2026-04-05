@@ -34,7 +34,7 @@ async def run_with_lease_refresh(
     stop_signal = asyncio.Event()
     refresh_interval_sec = max(1.0, ttl.total_seconds() / 3.0)
     lease_error: TaskFlowLeaseError | None = None
-    run_task: asyncio.Task[TValue] = asyncio.create_task(run())
+    run_task: asyncio.Future[TValue] = asyncio.ensure_future(run())
 
     async def _refresh_loop() -> None:
         nonlocal lease_error
