@@ -481,8 +481,8 @@ class TaskFlowService:
                 await _ensure_profile_exists(repo, profile_id)
                 run = await repo.get_task_run(task_run_id=task_run_id)
                 if run is not None:
-                    task = await repo.get_task(profile_id=profile_id, task_id=run.task_id)
-                    if task is None:
+                    task_row = await repo.get_task(profile_id=profile_id, task_id=run.task_id)
+                    if task_row is None:
                         run = None
             if run is None:
                 raise TaskFlowServiceError(error_code="task_run_not_found", reason="Task run not found")
@@ -728,7 +728,7 @@ async def reset_task_flow_services_async() -> None:
 async def _ensure_profile_exists(repo: TaskFlowRepository, profile_id: str) -> None:
     """Require that the selected profile exists before mutating task flow state."""
 
-    if await profile_exists(repo._session, profile_id=profile_id):  # type: ignore[attr-defined]
+    if await profile_exists(repo._session, profile_id=profile_id):
         return
     raise TaskFlowServiceError(error_code="profile_not_found", reason="Profile not found")
 

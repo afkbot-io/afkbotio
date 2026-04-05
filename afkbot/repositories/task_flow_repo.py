@@ -219,12 +219,14 @@ class TaskFlowRepository:
             or status is not None
         )
         if should_update_blocked_reason:
-            row.blocked_reason_code = (
+            next_blocked_reason_code: str | None = (
                 None if blocked_reason_code is _UNSET else blocked_reason_code
             )
-            row.blocked_reason_text = (
+            next_blocked_reason_text: str | None = (
                 None if blocked_reason_text is _UNSET else blocked_reason_text
             )
+            row.blocked_reason_code = next_blocked_reason_code
+            row.blocked_reason_text = next_blocked_reason_text
         if status is not None and status not in {"claimed", "running"}:
             row.claim_token = None
             row.claimed_by = None
@@ -652,15 +654,20 @@ class TaskFlowRepository:
             return None
         row.status = status
         if run_id is not _UNSET:
-            row.run_id = run_id
+            next_run_id: int | None = run_id
+            row.run_id = next_run_id
         if summary is not _UNSET:
-            row.summary = summary
+            next_summary: str | None = summary
+            row.summary = next_summary
         if error_code is not _UNSET:
-            row.error_code = error_code
+            next_error_code: str | None = error_code
+            row.error_code = next_error_code
         if error_text is not _UNSET:
-            row.error_text = error_text
+            next_error_text: str | None = error_text
+            row.error_text = next_error_text
         if finished_at is not _UNSET:
-            row.finished_at = finished_at
+            next_finished_at: datetime | None = finished_at
+            row.finished_at = next_finished_at
         await self._session.flush()
         await self._session.refresh(row)
         return row

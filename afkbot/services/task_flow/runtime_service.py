@@ -25,6 +25,7 @@ from afkbot.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from afkbot.services.agent_loop.action_contracts import TurnResult
+    from afkbot.services.agent_loop.context_overrides import TurnContextOverrides
     from afkbot.services.agent_loop.loop import AgentLoop
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,8 +41,8 @@ class AgentLoopLike(Protocol):
         profile_id: str,
         session_id: str,
         message: str,
-        context_overrides: object | None = None,
-    ) -> object: ...
+        context_overrides: TurnContextOverrides | None = None,
+    ) -> TurnResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +234,7 @@ class TaskFlowRuntimeService:
                     message=message,
                     context_overrides=runtime_target.context_overrides,
                 )
-                return result  # type: ignore[return-value]
+                return result
 
         async def _refresh() -> bool:
             return await self._refresh_claim(claimed=claimed)
