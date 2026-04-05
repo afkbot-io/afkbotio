@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import cast
 
 from sqlalchemy import Delete, Select, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -220,10 +221,10 @@ class TaskFlowRepository:
         )
         if should_update_blocked_reason:
             next_blocked_reason_code: str | None = (
-                None if blocked_reason_code is _UNSET else blocked_reason_code
+                None if blocked_reason_code is _UNSET else cast(str | None, blocked_reason_code)
             )
             next_blocked_reason_text: str | None = (
-                None if blocked_reason_text is _UNSET else blocked_reason_text
+                None if blocked_reason_text is _UNSET else cast(str | None, blocked_reason_text)
             )
             row.blocked_reason_code = next_blocked_reason_code
             row.blocked_reason_text = next_blocked_reason_text
@@ -654,19 +655,19 @@ class TaskFlowRepository:
             return None
         row.status = status
         if run_id is not _UNSET:
-            next_run_id: int | None = run_id
+            next_run_id = cast(int | None, run_id)
             row.run_id = next_run_id
         if summary is not _UNSET:
-            next_summary: str | None = summary
+            next_summary = cast(str | None, summary)
             row.summary = next_summary
         if error_code is not _UNSET:
-            next_error_code: str | None = error_code
+            next_error_code = cast(str | None, error_code)
             row.error_code = next_error_code
         if error_text is not _UNSET:
-            next_error_text: str | None = error_text
+            next_error_text = cast(str | None, error_text)
             row.error_text = next_error_text
         if finished_at is not _UNSET:
-            next_finished_at: datetime | None = finished_at
+            next_finished_at = cast(datetime | None, finished_at)
             row.finished_at = next_finished_at
         await self._session.flush()
         await self._session.refresh(row)

@@ -7,6 +7,9 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TypeVar
+
+TValue = TypeVar("TValue")
 
 
 @dataclass(slots=True)
@@ -22,16 +25,16 @@ class TaskFlowLeaseError(RuntimeError):
 
 async def run_with_lease_refresh(
     *,
-    run: Callable[[], Awaitable[object]],
+    run: Callable[[], Awaitable[TValue]],
     refresh: Callable[[], Awaitable[bool]],
     ttl: timedelta,
-) -> object:
+) -> TValue:
     """Run one task while periodically refreshing the current claim lease."""
 
     stop_signal = asyncio.Event()
     refresh_interval_sec = max(1.0, ttl.total_seconds() / 3.0)
     lease_error: TaskFlowLeaseError | None = None
-    run_task: asyncio.Task[object] = asyncio.ensure_future(run())
+    run_task: asyncio.Task[TValue] = asyncio.create_task(run())
 
     async def _refresh_loop() -> None:
         nonlocal lease_error

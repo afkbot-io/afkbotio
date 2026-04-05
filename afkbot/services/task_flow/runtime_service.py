@@ -25,7 +25,7 @@ from afkbot.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from afkbot.services.agent_loop.action_contracts import TurnResult
-    from afkbot.services.agent_loop.context_overrides import TurnContextOverrides
+    from afkbot.services.agent_loop.turn_context import TurnContextOverrides
     from afkbot.services.agent_loop.loop import AgentLoop
 
 _LOGGER = logging.getLogger(__name__)
