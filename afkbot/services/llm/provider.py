@@ -196,13 +196,16 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         *,
         encode_tool_name: Callable[[str], str],
     ) -> dict[str, object]:
+        input_items = self._build_responses_input(
+            request,
+            encode_tool_name=encode_tool_name,
+        )
+        if self._provider_id == LLMProviderId.OPENAI_CODEX:
+            input_items = self._filter_codex_stateless_replay_items(input_items)
         payload: dict[str, object] = {
             "model": self._model,
             "instructions": request.context,
-            "input": self._build_responses_input(
-                request,
-                encode_tool_name=encode_tool_name,
-            ),
+            "input": input_items,
         }
         tools = self._build_responses_tools(
             request.available_tools,
@@ -218,6 +221,18 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             # Codex backend currently serves Responses via SSE-only transport.
             payload["stream"] = True
         return payload
+
+    @staticmethod
+    def _filter_codex_stateless_replay_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Drop replay-only item types that Codex rejects when `store=false`."""
+
+        filtered: list[dict[str, object]] = []
+        for item in items:
+            item_type = str(item.get("type") or "").strip()
+            if item_type == "reasoning":
+                continue
+            filtered.append(item)
+        return filtered
 
     async def _post_chat(
         self,
@@ -531,6 +546,17 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 message="LLM provider rejected the configured credentials. Check provider auth settings.",
             )
         if status_code == 404:
+            if self._is_codex_stateless_item_replay_error(provider_detail=provider_detail):
+                detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+                return self._fallback_response(
+                    request,
+                    error_code="llm_provider_invalid_request",
+                    error_detail=provider_detail,
+                    message=(
+                        "LLM request was rejected by the provider."
+                        f"{detail_suffix} Check the configured model, API surface, and tool payload."
+                    ),
+                )
             return self._fallback_response(
                 request,
                 error_code="llm_provider_model_not_found",
@@ -575,6 +601,19 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             "request is too large for the model",
         )
         return any(marker in normalized for marker in markers)
+
+    def _is_codex_stateless_item_replay_error(self, *, provider_detail: str | None) -> bool:
+        """Return whether Codex returned stateless replay lookup failure with `store=false`."""
+
+        if self._provider_id != LLMProviderId.OPENAI_CODEX or not provider_detail:
+            return False
+        normalized = " ".join(provider_detail.lower().split())
+        return (
+            "item with id" in normalized
+            and "not found" in normalized
+            and "store" in normalized
+            and "false" in normalized
+        )
 
     @staticmethod
     def _extract_provider_error_detail(response: httpx.Response) -> str | None:
