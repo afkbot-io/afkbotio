@@ -717,6 +717,30 @@ def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request() -> N
     assert "item with id" in response.error_detail.lower()
 
 
+def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request_using_raw_detail() -> None:
+    """Codex replay classification should use raw detail even when surfaced detail is truncated."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+    detail = (
+        ("X" * 350)
+        + " Item with id 'rs_123' not found. Items are not persisted when `store` is set to false."
+    )
+
+    response = provider._fallback_http_status(  # noqa: SLF001
+        _request(),
+        _http_status_error_with_detail(404, detail),
+    )
+
+    assert response.error_code == "llm_provider_invalid_request"
+    assert response.error_detail is not None
+    assert len(response.error_detail) <= 303
+
+
 def test_openai_http_status_detail_is_truncated_before_surface() -> None:
     """Provider detail should be bounded to avoid leaking large payload fragments."""
 

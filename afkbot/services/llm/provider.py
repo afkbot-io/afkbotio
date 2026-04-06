@@ -526,17 +526,21 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
 
     def _fallback_http_status(self, request: LLMRequest, exc: httpx.HTTPStatusError) -> LLMResponse:
         status_code = exc.response.status_code
-        provider_detail = self._extract_provider_error_detail(exc.response)
-        if self._is_context_window_error(status_code=status_code, provider_detail=provider_detail):
+        provider_detail_raw = self._extract_provider_error_detail(exc.response, truncate=False)
+        provider_detail = (
+            self._truncate_provider_detail(provider_detail_raw) if provider_detail_raw else None
+        )
+        if self._is_context_window_error(status_code=status_code, provider_detail=provider_detail_raw):
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+            message_text = (
+                "LLM request was rejected because the input exceeded the model context window."
+                f"{detail_suffix} The runtime may need to compact older context before retrying."
+            )
             return self._fallback_response(
                 request,
                 error_code="llm_context_window_exceeded",
                 error_detail=provider_detail,
-                message=(
-                    "LLM request was rejected because the input exceeded the model context window."
-                    f"{detail_suffix} The runtime may need to compact older context before retrying."
-                ),
+                message=message_text,
             )
         if self._provider_id not in {
             LLMProviderId.OPENAI,
@@ -555,16 +559,17 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 message="LLM provider rejected the configured credentials. Check provider auth settings.",
             )
         if status_code == 404:
-            if self._is_codex_stateless_item_replay_error(provider_detail=provider_detail):
+            if self._is_codex_stateless_item_replay_error(provider_detail=provider_detail_raw):
                 detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+                message_text = (
+                    "LLM request was rejected by the provider."
+                    f"{detail_suffix} Check the configured model, API surface, and tool payload."
+                )
                 return self._fallback_response(
                     request,
                     error_code="llm_provider_invalid_request",
                     error_detail=provider_detail,
-                    message=(
-                        "LLM request was rejected by the provider."
-                        f"{detail_suffix} Check the configured model, API surface, and tool payload."
-                    ),
+                    message=message_text,
                 )
             return self._fallback_response(
                 request,
@@ -579,14 +584,15 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             )
         if 400 <= status_code < 500:
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+            message_text = (
+                "LLM request was rejected by the provider."
+                f"{detail_suffix} Check the configured model, API surface, and tool payload."
+            )
             return self._fallback_response(
                 request,
                 error_code="llm_provider_invalid_request",
                 error_detail=provider_detail,
-                message=(
-                    "LLM request was rejected by the provider."
-                    f"{detail_suffix} Check the configured model, API surface, and tool payload."
-                ),
+                message=message_text,
             )
         return self._fallback_response(request, error_code="llm_provider_unavailable")
 
@@ -625,8 +631,13 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         )
 
     @staticmethod
-    def _extract_provider_error_detail(response: httpx.Response) -> str | None:
+    def _extract_provider_error_detail(response: httpx.Response, *, truncate: bool = True) -> str | None:
         """Return a short provider-supplied 4xx detail when one is available."""
+
+        def _normalize(value: str) -> str:
+            if truncate:
+                return OpenAICompatibleChatProvider._truncate_provider_detail(value)
+            return " ".join(value.split()).strip()
 
         try:
             payload = response.json()
@@ -637,15 +648,15 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             if isinstance(error, Mapping):
                 message = error.get("message")
                 if isinstance(message, str) and message.strip():
-                    return OpenAICompatibleChatProvider._truncate_provider_detail(message)
+                    return _normalize(message)
             message = payload.get("message")
             if isinstance(message, str) and message.strip():
-                return OpenAICompatibleChatProvider._truncate_provider_detail(message)
+                return _normalize(message)
         raw_text = response.text.strip()
         if not raw_text:
             return None
         compact = " ".join(raw_text.split())
-        return OpenAICompatibleChatProvider._truncate_provider_detail(compact)
+        return _normalize(compact)
 
     @staticmethod
     def _truncate_provider_detail(value: str, *, max_chars: int = 300) -> str:
