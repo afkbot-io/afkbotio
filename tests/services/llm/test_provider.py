@@ -694,6 +694,75 @@ def test_openai_http_status_404_maps_to_model_not_found() -> None:
     assert "model or endpoint" in (response.final_message or "").lower()
 
 
+def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request() -> None:
+    """Codex stateless replay lookup failures should be treated as invalid request, not model lookup."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    response = provider._fallback_http_status(  # noqa: SLF001
+        _request(),
+        _http_status_error_with_detail(
+            404,
+            "Item with id 'rs_123' not found. Items are not persisted when `store` is set to false.",
+        ),
+    )
+
+    assert response.error_code == "llm_provider_invalid_request"
+    assert response.error_detail is not None
+    assert "item with id" in response.error_detail.lower()
+
+
+def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request_using_raw_detail() -> None:
+    """Codex replay classification should use raw detail even when surfaced detail is truncated."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+    detail = (
+        ("X" * 350)
+        + " Item with id 'rs_123' not found. Items are not persisted when `store` is set to false."
+    )
+
+    response = provider._fallback_http_status(  # noqa: SLF001
+        _request(),
+        _http_status_error_with_detail(404, detail),
+    )
+
+    assert response.error_code == "llm_provider_invalid_request"
+    assert response.error_detail is not None
+    assert len(response.error_detail) <= 303
+
+
+def test_openai_http_status_detail_is_truncated_before_surface() -> None:
+    """Provider detail should be bounded to avoid leaking large payload fragments."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-5.1",
+        api_key="token",
+        base_url="https://api.openai.com/v1",
+    )
+    oversized_detail = "X" * 400
+
+    response = provider._fallback_http_status(  # noqa: SLF001
+        _request(),
+        _http_status_error_with_detail(400, oversized_detail),
+    )
+
+    assert response.error_code == "llm_provider_invalid_request"
+    assert response.error_detail is not None
+    assert len(response.error_detail) <= 303
+    assert response.error_detail.endswith("...")
+
+
 def test_openai_http_status_429_maps_to_rate_limit() -> None:
     provider = OpenAICompatibleChatProvider(
         provider_id=LLMProviderId.OPENAI,
@@ -1193,6 +1262,144 @@ def test_responses_input_replays_prior_response_items_and_tool_outputs() -> None
     assert provider.last_responses_payload is not None
     assert provider.last_responses_payload["input"] == [
         {"type": "reasoning", "id": "rs_prev"},
+        {
+            "type": "function_call",
+            "id": "fc_prev",
+            "call_id": "call_debug_1",
+            "name": "debug_echo",
+            "arguments": '{"message":"hello"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_debug_1",
+            "output": '{"ok":true}',
+        },
+    ]
+
+
+def test_openai_codex_responses_input_drops_reasoning_items_when_replaying_tool_output() -> None:
+    """Codex Responses replay should skip reasoning items because store=false is stateless."""
+
+    # Arrange
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        responses_payload={
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "done"}],
+                }
+            ]
+        },
+    )
+    request = LLMRequest(
+        profile_id="default",
+        session_id="s-1",
+        context="ctx",
+        history=[
+            LLMMessage(
+                role="assistant",
+                provider_items=[
+                    {"type": "reasoning", "id": "rs_prev"},
+                    {
+                        "type": "function_call",
+                        "id": "fc_prev",
+                        "call_id": "call_debug_1",
+                        "name": "debug_echo",
+                        "arguments": '{"message":"hello"}',
+                    },
+                ],
+                tool_calls=[
+                    ToolCallRequest(
+                        name="debug.echo",
+                        params={"message": "hello"},
+                        call_id="call_debug_1",
+                    )
+                ],
+            ),
+            LLMMessage(
+                role="tool",
+                tool_name="debug.echo",
+                tool_call_id="call_debug_1",
+                content='{"ok":true}',
+            ),
+        ],
+        available_tools=_request().available_tools,
+    )
+
+    # Act
+    response = asyncio.run(provider.complete(request))
+
+    # Assert
+    assert response.kind == "final"
+    assert response.final_message == "done"
+    assert provider.last_responses_payload is not None
+    assert provider.last_responses_payload["input"] == [
+        {
+            "type": "function_call",
+            "id": "fc_prev",
+            "call_id": "call_debug_1",
+            "name": "debug_echo",
+            "arguments": '{"message":"hello"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_debug_1",
+            "output": '{"ok":true}',
+        },
+    ]
+
+
+def test_openai_codex_responses_input_drops_reasoning_items_case_insensitive() -> None:
+    """Codex replay filter should treat reasoning item type case-insensitively."""
+
+    provider = _SpyProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        responses_payload={
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "done"}],
+                }
+            ]
+        },
+    )
+    request = LLMRequest(
+        profile_id="default",
+        session_id="s-1",
+        context="ctx",
+        history=[
+            LLMMessage(
+                role="assistant",
+                provider_items=[
+                    {"type": "Reasoning", "id": "rs_prev"},
+                    {
+                        "type": "function_call",
+                        "id": "fc_prev",
+                        "call_id": "call_debug_1",
+                        "name": "debug_echo",
+                        "arguments": '{"message":"hello"}',
+                    },
+                ],
+            ),
+            LLMMessage(
+                role="tool",
+                tool_name="debug.echo",
+                tool_call_id="call_debug_1",
+                content='{"ok":true}',
+            ),
+        ],
+        available_tools=_request().available_tools,
+    )
+
+    response = asyncio.run(provider.complete(request))
+
+    assert response.kind == "final"
+    assert response.final_message == "done"
+    assert provider.last_responses_payload is not None
+    assert provider.last_responses_payload["input"] == [
         {
             "type": "function_call",
             "id": "fc_prev",
