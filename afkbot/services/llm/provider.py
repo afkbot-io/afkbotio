@@ -201,7 +201,10 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             encode_tool_name=encode_tool_name,
         )
         if self._provider_id == LLMProviderId.OPENAI_CODEX:
-            input_items = self._filter_codex_stateless_replay_items(input_items)
+            input_items = self._filter_codex_stateless_replay_items(
+                input_items,
+                store_enabled=False,
+            )
         payload: dict[str, object] = {
             "model": self._model,
             "instructions": request.context,
@@ -223,12 +226,18 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         return payload
 
     @staticmethod
-    def _filter_codex_stateless_replay_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    def _filter_codex_stateless_replay_items(
+        items: list[dict[str, object]],
+        *,
+        store_enabled: bool,
+    ) -> list[dict[str, object]]:
         """Drop replay-only item types that Codex rejects when `store=false`."""
 
+        if store_enabled:
+            return list(items)
         filtered: list[dict[str, object]] = []
         for item in items:
-            item_type = str(item.get("type") or "").strip()
+            item_type = str(item.get("type") or "").strip().lower()
             if item_type == "reasoning":
                 continue
             filtered.append(item)
@@ -628,15 +637,26 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             if isinstance(error, Mapping):
                 message = error.get("message")
                 if isinstance(message, str) and message.strip():
-                    return message.strip()
+                    return OpenAICompatibleChatProvider._truncate_provider_detail(message)
             message = payload.get("message")
             if isinstance(message, str) and message.strip():
-                return message.strip()
+                return OpenAICompatibleChatProvider._truncate_provider_detail(message)
         raw_text = response.text.strip()
         if not raw_text:
             return None
         compact = " ".join(raw_text.split())
-        return compact[:300]
+        return OpenAICompatibleChatProvider._truncate_provider_detail(compact)
+
+    @staticmethod
+    def _truncate_provider_detail(value: str, *, max_chars: int = 300) -> str:
+        """Bound provider detail length before surfacing in user-visible fallback text."""
+
+        compact = " ".join(value.split()).strip()
+        if not compact:
+            return ""
+        if len(compact) <= max_chars:
+            return compact
+        return f"{compact[:max_chars].rstrip()}..."
 
 
 def build_llm_provider(
