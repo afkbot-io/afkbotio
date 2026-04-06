@@ -122,8 +122,21 @@ def configure_telegram_channel_credentials(
     typer.echo(
         msg(
             lang,
-            en="Example chat id: 123456789",
-            ru="Пример chat id: 123456789",
+            en=(
+                "If Telegram bot credentials are not configured yet, this wizard will save them now. "
+                "Get the token from @BotFather (`/newbot` for a new bot or `/token` for an existing one)."
+            ),
+            ru=(
+                "Если credentials Telegram-бота ещё не настроены, этот мастер сохранит их сейчас. "
+                "Токен можно получить у @BotFather (`/newbot` для нового бота или `/token` для существующего)."
+            ),
+        )
+    )
+    typer.echo(
+        msg(
+            lang,
+            en="Optional default chat id examples: private chat `123456789`, groups/channels often start with `-100...`.",
+            ru="Примеры необязательного chat id по умолчанию: личный чат `123456789`, у групп и каналов id часто начинается с `-100...`.",
         )
     )
     token = resolve_channel_secret(
@@ -145,8 +158,14 @@ def configure_telegram_channel_credentials(
         lang=lang,
         existing_configured=_TELEGRAM_CHAT_ID in existing,
         required=False,
-        detail_en="Optional default target for app-level Telegram actions. Example: 123456789.",
-        detail_ru="Необязательная цель по умолчанию для app-level Telegram действий. Пример: 123456789.",
+        detail_en=(
+            "Optional default target for app-level Telegram actions such as `app.run telegram send_message`. "
+            "Leave blank if you will always pass chat_id explicitly or only need inbound bot polling."
+        ),
+        detail_ru=(
+            "Необязательная цель по умолчанию для app-level Telegram действий вроде `app.run telegram send_message`. "
+            "Оставьте пустым, если всегда будете передавать chat_id явно или вам нужен только inbound polling бота."
+        ),
     )
     if token is not None:
         _upsert_app_secret(
@@ -205,8 +224,27 @@ def configure_telethon_channel_credentials(
     typer.echo(
         msg(
             lang,
-            en="Example API id: 12345678",
-            ru="Пример API id: 12345678",
+            en=(
+                "You will need Telegram API credentials for the user account. "
+                "Open my.telegram.org -> API development tools and copy the API id and API hash."
+            ),
+            ru=(
+                "Понадобятся Telegram API credentials для user-аккаунта. "
+                "Откройте my.telegram.org -> API development tools и скопируйте API id и API hash."
+            ),
+        )
+    )
+    typer.echo(
+        msg(
+            lang,
+            en=(
+                "Session string is optional. If you skip it now, AFKBOT will save api_id/api_hash/phone and you can finish login later with "
+                "`afk channel telethon authorize <channel_id>`."
+            ),
+            ru=(
+                "Session string необязателен. Если пропустить его сейчас, AFKBOT сохранит api_id/api_hash/phone, а вход можно завершить позже через "
+                "`afk channel telethon authorize <channel_id>`."
+            ),
         )
     )
     api_id = resolve_channel_secret(
@@ -239,16 +277,22 @@ def configure_telethon_channel_credentials(
         lang=lang,
         existing_configured=TELETHON_CREDENTIAL_PHONE in existing,
         required=True,
-        detail_en="Enter the phone number for the Telegram account that will authorize this userbot.",
-        detail_ru="Введите номер телефона Telegram-аккаунта, который будет авторизован для этого userbot.",
+        detail_en="Enter the phone number for the Telegram account that will authorize this userbot. Example: `+79990000000`.",
+        detail_ru="Введите номер телефона Telegram-аккаунта, который будет авторизован для этого userbot. Пример: `+79990000000`.",
     )
     import_session_now = (
         _select_labeled_option(
             title=msg(lang, en="Telethon: Session", ru="Telethon: Session"),
             text=msg(
                 lang,
-                en="Import existing session string now or authorize later?",
-                ru="Импортировать готовый session string сейчас или авторизоваться позже?",
+                en=(
+                    "If you already have a Telethon StringSession, import it now to skip login later. "
+                    "Otherwise keep the default option and authorize after saving the channel."
+                ),
+                ru=(
+                    "Если у вас уже есть Telethon StringSession, импортируйте его сейчас и пропустите последующий логин. "
+                    "Иначе оставьте вариант по умолчанию и авторизуйтесь после сохранения канала."
+                ),
             ),
             options=(
                 (
@@ -283,8 +327,12 @@ def configure_telethon_channel_credentials(
             lang=lang,
             existing_configured=TELETHON_CREDENTIAL_SESSION_STRING in existing,
             required=True,
-            detail_en="Paste a previously exported Telethon StringSession if you want to skip `authorize`.",
-            detail_ru="Вставьте ранее экспортированный Telethon StringSession, если хотите пропустить `authorize`.",
+            detail_en=(
+                "Paste a previously exported Telethon StringSession if you want this channel to start without a later `authorize` step."
+            ),
+            detail_ru=(
+                "Вставьте ранее экспортированный Telethon StringSession, если хотите, чтобы этот канал заработал без отдельного шага `authorize`."
+            ),
         )
         if import_session_now == "import_now"
         else None

@@ -300,7 +300,7 @@ def test_render_human_task_startup_summary_renders_ru_notice(monkeypatch) -> Non
 
     from afkbot.cli.commands import chat_task_startup_digest as module
 
-    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_prompt_language", lambda **kwargs: PromptLanguage.RU)
     summary = HumanTaskStartupSummary(
         owner_ref="cli_user:alice",
         total_count=2,
@@ -391,7 +391,7 @@ def test_render_human_task_startup_summary_includes_recent_inbox_activity(monkey
 
     from afkbot.cli.commands import chat_task_startup_digest as module
 
-    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_prompt_language", lambda **kwargs: PromptLanguage.RU)
     summary = HumanTaskStartupSummary(
         owner_ref="cli_user:alice",
         total_count=1,
@@ -441,7 +441,7 @@ async def test_compose_human_task_startup_message_prefers_llm_digest(monkeypatch
 
     from afkbot.cli.commands import chat_task_startup_digest as module
 
-    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_prompt_language", lambda **kwargs: PromptLanguage.RU)
     monkeypatch.setattr(module, "resolve_profile_settings", lambda **kwargs: kwargs["settings"])
     provider = MockLLMProvider([LLMResponse.final("Для вас 2 задачи: одна на review, одна в todo. Начните с review.")])
     monkeypatch.setattr(module, "build_llm_provider", lambda _settings: provider)
@@ -471,7 +471,7 @@ async def test_compose_human_task_startup_message_falls_back_when_provider_error
 
     from afkbot.cli.commands import chat_task_startup_digest as module
 
-    monkeypatch.setattr(module, "detect_system_prompt_language", lambda: PromptLanguage.RU)
+    monkeypatch.setattr(module, "resolve_prompt_language", lambda **kwargs: PromptLanguage.RU)
     monkeypatch.setattr(module, "resolve_profile_settings", lambda **kwargs: kwargs["settings"])
     provider = MockLLMProvider(
         [LLMResponse.final("ignored", error_code="llm_provider_not_configured")]

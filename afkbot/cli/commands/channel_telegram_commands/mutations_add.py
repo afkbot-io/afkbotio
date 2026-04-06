@@ -14,10 +14,12 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_int,
 )
 from afkbot.cli.commands.channel_shared import (
+    build_generated_channel_id,
     build_ingress_batch_config,
     build_reply_humanization_config,
     collect_channel_add_base_inputs,
     put_matching_binding,
+    render_channel_add_intro,
     should_collect_channel_add_interactively,
 )
 from afkbot.cli.commands.channel_telegram_commands.common import (
@@ -25,7 +27,7 @@ from afkbot.cli.commands.channel_telegram_commands.common import (
     normalize_telegram_group_trigger_mode,
 )
 from afkbot.cli.commands.channel_telegram_commands.runtime import TelegramCommandRuntime
-from afkbot.cli.presentation.setup_prompts import normalize_prompt_language
+from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.endpoint_contracts import (
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
@@ -77,8 +79,15 @@ def run_telegram_add(
         profile_id=profile_id,
         credential_profile_key=credential_profile_key,
     )
-    prompt_language = normalize_prompt_language(value=lang, ru=ru)
+    prompt_language = resolve_prompt_language(settings=runtime.settings, value=lang, ru=ru)
+    generated_channel_id = build_generated_channel_id(transport="telegram")
     try:
+        if interactive:
+            render_channel_add_intro(
+                transport="telegram",
+                lang=prompt_language,
+                suggested_channel_id=generated_channel_id,
+            )
         base_inputs = collect_channel_add_base_inputs(
             settings=runtime.settings,
             interactive=interactive,
@@ -93,6 +102,7 @@ def run_telegram_add(
             session_policy=session_policy,
             binding_session_policy_default="per-thread",
             binding_session_policy_allowed=("main", "per-chat", "per-thread", "per-user-in-group"),
+            generated_channel_id=generated_channel_id,
         )
         resolved_group_trigger_mode = normalize_telegram_group_trigger_mode(
             resolve_channel_choice(
@@ -128,6 +138,8 @@ def run_telegram_add(
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MAX,
+                detail_en="How long AFKBOT waits after the last inbound message before flushing one combined turn.",
+                detail_ru="Сколько AFKBOT ждёт после последнего входящего сообщения перед отправкой одного объединённого turn.",
             ),
             cooldown_sec=resolve_channel_int(
                 value=ingress_cooldown_sec,
@@ -138,6 +150,8 @@ def run_telegram_add(
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MAX,
+                detail_en="Optional extra quiet period per chat after one batch is processed. Keep 0 for normal real-time behavior.",
+                detail_ru="Необязательная дополнительная пауза на чат после обработки одного batch. Для обычного real-time поведения оставьте 0.",
             ),
             max_batch_size=resolve_channel_int(
                 value=ingress_max_batch_size,
@@ -148,6 +162,8 @@ def run_telegram_add(
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_SIZE_MAX,
+                detail_en="Safety cap on how many inbound messages may merge into one turn before AFKBOT flushes immediately.",
+                detail_ru="Страхующий лимит на количество входящих сообщений, которые можно слить в один turn до немедленного flush.",
             ),
             max_buffer_chars=resolve_channel_int(
                 value=ingress_max_buffer_chars,
@@ -158,6 +174,8 @@ def run_telegram_add(
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
+                detail_en="Safety cap on the total buffered text size for one merged turn.",
+                detail_ru="Страхующий лимит на суммарный размер текста, который хранится для одного объединённого turn.",
             ),
         )
         resolved_humanize_replies = resolve_channel_bool(
@@ -167,6 +185,8 @@ def run_telegram_add(
             prompt_ru="Включить humanized replies?",
             default=False,
             lang=prompt_language,
+            detail_en="Show typing indicators and short reply delays so the bot behaves less abruptly. Disable for the fastest possible responses.",
+            detail_ru="Показывать typing и добавлять небольшие задержки, чтобы бот отвечал менее резко. Отключите для максимально быстрых ответов.",
         )
         resolved_reply_humanization = build_reply_humanization_config(
             enabled=resolved_humanize_replies,
@@ -178,6 +198,8 @@ def run_telegram_add(
                 default=1000,
                 lang=prompt_language,
                 min_value=0,
+                detail_en="Shortest delay before sending a reply when humanized replies are enabled.",
+                detail_ru="Минимальная задержка перед отправкой ответа, когда включены humanized replies.",
             ),
             max_delay_ms=resolve_channel_int(
                 value=humanize_max_delay_ms,
@@ -187,6 +209,8 @@ def run_telegram_add(
                 default=8000,
                 lang=prompt_language,
                 min_value=0,
+                detail_en="Maximum delay cap before sending a reply. Longer answers scale toward this ceiling.",
+                detail_ru="Верхний предел задержки перед отправкой ответа. Более длинные ответы стремятся к этому потолку.",
             ),
             chars_per_second=resolve_channel_int(
                 value=humanize_chars_per_second,
@@ -196,6 +220,8 @@ def run_telegram_add(
                 default=12,
                 lang=prompt_language,
                 min_value=1,
+                detail_en="Approximate typing speed used to convert reply length into a delay.",
+                detail_ru="Примерная скорость печати, по которой длина ответа переводится в задержку.",
             ),
         )
         endpoint = TelegramPollingEndpointConfig(

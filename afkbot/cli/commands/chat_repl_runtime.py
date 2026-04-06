@@ -285,7 +285,7 @@ async def _load_task_startup_assistant_message(
             )
     except Exception:
         return None
-    fallback_message = render_human_task_startup_summary(summary, inbox=inbox)
+    fallback_message = render_human_task_startup_summary(summary, settings=settings, inbox=inbox)
     if fallback_message is None:
         return None
     try:

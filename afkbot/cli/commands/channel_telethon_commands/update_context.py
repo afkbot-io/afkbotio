@@ -14,7 +14,7 @@ from afkbot.cli.commands.channel_telethon_commands.legacy import (
     load_legacy_telethon_endpoint,
 )
 from afkbot.cli.presentation.setup_prompts import PromptLanguage
-from afkbot.cli.presentation.setup_prompts import normalize_prompt_language
+from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.channels.endpoint_contracts import TelethonUserEndpointConfig
 from afkbot.settings import Settings, get_settings
 
@@ -44,7 +44,7 @@ def resolve_telethon_update_context(
 
     settings = get_settings()
     current = asyncio.run(load_legacy_telethon_endpoint(channel_id=channel_id))
-    prompt_language = normalize_prompt_language(value=lang, ru=ru)
+    prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
     interactive = should_collect_channel_update_interactively(
         yes=yes,
         sync_binding=sync_binding,
