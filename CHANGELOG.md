@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.6] - 2026-04-05
+## [1.0.6] - 2026-04-06
 
 ### Added
 
@@ -11,12 +11,16 @@ All notable changes to this project will be documented in this file.
 - CLI and tool surfaces for board/inbox/review/run history/event history/comments/stale-claim repair across `afk task ...` and `task.*`.
 - Human startup digest for Task Flow work at `afk chat` start, including reviewer-routed items and inbox dedupe cursors.
 - Release verification artifacts for Task Flow: a deterministic smoke script and a manual release checklist.
+- OAuth-ready LLM provider catalog entries for `openai-codex` (ChatGPT OAuth), `minimax-portal` (device-code OAuth), and `github-copilot` (GitHub device flow).
+- Setup/profile credential flows for OAuth providers in `afk setup`, `afk profile add`, and `afk profile update`, including Codex token import from local CLI auth state.
 
 ### Changed
 
 - `afk start` now launches the dedicated Task Flow runtime alongside existing automation runtime services.
 - Background Task Flow execution now uses its own `transport="taskflow"` prompt overlay and runtime context.
 - Operator maintenance now exposes explicit stale-claim inspection and repair flows instead of relying only on automatic runtime sweep.
+- OpenAI-compatible provider runtime now supports Codex Responses SSE decoding, MiniMax OAuth refresh persistence, and GitHub Copilot token exchange for provider requests.
+- Provider/base-url profile resolution now keeps provider defaults aligned when switching providers without an explicit custom base URL.
 
 ### Fixed
 
@@ -24,6 +28,8 @@ All notable changes to this project will be documented in this file.
 - Human inbox unread summary no longer materializes the full unseen event tail in Python; count and preview queries now stay bounded at the repository layer.
 - Notification cursor writes are atomic and trusted-only for `mark_seen` flows.
 - Expired Task Flow claims are repaired safely without clobbering refreshed live leases.
+- Codex stateless tool-followup requests no longer fail on replayed `reasoning` item ids when `store=false`; follow-up `/responses` calls now complete reliably.
+- Provider fallback error handling now truncates surfaced upstream details and maps Codex replay lookup 404 failures to invalid-request instead of model-not-found.
 
 ## [1.0.5] - 2026-04-04
 
