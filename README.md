@@ -193,6 +193,41 @@ The first external plugin is the Task Flow Kanban UI. After installation and `af
 
 Plugin install state lives under the AFKBOT runtime root in `/plugins/...` and is treated as local machine state, not repository content.
 
+## Channels Quickstart
+
+AFKBOT can attach chat transports to a profile for inbound routing and operator workflows.
+Use the docs site for the full command reference; the examples below cover the common setup paths.
+
+Telegram bot polling channel:
+
+```bash
+# guided wizard; omit channel_id to let AFKBOT suggest one
+afk channel telegram add
+
+# fully explicit example
+afk channel telegram add support-bot --profile default --credential-profile support-bot
+afk channel telegram status
+afk channel telegram show support-bot
+```
+
+Telethon user-account channel:
+
+```bash
+# guided wizard; omit channel_id to let AFKBOT suggest one
+afk channel telethon add
+
+# fully explicit example
+afk channel telethon add personal-user --profile default --credential-profile personal-user
+afk channel telethon status --probe
+afk channel telethon show personal-user
+```
+
+Notes:
+
+- Interactive channel setup explains required credentials inline: Telegram bot token comes from `@BotFather`; Telethon `api_id` and `api_hash` come from `my.telegram.org`.
+- If you skip the Telethon session string during setup, finish login later with `afk channel telethon authorize <channel_id>`.
+- Interactive prompt language follows this order: explicit `--lang` or `--ru`, then the project's saved `prompt_language`, then the current system locale.
+
 ## MCP Quickstart
 
 AFKBOT supports profile-local MCP configuration plus runtime MCP tool discovery.

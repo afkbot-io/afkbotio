@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from afkbot.cli.presentation.prompt_i18n import PromptLanguage, detect_system_prompt_language, msg
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg, resolve_prompt_language
 from afkbot.services.agent_loop.compaction_summary import CompactionSummaryRuntime
 from afkbot.services.agent_loop.runtime_factory import resolve_profile_settings
 from afkbot.services.llm.provider import build_llm_provider
@@ -27,7 +27,7 @@ async def compose_human_task_startup_message(
 ) -> str | None:
     """Return LLM-first startup digest with deterministic fallback."""
 
-    fallback = render_human_task_startup_summary(summary, inbox=inbox)
+    fallback = render_human_task_startup_summary(summary, settings=settings, inbox=inbox)
     if fallback is None:
         return None
     effective_settings = resolve_profile_settings(
@@ -52,13 +52,14 @@ async def compose_human_task_startup_message(
 def render_human_task_startup_summary(
     summary: HumanTaskStartupSummary,
     *,
+    settings: Settings | None = None,
     inbox: HumanTaskInboxMetadata | None = None,
 ) -> str | None:
     """Render deterministic startup notice for the current human inbox."""
 
     if summary.total_count <= 0:
         return None
-    lang = detect_system_prompt_language()
+    lang = resolve_prompt_language(settings=settings, value=None, ru=False)
     lines: list[str] = []
     if inbox is not None and inbox.recent_events:
         lines.append(

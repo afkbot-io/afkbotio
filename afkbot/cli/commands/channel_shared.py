@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from typing import cast
+
+import typer
 
 from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_bool,
@@ -78,6 +81,71 @@ def should_collect_channel_update_interactively(
     return not yes and not sync_binding and all(value is None for value in values)
 
 
+def build_generated_channel_id(*, transport: str) -> str:
+    """Build one safe default channel id for interactive and `--yes` add flows."""
+
+    normalized_transport = transport.strip().lower()
+    return f"{normalized_transport}-{secrets.token_hex(4)}"
+
+
+def render_channel_add_intro(
+    *,
+    transport: str,
+    lang: PromptLanguage,
+    suggested_channel_id: str,
+) -> None:
+    """Render one short operator-facing intro before interactive channel setup."""
+
+    normalized_transport = transport.strip().lower()
+    if normalized_transport == "telegram":
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "Telegram Bot API channel setup\n"
+                    f"- This wizard creates one polling endpoint for a Telegram bot.\n"
+                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, `status`, and `poll-once` commands. "
+                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- If bot credentials are not already configured, the wizard will ask for the BotFather token.\n"
+                    "- Optional: you may also save a default chat id for app-level Telegram actions; leave it blank if you do not need it yet."
+                ),
+                ru=(
+                    "Настройка Telegram Bot API канала\n"
+                    f"- Этот мастер создаёт один polling endpoint для Telegram-бота.\n"
+                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update`, `status` и `poll-once`. "
+                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
+                    "- Если credentials для бота ещё не настроены, мастер попросит BotFather token.\n"
+                    "- Дополнительно можно сохранить chat id по умолчанию для app-level Telegram действий; если пока не нужен, оставьте поле пустым."
+                ),
+            )
+        )
+        return
+    if normalized_transport == "telethon":
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "Telethon user channel setup\n"
+                    f"- This wizard creates one Telegram user-account endpoint powered by Telethon.\n"
+                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, `status`, `authorize`, and `dialogs` commands. "
+                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- If Telethon credentials are not already configured, the wizard will ask for API id, API hash, and phone.\n"
+                    "- A session string is optional: import it now, or save the channel first and authorize later with `afk channel telethon authorize <channel_id>`."
+                ),
+                ru=(
+                    "Настройка Telethon user-канала\n"
+                    f"- Этот мастер создаёт один endpoint Telegram user-аккаунта на Telethon.\n"
+                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update`, `status`, `authorize` и `dialogs`. "
+                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
+                    "- Если credentials для Telethon ещё не настроены, мастер попросит API id, API hash и телефон.\n"
+                    "- Session string необязателен: можно импортировать его сразу или сначала сохранить канал, а авторизоваться потом через `afk channel telethon authorize <channel_id>`."
+                ),
+            )
+        )
+        return
+    raise ValueError(f"Unsupported channel transport for intro: {transport}")
+
+
 def collect_channel_add_base_inputs(
     *,
     settings: Settings,
@@ -93,6 +161,7 @@ def collect_channel_add_base_inputs(
     session_policy: SessionPolicy | None,
     binding_session_policy_default: SessionPolicy,
     binding_session_policy_allowed: tuple[str, ...],
+    generated_channel_id: str,
 ) -> CollectedChannelAddBaseInputs:
     """Collect shared channel add inputs for any transport family."""
 
@@ -101,11 +170,19 @@ def collect_channel_add_base_inputs(
         interactive=interactive,
         prompt_en="Channel id",
         prompt_ru="Идентификатор канала",
-        default=None,
+        default=(generated_channel_id if channel_id is None else None),
         lang=lang,
         normalize_lower=True,
-        detail_en="This is the stable id you will use later in `afk channel show`, `update`, and runtime commands.",
-        detail_ru="Это стабильный идентификатор канала, который потом используется в `afk channel show`, `update` и runtime-командах.",
+        detail_en=(
+            "This is AFKBOT's stable local id for the channel. "
+            "It is used later in `afk channel show`, `update`, `status`, and runtime commands. "
+            f"Allowed format: lowercase letters, digits, hyphen. Press Enter to accept `{generated_channel_id}`."
+        ),
+        detail_ru=(
+            "Это стабильный локальный id канала внутри AFKBOT. "
+            "Он потом используется в `afk channel show`, `update`, `status` и runtime-командах. "
+            f"Допустимы строчные буквы, цифры и дефис. Нажмите Enter, чтобы принять `{generated_channel_id}`."
+        ),
     )
     resolved_profile_id = resolve_channel_profile_id(
         settings=settings,
