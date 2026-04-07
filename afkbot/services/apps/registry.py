@@ -17,6 +17,7 @@ from afkbot.services.apps.registry_discovery import (
     discover_profile_apps,
     ensure_builtin_apps_loaded,
 )
+from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import Settings
 
 
@@ -74,4 +75,5 @@ def get_app_registry(
         settings=settings,
         profile_id=normalized_profile_id,
     )
+    get_plugin_service(settings).register_apps(registry=merged)
     return merged

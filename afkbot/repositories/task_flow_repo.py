@@ -319,6 +319,24 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def has_task_run_event(
+        self,
+        *,
+        task_run_id: int,
+        event_type: str,
+    ) -> bool:
+        """Return whether one task run already emitted the selected event type."""
+
+        statement: Select[tuple[int]] = (
+            select(TaskEvent.id)
+            .where(
+                TaskEvent.task_run_id == task_run_id,
+                TaskEvent.event_type == event_type,
+            )
+            .limit(1)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none() is not None
+
     async def list_task_events_for_tasks(
         self,
         *,

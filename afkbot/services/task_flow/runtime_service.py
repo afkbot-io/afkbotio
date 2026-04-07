@@ -409,6 +409,11 @@ class TaskFlowRuntimeService:
                     to_status=outcome.status,
                     details=_task_event_details_for_outcome(outcome),
                 )
+                await _ensure_runtime_summary_comment(
+                    repo=repo,
+                    claimed=claimed,
+                    outcome=outcome,
+                )
                 reconcile_completed = outcome.status == "completed"
             else:
                 reconcile_completed = await self._handle_unfinalized_outcome(
@@ -829,3 +834,55 @@ def _task_event_details_for_outcome(outcome: TaskExecutionOutcome) -> dict[str, 
     if outcome.blocked_reason_code is not None:
         details["blocked_reason_code"] = outcome.blocked_reason_code
     return details
+
+
+async def _ensure_runtime_summary_comment(
+    *,
+    repo: TaskFlowRepository,
+    claimed: ClaimedTaskExecution,
+    outcome: TaskExecutionOutcome,
+) -> None:
+    if outcome.status not in {"review", "blocked", "completed", "failed"}:
+        return
+    if await repo.has_task_run_event(task_run_id=claimed.task_run_id, event_type="comment_added"):
+        return
+    message = _runtime_fallback_comment_message(outcome)
+    if message is None:
+        return
+    await record_task_event(
+        repo=repo,
+        task_id=claimed.task_id,
+        task_run_id=claimed.task_run_id,
+        event_type="comment_added",
+        actor_type="runtime",
+        actor_ref=claimed.worker_id,
+        message=message,
+        details={"comment_type": _runtime_fallback_comment_type(outcome.status)},
+    )
+
+
+def _runtime_fallback_comment_type(status: str) -> str:
+    if status == "review":
+        return "review_summary"
+    if status == "blocked":
+        return "blocked_reason"
+    return "completion_summary"
+
+
+def _runtime_fallback_comment_message(outcome: TaskExecutionOutcome) -> str | None:
+    if outcome.status == "review":
+        text = _trim_text(outcome.summary, limit=4000)
+        return f"Ready for review: {text}" if text else "Ready for review."
+    if outcome.status == "blocked":
+        text = _trim_text(
+            outcome.blocked_reason_text or outcome.error_text or outcome.summary,
+            limit=4000,
+        )
+        return f"Blocked: {text}" if text else "Blocked without an explicit task comment."
+    if outcome.status == "failed":
+        text = _trim_text(outcome.error_text or outcome.summary, limit=4000)
+        return f"Failed: {text}" if text else "Failed without an explicit task comment."
+    if outcome.status == "completed":
+        text = _trim_text(outcome.summary, limit=4000)
+        return f"Completed: {text}" if text else "Completed without an explicit task comment."
+    return None

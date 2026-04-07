@@ -16,6 +16,7 @@ from afkbot.cli.commands.setup import register as register_setup
 from afkbot.cli.commands.memory import register as register_memory
 from afkbot.cli.commands.mcp import register as register_mcp
 from afkbot.cli.commands.automation import register as register_automation
+from afkbot.cli.commands.plugin import register as register_plugin
 from afkbot.cli.commands.profile import register as register_profile
 from afkbot.cli.commands.skill import register as register_skill
 from afkbot.cli.commands.start import register as register_start
@@ -34,7 +35,8 @@ app = typer.Typer(
         "Use `afk start` to run the full local stack, `afk chat` for interactive or one-shot "
         "chat turns, `afk doctor` to verify local readiness, `afk bootstrap` to edit global "
         "system-prompt files, `afk update` to refresh the active AFKBOT install, `afk automation` to "
-        "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk channel` to operate external adapters, `afk memory` to "
+        "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk plugin` to "
+        "install optional platform extensions, `afk channel` to operate external adapters, `afk memory` to "
         "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, and `afk browser install` "
         "to prepare browser automation runtime."
@@ -56,6 +58,7 @@ register_credentials(app)
 register_doctor(app)
 register_memory(app)
 register_mcp(app)
+register_plugin(app)
 register_profile(app)
 register_skill(app)
 register_start(app)
@@ -73,7 +76,7 @@ def _guard_setup(ctx: typer.Context) -> None:
     command = ctx.invoked_subcommand
     if command is None:
         return
-    if command in {"setup", "uninstall", "update", "browser", "bootstrap", "upgrade", "mcp", "version"}:
+    if command in {"setup", "uninstall", "update", "browser", "bootstrap", "upgrade", "mcp", "plugin", "version"}:
         return
 
     settings = get_settings()

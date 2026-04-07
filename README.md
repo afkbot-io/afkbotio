@@ -69,7 +69,7 @@ Common installer flags:
 curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
 
 # install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.6
+curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.7
 
 # install from a local checkout
 bash scripts/install.sh --repo-url "file://$PWD"
@@ -159,10 +159,39 @@ uv run afk doctor
 uv run afk setup
 uv run afk chat --message "Summarize this project"
 uv run afk automation list --profile default
+uv run afk plugin list
 uv run afk mcp list
 uv run afk profile show default
 uv run afk update
 ```
+
+## Plugins
+
+AFKBOT supports installable embedded plugins that extend the local platform with:
+
+- API routers
+- static web apps
+- tool factories
+- skill directories
+- app registrars
+- optional startup and shutdown hooks
+
+Typical operator flow:
+
+```bash
+uv run afk plugin list
+uv run afk plugin install github:afkbot-io/afkbotkanbanplugin@v1.0.0
+uv run afk plugin inspect kanban
+uv run afk plugin config-get kanban
+uv run afk plugin update kanban
+```
+
+The first external plugin is the Task Flow Kanban UI. After installation and `afk start`, it mounts:
+
+- API: `/v1/plugins/kanban/...`
+- UI: `/plugins/kanban`
+
+Plugin install state lives under the AFKBOT runtime root in `/plugins/...` and is treated as local machine state, not repository content.
 
 ## Channels Quickstart
 

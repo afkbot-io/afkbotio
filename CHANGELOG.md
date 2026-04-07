@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - 2026-04-07
+
+### Added
+
+- Embedded plugin runtime with manifest-based install, enable, disable, update, inspect, config, and scaffold flows under `afk plugin ...`.
+- Plugin extension surfaces for API routers, static web apps, tools, skills, apps, and optional lifecycle hooks.
+- Plugin discovery/config API endpoints for installed plugins at `/v1/plugins...`.
+- First external plugin path for `Task Flow` via the companion Kanban web plugin repository.
+- Stronger Task Flow operator surfaces for AI comment discipline and richer runtime handoff behavior when work is routed through plugin-driven UI.
+
+### Changed
+
+- API app startup now loads enabled plugins and mounts their routes and static assets during the main FastAPI lifespan.
+- Runtime/plugin compatibility is now version-gated through plugin manifest `afkbot_version` constraints.
+- Local plugin runtime state is treated as generated machine state rather than tracked repository content.
+
+### Fixed
+
+- Plugin config patching now merges over defaults instead of accidentally requiring full replacement payloads.
+- GitHub archive plugin installs now clean up temporary extraction state correctly.
+- Task Flow background runs now emit fallback durable comments when execution reaches meaningful terminal states without an explicit operator note.
+
 ## [1.0.6] - 2026-04-06
 
 ### Added

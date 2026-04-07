@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     skills_dir_name: str = "afkbot/skills"
     subagents_dir_name: str = "afkbot/subagents"
     profiles_dir_name: str = "profiles"
+    plugins_dir_name: str = "plugins"
+    plugins_registry_filename: str = "registry.json"
     bootstrap_files: tuple[str, ...] = ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md")
     tool_timeout_default_sec: int = 15
     tool_timeout_max_sec: int = 120
@@ -602,6 +604,36 @@ class Settings(BaseSettings):
         """Return absolute profiles directory path."""
 
         return self.root_dir / self.profiles_dir_name
+
+    @property
+    def plugins_dir(self) -> Path:
+        """Return absolute runtime plugins directory path."""
+
+        return self.root_dir / self.plugins_dir_name
+
+    @property
+    def plugins_packages_dir(self) -> Path:
+        """Return absolute installed plugin packages directory path."""
+
+        return self.plugins_dir / "packages"
+
+    @property
+    def plugins_config_dir(self) -> Path:
+        """Return absolute plugin config directory path."""
+
+        return self.plugins_dir / "config"
+
+    @property
+    def plugins_data_dir(self) -> Path:
+        """Return absolute plugin data directory path."""
+
+        return self.plugins_dir / "data"
+
+    @property
+    def plugins_registry_path(self) -> Path:
+        """Return absolute plugin registry JSON path."""
+
+        return self.plugins_dir / self.plugins_registry_filename
 
     @property
     def tool_workspace_dir(self) -> Path:

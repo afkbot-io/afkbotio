@@ -112,6 +112,7 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
 - If a task is being handed to a human, set both the new owner and a status that matches the reason for handoff.
 - If you reassign a `claimed` or `running` task, move it out of active execution with `status=todo`, `status=blocked`, or `status=review` as part of the handoff.
 - If you need to reassign, block, or review the current task, persist it with `task.update` before the turn ends.
+- Before a background task ends in `review`, `blocked`, `completed`, `failed`, or human handoff, add a durable `task.comment.add` note so the task keeps human-readable context beyond raw events and run logs.
 - Prefer `task.review.approve` and `task.review.request_changes` over ad hoc `task.update` when handling a task already in `review`.
 - Prefer `task.event.list` for operator-style history; prefer `task.run.*` for execution-attempt diagnostics.
 - Prefer `task.inbox` for human notification/inbox questions instead of manually filtering `task.list`.

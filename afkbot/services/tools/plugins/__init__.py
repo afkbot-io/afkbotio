@@ -103,6 +103,7 @@ from afkbot.services.tools.plugins.task_update import create_tool as create_task
 from afkbot.services.tools.plugins.web_fetch import create_tool as create_web_fetch_tool
 from afkbot.services.tools.plugins.web_search import create_tool as create_web_search_tool
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import Settings
 
 try:
@@ -229,17 +230,22 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
 def create_tool_from_plugin(plugin_name: str, settings: Settings) -> ToolBase:
     """Instantiate tool for one configured plugin name."""
 
-    try:
-        factory = _PLUGIN_FACTORIES[plugin_name]
-    except KeyError as exc:
-        raise ValueError(f"Unknown tool plugin: {plugin_name}") from exc
-    return factory(settings)
+    factory = _PLUGIN_FACTORIES.get(plugin_name)
+    if factory is not None:
+        return factory(settings)
+    dynamic_factory = get_plugin_service(settings).tool_factories().get(plugin_name)
+    if dynamic_factory is not None:
+        return dynamic_factory(settings)
+    raise ValueError(f"Unknown tool plugin: {plugin_name}")
 
 
-def list_available_plugins() -> tuple[str, ...]:
+def list_available_plugins(settings: Settings | None = None) -> tuple[str, ...]:
     """List built-in plugin identifiers accepted by settings."""
 
-    return tuple(sorted(_PLUGIN_FACTORIES.keys()))
+    names = set(_PLUGIN_FACTORIES.keys())
+    if settings is not None:
+        names.update(get_plugin_service(settings).tool_factories().keys())
+    return tuple(sorted(names))
 
 
 __all__ = ["create_tool_from_plugin", "list_available_plugins"]

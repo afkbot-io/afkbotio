@@ -245,11 +245,14 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert listed_runs[0].id == updated.last_run_id
         assert listed_runs[0].status == "completed"
         listed_events = await service.list_task_events(profile_id="default", task_id=first.id)
-        assert listed_events[0].event_type == "execution_completed"
-        assert listed_events[0].actor_type == "runtime"
-        assert listed_events[0].actor_ref == "worker-a"
-        assert listed_events[0].to_status == "completed"
-        assert listed_events[0].details["run_id"] == listed_runs[0].run_id
+        execution_event = next(item for item in listed_events if item.event_type == "execution_completed")
+        assert execution_event.actor_type == "runtime"
+        assert execution_event.actor_ref == "worker-a"
+        assert execution_event.to_status == "completed"
+        assert execution_event.details["run_id"] == listed_runs[0].run_id
+        assert any(item.event_type == "comment_added" for item in listed_events)
+        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
+        assert fallback_comment.message == "Completed: analysis complete"
         fetched_run = await service.get_task_run(
             profile_id="default",
             task_run_id=updated.last_run_id,
@@ -317,9 +320,11 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         assert updated.blocked_reason_code == "task_action_ask_question"
         assert updated.blocked_reason_text == "Need human approval"
         listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
-        assert listed_events[0].event_type == "execution_blocked"
-        assert listed_events[0].message == "Need human approval"
-        assert listed_events[0].details["blocked_reason_code"] == "task_action_ask_question"
+        blocked_event = next(item for item in listed_events if item.event_type == "execution_blocked")
+        assert blocked_event.message == "Need human approval"
+        assert blocked_event.details["blocked_reason_code"] == "task_action_ask_question"
+        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
+        assert fallback_comment.message == "Blocked: Need human approval"
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -436,9 +441,11 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
         assert updated.last_error_code == "llm_timeout"
         assert updated.last_error_text == "Task run timed out while waiting for the LLM provider."
         listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
-        assert listed_events[0].event_type == "execution_failed"
-        assert listed_events[0].actor_ref == "worker-c"
-        assert listed_events[0].details["error_code"] == "llm_timeout"
+        failed_event = next(item for item in listed_events if item.event_type == "execution_failed")
+        assert failed_event.actor_ref == "worker-c"
+        assert failed_event.details["error_code"] == "llm_timeout"
+        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
+        assert fallback_comment.message == "Failed: Task run timed out while waiting for the LLM provider."
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -602,8 +609,10 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
         assert stale_run.error_code == "task_lease_expired"
         assert fresh_run.status == "completed"
         events = await service.list_task_events(profile_id="default", task_id=task.id)
-        assert events[0].event_type == "execution_completed"
+        assert any(item.event_type == "execution_completed" for item in events)
         assert {item.event_type for item in events} >= {"created", "lease_expired", "execution_completed"}
+        fallback_comment = next(item for item in events if item.event_type == "comment_added")
+        assert fallback_comment.message == "Completed: analysis complete"
         assert len(observed_calls) == 1
         assert observed_calls[0].session_id == f"taskflow:{task.id}"
     finally:
