@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from afkbot.services.path_scope import resolve_in_scope_or_none
+from afkbot.services.plugins import get_plugin_service
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.skills.loader_availability import check_skill_availability
 from afkbot.services.skills.loader_contracts import (
@@ -40,9 +41,10 @@ class SkillLoader:
         """List all visible skills, including mandatory always skills."""
 
         core = self._discover_core_skills()
+        plugin = self._discover_plugin_skills()
         profile = self._discover_profile_skills(profile_id)
         core_map = {item.name: item for item in core}
-        merged: dict[str, SkillInfo] = {item.name: item for item in [*core, *profile]}
+        merged: dict[str, SkillInfo] = {item.name: item for item in [*core, *plugin, *profile]}
 
         for skill_name in self.ALWAYS_SKILLS:
             core_skill = core_map.get(skill_name)
@@ -77,6 +79,11 @@ class SkillLoader:
         profile_path = self._safe_skill_path(profile_root, name)
         if profile_path.exists():
             return profile_path.read_text(encoding="utf-8")
+
+        for plugin_root in self._plugin_skill_roots():
+            plugin_path = self._safe_skill_path(plugin_root, name)
+            if plugin_path.exists():
+                return plugin_path.read_text(encoding="utf-8")
 
         core_path = self._safe_skill_path(self._settings.skills_dir, name)
         if core_path.exists():
@@ -165,6 +172,17 @@ class SkillLoader:
         if not root.exists():
             return []
         return self._discover(root, "profile")
+
+    def _discover_plugin_skills(self) -> list[SkillInfo]:
+        result: list[SkillInfo] = []
+        for root in self._plugin_skill_roots():
+            if not root.exists():
+                continue
+            result.extend(self._discover(root, f"plugin:{root.name}"))
+        return result
+
+    def _plugin_skill_roots(self) -> tuple[Path, ...]:
+        return get_plugin_service(self._settings).skill_dirs()
 
     def _discover(self, root: Path, origin: str) -> list[SkillInfo]:
         result: list[SkillInfo] = []

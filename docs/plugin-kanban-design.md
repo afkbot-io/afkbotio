@@ -4,6 +4,8 @@ Date: 2026-04-07
 Branch: `codex/plugin-system-rfc`
 Status: design only
 
+See also: `docs/plugin-kanban-implementation-plan.md`
+
 ## 1. Goal
 
 Сделать первый installable plugin:
@@ -14,6 +16,14 @@ Status: design only
 - без изменения доменной модели `task/task_flow/task_run/task_event`
 
 То есть plugin должен **использовать текущий Task Flow**, а не дублировать его.
+
+Проверено по текущему core:
+
+- `Task Flow` board уже есть
+- append-only task comments уже есть
+- review/inbox/events/runs уже есть
+
+Значит основной объём работы для kanban идёт в plugin runtime, web facade и UI, а не в новую task domain model.
 
 ## 2. Why Plugin, Not Core
 
@@ -81,6 +91,14 @@ Frontend общается с backend router по:
 
 - `/v1/plugins/kanban/...`
 
+Рекомендованный стек для первого plugin:
+
+- Vite + React
+- plain CSS / component CSS
+- тот же visual language, что и в `afkbotweb`
+
+То есть не Tailwind admin panel, а тот же dark glass/neon стиль с `Plus Jakarta Sans`, `Cormorant Garamond`, `JetBrains Mono` и общими цветами/радиусами.
+
 ## 5. Core UX
 
 Минимальный UX для v1:
@@ -141,6 +159,8 @@ Frontend общается с backend router по:
 - dependencies / dependents
 
 Это ключевое отличие нормального product UI от “просто board”.
+
+Комментарии не нужно придумывать заново: current core уже хранит их append-only через `task.comment.add/list`. Plugin должен просто сделать их нормальной частью UI и подтолкнуть AI/runtime оставлять их consistently.
 
 ## 6. Backend Endpoints
 

@@ -63,6 +63,7 @@ profiles/.system/runtime_config.json
 profiles/.system/runtime_secrets.json
 profiles/.system/setup_state.json
 profiles/.system/install_state.json
+/plugins/
 
 private/
 .afkbot.host.compose.yml

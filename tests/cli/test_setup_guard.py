@@ -90,6 +90,17 @@ def test_cli_allows_mcp_commands_before_setup(tmp_path: Path, monkeypatch: Monke
     assert result.exit_code == 1
 
 
+def test_cli_allows_plugin_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """Plugin install/list commands should remain available before setup marker exists."""
+
+    _prepare_guard_context(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["plugin", "list"])
+
+    assert result.exit_code == 0
+
+
 def test_cli_allows_upgrade_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """Upgrade runner should remain available before setup marker exists."""
 

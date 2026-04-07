@@ -46,6 +46,7 @@ def test_legacy_groups_are_not_exposed() -> None:
     assert "doctor" in output
     assert "memory" in output
     assert "mcp" in output
+    assert "plugin" in output
     assert "profile" in output
     assert "skill" in output
     assert "start" in output
@@ -78,6 +79,7 @@ def test_root_help_explains_primary_entrypoints() -> None:
     assert "global system-prompt files" in output
     assert "`afk automation`" in output
     assert "`afk task`" in output
+    assert "`afk plugin`" in output
     assert "`afk channel`" in output
     assert "`afk memory`" in output
     assert "`afk mcp`" in output
@@ -136,3 +138,24 @@ def test_task_help_exposes_dependency_and_run_surfaces() -> None:
     assert "run-get" in output
     assert "stale-list" in output
     assert "stale-sweep" in output
+
+
+def test_plugin_help_exposes_install_lifecycle() -> None:
+    """Plugin CLI help should expose install/inspect/lifecycle commands."""
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["plugin", "--help"])
+
+    assert result.exit_code == 0
+    output = result.stdout
+    assert "install" in output
+    assert "scaffold" in output
+    assert "list" in output
+    assert "inspect" in output
+    assert "config-get" in output
+    assert "config-set" in output
+    assert "config-reset" in output
+    assert "update" in output
+    assert "enable" in output
+    assert "disable" in output
+    assert "remove" in output
