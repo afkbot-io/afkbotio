@@ -146,7 +146,7 @@ Recommended layout:
     registry.json
     packages/
       kanban/
-        0.1.0/
+        1.0.0/
           .afkbot-plugin/
             plugin.json
           backend/
@@ -175,10 +175,10 @@ Recommended record shape:
   "plugins": [
     {
       "plugin_id": "kanban",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "source_kind": "github_archive",
-      "source_ref": "afkbot-plugins/kanban-ui@main",
-      "install_path": "plugins/packages/kanban/0.1.0",
+      "source_ref": "github:afkbot-io/afkbotkanbanplugin@v1.0.0",
+      "install_path": "plugins/packages/kanban/1.0.0",
       "enabled": true,
       "profiles": ["default"],
       "installed_at": "2026-04-07T10:00:00Z",
@@ -237,8 +237,8 @@ Example:
 {
   "plugin_id": "kanban",
   "name": "Task Flow Kanban",
-  "version": "0.1.0",
-  "afkbot_version": ">=1.0.6,<2.0.0",
+  "version": "1.0.0",
+  "afkbot_version": ">=1.0.7,<2.0.0",
   "kind": "embedded",
   "entrypoint": "backend.plugin:register",
   "description": "Kanban web interface for Task Flow.",
