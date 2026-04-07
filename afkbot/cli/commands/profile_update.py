@@ -14,7 +14,7 @@ from afkbot.cli.commands.profile_mutation_support import (
     render_profile_mutation_success,
     verify_profile_provider_token,
 )
-from afkbot.cli.presentation.setup_prompts import normalize_prompt_language
+from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.profile_runtime import (
     ProfileServiceError,
@@ -255,7 +255,7 @@ def register_update(profile_app: typer.Typer) -> None:
             normalized_profile_id = validate_profile_id(profile_id)
             details = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
             existing_runtime_secrets = get_profile_runtime_secrets_service(settings).load(normalized_profile_id)
-            prompt_language = normalize_prompt_language(value=lang, ru=ru)
+            prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
             mutation_inputs = collect_profile_mutation_inputs(
                 settings=settings,
                 interactive=interactive,

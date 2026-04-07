@@ -14,7 +14,7 @@ from afkbot.cli.commands.profile_mutation_support import (
     render_profile_mutation_success,
     verify_profile_provider_token,
 )
-from afkbot.cli.presentation.setup_prompts import PromptLanguage, normalize_prompt_language
+from afkbot.cli.presentation.setup_prompts import PromptLanguage, resolve_prompt_language
 from afkbot.services.setup.defaults import load_env_defaults
 from afkbot.services.profile_id import InvalidProfileIdError
 from afkbot.services.profile_runtime import (
@@ -260,8 +260,9 @@ def register_add(profile_app: typer.Typer) -> None:
         defaults = build_profile_defaults(load_env_defaults(settings=settings))
         interactive = not yes
         try:
-            prompt_language: PromptLanguage = normalize_prompt_language(
-                value=lang or defaults.get("AFKBOT_PROMPT_LANGUAGE"),
+            prompt_language: PromptLanguage = resolve_prompt_language(
+                settings=settings,
+                value=(lang or defaults.get("AFKBOT_PROMPT_LANGUAGE")),
                 ru=ru,
             )
             resolved_profile_id = resolve_profile_id(

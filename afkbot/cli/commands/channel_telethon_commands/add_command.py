@@ -21,17 +21,20 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
 
     @telethon_app.command("add")
     def telethon_add(
-        channel_id: str | None = typer.Argument(None, help="Stable channel endpoint id."),
+        channel_id: str | None = typer.Argument(
+            None,
+            help="Stable channel id used later in show/update/status/authorize. Omit it to let the wizard suggest an auto-generated id.",
+        ),
         profile_id: str | None = typer.Option(None, "--profile", help="Target profile-agent id."),
         credential_profile_key: str | None = typer.Option(
             None,
             "--credential-profile",
-            help="Telethon credential profile key holding api_id/api_hash/session_string.",
+            help="Telethon credential profile key holding api_id/api_hash/session_string. Defaults to the channel id.",
         ),
         account_id: str | None = typer.Option(
             None,
             "--account-id",
-            help="Channel account id used by bindings and routing telemetry.",
+            help="Logical account id used by bindings and routing telemetry. Defaults to the channel id.",
         ),
         enabled: bool | None = typer.Option(None, "--enabled/--disabled", help="Enable or disable this endpoint."),
         reply_mode: str | None = typer.Option(
@@ -219,7 +222,7 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
         yes: bool = typer.Option(
             False,
             "--yes",
-            help="Use defaults plus explicit flags without interactive questions.",
+            help="Use defaults plus explicit flags without interactive questions. Missing channel id is auto-generated.",
         ),
         lang: str | None = typer.Option(
             None,

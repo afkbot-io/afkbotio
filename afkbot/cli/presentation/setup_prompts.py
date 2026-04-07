@@ -6,6 +6,7 @@ from afkbot.cli.presentation.prompt_i18n import (
     PromptLanguage,
     msg,
     normalize_prompt_language,
+    resolve_prompt_language,
 )
 from afkbot.cli.presentation.setup_policy_prompts import (
     POLICY_PRESET_CHOICES,
@@ -46,6 +47,7 @@ __all__ = [
     "SOCKS5H_PROXY_TYPE",
     "msg",
     "normalize_prompt_language",
+    "resolve_prompt_language",
     "prompt_chat_model",
     "prompt_confirm",
     "prompt_certbot_email",

@@ -27,7 +27,7 @@ from afkbot.cli.commands.channel_telegram_commands.common import (
     normalize_telegram_group_trigger_mode,
 )
 from afkbot.cli.commands.channel_telegram_commands.runtime import TelegramCommandRuntime
-from afkbot.cli.presentation.setup_prompts import normalize_prompt_language
+from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.endpoint_contracts import (
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
@@ -80,7 +80,7 @@ def run_telegram_update(
 
     try:
         current = runtime.load_endpoint(channel_id)
-        prompt_language = normalize_prompt_language(value=lang, ru=ru)
+        prompt_language = resolve_prompt_language(settings=runtime.settings, value=lang, ru=ru)
         interactive = should_collect_channel_update_interactively(
             yes=yes,
             sync_binding=sync_binding,

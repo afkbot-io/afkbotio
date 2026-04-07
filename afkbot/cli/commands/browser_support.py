@@ -14,7 +14,10 @@ from afkbot.browser_backends import (
     get_browser_backend_spec,
 )
 from afkbot.cli.presentation.browser_prompts import prompt_browser_backend, prompt_browser_cdp_url
-from afkbot.cli.presentation.prompt_i18n import PromptLanguage, normalize_prompt_language
+from afkbot.cli.presentation.prompt_i18n import (
+    PromptLanguage,
+    resolve_prompt_language as resolve_cli_prompt_language,
+)
 from afkbot.cli.presentation.setup_prompts import msg
 from afkbot.services.browser_cdp import normalize_browser_cdp_url
 from afkbot.services.browser_runtime import (
@@ -180,10 +183,7 @@ def browser_install_question(
 def resolve_prompt_language(settings: Settings) -> PromptLanguage:
     """Resolve interactive prompt language from persisted runtime config."""
 
-    return normalize_prompt_language(
-        value=(read_runtime_config(settings).get("prompt_language") or None),
-        ru=False,
-    )
+    return resolve_cli_prompt_language(settings=settings, value=None, ru=False)
 
 
 def browser_install_wizard_enabled() -> bool:

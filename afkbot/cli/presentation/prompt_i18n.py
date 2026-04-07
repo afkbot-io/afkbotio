@@ -5,6 +5,10 @@ from __future__ import annotations
 from enum import StrEnum
 import locale
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from afkbot.settings import Settings
 
 
 class PromptLanguage(StrEnum):
@@ -48,11 +52,31 @@ def normalize_prompt_language(*, value: str | None, ru: bool) -> PromptLanguage:
         if normalized and normalized not in {"ru", "russian", "ru-ru"}:
             raise ValueError("--ru cannot be combined with --lang values other than 'ru'")
         return PromptLanguage.RU
-    if normalized in {"", "en", "english", "en-us", "en-gb"}:
+    if not normalized:
+        return detect_system_prompt_language()
+    if normalized in {"en", "english", "en-us", "en-gb"}:
         return PromptLanguage.EN
     if normalized in {"ru", "russian", "ru-ru"}:
         return PromptLanguage.RU
     raise ValueError("prompt language must be one of: en, ru")
+
+
+def resolve_prompt_language(*, settings: Settings | None, value: str | None, ru: bool) -> PromptLanguage:
+    """Resolve prompt language from explicit flags, persisted project config, then system locale."""
+
+    normalized = str(value or "").strip()
+    if ru or normalized:
+        return normalize_prompt_language(value=value, ru=ru)
+    if settings is not None:
+        from afkbot.services.setup.runtime_store import read_runtime_config
+
+        configured = str(read_runtime_config(settings).get("prompt_language") or "").strip()
+        if configured:
+            try:
+                return normalize_prompt_language(value=configured, ru=False)
+            except ValueError:
+                pass
+    return detect_system_prompt_language()
 
 
 def msg(lang: PromptLanguage, *, en: str, ru: str) -> str:

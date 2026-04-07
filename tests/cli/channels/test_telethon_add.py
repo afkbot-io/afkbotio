@@ -19,6 +19,7 @@ from afkbot.services.health import (
 )
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import reset_profile_services_async
+from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.settings import get_settings
 from tests.cli.channels._harness import _new_profile_service, _prepare_env
 
@@ -322,3 +323,124 @@ def test_channel_telethon_add_with_profile_flag_stays_interactive(
     shown = runner.invoke(app, ["channel", "telethon", "show", "personal-user"]).stdout
     assert "- credential_profile: personal-user" in shown
     assert "- account_id: personal-user" in shown
+
+
+def test_channel_telethon_add_interactive_accepts_generated_channel_id(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive Telethon add should allow blank channel id and create a generated one."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("memory",),
+            policy_network_allowlist=("*",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        ["channel", "telethon", "add"],
+        input="\n12345678\nhash-value\n+79990000000\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Telethon user channel setup" in result.stdout
+    assert "Press Enter there to accept `telethon-" in result.stdout
+    channels = asyncio.run(get_channel_endpoint_service(settings).list(transport="telegram_user"))
+    assert len(channels) == 1
+    saved = channels[0]
+    assert saved.endpoint_id.startswith("telethon-")
+    assert saved.credential_profile_key == saved.endpoint_id
+    assert saved.account_id == saved.endpoint_id
+
+
+def test_channel_telethon_add_uses_russian_locale_for_intro(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive Telethon add should switch to Russian when the system locale is Russian."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.delenv("LC_MESSAGES", raising=False)
+    monkeypatch.setenv("LANG", "ru_RU.UTF-8")
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("memory",),
+            policy_network_allowlist=("*",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        ["channel", "telethon", "add"],
+        input="\n12345678\nhash-value\n+79990000000\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Настройка Telethon user-канала" in result.stdout
+    assert "Нажмите Enter, чтобы принять `telethon-" in result.stdout
+
+
+def test_channel_telethon_add_prefers_project_prompt_language_over_system_locale(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive Telethon add should prefer persisted project prompt language over system locale."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    runner = CliRunner()
+    settings = get_settings()
+    write_runtime_config(settings, config={"prompt_language": "ru"})
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("memory",),
+            policy_network_allowlist=("*",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        ["channel", "telethon", "add"],
+        input="\n12345678\nhash-value\n+79990000000\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Настройка Telethon user-канала" in result.stdout

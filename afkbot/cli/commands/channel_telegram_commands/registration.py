@@ -40,17 +40,20 @@ def register_telegram_command_tree(
 
     @telegram_app.command("add")
     def telegram_add(
-        channel_id: str | None = typer.Argument(None, help="Stable channel endpoint id."),
+        channel_id: str | None = typer.Argument(
+            None,
+            help="Stable channel id used later in show/update/status. Omit it to let the wizard suggest an auto-generated id.",
+        ),
         profile_id: str | None = typer.Option(None, "--profile", help="Target profile-agent id."),
         credential_profile_key: str | None = typer.Option(
             None,
             "--credential-profile",
-            help="Telegram credential profile key holding the bot token.",
+            help="Telegram credential profile key holding the bot token. Defaults to the channel id.",
         ),
         account_id: str | None = typer.Option(
             None,
             "--account-id",
-            help="Channel account id used by bindings and routing telemetry.",
+            help="Logical account id used by bindings and routing telemetry. Defaults to the channel id.",
         ),
         enabled: bool | None = typer.Option(None, "--enabled/--disabled", help="Enable or disable this endpoint."),
         group_trigger_mode: str | None = typer.Option(
@@ -128,7 +131,7 @@ def register_telegram_command_tree(
         yes: bool = typer.Option(
             False,
             "--yes",
-            help="Use defaults plus explicit flags without interactive questions.",
+            help="Use defaults plus explicit flags without interactive questions. Missing channel id is auto-generated.",
         ),
         lang: str | None = typer.Option(
             None,
