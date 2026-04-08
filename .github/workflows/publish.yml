@@ -6,12 +6,12 @@ on:
     tags:
       - "v*"
 
-permissions:
-  contents: write
-
 jobs:
-  python-package:
+  build-distributions:
+    name: Build Python distributions
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: afkbotio-dist
+          name: python-package-distributions
           path: dist/*
 
       - name: Attach artifacts to GitHub release
@@ -41,3 +41,47 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+
+  publish-to-testpypi:
+    name: Publish Python distributions to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - build-distributions
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/afkbotio
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-to-pypi:
+    name: Publish Python distributions to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-distributions
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/afkbotio/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

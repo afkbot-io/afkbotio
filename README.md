@@ -317,7 +317,7 @@ uv tool uninstall afkbotio
 
 ## Configuration
 
-- Environment-based configuration examples live in [`.env.example`](.env.example).
+- Environment-based configuration examples live in [`.env.example`](https://github.com/afkbot-io/afkbotio/blob/main/.env.example).
 - Setup/provider selection supports OpenRouter, OpenAI, Claude, Moonshot (Kimi), DeepSeek, xAI, Qwen, and custom OpenAI-compatible endpoints.
 - Runtime secrets should be configured through `afk setup`, `afk profile`, or credential commands, not committed into the repository.
 - Manual source setups use a local SQLite database and a local AFKBOT runtime.
@@ -335,11 +335,36 @@ uv run mypy afkbot tests
 uv run pytest -q
 ```
 
+## PyPI Release
+
+The project builds clean Python distributions and passes `twine check`:
+
+```bash
+uv build
+uvx twine check dist/*
+```
+
+For a safe dry run, upload to TestPyPI first:
+
+```bash
+uvx twine upload --repository testpypi dist/*
+```
+
+This repository also includes a GitHub Actions publish workflow prepared for trusted publishing:
+
+- `workflow_dispatch`: builds distributions and publishes to `testpypi`
+- `push` on `v*` tags: builds distributions, attaches them to the GitHub release, and publishes to `pypi`
+
+Before using the workflow, create matching trusted publishing environments in PyPI:
+
+- `testpypi` for `https://test.pypi.org/p/afkbotio`
+- `pypi` for `https://pypi.org/project/afkbotio/`
+
 ## License
 
 AFKBOT is distributed under the `Sustainable Use License 1.0`.
 
-- See [`LICENSE`](LICENSE) for the full license text.
-- See [`LICENSE_FAQ.md`](LICENSE_FAQ.md) for practical allowed/not-allowed examples.
-- See [`COMMERCIAL_LICENSE.md`](COMMERCIAL_LICENSE.md) for commercial-use guidance.
-- See [`TRADEMARKS.md`](TRADEMARKS.md) for brand and name usage rules.
+- See [`LICENSE`](https://github.com/afkbot-io/afkbotio/blob/main/LICENSE) for the full license text.
+- See [`LICENSE_FAQ.md`](https://github.com/afkbot-io/afkbotio/blob/main/LICENSE_FAQ.md) for practical allowed/not-allowed examples.
+- See [`COMMERCIAL_LICENSE.md`](https://github.com/afkbot-io/afkbotio/blob/main/COMMERCIAL_LICENSE.md) for commercial-use guidance.
+- See [`TRADEMARKS.md`](https://github.com/afkbot-io/afkbotio/blob/main/TRADEMARKS.md) for brand and name usage rules.
