@@ -25,6 +25,11 @@ def resolve_tool_workspace_base_dir(*, settings: Settings, profile_id: str) -> P
 
     if settings.tool_workspace_root is not None:
         return settings.tool_workspace_dir
+    if settings.tool_invocation_cwd is not None:
+        base_dir = settings.tool_invocation_cwd
+        if not base_dir.is_absolute():
+            base_dir = settings.root_dir / base_dir
+        return base_dir.resolve(strict=False)
     base_dir = get_profile_runtime_config_service(settings).profile_root(profile_id)
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
@@ -39,6 +44,8 @@ async def resolve_tool_workspace_scope_roots(*, settings: Settings, profile_id: 
             profile = await get_profile_service(settings).get(profile_id=profile_id)
         except ProfileServiceError:
             return (base_dir,)
+        if not profile.policy.enabled:
+            return ()
         resolved_roots = _normalize_scope_roots(profile.policy.allowed_directories)
         if not resolved_roots:
             return (base_dir,)

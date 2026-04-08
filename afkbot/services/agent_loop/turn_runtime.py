@@ -18,7 +18,7 @@ from afkbot.services.agent_loop.runtime_factory import build_profile_agent_loop
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
 from afkbot.services.tools.base import ToolCall
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 
 ProgressSink = Callable[[ProgressEvent], None]
 
@@ -28,14 +28,15 @@ async def run_once_result(
     message: str,
     profile_id: str,
     session_id: str,
+    settings: Settings | None = None,
     planned_tool_calls: list[ToolCall] | None = None,
     progress_sink: ProgressSink | None = None,
     context_overrides: TurnContextOverrides | None = None,
 ) -> TurnResult:
     """Run one loop turn and return typed result payload."""
 
-    settings = get_settings()
-    engine = create_engine(settings)
+    effective_settings = settings or get_settings()
+    engine = create_engine(effective_settings)
     session_factory = create_session_factory(engine)
 
     await create_schema(engine)
@@ -43,7 +44,7 @@ async def run_once_result(
         async with session_scope(session_factory) as db:
             loop = build_profile_agent_loop(
                 db,
-                settings=settings,
+                settings=effective_settings,
                 profile_id=profile_id,
             )
             previous_latest_run_id = await RunRepository(db).get_latest_run_id(
@@ -65,8 +66,8 @@ async def run_once_result(
                 profile_id=profile_id,
                 session_id=session_id,
                 previous_latest_run_id=previous_latest_run_id,
-                poll_interval_ms=settings.cli_progress_poll_interval_ms,
-                batch_size=settings.cli_progress_batch_size,
+                poll_interval_ms=effective_settings.cli_progress_poll_interval_ms,
+                batch_size=effective_settings.cli_progress_batch_size,
                 progress_sink=progress_sink,
             )
     finally:

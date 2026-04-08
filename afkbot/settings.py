@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     root_dir: Path = Field(default_factory=_default_runtime_root)
     app_dir: Path = Field(default_factory=_default_app_root)
     tool_workspace_root: Path | None = None
+    tool_invocation_cwd: Path | None = None
     bootstrap_dir_name: str = "afkbot/bootstrap"
     skills_dir_name: str = "afkbot/skills"
     subagents_dir_name: str = "afkbot/subagents"
@@ -400,10 +401,10 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("tool_workspace_root", mode="before")
+    @field_validator("tool_workspace_root", "tool_invocation_cwd", mode="before")
     @classmethod
-    def _normalize_tool_workspace_root(cls, value: object) -> object:
-        """Treat empty tool workspace root as disabled override."""
+    def _normalize_tool_workspace_path_override(cls, value: object) -> object:
+        """Treat empty tool workspace path overrides as disabled."""
 
         if value is None:
             return None

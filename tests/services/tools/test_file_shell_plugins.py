@@ -43,6 +43,7 @@ async def _set_allowed_directories(
     settings: Settings,
     profile_id: str,
     directories: list[Path],
+    enabled: bool | None = None,
 ) -> None:
     engine = create_engine(settings)
     await create_schema(engine)
@@ -51,6 +52,8 @@ async def _set_allowed_directories(
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default(profile_id)
             policy = await ProfilePolicyRepository(session).get_or_create_default(profile_id)
+            if enabled is not None:
+                policy.policy_enabled = bool(enabled)
             policy.allowed_directories_json = json.dumps(
                 [str(path.resolve(strict=False)) for path in directories],
                 ensure_ascii=True,
@@ -63,7 +66,10 @@ async def _set_allowed_directories(
 async def test_file_tools_roundtrip(tmp_path: Path) -> None:
     """file.* tools should support write/read/edit/search/list workflow."""
 
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-default.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
     profile_root = tmp_path / "profiles/default"
@@ -211,7 +217,10 @@ async def test_file_read_streams_without_read_bytes(tmp_path: Path, monkeypatch)
 async def test_bash_exec_runs_command(tmp_path: Path) -> None:
     """bash.exec should execute command in workspace and return stdout/stderr."""
 
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-allowed.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
 
@@ -236,7 +245,10 @@ async def test_bash_exec_runs_command(tmp_path: Path) -> None:
 async def test_bash_exec_pwd_defaults_to_profile_workspace(tmp_path: Path) -> None:
     """bash.exec should treat the profile workspace as the default cwd."""
 
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'custom-scope.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
 
@@ -254,6 +266,91 @@ async def test_bash_exec_pwd_defaults_to_profile_workspace(tmp_path: Path) -> No
     assert result.ok is True
     assert str(result.payload["stdout"]).strip() == str((tmp_path / "profiles/default").resolve())
     assert result.payload["cwd"] == "."
+
+
+async def test_full_access_invocation_cwd_sets_relative_base_without_narrowing_scope(
+    tmp_path: Path,
+) -> None:
+    """Full-access profiles should start in the invocation cwd without shrinking file scope."""
+
+    invocation_cwd = tmp_path / "checkout"
+    invocation_cwd.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'full-access.db'}",
+        root_dir=tmp_path,
+        tool_invocation_cwd=invocation_cwd,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[Path("/")],
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    bash_tool = registry.get("bash.exec")
+    assert bash_tool is not None
+    bash_params = bash_tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "pwd",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    bash_result = await bash_tool.execute(ctx, bash_params)
+    assert bash_result.ok is True
+    assert str(bash_result.payload["stdout"]).strip() == str(invocation_cwd.resolve())
+    assert bash_result.payload["cwd"] == "."
+
+    read_tool = registry.get("file.read")
+    assert read_tool is not None
+    read_params = read_tool.parse_params(
+        {
+            "profile_key": "default",
+            "path": str(outside),
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    read_result = await read_tool.execute(ctx, read_params)
+    assert read_result.ok is True
+    assert read_result.payload["content"] == "outside"
+
+
+async def test_policy_disabled_removes_hard_workspace_scope(tmp_path: Path) -> None:
+    """Disabled policy should not keep file tools pinned to the profile workspace."""
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'policy-disabled.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        enabled=False,
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    read_tool = registry.get("file.read")
+    assert read_tool is not None
+    read_params = read_tool.parse_params(
+        {
+            "profile_key": "default",
+            "path": str(outside),
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    read_result = await read_tool.execute(ctx, read_params)
+    assert read_result.ok is True
+    assert read_result.payload["content"] == "outside"
 
 
 async def test_bash_exec_clamps_timeout_above_runtime_max(tmp_path: Path) -> None:
@@ -407,7 +504,10 @@ async def test_bash_exec_emits_live_progress_preview_lines(tmp_path: Path) -> No
     """bash.exec should emit rolling preview lines through the tool progress callback."""
 
     # Arrange
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-default.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     progress_events: list[dict[str, object]] = []
 
@@ -462,7 +562,10 @@ async def test_bash_exec_dedupes_identical_live_preview_snapshots(tmp_path: Path
     """bash.exec should not emit the same preview snapshot twice in a row."""
 
     # Arrange
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-allowed.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     progress_events: list[dict[str, object]] = []
 
@@ -513,7 +616,10 @@ async def test_bash_exec_terminates_process_group_when_task_is_cancelled(tmp_pat
 
     # Arrange
     pid_file = tmp_path / "bash-exec-pgid.txt"
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'custom-scope.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
     tool = registry.get("bash.exec")
@@ -964,7 +1070,10 @@ async def test_file_tools_reject_absolute_paths_outside_profile_workspace_by_def
 
     outside = tmp_path / "external.txt"
     outside.write_text("outside", encoding="utf-8")
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-default.db'}",
+        root_dir=tmp_path,
+    )
     registry = _registry(settings)
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
 
@@ -989,7 +1098,10 @@ async def test_file_tools_allow_absolute_paths_from_profile_policy_scope(tmp_pat
 
     outside = tmp_path / "external.txt"
     outside.write_text("outside", encoding="utf-8")
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside-allowed.db'}",
+        root_dir=tmp_path,
+    )
     await _set_allowed_directories(
         settings=settings,
         profile_id="default",
@@ -1021,7 +1133,10 @@ async def test_custom_scope_keeps_profile_workspace_and_extra_roots(tmp_path: Pa
     outside_dir.mkdir()
     outside = outside_dir / "external.txt"
     outside.write_text("outside", encoding="utf-8")
-    settings = Settings(root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'custom-scope.db'}",
+        root_dir=tmp_path,
+    )
     await _set_allowed_directories(
         settings=settings,
         profile_id="default",
@@ -1309,7 +1424,10 @@ async def test_file_tools_support_absolute_paths_inside_root_dir(tmp_path: Path)
     in_scope_file = workspace / "demo.txt"
     in_scope_file.write_text("hello inside\nneedle\n", encoding="utf-8")
 
-    settings = Settings(root_dir=workspace)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{workspace / 'absolute-paths.db'}",
+        root_dir=workspace,
+    )
     await _set_allowed_directories(
         settings=settings,
         profile_id="default",
