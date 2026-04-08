@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-04-09
+
+### Fixed
+
+- Fresh installs from `install.sh` now declare `packaging` as an explicit runtime dependency, preventing `afk` startup failures when `afkbot.services.update_runtime` imports `packaging.version`.
+- Release metadata and install examples now point to `1.0.9`, matching the hotfix build shipped from `main`.
+
 ## [1.0.8] - 2026-04-08
 
 ### Added
