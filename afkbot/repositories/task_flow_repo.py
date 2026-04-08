@@ -78,6 +78,17 @@ class TaskFlowRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def delete_flow(self, *, profile_id: str, flow_id: str) -> bool:
+        """Delete one task flow row when present."""
+
+        statement: Delete = delete(TaskFlow).where(
+            TaskFlow.profile_id == profile_id,
+            TaskFlow.id == flow_id,
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return _result_succeeded(result)
+
     async def create_task(
         self,
         *,
@@ -140,6 +151,46 @@ class TaskFlowRepository:
             Task.id == task_id,
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def delete_task(self, *, profile_id: str, task_id: str) -> bool:
+        """Delete one task row when present."""
+
+        statement: Delete = delete(Task).where(
+            Task.profile_id == profile_id,
+            Task.id == task_id,
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return _result_succeeded(result)
+
+    async def delete_task_dependencies(self, *, task_id: str) -> int:
+        """Delete dependency edges where the task is either source or prerequisite."""
+
+        statement: Delete = delete(TaskDependency).where(
+            or_(
+                TaskDependency.task_id == task_id,
+                TaskDependency.depends_on_task_id == task_id,
+            )
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def delete_task_events(self, *, task_id: str) -> int:
+        """Delete all task events for one task."""
+
+        statement: Delete = delete(TaskEvent).where(TaskEvent.task_id == task_id)
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def delete_task_runs(self, *, task_id: str) -> int:
+        """Delete all task runs for one task."""
+
+        statement: Delete = delete(TaskRun).where(TaskRun.task_id == task_id)
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def list_tasks(
         self,
