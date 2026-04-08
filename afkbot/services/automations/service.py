@@ -96,6 +96,7 @@ class AutomationsService:
                 cron_expr=normalized_cron,
                 timezone=normalized_timezone,
                 next_run_at=next_run_at,
+                delivery_mode="tool",
             )
             return self._to_metadata(automation=automation, cron=cron, webhook=None)
 
@@ -125,6 +126,7 @@ class AutomationsService:
                     prompt=normalized_prompt,
                     webhook_token=token,
                     webhook_token_hash=token_hash,
+                    delivery_mode="tool",
                 )
                 return self._to_metadata(automation=automation, cron=None, webhook=webhook)
 
