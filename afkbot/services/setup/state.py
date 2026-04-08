@@ -35,6 +35,7 @@ class SetupStateSnapshot:
     public_runtime_url: str
     public_chat_api_url: str
     prompt_language: str
+    update_notices_enabled: bool
     policy_setup_mode: str
     policy_enabled: bool
     policy_preset: str
@@ -134,6 +135,7 @@ def build_setup_state_payload(
             "public_runtime_url": snapshot.public_runtime_url,
             "public_chat_api_url": snapshot.public_chat_api_url,
             "prompt_language": snapshot.prompt_language,
+            "update_notices_enabled": snapshot.update_notices_enabled,
             "policy_setup_mode": snapshot.policy_setup_mode,
             "policy_enabled": snapshot.policy_enabled,
             "policy_preset": snapshot.policy_preset,

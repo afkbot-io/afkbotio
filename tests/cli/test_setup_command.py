@@ -216,6 +216,10 @@ def test_setup_cli_bootstrap_only_persists_installer_source_metadata(
         "AFKBOT_INSTALL_SOURCE_SPEC",
         "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz",
     )
+    monkeypatch.setattr(
+        "afkbot.services.setup.command_runtime.resolve_install_source_target",
+        lambda install_source: None,
+    )
 
     payload = bootstrap_platform(tmp_path)
 
@@ -223,6 +227,30 @@ def test_setup_cli_bootstrap_only_persists_installer_source_metadata(
     config = read_runtime_config(get_settings())
     assert config["install_source_mode"] == "archive"
     assert config["install_source_spec"] == "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+
+
+def test_setup_cli_bootstrap_only_persists_resolved_installer_target(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Bootstrap-only setup should persist a resolved installer target for update notices."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("AFKBOT_INSTALL_SOURCE_MODE", "archive")
+    monkeypatch.setenv(
+        "AFKBOT_INSTALL_SOURCE_SPEC",
+        "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.command_runtime.resolve_install_source_target",
+        lambda install_source: "abcdef1234567890",
+    )
+
+    payload = bootstrap_platform(tmp_path)
+
+    assert payload["ok"] is True
+    config = read_runtime_config(get_settings())
+    assert config["install_source_resolved_target"] == "abcdef1234567890"
 
 
 def test_setup_cli_detects_russian_language_from_system_locale(
@@ -270,6 +298,35 @@ def test_setup_cli_lang_flag_overrides_detected_system_locale(
     assert result.exit_code == 0
     config = read_runtime_config(get_settings())
     assert config["prompt_language"] == "ru"
+
+
+def test_setup_cli_can_disable_chat_update_notices(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Setup should persist the operator preference for chat-time update prompts."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.setup.reload_install_managed_runtime_notice",
+        lambda _settings: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "setup",
+            "--yes",
+            "--accept-risk",
+            "--skip-llm-token-verify",
+            "--no-update-notices",
+        ],
+    )
+
+    assert result.exit_code == 0
+    config = read_runtime_config(get_settings())
+    assert config["update_notices_enabled"] is False
 
 
 def test_setup_cli_yes_requires_accept_risk(

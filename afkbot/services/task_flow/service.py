@@ -167,6 +167,35 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def delete_flow(self, *, profile_id: str, flow_id: str) -> None:
+        """Hard-delete one flow and all tasks inside it when no active execution is running."""
+
+        normalized_flow_id = _normalize_required_text(flow_id, field_name="flow_id")
+
+        async def _op(repo: TaskFlowRepository) -> None:
+            await _ensure_profile_exists(repo, profile_id)
+            row = await repo.get_flow(profile_id=profile_id, flow_id=normalized_flow_id)
+            if row is None:
+                raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+            flow_tasks = await repo.list_tasks(profile_id=profile_id, flow_id=normalized_flow_id)
+            if any(task.status in {"claimed", "running"} for task in flow_tasks):
+                raise TaskFlowServiceError(
+                    error_code="task_flow_delete_active_conflict",
+                    reason="Claimed or running tasks must finish before deleting the flow",
+                )
+            flow_task_ids = {task.id for task in flow_tasks}
+            for task in flow_tasks:
+                await _delete_task_row(
+                    repo=repo,
+                    row=task,
+                    skip_reconcile_task_ids=flow_task_ids,
+                )
+            deleted = await repo.delete_flow(profile_id=profile_id, flow_id=normalized_flow_id)
+            if not deleted:
+                raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+
+        await self._with_repo(_op)
+
     async def create_task(
         self,
         *,
@@ -305,6 +334,22 @@ class TaskFlowService:
             return await _build_task_metadata(repo, row)
 
         return await self._with_repo(_op)
+
+    async def delete_task(self, *, profile_id: str, task_id: str) -> None:
+        """Hard-delete one task after validating it is not actively executing."""
+
+        normalized_task_id = _normalize_required_text(task_id, field_name="task_id")
+
+        async def _op(repo: TaskFlowRepository) -> None:
+            row = await _require_task(repo, profile_id=profile_id, task_id=normalized_task_id)
+            if row.status in {"claimed", "running"}:
+                raise TaskFlowServiceError(
+                    error_code="task_delete_active_conflict",
+                    reason="Claimed or running task cannot be deleted",
+                )
+            await _delete_task_row(repo=repo, row=row)
+
+        await self._with_repo(_op)
 
     async def build_board(
         self,
@@ -1766,6 +1811,43 @@ async def _require_task(
     if row is None:
         raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
     return row
+
+
+async def _delete_task_row(
+    *,
+    repo: TaskFlowRepository,
+    row: Task,
+    skip_reconcile_task_ids: set[str] | None = None,
+) -> None:
+    """Delete one task and reconcile downstream dependencies that remain in storage."""
+
+    if row.status in {"claimed", "running"}:
+        raise TaskFlowServiceError(
+            error_code="task_delete_active_conflict",
+            reason="Running or claimed task cannot be deleted",
+        )
+    dependent_edges = await repo.list_dependents(depends_on_task_id=row.id)
+    skip_ids = skip_reconcile_task_ids or set()
+    dependent_task_ids = tuple(
+        edge.task_id
+        for edge in dependent_edges
+        if edge.task_id not in skip_ids
+    )
+    await repo.delete_task_events(task_id=row.id)
+    await repo.delete_task_runs(task_id=row.id)
+    await repo.delete_task_dependencies(task_id=row.id)
+    deleted = await repo.delete_task(profile_id=row.profile_id, task_id=row.id)
+    if not deleted:
+        raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
+    seen: set[str] = set()
+    for dependent_task_id in dependent_task_ids:
+        if dependent_task_id in seen:
+            continue
+        seen.add(dependent_task_id)
+        dependent_row = await repo.get_task(profile_id=row.profile_id, task_id=dependent_task_id)
+        if dependent_row is None:
+            continue
+        await _reconcile_task_readiness_after_dependency_change(repo=repo, task=dependent_row)
 
 
 async def _create_dependency_edge(

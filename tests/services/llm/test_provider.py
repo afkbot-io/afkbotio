@@ -519,6 +519,43 @@ def test_openai_codex_sse_decoder_returns_completed_response_object() -> None:
     assert decoded["status"] == "completed"
 
 
+def test_openai_codex_sse_decoder_rehydrates_output_items_from_done_events() -> None:
+    """Codex SSE decoder should rebuild response.output from output_item.done events."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+    sse_payload = (
+        'event: response.created\n'
+        'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}\n'
+        "\n"
+        'event: response.output_item.done\n'
+        'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"ok"}]},"output_index":0,"sequence_number":7}\n'
+        "\n"
+        'event: response.completed\n'
+        'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[]}}\n'
+        "\n"
+    )
+
+    decoded = OpenAICompatibleChatProvider._decode_openai_codex_sse_response(sse_payload)  # noqa: SLF001
+    response = provider._parse_responses_response(decoded, _request())  # noqa: SLF001
+
+    assert decoded["output"] == [
+        {
+            "id": "msg_1",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "ok"}],
+        }
+    ]
+    assert response.kind == "final"
+    assert response.final_message == "ok"
+
+
 def test_build_llm_provider_uses_runtime_timeout_setting() -> None:
     """Provider transport timeout should be configured from runtime settings."""
 

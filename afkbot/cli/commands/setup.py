@@ -168,6 +168,11 @@ def register(app: typer.Typer) -> None:
             hidden=True,
             help="Allow or forbid automatic installation of missing system dependencies during bootstrap-only seeding.",
         ),
+        update_notices_enabled: bool | None = typer.Option(
+            None,
+            "--update-notices-enabled/--no-update-notices",
+            help="Enable or disable chat-time update prompts.",
+        ),
     ) -> None:
         """Configure or reconfigure the default profile after the public installer bootstraps the platform."""
 
@@ -292,6 +297,7 @@ def register(app: typer.Typer) -> None:
             policy_workspace_scope=policy_workspace_scope,
             policy_network_host=tuple(policy_network_host),
             auto_install_deps=auto_install_deps if bootstrap_only else None,
+            update_notices_enabled=update_notices_enabled,
             resolved_runtime_core=(
                 setup_profile_inputs.runtime_core if setup_profile_inputs is not None else None
             ),

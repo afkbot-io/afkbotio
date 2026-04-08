@@ -167,3 +167,27 @@ def test_chat_cli_external_binding_resolution_is_strict_by_default(
 
     assert result.exit_code != 0
     assert "No channel binding matched the provided target selectors." in result.stderr
+
+
+def test_chat_cli_checks_update_notice_before_one_shot_turn(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """One-shot chat should also honor the startup update notice gate."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    _add_profile(runner, "default", "Default")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("afkbot.cli.commands.chat.supports_interactive_tty", lambda: True)
+    monkeypatch.setattr("afkbot.cli.commands.chat.handle_chat_update_notice", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat.run_single_turn",
+        lambda **kwargs: captured.update(kwargs),  # type: ignore[no-untyped-def]
+    )
+
+    result = runner.invoke(app, ["chat", "--message", "hello"])
+
+    assert result.exit_code == 0
+    assert captured == {}

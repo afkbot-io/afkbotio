@@ -69,7 +69,7 @@ Common installer flags:
 curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
 
 # install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.7
+curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.8
 
 # install from a local checkout
 bash scripts/install.sh --repo-url "file://$PWD"
@@ -102,8 +102,17 @@ afk chat
 ```
 
 - `afk setup` configures the default profile, provider, policy, locale, and runtime defaults
+- `afk setup` also asks whether `afk chat` should check for AFKBOT updates before opening chat
 - `afk doctor` prints the effective runtime/chat ports and checks local readiness
 - `afk chat` is the main entrypoint for real work
+
+If update notices are enabled in setup, interactive `afk chat` checks for a newer AFKBOT build before opening the session and asks:
+
+- `Yes`
+- `No`
+- `Remind in a week`
+
+`No` continues into chat immediately and does not save a permanent skip. `Remind in a week` suppresses all update prompts for seven days. If you disable update notices in setup, chat will not ask at startup.
 
 The runtime chooses and persists a non-default local port automatically for fresh installs, so use `afk doctor` when you need the actual `runtime_port` or `api_port`.
 
@@ -176,20 +185,38 @@ AFKBOT supports installable embedded plugins that extend the local platform with
 - app registrars
 - optional startup and shutdown hooks
 
+Current curated plugins:
+
+- `afkbotui`: unified AFKBOT web workspace for automations today and future operator surfaces
+
 Typical operator flow:
 
 ```bash
 uv run afk plugin list
-uv run afk plugin install github:afkbot-io/afkbotkanbanplugin@v1.0.0
-uv run afk plugin inspect kanban
-uv run afk plugin config-get kanban
-uv run afk plugin update kanban
+uv run afk plugin install
+uv run afk plugin inspect afkbotui
+uv run afk plugin config-get afkbotui
+uv run afk plugin update afkbotui
 ```
 
-The first external plugin is the Task Flow Kanban UI. After installation and `afk start`, it mounts:
+`afk plugin install` now works as a small wizard:
 
-- API: `/v1/plugins/kanban/...`
-- UI: `/plugins/kanban`
+- it shows curated plugins that are not installed yet
+- today the curated list contains only `afkbotui`
+- the last option is a custom GitHub source, where you can paste a GitHub URL or `github:owner/repo@ref`
+
+You can still install directly without the wizard:
+
+```bash
+uv run afk plugin install github:afkbot-io/afkbotuiplugin@main
+```
+
+Direct `afk plugin install <source>` also still accepts a local path when you want to install a plugin from a checkout on disk.
+
+The current curated external plugin is AFKBOT UI. Today it provides the web workspace for automations and is intended to expand into the main operator surface for Task Flow, subagents, MCP, AI settings, and profile management. The older kanban-specific example is no longer the curated plugin path. After installation and `afk start`, it mounts:
+
+- API: `/v1/plugins/afkbotui/...`
+- UI: `/plugins/afkbotui`
 
 Plugin install state lives under the AFKBOT runtime root in `/plugins/...` and is treated as local machine state, not repository content.
 

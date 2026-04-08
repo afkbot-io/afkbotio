@@ -12,6 +12,7 @@ from afkbot.cli.presentation.setup_prompts import (
     PromptLanguage,
     msg,
     prompt_secret_ack,
+    prompt_update_notices_enabled,
 )
 from afkbot.services.setup.contracts import (
     PolicyFileAccessMode,
@@ -186,6 +187,7 @@ def collect_setup_config(
     policy_workspace_scope: str | None,
     policy_network_host: tuple[str, ...],
     auto_install_deps: bool | None,
+    update_notices_enabled: bool | None = None,
     default_profile_base_runtime_config: ProfileRuntimeConfig | None = None,
     resolved_runtime_core: ResolvedProfileRuntimeCore | None = None,
     resolved_api_key: str | None = None,
@@ -372,6 +374,29 @@ def collect_setup_config(
         db_url=str(defaults.get("AFKBOT_DB_URL", settings.db_url)).strip() or settings.db_url,
     ).db_url
     persisted_runtime_config = read_runtime_config(settings)
+    update_notices_enabled_default = read_bool_default(
+        defaults.get("AFKBOT_UPDATE_NOTICES_ENABLED"),
+        True,
+    )
+    if platform_seed_only:
+        update_notices_enabled_resolved = (
+            update_notices_enabled
+            if update_notices_enabled is not None
+            else update_notices_enabled_default
+        )
+    else:
+        update_notices_enabled_resolved = (
+            prompt_update_notices_enabled(
+                default=update_notices_enabled_default,
+                lang=lang,
+            )
+            if interactive and update_notices_enabled is None
+            else (
+                update_notices_enabled
+                if update_notices_enabled is not None
+                else update_notices_enabled_default
+            )
+        )
 
     if profile_setup_only or platform_seed_only:
         runtime_host_resolved = (runtime_host or defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host)).strip()
@@ -515,5 +540,6 @@ def collect_setup_config(
             )
         ),
         auto_install_deps=auto_install_deps_resolved,
+        update_notices_enabled=update_notices_enabled_resolved,
         runtime_secrets_update=dict(resolved_runtime_secrets_update or {}),
     )

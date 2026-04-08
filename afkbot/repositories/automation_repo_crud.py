@@ -29,6 +29,7 @@ class AutomationRepositoryCrudMixin:
         cron_expr: str,
         timezone: str,
         next_run_at: datetime | None,
+        delivery_mode: str = "tool",
     ) -> tuple[Automation, AutomationTriggerCron]:
         """Create automation row with cron trigger row."""
 
@@ -38,6 +39,7 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="cron",
             status="active",
+            delivery_mode=delivery_mode,
         )
         self._session.add(automation)
         await self._session.flush()
@@ -62,6 +64,7 @@ class AutomationRepositoryCrudMixin:
         prompt: str,
         webhook_token: str,
         webhook_token_hash: str,
+        delivery_mode: str = "tool",
     ) -> tuple[Automation, AutomationTriggerWebhook]:
         """Create automation row with webhook trigger row."""
 
@@ -71,6 +74,7 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="webhook",
             status="active",
+            delivery_mode=delivery_mode,
         )
         self._session.add(automation)
         await self._session.flush()

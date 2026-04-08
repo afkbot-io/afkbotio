@@ -7,7 +7,11 @@ from pathlib import Path
 
 import typer
 
+from afkbot.cli.command_errors import raise_usage_error
 from afkbot.cli.commands.runtime_assets_common import emit_structured_error
+from afkbot.cli.presentation.prompt_i18n import msg, resolve_prompt_language
+from afkbot.cli.presentation.tty import supports_interactive_tty
+from afkbot.cli.presentation.plugin_prompts import prompt_plugin_install_source
 from afkbot.services.plugins import (
     PluginServiceError,
     get_plugin_service,
@@ -105,8 +109,8 @@ def register(app: typer.Typer) -> None:
 
     @plugin_app.command("install")
     def install_plugin(
-        source: str = typer.Argument(
-            ...,
+        source: str | None = typer.Argument(
+            None,
             help="Plugin source: local path, github:owner/repo@ref, or GitHub URL.",
         ),
         enable: bool = typer.Option(
@@ -123,8 +127,35 @@ def register(app: typer.Typer) -> None:
         """Install one local plugin source directory."""
 
         try:
-            item = get_plugin_service(get_settings()).install(
-                source=str(source),
+            settings = get_settings()
+            service = get_plugin_service(settings)
+            resolved_source = str(source or "").strip()
+            interactive_tty = supports_interactive_tty()
+            if not resolved_source:
+                if not interactive_tty:
+                    raise_usage_error("Plugin source is required in non-interactive mode.")
+                prompt_language = resolve_prompt_language(settings=settings, value=None, ru=False)
+                installed_plugin_ids = {
+                    item.plugin_id for item in service.list_installed()
+                }
+                resolved_source = str(
+                    prompt_plugin_install_source(
+                        settings=settings,
+                        installed_plugin_ids=installed_plugin_ids,
+                    )
+                    or ""
+                ).strip()
+            if not resolved_source:
+                typer.echo(
+                    msg(
+                        prompt_language,
+                        en="Plugin install cancelled.",
+                        ru="Установка плагина отменена.",
+                    )
+                )
+                raise typer.Exit(code=0) from None
+            item = service.install(
+                source=resolved_source,
                 enable=enable,
                 overwrite=overwrite,
             )

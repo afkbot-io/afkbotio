@@ -42,6 +42,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         policy_network_allowlist_default = (WILDCARD_NETWORK_HOST,)
     merged = {
         "AFKBOT_PROMPT_LANGUAGE": str(runtime_config.get("prompt_language", "")),
+        "AFKBOT_UPDATE_NOTICES_ENABLED": (
+            "1" if coerce_bool(runtime_config.get("update_notices_enabled"), default=True) else "0"
+        ),
         "AFKBOT_LLM_PROVIDER": str(runtime_config.get("llm_provider", settings.llm_provider)),
         "AFKBOT_LLM_MODEL": str(runtime_config.get("llm_model", settings.llm_model)),
         "AFKBOT_LLM_BASE_URL": str(runtime_config.get("llm_base_url", settings.llm_base_url or "")),

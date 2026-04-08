@@ -37,9 +37,39 @@ async def ping(engine: AsyncEngine) -> bool:
 def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
+    _ensure_automation_delivery_columns(conn)
     _ensure_webhook_token_column(conn)
     _ensure_webhook_execution_columns(conn)
     _backfill_missing_webhook_tokens(conn)
+
+
+def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure newer automation delivery columns exist for legacy SQLite installs."""
+
+    columns = _table_columns(conn, "automation")
+    if not columns:
+        return
+    if "delivery_mode" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation "
+                "ADD COLUMN delivery_mode VARCHAR(16) NOT NULL DEFAULT 'tool'"
+            )
+        )
+    if "delivery_target_json" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation "
+                "ADD COLUMN delivery_target_json TEXT"
+            )
+        )
+    conn.execute(
+        text(
+            "UPDATE automation "
+            "SET delivery_mode = 'tool' "
+            "WHERE delivery_mode IS NULL OR delivery_mode = ''"
+        )
+    )
 
 
 def _ensure_webhook_token_column(conn) -> None:  # type: ignore[no-untyped-def]

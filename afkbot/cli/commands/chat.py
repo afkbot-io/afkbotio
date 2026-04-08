@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import inspect
+from pathlib import Path
+
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
@@ -9,7 +13,9 @@ from afkbot.cli.commands.chat_planning import (
     normalize_chat_planning_mode,
     resolve_cli_thinking_level,
 )
+from afkbot.cli.commands.chat_update_notices import handle_chat_update_notice
 from afkbot.cli.presentation import confirm_space
+from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.cli.commands.chat_secure_flow import (
     RunTurnWithSecureResolution,
     build_run_turn_with_overrides,
@@ -17,9 +23,16 @@ from afkbot.cli.commands.chat_secure_flow import (
 from afkbot.cli.commands.chat_target import build_cli_runtime_overrides, resolve_cli_chat_target
 from afkbot.cli.commands.chat_session_runtime import run_repl, run_single_turn
 from afkbot.services.browser_sessions import get_browser_session_manager
+from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.runtime_factory import resolve_profile_settings
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_runtime import run_once_result, submit_secure_field
-from afkbot.settings import get_settings
+from afkbot.services.policy import infer_workspace_scope_mode
+from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
+from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
+from afkbot.services.tools.base import ToolCall
+from afkbot.settings import Settings, get_settings
 
 
 def register(app: typer.Typer) -> None:
@@ -108,8 +121,13 @@ def register(app: typer.Typer) -> None:
             thread_id=thread_id,
             user_id=user_id,
         )
-        effective_profile_settings = resolve_profile_settings(
+        chat_settings = _resolve_chat_invocation_settings(
             settings=settings,
+            profile_id=target.profile_id,
+            invocation_cwd=Path.cwd(),
+        )
+        effective_profile_settings = resolve_profile_settings(
+            settings=chat_settings,
             profile_id=target.profile_id,
             ensure_layout=True,
         )
@@ -128,12 +146,44 @@ def register(app: typer.Typer) -> None:
             thread_id=thread_id,
             user_id=user_id,
         )
+        run_once_result_accepts_settings = "settings" in inspect.signature(run_once_result).parameters
+
+        async def _run_once_result_with_chat_settings(
+            *,
+            message: str,
+            profile_id: str,
+            session_id: str,
+            planned_tool_calls: list[ToolCall] | None = None,
+            progress_sink: Callable[[ProgressEvent], None] | None = None,
+            context_overrides: TurnContextOverrides | None = None,
+        ) -> TurnResult:
+            if run_once_result_accepts_settings:
+                return await run_once_result(
+                    message=message,
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    settings=chat_settings,
+                    planned_tool_calls=planned_tool_calls,
+                    progress_sink=progress_sink,
+                    context_overrides=context_overrides,
+                )
+            return await run_once_result(
+                message=message,
+                profile_id=profile_id,
+                session_id=session_id,
+                planned_tool_calls=planned_tool_calls,
+                progress_sink=progress_sink,
+                context_overrides=context_overrides,
+            )
+
         run_turn_with_secure_resolution: RunTurnWithSecureResolution = build_run_turn_with_overrides(
             runtime_overrides,
-            run_once_result_fn=run_once_result,
+            run_once_result_fn=_run_once_result_with_chat_settings,
             submit_secure_field_fn=submit_secure_field,
             confirm_space_fn=None if message is not None else confirm_space,
         )
+        if not json_output and supports_interactive_tty() and not handle_chat_update_notice(settings=settings):
+            return
 
         if message is not None:
             run_single_turn(
@@ -153,7 +203,47 @@ def register(app: typer.Typer) -> None:
             session_id=target.session_id,
             run_turn_with_secure_resolution=run_turn_with_secure_resolution,
             get_browser_session_manager=get_browser_session_manager,
-            get_settings=get_settings,
+            get_settings=lambda: chat_settings,
             planning_mode=resolved_plan_mode,
             thinking_level=resolved_thinking_level,
         )
+
+
+def _resolve_chat_invocation_settings(
+    *,
+    settings: Settings,
+    profile_id: str,
+    invocation_cwd: Path,
+) -> Settings:
+    """Return one invocation-scoped settings object for chat cwd behavior."""
+
+    if settings.tool_workspace_root is not None:
+        return settings
+    if not _profile_has_full_chat_workspace_access(settings=settings, profile_id=profile_id):
+        return settings
+    return settings.model_copy(
+        update={"tool_invocation_cwd": invocation_cwd.resolve(strict=False)}
+    )
+
+
+def _profile_has_full_chat_workspace_access(*, settings: Settings, profile_id: str) -> bool:
+    """Return whether chat should start from the operator's current cwd."""
+
+    try:
+        profile = run_profile_service_sync(
+            settings,
+            lambda service: service.get(profile_id=profile_id),
+        )
+    except ProfileServiceError:
+        return False
+
+    if not profile.policy.enabled:
+        return True
+    if not profile.policy.allowed_directories:
+        return False
+    scope_mode = infer_workspace_scope_mode(
+        root_dir=settings.root_dir,
+        profile_root=get_profile_runtime_config_service(settings).profile_root(profile_id),
+        allowed_directories=profile.policy.allowed_directories,
+    )
+    return scope_mode == "full_system"

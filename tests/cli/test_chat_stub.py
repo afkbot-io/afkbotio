@@ -19,7 +19,7 @@ from afkbot.services.channel_routing.runtime_target import RuntimeTarget
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
 from afkbot.services.agent_loop.turn_runtime import run_once_result
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 from tests.cli._rendering import invoke_plain_help, strip_ansi
 
 
@@ -104,6 +104,165 @@ def test_chat_cli_uses_profile_scoped_default_session_ids(
     assert smoke_result.exit_code == 0
     assert "SessionProfileMismatchError" not in smoke_result.stdout
     assert "LLM provider is temporarily unavailable." in smoke_result.stdout
+
+
+def test_chat_cli_uses_current_cwd_for_one_shot_when_profile_has_full_access(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """One-shot chat should pass the operator cwd into full-access runtime settings."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    profile_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "ops",
+            "--name",
+            "Ops",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--policy-capability",
+            "files",
+            "--policy-workspace-scope",
+            "full_system",
+        ],
+    )
+    assert profile_result.exit_code == 0
+    invocation_cwd = tmp_path / "checkout"
+    invocation_cwd.mkdir()
+    monkeypatch.chdir(invocation_cwd)
+    captured: dict[str, object] = {}
+
+    async def _fake_run_once_result(*, settings=None, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        captured["settings"] = settings
+        return TurnResult(
+            run_id=1,
+            session_id=str(kwargs["session_id"]),
+            profile_id=str(kwargs["profile_id"]),
+            envelope=ActionEnvelope(action="finalize", message="ok"),
+        )
+
+    def _fake_run_single_turn(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        asyncio.run(
+            kwargs["run_turn_with_secure_resolution"](
+                message=kwargs["message"],
+                profile_id=kwargs["profile_id"],
+                session_id=kwargs["session_id"],
+                progress_sink=None,
+                allow_secure_prompt=False,
+            )
+        )
+
+    monkeypatch.setattr(module, "run_once_result", _fake_run_once_result)
+    monkeypatch.setattr(module, "run_single_turn", _fake_run_single_turn)
+
+    result = runner.invoke(app, ["chat", "--profile", "ops", "--message", "hello"])
+
+    assert result.exit_code == 0
+    assert isinstance(captured["settings"], Settings)
+    assert captured["settings"].tool_invocation_cwd == invocation_cwd.resolve()
+
+
+def test_chat_cli_uses_current_cwd_for_repl_when_profile_has_full_access(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive chat should seed REPL runtime settings from the operator cwd."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    profile_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "ops",
+            "--name",
+            "Ops",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--policy-capability",
+            "files",
+            "--policy-workspace-scope",
+            "full_system",
+        ],
+    )
+    assert profile_result.exit_code == 0
+    invocation_cwd = tmp_path / "checkout"
+    invocation_cwd.mkdir()
+    monkeypatch.chdir(invocation_cwd)
+    captured: dict[str, object] = {}
+
+    def _fake_run_repl(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        captured["settings"] = kwargs["get_settings"]()
+
+    monkeypatch.setattr(module, "run_repl", _fake_run_repl)
+
+    result = runner.invoke(app, ["chat", "--profile", "ops"])
+
+    assert result.exit_code == 0
+    assert isinstance(captured["settings"], Settings)
+    assert captured["settings"].tool_invocation_cwd == invocation_cwd.resolve()
+
+
+def test_chat_invocation_settings_keep_profile_workspace_when_scope_is_restricted(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Restricted profiles should keep the profile workspace as the default chat cwd."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    profile_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "ops",
+            "--name",
+            "Ops",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--policy-capability",
+            "files",
+            "--policy-workspace-scope",
+            "project_only",
+        ],
+    )
+    assert profile_result.exit_code == 0
+    invocation_cwd = tmp_path / "checkout"
+    invocation_cwd.mkdir()
+    monkeypatch.chdir(invocation_cwd)
+
+    resolved = module._resolve_chat_invocation_settings(
+        settings=get_settings(),
+        profile_id="ops",
+        invocation_cwd=Path.cwd(),
+    )
+
+    assert resolved.tool_invocation_cwd is None
 
 
 def test_chat_cli_repl_smoke_via_stdin(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

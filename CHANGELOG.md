@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.8] - 2026-04-08
+
+### Added
+
+- Curated plugin catalog and operator docs now point to the `AFKBOT UI` companion plugin (`afkbotui`) instead of the earlier kanban-only example.
+- Legacy SQLite automation installs now receive idempotent schema upgrades for delivery metadata columns during bootstrap.
+- Regression coverage for localized update summaries, uv-backed editable refresh, and legacy automation schema upgrades.
+
+### Changed
+
+- `afk chat` startup update notices now finish with localized success summaries, keeping Russian and English flows consistent end-to-end.
+- Host and managed editable update paths now refresh the environment through `uv pip --python ... --editable ...`, matching the uv-based install model.
+- Full-access `afk chat` sessions now start from the operator's current shell directory instead of always falling back to the profile workspace root.
+- README plugin guidance now treats `AFKBOT UI` as the current extensible web workspace for automations today and future Task Flow/operator surfaces.
+
+### Fixed
+
+- Existing SQLite installs no longer fail ORM reads after automation delivery fields were added to the `automation` model.
+- Chat-time self-update no longer breaks in uv-managed environments that do not ship `pip` inside the active interpreter.
+- `openai-codex` SSE decoding now rehydrates assistant output from `response.output_item.done`, fixing provider responses that previously surfaced as temporary provider failures.
+
 ## [1.0.7] - 2026-04-07
 
 ### Added
