@@ -371,7 +371,7 @@ def test_run_update_upgrades_uv_tool_install(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Installed uv-tool mode should reinstall the tool source, then run maintenance via the fresh executable."""
+    """Installed uv-tool mode should replay the hosted archive source, then run maintenance."""
 
     settings = _prepare_settings(tmp_path, monkeypatch)
     tool_bin = tmp_path / "tool-bin"
@@ -438,13 +438,24 @@ def test_run_update_upgrades_uv_tool_install(
     assert result.source_updated is True
     assert result.maintenance_applied is True
     assert result.runtime_restarted is False
-    assert [str(uv_executable), "tool", "install", "--python", "3.12", "--reinstall", "afkbotio"] in commands
+    assert [
+        str(uv_executable),
+        "tool",
+        "install",
+        "--python",
+        "3.12",
+        "--reinstall",
+        "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz",
+    ] in commands
     assert [str(uv_executable), "tool", "update-shell"] in shell_commands
     assert len(bootstrap_calls) == 1
     bootstrap_args, bootstrap_env = bootstrap_calls[0]
     assert bootstrap_args == ("setup", "--bootstrap-only", "--yes", "--lang", "en")
-    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_MODE"] == "package"
-    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"] == "afkbotio"
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_MODE"] == "archive"
+    assert (
+        bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"]
+        == "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+    )
     assert bootstrap_env["AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET"] == "1.2.3"
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
@@ -577,9 +588,9 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
             "_Version",
             (),
             {
-                "version": "1.0.9",
+                "version": "1.0.10",
                 "git_sha": None,
-                "render": lambda self: "afk 1.0.9",
+                "render": lambda self: "afk 1.0.10",
             },
         )(),
     )
@@ -589,6 +600,32 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
     assert availability is not None
     assert availability.install_mode == "uv-tool"
     assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
+
+def test_inspect_available_update_skips_hosted_archive_notice_without_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Legacy uv-tool installs without saved metadata should not crash update notice checks."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "newsha654321",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.load_cli_version_info",
+        lambda root_dir=None: type(
+            "_Version",
+            (),
+            {
+                "version": "1.0.10",
+                "git_sha": None,
+                "render": lambda self: "afk 1.0.10",
+            },
+        )(),
+    )
+
+    assert inspect_available_update(settings) is None
 
 
 def test_inspect_available_update_ignores_uv_tool_http_404(

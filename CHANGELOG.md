@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] - 2026-04-09
+
+### Fixed
+
+- `afk update` for uv-tool installs now replays the canonical hosted GitHub archive source when installer metadata is missing, instead of trying to resolve an unavailable `afkbotio` registry package.
+- Legacy uv-tool update notices now fall back to the same hosted archive source, keeping update checks aligned with the install scripts.
+
 ## [1.0.9] - 2026-04-09
 
 ### Fixed

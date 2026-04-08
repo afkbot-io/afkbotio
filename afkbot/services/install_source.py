@@ -16,6 +16,7 @@ INSTALL_SOURCE_MODE_CONFIG_KEY = "install_source_mode"
 INSTALL_SOURCE_SPEC_CONFIG_KEY = "install_source_spec"
 INSTALL_SOURCE_RESOLVED_TARGET_CONFIG_KEY = "install_source_resolved_target"
 DEFAULT_PACKAGE_SOURCE_SPEC = "afkbotio"
+DEFAULT_HOSTED_ARCHIVE_SOURCE_SPEC = "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
 _VALID_INSTALL_SOURCE_MODES = frozenset({"editable", "archive", "package"})
 
 
@@ -31,6 +32,12 @@ def default_package_install_source() -> InstallSource:
     """Return the canonical package install source used by hosted installs."""
 
     return InstallSource(mode="package", spec=DEFAULT_PACKAGE_SOURCE_SPEC)
+
+
+def default_hosted_archive_install_source() -> InstallSource:
+    """Return the canonical hosted archive source used by the install scripts."""
+
+    return InstallSource(mode="archive", spec=DEFAULT_HOSTED_ARCHIVE_SOURCE_SPEC)
 
 
 def read_install_source_from_env() -> InstallSource | None:
@@ -117,6 +124,7 @@ def _normalize_install_source(*, mode: object, spec: object) -> InstallSource | 
 
 __all__ = [
     "DEFAULT_PACKAGE_SOURCE_SPEC",
+    "DEFAULT_HOSTED_ARCHIVE_SOURCE_SPEC",
     "INSTALL_SOURCE_MODE_CONFIG_KEY",
     "INSTALL_SOURCE_MODE_ENV",
     "INSTALL_SOURCE_RESOLVED_TARGET_CONFIG_KEY",
@@ -125,6 +133,7 @@ __all__ = [
     "INSTALL_SOURCE_SPEC_ENV",
     "InstallSource",
     "build_uv_tool_install_command",
+    "default_hosted_archive_install_source",
     "default_package_install_source",
     "install_source_runtime_payload",
     "read_install_source_from_env",
