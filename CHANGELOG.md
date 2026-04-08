@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.11] - 2026-04-09
+
+### Fixed
+
+- Fresh uv-tool installs now let `afk update` create the runtime root on demand before replaying bootstrap-only setup, so updates no longer fail with missing `AFKBOT` application-support directories.
+- Legacy uv-tool installs without saved installer metadata now default to the published `afkbotio` PyPI package for update checks and reinstalls instead of falling back to the GitHub archive path.
+- Installer-style `afk update` now skips the post-update `doctor` pass until full `afk setup` has completed, allowing newly installed tools to self-update successfully before initial setup.
+
 ## [1.0.10] - 2026-04-09
 
 ### Fixed

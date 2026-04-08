@@ -22,7 +22,7 @@ from afkbot.services.install_source import (
     INSTALL_SOURCE_SPEC_ENV,
     InstallSource,
     build_uv_tool_install_command,
-    default_hosted_archive_install_source,
+    default_package_install_source,
     read_install_source_from_runtime_config,
     read_install_source_resolved_target_from_runtime_config,
 )
@@ -35,6 +35,7 @@ from afkbot.services.managed_install import (
     stage_source_snapshot,
     write_managed_launcher,
 )
+from afkbot.services.setup.state import setup_is_complete
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.runtime_ports import resolve_default_runtime_port
 from afkbot.settings import Settings
@@ -236,11 +237,11 @@ def _inspect_managed_update(*, context: ManagedInstallContext) -> UpdateAvailabi
 
 
 def _inspect_uv_tool_update(*, runtime_config: dict[str, object]) -> UpdateAvailability | None:
-    """Check whether one legacy uv-tool install has a newer hosted archive revision."""
+    """Check whether one legacy uv-tool install has a newer package/archive target."""
 
     install_source = read_install_source_from_runtime_config(runtime_config)
     if install_source is None:
-        install_source = default_hosted_archive_install_source()
+        install_source = default_package_install_source()
     return _inspect_installer_source_update(
         install_source=install_source,
         runtime_config=runtime_config,
@@ -418,7 +419,7 @@ def _run_uv_tool_update(*, settings: Settings, runtime_config: dict[str, object]
 
     install_source = read_install_source_from_runtime_config(runtime_config)
     if install_source is None:
-        install_source = default_hosted_archive_install_source()
+        install_source = default_package_install_source()
     return _run_installer_source_update(
         settings=settings,
         install_source=install_source,
@@ -457,11 +458,14 @@ def _run_installer_source_update(
         settings=settings,
         args=("upgrade", "apply", "--quiet"),
     )
-    _run_afk_executable(
-        executable=afk_executable,
-        settings=settings,
-        args=("doctor", "--no-integrations", "--no-upgrades"),
-    )
+    doctor_ran = False
+    if setup_is_complete(settings):
+        _run_afk_executable(
+            executable=afk_executable,
+            settings=settings,
+            args=("doctor", "--no-integrations", "--no-upgrades"),
+        )
+        doctor_ran = True
 
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
@@ -474,6 +478,7 @@ def _run_installer_source_update(
             else "Shell integration: unchanged"
         ),
         "Bootstrap setup: refreshed",
+        "Doctor: skipped until `afk setup` completes" if not doctor_ran else "",
         (
             "Runtime health: ok"
             if (runtime_restarted and _wait_for_local_health(settings=settings))
@@ -751,18 +756,20 @@ def _git_is_ancestor(project_root: Path, *, ancestor: str, descendant: str) -> b
 
 
 def _run_afk_subcommand(*, settings: Settings, args: tuple[str, ...]) -> None:
+    cwd = _ensure_runtime_command_cwd(settings.root_dir)
     _run_checked(
         [sys.executable, "-m", "afkbot.cli.main", *args],
-        cwd=settings.root_dir,
+        cwd=cwd,
         error_code="update_failed",
         fallback=f"failed to run AFKBOT command: {' '.join(args)}",
     )
 
 
 def _run_afk_executable(*, executable: Path, settings: Settings, args: tuple[str, ...]) -> None:
+    cwd = _ensure_runtime_command_cwd(settings.root_dir)
     _run_checked(
         [str(executable), *args],
-        cwd=settings.root_dir,
+        cwd=cwd,
         error_code="update_failed",
         fallback=f"failed to run AFKBOT command: {' '.join(args)}",
     )
@@ -775,9 +782,10 @@ def _run_afk_executable_with_env(
     args: tuple[str, ...],
     env: dict[str, str],
 ) -> None:
+    cwd = _ensure_runtime_command_cwd(settings.root_dir)
     result = subprocess.run(
         [str(executable), *args],
-        cwd=str(settings.root_dir),
+        cwd=str(cwd),
         check=False,
         capture_output=True,
         text=True,
@@ -792,6 +800,13 @@ def _run_afk_executable_with_env(
             fallback=f"failed to run AFKBOT command: {' '.join(args)}",
         ),
     )
+
+
+def _ensure_runtime_command_cwd(root_dir: Path) -> Path:
+    """Create the runtime working directory on demand before spawning AFKBOT subprocesses."""
+
+    root_dir.mkdir(parents=True, exist_ok=True)
+    return root_dir
 
 
 def _restart_managed_host_runtime_service() -> bool:
