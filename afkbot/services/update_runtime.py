@@ -22,7 +22,7 @@ from afkbot.services.install_source import (
     INSTALL_SOURCE_SPEC_ENV,
     InstallSource,
     build_uv_tool_install_command,
-    default_package_install_source,
+    default_hosted_archive_install_source,
     read_install_source_from_runtime_config,
     read_install_source_resolved_target_from_runtime_config,
 )
@@ -94,11 +94,11 @@ def inspect_available_update(settings: Settings) -> UpdateAvailability | None:
             )
         if _is_source_checkout_install():
             return _inspect_host_update(settings=settings)
+        return _inspect_uv_tool_update(runtime_config=runtime_config)
     except UpdateRuntimeError:
         return None
     except (OSError, ValueError, URLError, json.JSONDecodeError):
         return None
-    return _inspect_uv_tool_update()
 
 
 def run_update(settings: Settings) -> UpdateResult:
@@ -235,23 +235,15 @@ def _inspect_managed_update(*, context: ManagedInstallContext) -> UpdateAvailabi
     )
 
 
-def _inspect_uv_tool_update() -> UpdateAvailability | None:
-    """Check whether the packaged AFKBOT install has a newer published version."""
+def _inspect_uv_tool_update(*, runtime_config: dict[str, object]) -> UpdateAvailability | None:
+    """Check whether one legacy uv-tool install has a newer hosted archive revision."""
 
-    current_info = load_cli_version_info()
-    current_version = current_info.version
-    if not current_version:
-        return None
-    payload = _fetch_json_payload("https://pypi.org/pypi/afkbotio/json")
-    latest_version = str(_json_object_field(payload, "info").get("version") or "").strip()
-    if not latest_version or not _version_is_newer(latest_version, current_version):
-        return None
-    return UpdateAvailability(
-        install_mode="uv-tool",
-        current_version=current_info.render(),
-        target_id=f"package:afkbotio:{latest_version}",
-        target_label=f"afkbotio {latest_version}",
-        details=("Package source: afkbotio",),
+    install_source = read_install_source_from_runtime_config(runtime_config)
+    if install_source is None:
+        install_source = default_hosted_archive_install_source()
+    return _inspect_installer_source_update(
+        install_source=install_source,
+        runtime_config=runtime_config,
     )
 
 
@@ -424,9 +416,12 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
 def _run_uv_tool_update(*, settings: Settings, runtime_config: dict[str, object]) -> UpdateResult:
     """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
 
+    install_source = read_install_source_from_runtime_config(runtime_config)
+    if install_source is None:
+        install_source = default_hosted_archive_install_source()
     return _run_installer_source_update(
         settings=settings,
-        install_source=default_package_install_source(),
+        install_source=install_source,
         runtime_config=runtime_config,
     )
 
