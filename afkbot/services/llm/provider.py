@@ -330,6 +330,7 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
 
         latest_response: dict[str, object] | None = None
         completed_response: dict[str, object] | None = None
+        collected_output_items: dict[str, tuple[int, int, dict[str, object]]] = {}
         data_lines: list[str] = []
 
         def _consume_event_data(lines: list[str]) -> tuple[dict[str, object] | None, bool]:
@@ -344,6 +345,28 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 raise ValueError("Codex SSE response contains invalid JSON event payload") from exc
             if not isinstance(payload, dict):
                 return None, False
+            item_obj = payload.get("item")
+            if isinstance(item_obj, dict):
+                event_type = str(payload.get("type") or "").strip()
+                if event_type == "response.output_item.done":
+                    item_id_raw = item_obj.get("id")
+                    item_id = item_id_raw.strip() if isinstance(item_id_raw, str) else ""
+                    if item_id:
+                        output_index_raw = payload.get("output_index")
+                        sequence_raw = payload.get("sequence_number")
+                        try:
+                            output_index = int(output_index_raw)
+                        except (TypeError, ValueError):
+                            output_index = len(collected_output_items)
+                        try:
+                            sequence_number = int(sequence_raw)
+                        except (TypeError, ValueError):
+                            sequence_number = output_index
+                        collected_output_items[item_id] = (
+                            output_index,
+                            sequence_number,
+                            dict(item_obj),
+                        )
             response_obj = payload.get("response")
             if isinstance(response_obj, dict):
                 event_type = str(payload.get("type") or "").strip()
@@ -373,6 +396,16 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         resolved = completed_response or latest_response
         if resolved is None:
             raise ValueError("Codex SSE response did not include any response payload")
+        output = resolved.get("output")
+        if (not isinstance(output, list) or not output) and collected_output_items:
+            resolved = dict(resolved)
+            resolved["output"] = [
+                item
+                for _, _, item in sorted(
+                    collected_output_items.values(),
+                    key=lambda entry: (entry[0], entry[1]),
+                )
+            ]
         return resolved
 
     async def _maybe_refresh_minimax_portal_token(self, *, timeout_sec: float) -> None:
