@@ -123,13 +123,68 @@ def run_update(settings: Settings) -> UpdateResult:
 def format_update_success(result: UpdateResult) -> str:
     """Render short human-readable update summary."""
 
-    lines = ["AFKBOT update complete."]
-    lines.append(f"Install mode: {result.install_mode}")
-    lines.append("Source: updated" if result.source_updated else "Source: already up to date")
-    lines.append("Maintenance: applied" if result.maintenance_applied else "Maintenance: skipped")
-    lines.append("Runtime: restarted" if result.runtime_restarted else "Runtime: no managed restart")
+    return format_update_success_for_language(result, lang="en")
+
+
+def format_update_success_for_language(
+    result: UpdateResult,
+    *,
+    lang: str,
+) -> str:
+    """Render short human-readable update summary for one prompt language."""
+
+    normalized_lang = _normalize_update_language(lang)
+    lines = [
+        "Обновление AFKBOT завершено."
+        if normalized_lang == "ru"
+        else "AFKBOT update complete."
+    ]
+    lines.append(
+        f"Режим установки: {result.install_mode}"
+        if normalized_lang == "ru"
+        else f"Install mode: {result.install_mode}"
+    )
+    lines.append(
+        "Источник: обновлён"
+        if (normalized_lang == "ru" and result.source_updated)
+        else (
+            "Источник: уже актуален"
+            if normalized_lang == "ru"
+            else (
+                "Source: updated"
+                if result.source_updated
+                else "Source: already up to date"
+            )
+        )
+    )
+    lines.append(
+        "Обслуживание: выполнено"
+        if (normalized_lang == "ru" and result.maintenance_applied)
+        else (
+            "Обслуживание: пропущено"
+            if normalized_lang == "ru"
+            else (
+                "Maintenance: applied"
+                if result.maintenance_applied
+                else "Maintenance: skipped"
+            )
+        )
+    )
+    lines.append(
+        "Runtime: перезапущен"
+        if (normalized_lang == "ru" and result.runtime_restarted)
+        else (
+            "Runtime: без managed-перезапуска"
+            if normalized_lang == "ru"
+            else (
+                "Runtime: restarted"
+                if result.runtime_restarted
+                else "Runtime: no managed restart"
+            )
+        )
+    )
     for detail in result.details:
-        lines.append(detail)
+        lines.append(_localize_update_detail(detail, lang=normalized_lang))
     return "\n".join(lines)
 
 
@@ -269,10 +324,9 @@ def _run_host_update(*, settings: Settings) -> UpdateResult:
     source_updated = bool(before_head and after_head and before_head != after_head)
 
     if source_updated:
-        _run_checked(
-            [sys.executable, "-m", "pip", "install", "-e", str(project_root)],
-            cwd=project_root,
-            error_code="update_failed",
+        _refresh_editable_environment(
+            project_root=project_root,
+            python_executable=Path(sys.executable),
             fallback="failed to refresh local Python environment",
         )
 
@@ -324,10 +378,9 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
             reason=f"failed to stage managed source snapshot: {exc}",
         ) from exc
 
-    _run_checked(
-        [sys.executable, "-m", "pip", "install", "-e", str(next_app_dir)],
-        cwd=next_app_dir,
-        error_code="update_failed",
+    _refresh_editable_environment(
+        project_root=next_app_dir,
+        python_executable=Path(sys.executable),
         fallback="failed to refresh managed Python environment",
     )
     try:
@@ -526,6 +579,40 @@ def _resolve_uv_executable() -> Path:
     raise UpdateRuntimeError(
         error_code="update_prereq_failed",
         reason="uv is required to update this AFKBOT install; reinstall with the hosted installer or install uv first",
+    )
+
+
+def _refresh_editable_environment(
+    *,
+    project_root: Path,
+    python_executable: Path,
+    fallback: str,
+) -> None:
+    """Refresh one editable install in the active Python environment."""
+
+    try:
+        uv_executable = _resolve_uv_executable()
+    except UpdateRuntimeError:
+        _run_checked(
+            [str(python_executable), "-m", "pip", "install", "-e", str(project_root)],
+            cwd=project_root,
+            error_code="update_failed",
+            fallback=fallback,
+        )
+        return
+    _run_checked(
+        [
+            str(uv_executable),
+            "pip",
+            "install",
+            "--python",
+            str(python_executable),
+            "--editable",
+            str(project_root),
+        ],
+        cwd=project_root,
+        error_code="update_failed",
+        fallback=fallback,
     )
 
 
@@ -897,6 +984,46 @@ def _version_is_newer(candidate: str, current: str) -> bool:
         return Version(candidate) > Version(current)
     except InvalidVersion:
         return candidate.strip() != current.strip()
+
+
+def _normalize_update_language(value: str) -> str:
+    normalized = str(value).strip().lower()
+    return "ru" if normalized.startswith("ru") else "en"
+
+
+def _localize_update_detail(detail: str, *, lang: str) -> str:
+    if lang != "ru":
+        return detail
+    if detail.startswith("Git branch: "):
+        return f"Git-ветка: {detail.removeprefix('Git branch: ')}"
+    if detail.startswith("Git source reset to origin/"):
+        return (
+            "Git checkout сброшен на "
+            + detail.removeprefix("Git source reset to ")
+            .removesuffix(" after history rewrite")
+            + " после переписанной истории"
+        )
+    if detail == "Runtime health: ok":
+        return "Состояние runtime: ok"
+    if detail == "Managed host service not found; restart manually with `afk start`":
+        return "Managed host service не найден; перезапустите вручную через `afk start`"
+    if detail.startswith("Managed source ref: "):
+        return f"Managed source ref: {detail.removeprefix('Managed source ref: ')}"
+    if detail.startswith("Managed source dir: "):
+        return f"Каталог managed-source: {detail.removeprefix('Managed source dir: ')}"
+    if detail.startswith("Tool source mode: "):
+        return f"Режим источника tool: {detail.removeprefix('Tool source mode: ')}"
+    if detail.startswith("Tool source: "):
+        return f"Источник tool: {detail.removeprefix('Tool source: ')}"
+    if detail.startswith("Tool executable: "):
+        return f"Исполняемый файл tool: {detail.removeprefix('Tool executable: ')}"
+    if detail == "Shell integration: refreshed":
+        return "Интеграция shell: обновлена"
+    if detail == "Shell integration: unchanged":
+        return "Интеграция shell: без изменений"
+    if detail == "Bootstrap setup: refreshed":
+        return "Bootstrap-настройка: обновлена"
+    return detail
 
 
 def _run_checked(

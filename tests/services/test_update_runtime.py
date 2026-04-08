@@ -23,6 +23,7 @@ from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.services.update_runtime import (
     _resolve_uv_tool_afk_executable,
     _wait_for_local_health,
+    format_update_success_for_language,
     inspect_available_update,
 )
 from afkbot.services.update_runtime import UpdateRuntimeError, run_update
@@ -74,6 +75,10 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
     monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path)
     monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable",
+        lambda: tmp_path / ("uv.exe" if os.name == "nt" else "uv"),
+    )
+    monkeypatch.setattr(
         "afkbot.services.update_runtime._run_afk_subcommand",
         lambda *, settings, args: afk_calls.append(args),  # type: ignore[no-untyped-call]
     )
@@ -99,7 +104,15 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
     ]
     assert ["git", "-C", str(tmp_path), "fetch", "--depth", "1", "--no-tags", "origin", "main"] in commands
     assert ["git", "-C", str(tmp_path), "merge", "--ff-only", "FETCH_HEAD"] in commands
-    assert [sys.executable, "-m", "pip", "install", "-e", str(tmp_path)] in commands
+    assert [
+        str(tmp_path / ("uv.exe" if os.name == "nt" else "uv")),
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "--editable",
+        str(tmp_path),
+    ] in commands
 
 
 def test_run_update_resets_checkout_after_history_rewrite(
@@ -139,6 +152,10 @@ def test_run_update_resets_checkout_after_history_rewrite(
 
     monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable",
+        lambda: tmp_path / ("uv.exe" if os.name == "nt" else "uv"),
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime._run_afk_subcommand",
         lambda *, settings, args: afk_calls.append(args),  # type: ignore[no-untyped-call]
@@ -243,6 +260,10 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
     monkeypatch.setattr("afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source)
     monkeypatch.setattr("afkbot.services.update_runtime.build_next_app_dir", lambda context: next_app_dir)
     monkeypatch.setattr("afkbot.services.update_runtime.sys.executable", str(python_link))
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable",
+        lambda: tmp_path / ("uv.exe" if os.name == "nt" else "uv"),
+    )
     monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
     monkeypatch.setattr(
         "afkbot.services.update_runtime._run_afk_subcommand",
@@ -265,7 +286,15 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
     assert result.source_updated is True
     assert result.runtime_restarted is True
     assert next_app_dir.exists()
-    assert [sys.executable, "-m", "pip", "install", "-e", str(next_app_dir)] in commands
+    assert [
+        str(tmp_path / ("uv.exe" if os.name == "nt" else "uv")),
+        "pip",
+        "install",
+        "--python",
+        str(python_link),
+        "--editable",
+        str(next_app_dir),
+    ] in commands
     assert afk_calls == [
         ("doctor", "--no-integrations", "--no-upgrades"),
         ("upgrade", "apply", "--quiet"),
@@ -558,6 +587,38 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
     assert availability is not None
     assert availability.install_mode == "uv-tool"
     assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
+
+
+def test_format_update_success_for_language_renders_russian_copy() -> None:
+    """Localized update summaries should stay fully Russian in chat update flows."""
+
+    rendered = format_update_success_for_language(
+        result=type(
+            "_Result",
+            (),
+            {
+                "install_mode": "host",
+                "source_updated": True,
+                "runtime_restarted": False,
+                "maintenance_applied": True,
+                "details": (
+                    "Git branch: main",
+                    "Runtime health: ok",
+                    "Managed host service not found; restart manually with `afk start`",
+                ),
+            },
+        )(),
+        lang="ru",
+    )
+
+    assert "Обновление AFKBOT завершено." in rendered
+    assert "Режим установки: host" in rendered
+    assert "Источник: обновлён" in rendered
+    assert "Обслуживание: выполнено" in rendered
+    assert "Runtime: без managed-перезапуска" in rendered
+    assert "Git-ветка: main" in rendered
+    assert "Состояние runtime: ok" in rendered
+    assert "перезапустите вручную через `afk start`" in rendered
 
 
 def test_resolve_uv_tool_afk_executable_prefers_windows_exe(

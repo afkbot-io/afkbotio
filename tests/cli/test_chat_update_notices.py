@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.cli.commands.chat_update_notices import _should_prompt_for_update, handle_chat_update_notice
 from afkbot.services.update_runtime import UpdateAvailability, UpdateResult
 from afkbot.settings import get_settings
@@ -106,6 +107,10 @@ def test_handle_chat_update_notice_runs_update_and_stops_chat(tmp_path, monkeypa
         lambda **_kwargs: "install",
     )
     monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.resolve_prompt_language",
+        lambda **_kwargs: PromptLanguage.EN,
+    )
+    monkeypatch.setattr(
         "afkbot.cli.commands.chat_update_notices.run_update",
         lambda _settings: UpdateResult(
             install_mode="host",
@@ -128,6 +133,56 @@ def test_handle_chat_update_notice_runs_update_and_stops_chat(tmp_path, monkeypa
     assert captured[-1]["update_notice_remind_until"] is None
     assert any("AFKBOT update complete." in item for item in echoed)
     assert any("Restart `afk chat`" in item for item in echoed)
+
+
+def test_handle_chat_update_notice_localizes_success_summary_in_russian(tmp_path, monkeypatch) -> None:
+    """Russian prompt language should localize the post-update success summary too."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    echoed: list[str] = []
+    availability = UpdateAvailability(
+        install_mode="host",
+        current_version="afk 1.0.0",
+        target_id="git:main:abcdef123456",
+        target_label="origin/main @ abcdef123456",
+        details=(),
+    )
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.inspect_available_update",
+        lambda _settings: availability,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.prompt_chat_update_action",
+        lambda **_kwargs: "install",
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.resolve_prompt_language",
+        lambda **_kwargs: PromptLanguage.RU,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.run_update",
+        lambda _settings: UpdateResult(
+            install_mode="host",
+            source_updated=True,
+            runtime_restarted=False,
+            maintenance_applied=True,
+            details=("Git branch: main",),
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_update_notices.write_runtime_config",
+        lambda _settings, *, config: None,
+    )
+    monkeypatch.setattr("afkbot.cli.commands.chat_update_notices.typer.echo", echoed.append)
+
+    should_continue = handle_chat_update_notice(settings=settings)
+
+    assert should_continue is False
+    assert any("Обновление AFKBOT завершено." in item for item in echoed)
+    assert any("Режим установки: host" in item for item in echoed)
+    assert any("Git-ветка: main" in item for item in echoed)
+    assert any("Перезапустите `afk chat`" in item for item in echoed)
 
 
 def test_should_prompt_for_update_respects_future_remind_deadline() -> None:

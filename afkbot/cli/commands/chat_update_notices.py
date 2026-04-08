@@ -12,7 +12,7 @@ from afkbot.services.setup.defaults import coerce_bool
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.update_runtime import (
     UpdateRuntimeError,
-    format_update_success,
+    format_update_success_for_language,
     inspect_available_update,
     run_update,
 )
@@ -78,7 +78,7 @@ def handle_chat_update_notice(*, settings: Settings) -> bool:
         runtime_config=runtime_config,
         remind_until=None,
     )
-    typer.echo(format_update_success(result))
+    typer.echo(format_update_success_for_language(result, lang=lang))
     typer.echo(
         msg(
             lang,
