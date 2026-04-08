@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import tomllib
 
 import pytest
 from pytest import MonkeyPatch
@@ -575,9 +576,9 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
             "_Version",
             (),
             {
-                "version": "1.0.8",
+                "version": "1.0.9",
                 "git_sha": None,
-                "render": lambda self: "afk 1.0.8",
+                "render": lambda self: "afk 1.0.9",
             },
         )(),
     )
@@ -619,6 +620,23 @@ def test_format_update_success_for_language_renders_russian_copy() -> None:
     assert "Git-ветка: main" in rendered
     assert "Состояние runtime: ok" in rendered
     assert "перезапустите вручную через `afk start`" in rendered
+
+
+def test_project_declares_packaging_runtime_dependency() -> None:
+    """Installer metadata must include packaging for update-runtime imports."""
+
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    with pyproject_path.open("rb") as handle:
+        payload = tomllib.load(handle)
+
+    project = payload.get("project")
+    assert isinstance(project, dict)
+    dependencies = project.get("dependencies")
+    assert isinstance(dependencies, list)
+    assert any(
+        isinstance(dependency, str) and dependency.startswith("packaging")
+        for dependency in dependencies
+    )
 
 
 def test_resolve_uv_tool_afk_executable_prefers_windows_exe(
