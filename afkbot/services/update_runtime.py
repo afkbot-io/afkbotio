@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import platform
+from packaging.version import InvalidVersion, Version
 import shutil
 import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from afkbot.services.install_source import (
+    INSTALL_SOURCE_MODE_ENV,
+    INSTALL_SOURCE_RESOLVED_TARGET_ENV,
+    INSTALL_SOURCE_SPEC_ENV,
     InstallSource,
     build_uv_tool_install_command,
     default_package_install_source,
     read_install_source_from_runtime_config,
+    read_install_source_resolved_target_from_runtime_config,
 )
 from afkbot.services.managed_install import (
     ManagedInstallContext,
@@ -31,6 +38,7 @@ from afkbot.services.managed_install import (
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.runtime_ports import resolve_default_runtime_port
 from afkbot.settings import Settings
+from afkbot.version import load_cli_version_info
 
 _HOST_SERVICE_MARKER = "afkbot-managed-runtime-service"
 _SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
@@ -50,6 +58,17 @@ class UpdateResult:
     details: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class UpdateAvailability:
+    """Summary of one available update without mutating local install state."""
+
+    install_mode: str
+    current_version: str
+    target_id: str
+    target_label: str
+    details: tuple[str, ...]
+
+
 class UpdateRuntimeError(RuntimeError):
     """Raised when managed runtime update cannot complete."""
 
@@ -59,18 +78,46 @@ class UpdateRuntimeError(RuntimeError):
         self.reason = reason
 
 
+def inspect_available_update(settings: Settings) -> UpdateAvailability | None:
+    """Return one available update summary when the current install can detect one."""
+
+    try:
+        runtime_config = read_runtime_config(settings)
+        managed_context = resolve_managed_install_context()
+        if managed_context is not None:
+            return _inspect_managed_update(context=managed_context)
+        install_source = read_install_source_from_runtime_config(runtime_config)
+        if install_source is not None:
+            return _inspect_installer_source_update(
+                install_source=install_source,
+                runtime_config=runtime_config,
+            )
+        if _is_source_checkout_install():
+            return _inspect_host_update(settings=settings)
+    except UpdateRuntimeError:
+        return None
+    except (OSError, ValueError, URLError, json.JSONDecodeError):
+        return None
+    return _inspect_uv_tool_update()
+
+
 def run_update(settings: Settings) -> UpdateResult:
     """Update the local AFKBOT source checkout and apply pending maintenance."""
 
+    runtime_config = read_runtime_config(settings)
     managed_context = resolve_managed_install_context()
     if managed_context is not None:
         return _run_managed_update(settings=settings, context=managed_context)
-    install_source = read_install_source_from_runtime_config(read_runtime_config(settings))
+    install_source = read_install_source_from_runtime_config(runtime_config)
     if install_source is not None:
-        return _run_installer_source_update(settings=settings, install_source=install_source)
+        return _run_installer_source_update(
+            settings=settings,
+            install_source=install_source,
+            runtime_config=runtime_config,
+        )
     if _is_source_checkout_install():
         return _run_host_update(settings=settings)
-    return _run_uv_tool_update(settings=settings)
+    return _run_uv_tool_update(settings=settings, runtime_config=runtime_config)
 
 
 def format_update_success(result: UpdateResult) -> str:
@@ -84,6 +131,116 @@ def format_update_success(result: UpdateResult) -> str:
     for detail in result.details:
         lines.append(detail)
     return "\n".join(lines)
+
+
+def _inspect_host_update(*, settings: Settings) -> UpdateAvailability | None:
+    """Check whether a newer commit is available for the current git checkout."""
+
+    project_root = _resolve_host_checkout_root(settings)
+    _assert_host_git_checkout(project_root)
+    branch = _git_stdout(project_root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if not branch or _git_worktree_is_dirty(project_root) or not _git_has_origin(project_root):
+        return None
+    current_head = _git_stdout(project_root, "rev-parse", "HEAD")
+    if not current_head:
+        return None
+    _run_checked(
+        ["git", "-C", str(project_root), "fetch", "--depth", "1", "--no-tags", "origin", branch],
+        error_code="update_check_failed",
+        fallback=f"failed to fetch latest source for branch {branch}",
+    )
+    fetched_head = _git_stdout(project_root, "rev-parse", "FETCH_HEAD")
+    if not fetched_head or fetched_head == current_head:
+        return None
+    return UpdateAvailability(
+        install_mode="host",
+        current_version=load_cli_version_info(root_dir=project_root).render(),
+        target_id=f"git:{branch}:{fetched_head}",
+        target_label=f"origin/{branch} @ {fetched_head[:12]}",
+        details=(f"Git branch: {branch}",),
+    )
+
+
+def _inspect_managed_update(*, context: ManagedInstallContext) -> UpdateAvailability | None:
+    """Check whether a managed install points to a newer remote revision."""
+
+    parsed = _parse_remote_source_ref(source_url=context.source_url, source_ref=context.source_ref)
+    if parsed is None:
+        return None
+    latest_sha = _fetch_github_commit_sha(owner=parsed.owner, repo=parsed.repo, ref=parsed.ref)
+    current_sha = load_cli_version_info(root_dir=context.app_dir).git_sha
+    if not latest_sha or not current_sha or latest_sha.startswith(current_sha):
+        return None
+    return UpdateAvailability(
+        install_mode="managed",
+        current_version=load_cli_version_info(root_dir=context.app_dir).render(),
+        target_id=f"github:{parsed.owner}/{parsed.repo}@{parsed.ref}:{latest_sha}",
+        target_label=f"{parsed.owner}/{parsed.repo}@{parsed.ref} @ {latest_sha[:12]}",
+        details=(f"Managed source ref: {parsed.ref}",),
+    )
+
+
+def _inspect_uv_tool_update() -> UpdateAvailability | None:
+    """Check whether the packaged AFKBOT install has a newer published version."""
+
+    current_info = load_cli_version_info()
+    current_version = current_info.version
+    if not current_version:
+        return None
+    payload = _fetch_json_payload("https://pypi.org/pypi/afkbotio/json")
+    latest_version = str(payload.get("info", {}).get("version") or "").strip()
+    if not latest_version or not _version_is_newer(latest_version, current_version):
+        return None
+    return UpdateAvailability(
+        install_mode="uv-tool",
+        current_version=current_info.render(),
+        target_id=f"package:afkbotio:{latest_version}",
+        target_label=f"afkbotio {latest_version}",
+        details=("Package source: afkbotio",),
+    )
+
+
+def _inspect_installer_source_update(
+    *,
+    install_source: InstallSource,
+    runtime_config: dict[str, object],
+) -> UpdateAvailability | None:
+    """Check whether installer-source metadata points to a newer remote release."""
+
+    if install_source.mode == "package":
+        current_info = load_cli_version_info()
+        current_target = (
+            read_install_source_resolved_target_from_runtime_config(runtime_config)
+            or current_info.version
+        )
+        latest_version = resolve_install_source_target(install_source)
+        if not latest_version or not _version_is_newer(latest_version, current_target):
+            return None
+        return UpdateAvailability(
+            install_mode="uv-tool",
+            current_version=current_info.render(),
+            target_id=f"package:{install_source.spec}:{latest_version}",
+            target_label=f"{install_source.spec} {latest_version}",
+            details=(f"Install source: {install_source.spec}",),
+        )
+    parsed = _parse_install_source_for_update(install_source)
+    if parsed is None:
+        return None
+    latest_sha = resolve_install_source_target(install_source)
+    current_info = load_cli_version_info()
+    current_sha = (
+        read_install_source_resolved_target_from_runtime_config(runtime_config)
+        or current_info.git_sha
+    )
+    if not latest_sha or not current_sha or latest_sha.startswith(current_sha):
+        return None
+    return UpdateAvailability(
+        install_mode="uv-tool" if install_source.mode == "archive" else install_source.mode,
+        current_version=current_info.render(),
+        target_id=f"github:{parsed.owner}/{parsed.repo}@{parsed.ref}:{latest_sha}",
+        target_label=f"{parsed.owner}/{parsed.repo}@{parsed.ref} @ {latest_sha[:12]}",
+        details=(f"Install source: {install_source.spec}",),
+    )
 
 
 def _run_host_update(*, settings: Settings) -> UpdateResult:
@@ -211,12 +368,13 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
     )
 
 
-def _run_uv_tool_update(*, settings: Settings) -> UpdateResult:
+def _run_uv_tool_update(*, settings: Settings, runtime_config: dict[str, object]) -> UpdateResult:
     """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
 
     return _run_installer_source_update(
         settings=settings,
         install_source=default_package_install_source(),
+        runtime_config=runtime_config,
     )
 
 
@@ -224,6 +382,7 @@ def _run_installer_source_update(
     *,
     settings: Settings,
     install_source: InstallSource,
+    runtime_config: dict[str, object],
 ) -> UpdateResult:
     """Replay one installer-style uv tool install and then apply maintenance."""
 
@@ -237,7 +396,14 @@ def _run_installer_source_update(
         error_code="update_failed",
         fallback="failed to reinstall AFKBOT from the saved installer source",
     )
+    shell_updated = _update_uv_tool_shell_integration(uv_executable=uv_executable)
     afk_executable = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+    _run_bootstrap_only_setup(
+        executable=afk_executable,
+        settings=settings,
+        install_source=install_source,
+        runtime_config=runtime_config,
+    )
     _run_afk_executable(
         executable=afk_executable,
         settings=settings,
@@ -254,6 +420,12 @@ def _run_installer_source_update(
         f"Tool source mode: {install_source.mode}",
         f"Tool source: {install_source.spec}",
         f"Tool executable: {afk_executable}",
+        (
+            "Shell integration: refreshed"
+            if shell_updated
+            else "Shell integration: unchanged"
+        ),
+        "Bootstrap setup: refreshed",
         (
             "Runtime health: ok"
             if (runtime_restarted and _wait_for_local_health(settings=settings))
@@ -406,6 +578,61 @@ def _resolve_uv_tool_afk_executable(*, uv_executable: Path) -> Path:
     )
 
 
+def _update_uv_tool_shell_integration(*, uv_executable: Path) -> bool:
+    """Best-effort replay of the installer shell-integration refresh."""
+
+    result = _run_command([str(uv_executable), "tool", "update-shell"])
+    return result.returncode == 0
+
+
+def _run_bootstrap_only_setup(
+    *,
+    executable: Path,
+    settings: Settings,
+    install_source: InstallSource,
+    runtime_config: dict[str, object],
+) -> None:
+    """Replay the installer bootstrap-only setup step after reinstalling the tool."""
+
+    env = dict(os.environ)
+    env[INSTALL_SOURCE_MODE_ENV] = install_source.mode
+    env[INSTALL_SOURCE_SPEC_ENV] = install_source.spec
+    resolved_target = resolve_install_source_target(install_source)
+    if resolved_target:
+        env[INSTALL_SOURCE_RESOLVED_TARGET_ENV] = resolved_target
+    else:
+        env.pop(INSTALL_SOURCE_RESOLVED_TARGET_ENV, None)
+    _run_afk_executable_with_env(
+        executable=executable,
+        settings=settings,
+        args=(
+            "setup",
+            "--bootstrap-only",
+            "--yes",
+            "--lang",
+            _resolve_bootstrap_setup_lang(runtime_config=runtime_config),
+        ),
+        env=env,
+    )
+
+
+def _resolve_bootstrap_setup_lang(*, runtime_config: dict[str, object]) -> str:
+    """Return the setup language used when replaying installer bootstrap state."""
+
+    configured = str(runtime_config.get("prompt_language") or "").strip().lower()
+    if configured in {"en", "ru"}:
+        return configured
+    locale_candidates = (
+        str(os.getenv("LC_ALL") or "").strip().lower(),
+        str(os.getenv("LC_MESSAGES") or "").strip().lower(),
+        str(os.getenv("LANG") or "").strip().lower(),
+    )
+    for candidate in locale_candidates:
+        if candidate.startswith("ru"):
+            return "ru"
+    return "en"
+
+
 def _git_stdout(project_root: Path, *args: str) -> str:
     result = _run_command(["git", "-C", str(project_root), *args], cwd=project_root)
     if result.returncode != 0:
@@ -456,6 +683,32 @@ def _run_afk_executable(*, executable: Path, settings: Settings, args: tuple[str
         cwd=settings.root_dir,
         error_code="update_failed",
         fallback=f"failed to run AFKBOT command: {' '.join(args)}",
+    )
+
+
+def _run_afk_executable_with_env(
+    *,
+    executable: Path,
+    settings: Settings,
+    args: tuple[str, ...],
+    env: dict[str, str],
+) -> None:
+    result = subprocess.run(
+        [str(executable), *args],
+        cwd=str(settings.root_dir),
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode == 0:
+        return
+    raise UpdateRuntimeError(
+        error_code="update_failed",
+        reason=_command_reason(
+            result,
+            fallback=f"failed to run AFKBOT command: {' '.join(args)}",
+        ),
     )
 
 
@@ -531,6 +784,110 @@ def _resolve_runtime_health_target(settings: Settings) -> tuple[str, int]:
         runtime_config=runtime_config,
     )
     return host, port
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteSourceRef:
+    owner: str
+    repo: str
+    ref: str
+
+
+def _parse_install_source_for_update(install_source: InstallSource) -> _RemoteSourceRef | None:
+    """Parse one installer source into a GitHub repository ref when possible."""
+
+    if install_source.mode == "editable":
+        return None
+    if install_source.spec.startswith("github:"):
+        raw_repo = install_source.spec.removeprefix("github:")
+        repo_spec, sep, ref = raw_repo.partition("@")
+        owner, slash, repo = repo_spec.partition("/")
+        if not slash or not owner or not repo or not _is_trackable_ref(ref or "main"):
+            return None
+        return _RemoteSourceRef(owner=owner, repo=repo, ref=ref or "main")
+    parsed = urlparse(install_source.spec)
+    if parsed.netloc != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4 or parts[2] != "archive":
+        return None
+    owner, repo = parts[0], parts[1]
+    ref = parts[-1]
+    if ref.endswith(".tar.gz"):
+        ref = ref[: -len(".tar.gz")]
+    if ref == "main.tar":
+        ref = "main"
+    if ref == "master.tar":
+        ref = "master"
+    if not owner or not repo or not _is_trackable_ref(ref):
+        return None
+    return _RemoteSourceRef(owner=owner, repo=repo, ref=ref)
+
+
+def _parse_remote_source_ref(*, source_url: str, source_ref: str) -> _RemoteSourceRef | None:
+    """Parse one managed remote source into a GitHub repository ref when possible."""
+
+    parsed = urlparse(source_url)
+    if parsed.netloc != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or not _is_trackable_ref(source_ref):
+        return None
+    return _RemoteSourceRef(owner=parts[0], repo=parts[1], ref=source_ref)
+
+
+def _is_trackable_ref(ref: str) -> bool:
+    """Return whether one ref should participate in auto-update prompting."""
+
+    normalized = ref.strip()
+    return normalized in {"main", "master"}
+
+
+def _fetch_github_commit_sha(*, owner: str, repo: str, ref: str) -> str | None:
+    """Return the latest commit SHA for one GitHub branch ref."""
+
+    payload = _fetch_json_payload(
+        f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}",
+    )
+    sha = str(payload.get("sha") or "").strip()
+    return sha or None
+
+
+def resolve_install_source_target(install_source: InstallSource) -> str | None:
+    """Resolve one stable target marker for installer-style update comparisons."""
+
+    try:
+        if install_source.mode == "package":
+            payload = _fetch_json_payload(f"https://pypi.org/pypi/{install_source.spec}/json")
+            version = str(payload.get("info", {}).get("version") or "").strip()
+            return version or None
+        parsed = _parse_install_source_for_update(install_source)
+        if parsed is None:
+            return None
+        return _fetch_github_commit_sha(owner=parsed.owner, repo=parsed.repo, ref=parsed.ref)
+    except (OSError, ValueError, URLError, json.JSONDecodeError):
+        return None
+
+
+def _fetch_json_payload(url: str) -> dict[str, object]:
+    """Fetch one JSON object payload from a remote endpoint."""
+
+    request = Request(url, headers={"User-Agent": "afkbot/update-check"})
+    with urlopen(request, timeout=10) as response:
+        raw = response.read().decode("utf-8")
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("Expected JSON object payload")
+    return payload
+
+
+def _version_is_newer(candidate: str, current: str) -> bool:
+    """Return whether one candidate package version is newer than current."""
+
+    try:
+        return Version(candidate) > Version(current)
+    except InvalidVersion:
+        return candidate.strip() != current.strip()
 
 
 def _run_checked(

@@ -102,8 +102,17 @@ afk chat
 ```
 
 - `afk setup` configures the default profile, provider, policy, locale, and runtime defaults
+- `afk setup` also asks whether `afk chat` should check for AFKBOT updates before opening chat
 - `afk doctor` prints the effective runtime/chat ports and checks local readiness
 - `afk chat` is the main entrypoint for real work
+
+If update notices are enabled in setup, interactive `afk chat` checks for a newer AFKBOT build before opening the session and asks:
+
+- `Yes`
+- `No`
+- `Remind in a week`
+
+`No` continues into chat immediately and does not save a permanent skip. `Remind in a week` suppresses all update prompts for seven days. If you disable update notices in setup, chat will not ask at startup.
 
 The runtime chooses and persists a non-default local port automatically for fresh installs, so use `afk doctor` when you need the actual `runtime_port` or `api_port`.
 
@@ -176,15 +185,33 @@ AFKBOT supports installable embedded plugins that extend the local platform with
 - app registrars
 - optional startup and shutdown hooks
 
+Current curated plugins:
+
+- `kanban`: Task Flow Kanban web UI and plugin API surface
+
 Typical operator flow:
 
 ```bash
 uv run afk plugin list
-uv run afk plugin install github:afkbot-io/afkbotkanbanplugin@v1.0.0
+uv run afk plugin install
 uv run afk plugin inspect kanban
 uv run afk plugin config-get kanban
 uv run afk plugin update kanban
 ```
+
+`afk plugin install` now works as a small wizard:
+
+- it shows curated plugins that are not installed yet
+- today the curated list contains only `kanban`
+- the last option is a custom GitHub source, where you can paste a GitHub URL or `github:owner/repo@ref`
+
+You can still install directly without the wizard:
+
+```bash
+uv run afk plugin install github:afkbot-io/afkbotkanbanplugin@main
+```
+
+Direct `afk plugin install <source>` also still accepts a local path when you want to install a plugin from a checkout on disk.
 
 The first external plugin is the Task Flow Kanban UI. After installation and `afk start`, it mounts:
 

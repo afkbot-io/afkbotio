@@ -11,6 +11,7 @@ from afkbot.services.bootstrap_service import seed_missing_global_bootstrap_file
 from afkbot.services.install_source import (
     install_source_runtime_payload,
     read_install_source_from_env,
+    read_install_source_resolved_target_from_env,
 )
 from afkbot.services.setup.contracts import SetupConfig
 from afkbot.services.setup.runtime_store import (
@@ -27,6 +28,7 @@ from afkbot.services.llm.provider_catalog import (
 )
 from afkbot.services.profile_runtime import provider_secret_field, run_profile_service_sync
 from afkbot.services.profile_runtime.service import reset_profile_services_async
+from afkbot.services.update_runtime import resolve_install_source_target
 from afkbot.settings import Settings, get_settings
 
 
@@ -241,6 +243,7 @@ def _finalize_setup_runtime(
                 public_runtime_url=config.public_runtime_url,
                 public_chat_api_url=config.public_chat_api_url,
                 prompt_language=config.prompt_language,
+                update_notices_enabled=config.update_notices_enabled,
                 policy_setup_mode=config.policy_setup_mode,
                 policy_enabled=profile.policy.enabled,
                 policy_preset=profile.policy.preset,
@@ -263,6 +266,10 @@ def _finalize_setup_runtime(
 
 
 def _build_platform_runtime_config_payload(*, config: SetupConfig) -> dict[str, object]:
+    install_source = read_install_source_from_env()
+    resolved_install_target = read_install_source_resolved_target_from_env()
+    if install_source is not None and resolved_install_target is None:
+        resolved_install_target = resolve_install_source_target(install_source)
     payload = {
         "db_url": config.db_url,
         "runtime_host": config.runtime_host,
@@ -280,8 +287,14 @@ def _build_platform_runtime_config_payload(*, config: SetupConfig) -> dict[str, 
         "public_chat_api_url": config.public_chat_api_url or None,
         "auto_install_deps": config.auto_install_deps,
         "prompt_language": config.prompt_language,
+        "update_notices_enabled": config.update_notices_enabled,
     }
-    payload.update(install_source_runtime_payload(read_install_source_from_env()))
+    payload.update(
+        install_source_runtime_payload(
+            install_source,
+            resolved_target=resolved_install_target,
+        )
+    )
     return payload
 
 
@@ -314,8 +327,13 @@ def _build_runtime_config_payload(
             "policy_allowed_directories": list(config.policy_allowed_directories),
             "policy_network_mode": config.policy_network_mode,
             "policy_network_allowlist": list(config.policy_network_allowlist),
+            "update_notices_enabled": config.update_notices_enabled,
         }
     )
+    if not config.update_notices_enabled:
+        payload["update_notice_skip_target"] = None
+        payload["update_notice_remind_target"] = None
+        payload["update_notice_remind_until"] = None
     if provider_base_url_field:
         payload[provider_base_url_field] = config.llm_base_url or None
     return payload

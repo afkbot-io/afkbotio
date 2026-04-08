@@ -8,6 +8,7 @@ from afkbot.cli.presentation.prompt_i18n import (
     normalize_prompt_language,
     resolve_prompt_language,
 )
+from afkbot.cli.presentation.plugin_prompts import prompt_update_notices_enabled
 from afkbot.cli.presentation.setup_policy_prompts import (
     POLICY_PRESET_CHOICES,
     prompt_policy_capabilities,
@@ -66,4 +67,5 @@ __all__ = [
     "prompt_proxy_config",
     "prompt_secret_ack",
     "prompt_thinking_level",
+    "prompt_update_notices_enabled",
 ]

@@ -20,7 +20,11 @@ from afkbot.services.managed_install import (
     MANAGED_SOURCE_URL_ENV,
 )
 from afkbot.services.setup.runtime_store import write_runtime_config
-from afkbot.services.update_runtime import _resolve_uv_tool_afk_executable, _wait_for_local_health
+from afkbot.services.update_runtime import (
+    _resolve_uv_tool_afk_executable,
+    _wait_for_local_health,
+    inspect_available_update,
+)
 from afkbot.services.update_runtime import UpdateRuntimeError, run_update
 from afkbot.settings import get_settings
 
@@ -346,6 +350,8 @@ def test_run_update_upgrades_uv_tool_install(
     afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
     afk_executable.write_text("", encoding="utf-8")
     commands: list[list[str]] = []
+    shell_commands: list[list[str]] = []
+    bootstrap_calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
 
     def _fake_run_checked(
         command: list[str],
@@ -358,6 +364,25 @@ def test_run_update_upgrades_uv_tool_install(
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd
+        shell_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _fake_bootstrap(
+        *,
+        executable: Path,
+        settings: object,
+        args: tuple[str, ...],
+        env: dict[str, str],
+    ) -> None:
+        del executable, settings
+        bootstrap_calls.append((args, dict(env)))
+
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool")
     monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
     monkeypatch.setattr(
@@ -365,7 +390,16 @@ def test_run_update_upgrades_uv_tool_install(
         lambda *, uv_executable: afk_executable,
     )
     monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        _fake_bootstrap,
+    )
     monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "1.2.3",
+    )
 
     result = run_update(settings)
 
@@ -374,6 +408,13 @@ def test_run_update_upgrades_uv_tool_install(
     assert result.maintenance_applied is True
     assert result.runtime_restarted is False
     assert [str(uv_executable), "tool", "install", "--python", "3.12", "--reinstall", "afkbotio"] in commands
+    assert [str(uv_executable), "tool", "update-shell"] in shell_commands
+    assert len(bootstrap_calls) == 1
+    bootstrap_args, bootstrap_env = bootstrap_calls[0]
+    assert bootstrap_args == ("setup", "--bootstrap-only", "--yes", "--lang", "en")
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_MODE"] == "package"
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"] == "afkbotio"
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET"] == "1.2.3"
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
 
@@ -398,6 +439,8 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
     afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
     afk_executable.write_text("", encoding="utf-8")
     commands: list[list[str]] = []
+    shell_commands: list[list[str]] = []
+    bootstrap_calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
 
     write_runtime_config(
         settings,
@@ -418,6 +461,25 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd
+        shell_commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _fake_bootstrap(
+        *,
+        executable: Path,
+        settings: object,
+        args: tuple[str, ...],
+        env: dict[str, str],
+    ) -> None:
+        del executable, settings
+        bootstrap_calls.append((args, dict(env)))
+
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", checkout_root)
     monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
     monkeypatch.setattr(
@@ -425,7 +487,16 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         lambda *, uv_executable: afk_executable,
     )
     monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        _fake_bootstrap,
+    )
     monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: None,
+    )
 
     result = run_update(settings)
 
@@ -440,7 +511,53 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         "--editable",
         str(source_path),
     ] in commands
+    assert [str(uv_executable), "tool", "update-shell"] in shell_commands
+    assert len(bootstrap_calls) == 1
+    bootstrap_args, bootstrap_env = bootstrap_calls[0]
+    assert bootstrap_args == ("setup", "--bootstrap-only", "--yes", "--lang", "en")
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_MODE"] == "editable"
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"] == str(source_path)
+    assert "AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET" not in bootstrap_env
     assert all(not command or command[0] != "git" for command in commands)
+
+
+def test_inspect_available_update_uses_saved_installer_target_without_git_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Archive installs should detect updates from saved installer metadata even without `.git`."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    write_runtime_config(
+        settings,
+        config={
+            "install_source_mode": "archive",
+            "install_source_spec": "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz",
+            "install_source_resolved_target": "oldsha123456",
+        },
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "newsha654321",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.load_cli_version_info",
+        lambda root_dir=None: type(
+            "_Version",
+            (),
+            {
+                "version": "1.0.7",
+                "git_sha": None,
+                "render": lambda self: "afk 1.0.7",
+            },
+        )(),
+    )
+
+    availability = inspect_available_update(settings)
+
+    assert availability is not None
+    assert availability.install_mode == "uv-tool"
+    assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
 
 
 def test_resolve_uv_tool_afk_executable_prefers_windows_exe(

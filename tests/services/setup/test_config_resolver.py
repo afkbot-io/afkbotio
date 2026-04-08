@@ -334,3 +334,61 @@ def test_collect_setup_config_uses_auto_selected_exotic_runtime_port_when_unconf
     )
 
     assert config.runtime_port == 46341
+
+
+def test_collect_setup_config_prompts_for_update_notices_during_public_setup(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive public setup should ask about chat-time update notices."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'install-config-resolver.db'}",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.config_resolver.prompt_update_notices_enabled",
+        lambda *, default, lang: False,
+    )
+
+    config = collect_setup_config(
+        settings=settings,
+        defaults={
+            "AFKBOT_LLM_PROVIDER": "openai",
+            "AFKBOT_LLM_MODEL": "gpt-4o-mini",
+            "AFKBOT_LLM_API_KEY": "seed-key",
+            "AFKBOT_CREDENTIALS_MASTER_KEYS": "seed-master-key",
+        },
+        env_file=tmp_path / ".unused",
+        interactive=True,
+        lang=PromptLanguage.EN,
+        llm_provider=None,
+        chat_model=None,
+        thinking_level=None,
+        llm_api_key_file=None,
+        llm_base_url=None,
+        custom_interface=None,
+        skip_llm_token_verify=True,
+        llm_proxy_type=None,
+        llm_proxy_url=None,
+        runtime_host=None,
+        runtime_port=None,
+        nginx_enabled=None,
+        nginx_port=None,
+        nginx_runtime_host=None,
+        nginx_runtime_https=None,
+        nginx_api_host=None,
+        nginx_api_https=None,
+        certbot_email=None,
+        policy_enabled=None,
+        policy_preset=None,
+        policy_capability=(),
+        policy_file_access_mode=None,
+        policy_workspace_scope=None,
+        policy_network_host=(),
+        auto_install_deps=None,
+        resolved_api_key="seed-key",
+        profile_setup_only=True,
+    )
+
+    assert config.update_notices_enabled is False

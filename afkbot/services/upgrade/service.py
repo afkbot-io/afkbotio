@@ -203,6 +203,10 @@ class UpgradeService:
                 _first_present_any(config, runtime_config, "prompt_language", "install_language"),
                 default="en",
             ),
+            update_notices_enabled=_coerce_bool(
+                _first_present(config, runtime_config, "update_notices_enabled"),
+                default=True,
+            ),
             policy_setup_mode=_coerce_text(_first_present(config, runtime_config, "policy_setup_mode"), default="preset"),
             policy_enabled=_coerce_bool(_first_present(config, runtime_config, "policy_enabled"), default=True),
             policy_preset=_coerce_text(_first_present(config, runtime_config, "policy_preset"), default="medium"),

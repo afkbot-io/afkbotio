@@ -48,6 +48,7 @@ def test_uninstall_clears_local_state(tmp_path: Path, monkeypatch) -> None:
             public_runtime_url="",
             public_chat_api_url="",
             prompt_language="en",
+            update_notices_enabled=True,
             policy_setup_mode="recommended",
             policy_enabled=True,
             policy_preset="medium",

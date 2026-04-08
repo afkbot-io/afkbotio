@@ -9,7 +9,9 @@ from afkbot.cli.commands.chat_planning import (
     normalize_chat_planning_mode,
     resolve_cli_thinking_level,
 )
+from afkbot.cli.commands.chat_update_notices import handle_chat_update_notice
 from afkbot.cli.presentation import confirm_space
+from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.cli.commands.chat_secure_flow import (
     RunTurnWithSecureResolution,
     build_run_turn_with_overrides,
@@ -134,6 +136,8 @@ def register(app: typer.Typer) -> None:
             submit_secure_field_fn=submit_secure_field,
             confirm_space_fn=None if message is not None else confirm_space,
         )
+        if not json_output and supports_interactive_tty() and not handle_chat_update_notice(settings=settings):
+            return
 
         if message is not None:
             run_single_turn(
