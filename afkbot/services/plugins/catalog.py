@@ -17,10 +17,10 @@ class KnownPlugin:
 
 _KNOWN_PLUGINS: tuple[KnownPlugin, ...] = (
     KnownPlugin(
-        plugin_id="kanban",
-        name="Task Flow Kanban",
-        description="Web kanban board for Task Flow backlog, review, and inbox work.",
-        source_ref="github:afkbot-io/afkbotkanbanplugin@main",
+        plugin_id="afkbotui",
+        name="AFKBOT UI",
+        description="Unified AFKBOT web workspace for automations and future operator surfaces.",
+        source_ref="github:afkbot-io/afkbotuiplugin@main",
     ),
 )
 

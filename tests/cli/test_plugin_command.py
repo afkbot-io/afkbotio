@@ -21,7 +21,7 @@ def test_plugin_install_uses_prompted_source_when_argument_is_omitted(tmp_path, 
     class _FakeInstalledRecord:
         def model_dump(self, mode: str = "json") -> dict[str, object]:
             assert mode == "json"
-            return {"plugin_id": "kanban", "source_ref": captured["source"]}
+            return {"plugin_id": "afkbotui", "source_ref": captured["source"]}
 
     class _FakePluginService:
         def list_installed(self) -> tuple[object, ...]:
@@ -40,7 +40,7 @@ def test_plugin_install_uses_prompted_source_when_argument_is_omitted(tmp_path, 
     monkeypatch.setattr("afkbot.cli.commands.plugin.supports_interactive_tty", lambda: True)
     monkeypatch.setattr(
         "afkbot.cli.commands.plugin.prompt_plugin_install_source",
-        lambda **_kwargs: "github:afkbot-io/afkbotkanbanplugin@main",
+        lambda **_kwargs: "github:afkbot-io/afkbotuiplugin@main",
     )
     runner = CliRunner()
 
@@ -48,9 +48,9 @@ def test_plugin_install_uses_prompted_source_when_argument_is_omitted(tmp_path, 
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["plugin"]["plugin_id"] == "kanban"
+    assert payload["plugin"]["plugin_id"] == "afkbotui"
     assert captured == {
-        "source": "github:afkbot-io/afkbotkanbanplugin@main",
+        "source": "github:afkbot-io/afkbotuiplugin@main",
         "enable": True,
         "overwrite": False,
     }
@@ -86,8 +86,8 @@ def test_plugin_install_requires_source_when_wizard_returns_empty(tmp_path, monk
 def test_plugin_install_custom_source_validation_accepts_github_sources() -> None:
     """Wizard custom source should accept GitHub shorthand and URLs."""
 
-    assert _is_supported_custom_plugin_source("github:afkbot-io/afkbotkanbanplugin@main") is True
-    assert _is_supported_custom_plugin_source("https://github.com/afkbot-io/afkbotkanbanplugin") is True
+    assert _is_supported_custom_plugin_source("github:afkbot-io/afkbotuiplugin@main") is True
+    assert _is_supported_custom_plugin_source("https://github.com/afkbot-io/afkbotuiplugin") is True
 
 
 def test_plugin_install_custom_source_validation_rejects_non_github_sources() -> None:

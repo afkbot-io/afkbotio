@@ -575,9 +575,9 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
             "_Version",
             (),
             {
-                "version": "1.0.7",
+                "version": "1.0.8",
                 "git_sha": None,
-                "render": lambda self: "afk 1.0.7",
+                "render": lambda self: "afk 1.0.8",
             },
         )(),
     )
