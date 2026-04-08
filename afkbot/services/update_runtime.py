@@ -188,7 +188,7 @@ def _inspect_uv_tool_update() -> UpdateAvailability | None:
     if not current_version:
         return None
     payload = _fetch_json_payload("https://pypi.org/pypi/afkbotio/json")
-    latest_version = str(payload.get("info", {}).get("version") or "").strip()
+    latest_version = str(_json_object_field(payload, "info").get("version") or "").strip()
     if not latest_version or not _version_is_newer(latest_version, current_version):
         return None
     return UpdateAvailability(
@@ -859,7 +859,7 @@ def resolve_install_source_target(install_source: InstallSource) -> str | None:
     try:
         if install_source.mode == "package":
             payload = _fetch_json_payload(f"https://pypi.org/pypi/{install_source.spec}/json")
-            version = str(payload.get("info", {}).get("version") or "").strip()
+            version = str(_json_object_field(payload, "info").get("version") or "").strip()
             return version or None
         parsed = _parse_install_source_for_update(install_source)
         if parsed is None:
@@ -879,6 +879,15 @@ def _fetch_json_payload(url: str) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError("Expected JSON object payload")
     return payload
+
+
+def _json_object_field(payload: dict[str, object], key: str) -> dict[str, object]:
+    """Return one JSON object field as a typed mapping when present."""
+
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        return {}
+    return {str(field_key): field_value for field_key, field_value in value.items()}
 
 
 def _version_is_newer(candidate: str, current: str) -> bool:
