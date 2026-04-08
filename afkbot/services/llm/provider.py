@@ -333,6 +333,23 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         collected_output_items: dict[str, tuple[int, int, dict[str, object]]] = {}
         data_lines: list[str] = []
 
+        def _coerce_event_int(value: object, *, default: int) -> int:
+            if isinstance(value, bool):
+                return default
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str):
+                raw = value.strip()
+                if not raw:
+                    return default
+                try:
+                    return int(raw)
+                except ValueError:
+                    return default
+            return default
+
         def _consume_event_data(lines: list[str]) -> tuple[dict[str, object] | None, bool]:
             if not lines:
                 return None, False
@@ -354,14 +371,14 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                     if item_id:
                         output_index_raw = payload.get("output_index")
                         sequence_raw = payload.get("sequence_number")
-                        try:
-                            output_index = int(output_index_raw)
-                        except (TypeError, ValueError):
-                            output_index = len(collected_output_items)
-                        try:
-                            sequence_number = int(sequence_raw)
-                        except (TypeError, ValueError):
-                            sequence_number = output_index
+                        output_index = _coerce_event_int(
+                            output_index_raw,
+                            default=len(collected_output_items),
+                        )
+                        sequence_number = _coerce_event_int(
+                            sequence_raw,
+                            default=output_index,
+                        )
                         collected_output_items[item_id] = (
                             output_index,
                             sequence_number,

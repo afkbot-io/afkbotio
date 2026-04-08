@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import inspect
 from pathlib import Path
 
@@ -22,11 +23,15 @@ from afkbot.cli.commands.chat_secure_flow import (
 from afkbot.cli.commands.chat_target import build_cli_runtime_overrides, resolve_cli_chat_target
 from afkbot.cli.commands.chat_session_runtime import run_repl, run_single_turn
 from afkbot.services.browser_sessions import get_browser_session_manager
+from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.runtime_factory import resolve_profile_settings
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_runtime import run_once_result, submit_secure_field
 from afkbot.services.policy import infer_workspace_scope_mode
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
+from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
 
@@ -143,10 +148,33 @@ def register(app: typer.Typer) -> None:
         )
         run_once_result_accepts_settings = "settings" in inspect.signature(run_once_result).parameters
 
-        async def _run_once_result_with_chat_settings(**kwargs: object):
+        async def _run_once_result_with_chat_settings(
+            *,
+            message: str,
+            profile_id: str,
+            session_id: str,
+            planned_tool_calls: list[ToolCall] | None = None,
+            progress_sink: Callable[[ProgressEvent], None] | None = None,
+            context_overrides: TurnContextOverrides | None = None,
+        ) -> TurnResult:
             if run_once_result_accepts_settings:
-                return await run_once_result(settings=chat_settings, **kwargs)
-            return await run_once_result(**kwargs)
+                return await run_once_result(
+                    message=message,
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    settings=chat_settings,
+                    planned_tool_calls=planned_tool_calls,
+                    progress_sink=progress_sink,
+                    context_overrides=context_overrides,
+                )
+            return await run_once_result(
+                message=message,
+                profile_id=profile_id,
+                session_id=session_id,
+                planned_tool_calls=planned_tool_calls,
+                progress_sink=progress_sink,
+                context_overrides=context_overrides,
+            )
 
         run_turn_with_secure_resolution: RunTurnWithSecureResolution = build_run_turn_with_overrides(
             runtime_overrides,
