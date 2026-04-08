@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 import tomllib
+from urllib.error import HTTPError
 
 import pytest
 from pytest import MonkeyPatch
@@ -588,6 +589,35 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
     assert availability is not None
     assert availability.install_mode == "uv-tool"
     assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
+
+
+def test_inspect_available_update_ignores_uv_tool_http_404(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Chat update checks should not crash when PyPI lookup returns 404."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_managed_install_context",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.read_install_source_from_runtime_config",
+        lambda runtime_config: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._is_source_checkout_install",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._fetch_json_payload",
+        lambda url: (_ for _ in ()).throw(
+            HTTPError(url=url, code=404, msg="Not Found", hdrs=None, fp=None)
+        ),
+    )
+
+    assert inspect_available_update(settings) is None
 
 
 def test_format_update_success_for_language_renders_russian_copy() -> None:

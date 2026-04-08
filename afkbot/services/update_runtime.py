@@ -94,11 +94,11 @@ def inspect_available_update(settings: Settings) -> UpdateAvailability | None:
             )
         if _is_source_checkout_install():
             return _inspect_host_update(settings=settings)
+        return _inspect_uv_tool_update()
     except UpdateRuntimeError:
         return None
     except (OSError, ValueError, URLError, json.JSONDecodeError):
         return None
-    return _inspect_uv_tool_update()
 
 
 def run_update(settings: Settings) -> UpdateResult:
