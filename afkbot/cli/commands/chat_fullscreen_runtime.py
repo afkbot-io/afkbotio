@@ -27,7 +27,6 @@ from afkbot.cli.presentation.chat_workspace.presenter import (
     build_chat_workspace_progress_entries,
     build_chat_workspace_surface_state,
     build_chat_workspace_toolbar_text,
-    build_chat_workspace_user_entry,
 )
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -150,11 +149,6 @@ async def run_fullscreen_chat_workspace_session(
             turn_queue=turn_queue,
             turn_active=turn_active,
         )
-        if outcome.queued_message:
-            workspace.append_transcript_entry(
-                build_chat_workspace_user_entry(outcome.queued_message),
-                echo=False,
-            )
         return outcome
 
     def _emit_notice(message: str) -> None:

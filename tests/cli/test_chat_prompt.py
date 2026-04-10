@@ -390,6 +390,30 @@ def test_chat_workspace_surface_shows_active_plan_summary() -> None:
     assert surface_state.queue_lines == ("◦ Plan executing · 3 step(s) · Inspect, Implement, ...",)
 
 
+def test_chat_workspace_surface_hides_completed_plan_during_unrelated_turn() -> None:
+    """Completed historical plans should not masquerade as the active plan for a new turn."""
+
+    state = ChatReplSessionState(
+        planning_mode="on",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+        active_turn=True,
+        latest_plan=ChatPlanSnapshot(
+            raw_text="1. Inspect\n2. Implement",
+            steps=(
+                ChatPlanStep(text="Inspect"),
+                ChatPlanStep(text="Implement"),
+            ),
+        ),
+        latest_plan_phase="completed",
+    )
+
+    surface_state = build_chat_workspace_surface_state(state)
+
+    assert surface_state.queue_lines == ()
+
+
 def test_chat_workspace_status_line_formats_minutes_and_hours(monkeypatch) -> None:
     """Elapsed labels should roll over from seconds to minutes and hours."""
 

@@ -159,7 +159,11 @@ def _toolish_activity_label(
 
 
 def _active_plan_line(state: ChatReplSessionState) -> str | None:
-    if not state.active_turn or state.latest_plan is None:
+    if (
+        not state.active_turn
+        or state.latest_plan is None
+        or state.latest_plan_phase not in {"planned", "executing"}
+    ):
         return None
     status = stored_plan_status_for_chat_workspace(
         state.latest_plan,
