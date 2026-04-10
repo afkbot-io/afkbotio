@@ -19,6 +19,7 @@ _MEDIUM_DELETE_INTENT_RE = re.compile(
     r"(delete|remove|rm|rmdir|del|unlink|truncate|wipe|удал|стер|очист)",
     re.IGNORECASE,
 )
+_SHELL_PAYLOAD_PARAM_NAMES = frozenset({"cmd", "command", "chars"})
 _STRICT_READ_ONLY_TOOL_NAMES = frozenset(
     {
         "app.list",
@@ -169,7 +170,9 @@ class SafetyPolicy:
                     "Medium safety preset requires explicit yes/no confirmation for file deletion/destructive operations.",
                 )
             return None, ""
-        if preset == "strict" and self._is_strict_critical_operation(tool_name=tool_name, params=params):
+        if preset == "strict" and self._is_strict_critical_operation(
+            tool_name=tool_name, params=params
+        ):
             return (
                 "strict",
                 "Strict safety preset requires explicit yes/no confirmation before critical operation execution.",
@@ -181,9 +184,9 @@ class SafetyPolicy:
         """Return whether operation is a potentially destructive file action for medium preset."""
 
         normalized_tool = tool_name.strip()
-        if normalized_tool == "bash.exec":
+        if normalized_tool in {"bash.exec", "session.job.run"}:
             payload_text = "\n".join(
-                part for part in (str(params.get("cmd") or ""), str(params.get("chars") or "")) if part
+                part for part in SafetyPolicy._shell_payload_values(params) if part
             )
             return _MEDIUM_BASH_DELETE_RE.search(payload_text) is not None
         if normalized_tool == "file.write":
@@ -200,6 +203,24 @@ class SafetyPolicy:
                 _MEDIUM_DELETE_INTENT_RE.search(search) is not None
             )
         return False
+
+    @staticmethod
+    def _shell_payload_values(value: object, *, field_name: str | None = None) -> list[str]:
+        """Return shell payload text values from nested tool params."""
+
+        if isinstance(value, dict):
+            result: list[str] = []
+            for key, item in value.items():
+                result.extend(SafetyPolicy._shell_payload_values(item, field_name=str(key).lower()))
+            return result
+        if isinstance(value, list):
+            list_result: list[str] = []
+            for item in value:
+                list_result.extend(SafetyPolicy._shell_payload_values(item, field_name=field_name))
+            return list_result
+        if isinstance(value, str) and field_name in _SHELL_PAYLOAD_PARAM_NAMES:
+            return [value]
+        return []
 
     @staticmethod
     def _is_strict_critical_operation(*, tool_name: str, params: dict[str, object]) -> bool:

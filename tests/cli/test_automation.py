@@ -115,12 +115,10 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     assert show_result.exit_code == 0
     shown = json.loads(show_result.stdout)
     assert shown["automation"]["id"] == automation_id
-    assert shown["automation"]["webhook"]["webhook_token"] == created_token
-    assert shown["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        _runtime_base_url(),
-        "default",
-        created_token,
-    )
+    assert shown["automation"]["webhook"]["webhook_token"] is None
+    assert shown["automation"]["webhook"]["webhook_path"] is None
+    assert shown["automation"]["webhook"]["webhook_url"] is None
+    assert shown["automation"]["webhook"]["webhook_token_masked"] == "[HIDDEN]"
     assert shown["automation"]["webhook"]["last_execution_status"] == "idle"
 
     get_result = runner.invoke(
@@ -129,12 +127,10 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     )
     assert get_result.exit_code == 0
     gotten = json.loads(get_result.stdout)
-    assert gotten["automation"]["webhook"]["webhook_token"] == created_token
-    assert gotten["automation"]["webhook"]["webhook_url"] == build_webhook_url(
-        _runtime_base_url(),
-        "default",
-        created_token,
-    )
+    assert gotten["automation"]["webhook"]["webhook_token"] is None
+    assert gotten["automation"]["webhook"]["webhook_path"] is None
+    assert gotten["automation"]["webhook"]["webhook_url"] is None
+    assert gotten["automation"]["webhook"]["webhook_token_masked"] == "[HIDDEN]"
     assert gotten["automation"]["webhook"]["last_execution_status"] == "idle"
 
     update_result = runner.invoke(
@@ -282,4 +278,6 @@ def test_automation_cli_accepts_group_level_profile_option(
     )
     assert get_result.exit_code == 0
     gotten = json.loads(get_result.stdout)
-    assert gotten["automation"]["webhook"]["webhook_token"] == token
+    assert gotten["automation"]["webhook"]["webhook_token"] is None
+    assert gotten["automation"]["webhook"]["webhook_path"] is None
+    assert gotten["automation"]["webhook"]["webhook_url"] is None

@@ -32,7 +32,9 @@ def test_medium_policy_requires_confirmation_for_destructive_bash() -> None:
     """Medium preset should return approval-required error for destructive bash command."""
 
     policy = SafetyPolicy()
-    profile_policy = ProfilePolicy(profile_id="default", policy_enabled=True, policy_preset="medium")
+    profile_policy = ProfilePolicy(
+        profile_id="default", policy_enabled=True, policy_preset="medium"
+    )
 
     result = policy.approval_required_result(
         policy=profile_policy,
@@ -59,7 +61,9 @@ def test_strict_preset_enriches_metadata_and_prompt() -> None:
     """Strict preset metadata and prompt should stay consistent for prompt shaping."""
 
     policy = SafetyPolicy()
-    profile_policy = ProfilePolicy(profile_id="default", policy_enabled=True, policy_preset="strict")
+    profile_policy = ProfilePolicy(
+        profile_id="default", policy_enabled=True, policy_preset="strict"
+    )
 
     metadata = policy.enrich_runtime_metadata(
         runtime_metadata={"selected_skill_requests": ["telegram"]},
@@ -82,7 +86,9 @@ def test_medium_policy_requires_confirmation_for_destructive_bash_session_chars(
 
     # Arrange
     policy = SafetyPolicy()
-    profile_policy = ProfilePolicy(profile_id="default", policy_enabled=True, policy_preset="medium")
+    profile_policy = ProfilePolicy(
+        profile_id="default", policy_enabled=True, policy_preset="medium"
+    )
 
     # Act
     result = policy.approval_required_result(
@@ -107,11 +113,39 @@ def test_medium_policy_requires_confirmation_for_destructive_bash_session_chars(
     }
 
 
+def test_medium_policy_requires_confirmation_for_destructive_bash_batch() -> None:
+    """Medium preset should gate destructive commands nested in session.job.run."""
+
+    policy = SafetyPolicy()
+    profile_policy = ProfilePolicy(
+        profile_id="default", policy_enabled=True, policy_preset="medium"
+    )
+
+    result = policy.approval_required_result(
+        policy=profile_policy,
+        tool_name="session.job.run",
+        params={
+            "jobs": [
+                {"kind": "bash", "cmd": "echo ok"},
+                {"kind": "bash", "cmd": "truncate -s 0 tmp/data.txt"},
+            ],
+        },
+        confirmed=False,
+        question_id="approval:3",
+    )
+
+    assert result is not None
+    assert result.error_code == APPROVAL_REQUIRED_ERROR_CODE
+    assert result.metadata["tool_name"] == "session.job.run"
+
+
 def test_simple_preset_does_not_require_confirmation_for_destructive_command() -> None:
     """Simple preset should not gate destructive commands behind approval."""
 
     policy = SafetyPolicy()
-    profile_policy = ProfilePolicy(profile_id="default", policy_enabled=True, policy_preset="simple")
+    profile_policy = ProfilePolicy(
+        profile_id="default", policy_enabled=True, policy_preset="simple"
+    )
 
     result = policy.approval_required_result(
         policy=profile_policy,

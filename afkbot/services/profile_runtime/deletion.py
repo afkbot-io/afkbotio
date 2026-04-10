@@ -16,6 +16,7 @@ from afkbot.models.channel_binding import ChannelBinding
 from afkbot.models.channel_endpoint import ChannelEndpoint
 from afkbot.models.chat_session import ChatSession
 from afkbot.models.chat_session_compaction import ChatSessionCompaction
+from afkbot.models.chat_session_turn_queue import ChatSessionTurnQueueItem
 from afkbot.models.chat_turn import ChatTurn
 from afkbot.models.chat_turn_idempotency import ChatTurnIdempotency, ChatTurnIdempotencyClaim
 from afkbot.models.connect_access_token import ConnectAccessToken
@@ -87,6 +88,9 @@ async def purge_profile_rows(
         )
 
     await session.execute(delete(PendingSecureRequest).where(PendingSecureRequest.profile_id == profile_id))
+    await session.execute(
+        delete(ChatSessionTurnQueueItem).where(ChatSessionTurnQueueItem.profile_id == profile_id)
+    )
     await session.execute(
         delete(ChatTurnIdempotencyClaim).where(ChatTurnIdempotencyClaim.profile_id == profile_id)
     )

@@ -32,6 +32,11 @@ _COMMAND_SPECS: tuple[ChatReplCommandSpec, ...] = (
         help_summary="show the latest visible turn activity summary",
     ),
     ChatReplCommandSpec(
+        local_command="//cancel",
+        slash_command="/cancel",
+        help_summary="cancel the active turn and clear queued follow-up messages",
+    ),
+    ChatReplCommandSpec(
         local_command="//capabilities",
         slash_command="/capabilities",
         help_summary="inspect the current capability catalog",
@@ -72,9 +77,7 @@ def chat_repl_local_commands() -> tuple[str, ...]:
     """Return all command spellings surfaced in prompt completion."""
 
     return tuple(
-        command
-        for spec in _COMMAND_SPECS
-        for command in (spec.local_command, spec.slash_command)
+        command for spec in _COMMAND_SPECS for command in (spec.local_command, spec.slash_command)
     )
 
 

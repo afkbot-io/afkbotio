@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
 from afkbot.models.task_run import TaskRun
@@ -187,6 +187,40 @@ class _FakeLoop:
         raise AssertionError(f"Unsupported fake loop behavior: {self._behavior}")
 
 
+class _FakeSessionRunner:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        behavior: str,
+        observed_calls: list[_ObservedCall],
+    ) -> None:
+        self._session_factory = session_factory
+        self._behavior = behavior
+        self._observed_calls = observed_calls
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        context_overrides: object | None = None,
+        **_unused: object,
+    ) -> TurnResult:
+        async with session_scope(self._session_factory) as session:
+            return await _FakeLoop(
+                session,
+                behavior=self._behavior,
+                observed_calls=self._observed_calls,
+            ).run_turn(
+                profile_id=profile_id,
+                session_id=session_id,
+                message=message,
+                context_overrides=context_overrides,
+            )
+
+
 async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
     tmp_path: Path,
 ) -> None:
@@ -205,7 +239,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="complete",
             observed_calls=observed_calls,
@@ -296,7 +330,7 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="ask_question",
             observed_calls=[],
@@ -346,7 +380,7 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
             db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_handoff.db'}",
         ),
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="handoff_human",
             observed_calls=[],
@@ -417,7 +451,7 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="llm_timeout",
             observed_calls=[],
@@ -469,7 +503,7 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="complete",
             observed_calls=observed_calls,
@@ -541,7 +575,7 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="complete",
             observed_calls=observed_calls,
@@ -635,7 +669,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
     runtime = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _FakeLoop(
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
             behavior="complete",
             observed_calls=[],

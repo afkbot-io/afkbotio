@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from pydantic import ValidationError
@@ -28,6 +28,19 @@ BuildToolLogPayload = Callable[..., dict[str, object]]
 SanitizeText = Callable[[str], str]
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedToolExecution:
+    """Validated tool call ready for the side-effecting execute phase."""
+
+    run_id: int
+    session_id: str
+    ctx: ToolContext
+    execution_name: str
+    sanitized_name: str
+    guarded_call: ToolCall
+    parallel_execution_safe: bool
+
+
 class ToolExecutionRuntime:
     """Execute guarded tool calls and persist deterministic tool call/result events."""
 
@@ -42,6 +55,7 @@ class ToolExecutionRuntime:
         tool_invocation_gates: ToolInvocationGuards,
         tool_timeout_default_sec: int,
         tool_timeout_max_sec: int,
+        parallel_tool_max_concurrent: int = 4,
         log_event: AsyncLogEvent,
         raise_if_cancel_requested: AsyncCancelCheck,
         sanitize: SanitizeText,
@@ -57,6 +71,7 @@ class ToolExecutionRuntime:
         self._tool_invocation_gates = tool_invocation_gates
         self._tool_timeout_default_sec = tool_timeout_default_sec
         self._tool_timeout_max_sec = tool_timeout_max_sec
+        self._parallel_tool_max_concurrent = max(1, int(parallel_tool_max_concurrent))
         self._log_event = log_event
         self._raise_if_cancel_requested = raise_if_cancel_requested
         self._sanitize = sanitize
@@ -81,7 +96,7 @@ class ToolExecutionRuntime:
         approved_tool_names: set[str] | None = None,
         approval_required_tool_names: set[str] | None = None,
     ) -> list[ToolResult]:
-        """Execute requested tool calls sequentially with logging and pre-execution guards."""
+        """Execute tool calls with sequential guards and bounded safe fan-out."""
 
         ctx = ToolContext(
             profile_id=profile_id,
@@ -91,10 +106,38 @@ class ToolExecutionRuntime:
             runtime_metadata=runtime_metadata,
         )
         results: list[ToolResult] = []
-        explicit_skills = {name.strip() for name in (explicit_skill_requests or set()) if name.strip()}
+        explicit_skills = {
+            name.strip() for name in (explicit_skill_requests or set()) if name.strip()
+        }
         explicit_subagents = {
             name.strip() for name in (explicit_subagent_requests or set()) if name.strip()
         }
+        pending_parallel: list[_PreparedToolExecution] = []
+
+        async def _flush_parallel() -> None:
+            if not pending_parallel:
+                return
+            batch = list(pending_parallel)
+            pending_parallel.clear()
+            semaphore = asyncio.Semaphore(self._parallel_tool_max_concurrent)
+
+            async def _execute_with_limit(prepared: _PreparedToolExecution) -> ToolResult:
+                async with semaphore:
+                    return await self._execute_prepared_tool_call(prepared)
+
+            batch_results = await asyncio.gather(
+                *(_execute_with_limit(prepared) for prepared in batch)
+            )
+            for prepared, result in zip(batch, batch_results, strict=True):
+                await self._log_tool_result(
+                    run_id=run_id,
+                    session_id=session_id,
+                    sanitized_name=prepared.sanitized_name,
+                    result=result,
+                )
+                results.append(result)
+                await self._raise_if_cancel_requested(run_id=run_id)
+
         for tool_call in tool_calls:
             await self._raise_if_cancel_requested(run_id=run_id)
             execution_name = tool_call.name.strip()
@@ -129,11 +172,12 @@ class ToolExecutionRuntime:
                     tool_name=sanitized_name,
                 ),
             )
-            result = await self._execute_single_tool_call(
+            prepared_or_result = await self._prepare_single_tool_call(
                 run_id=run_id,
                 session_id=session_id,
                 profile_id=profile_id,
                 ctx=tool_ctx,
+                sanitized_name=sanitized_name,
                 execution_name=execution_name,
                 execution_params=execution_params,
                 guarded_call=guarded.execution_call,
@@ -150,20 +194,42 @@ class ToolExecutionRuntime:
                 approved_tool_names=approved_tool_names,
                 approval_required_tool_names=approval_required_tool_names,
             )
-            await self._log_event(
+            if isinstance(prepared_or_result, ToolResult):
+                await _flush_parallel()
+                await self._log_tool_result(
+                    run_id=run_id,
+                    session_id=session_id,
+                    sanitized_name=sanitized_name,
+                    result=prepared_or_result,
+                )
+                results.append(prepared_or_result)
+                await self._raise_if_cancel_requested(run_id=run_id)
+                continue
+            if prepared_or_result.parallel_execution_safe:
+                pending_parallel.append(
+                    _PreparedToolExecution(
+                        run_id=prepared_or_result.run_id,
+                        session_id=prepared_or_result.session_id,
+                        ctx=replace(prepared_or_result.ctx, progress_callback=None),
+                        execution_name=prepared_or_result.execution_name,
+                        sanitized_name=prepared_or_result.sanitized_name,
+                        guarded_call=prepared_or_result.guarded_call,
+                        parallel_execution_safe=True,
+                    )
+                )
+                continue
+
+            await _flush_parallel()
+            result = await self._execute_prepared_tool_call(prepared_or_result)
+            await self._log_tool_result(
                 run_id=run_id,
                 session_id=session_id,
-                event_type="tool.result",
-                payload=self._tool_log_payload(
-                    tool_name=sanitized_name,
-                    payload={
-                        "name": sanitized_name,
-                        "result": self._sanitize_value(result.model_dump()),
-                    },
-                ),
+                sanitized_name=sanitized_name,
+                result=result,
             )
             results.append(result)
             await self._raise_if_cancel_requested(run_id=run_id)
+        await _flush_parallel()
         return results
 
     async def execute_tool_call(self, *, tool_call: ToolCall, ctx: ToolContext) -> ToolResult:
@@ -314,13 +380,14 @@ class ToolExecutionRuntime:
         }
         return ToolResult(ok=True, payload=merged_payload)
 
-    async def _execute_single_tool_call(
+    async def _prepare_single_tool_call(
         self,
         *,
         run_id: int,
         session_id: str,
         profile_id: str,
         ctx: ToolContext,
+        sanitized_name: str,
         execution_name: str,
         execution_params: dict[str, object],
         guarded_call: ToolCall,
@@ -336,8 +403,8 @@ class ToolExecutionRuntime:
         allowed_tool_names: set[str] | None,
         approved_tool_names: set[str] | None,
         approval_required_tool_names: set[str] | None,
-    ) -> ToolResult:
-        """Execute one already-logged tool call through all runtime guards."""
+    ) -> ToolResult | _PreparedToolExecution:
+        """Run sequential guards and return one executable tool call."""
 
         if not guarded_allowed:
             return ToolResult.error(
@@ -361,10 +428,13 @@ class ToolExecutionRuntime:
                 error_code="tool_not_allowed_in_turn",
                 reason=f"Tool not available in current turn: {execution_name}",
             )
-        if execution_name == "subagent.run":
-            requested_subagent = str(execution_params.get("subagent_name") or "").strip()
-            subagent_intent_result = self._tool_invocation_gates.subagent_intent_mismatch_result(
-                requested_subagent=requested_subagent,
+        if execution_name == "subagent.run" or (
+            execution_name == "session.job.run"
+            and self._session_job_params_include_subagent(execution_params)
+        ):
+            subagent_intent_result = self._subagent_intent_mismatch_result(
+                execution_name=execution_name,
+                execution_params=execution_params,
                 explicit_skills=explicit_skills,
                 explicit_subagents=explicit_subagents,
             )
@@ -413,23 +483,106 @@ class ToolExecutionRuntime:
                 params=approval_params,
                 approved_tool_names=approved_tool_names,
             )
-            result = await self.execute_tool_call(
-                tool_call=guarded_call,
-                ctx=ctx,
-            )
-            if result.ok and execution_name == "subagent.run":
-                return await self.await_subagent_result_after_run(
-                    run_id=run_id,
-                    session_id=session_id,
-                    ctx=ctx,
-                    run_result=result,
-                )
-            return result
         except PolicyViolationError as exc:
             return ToolResult.error(
                 error_code="profile_policy_violation",
                 reason=exc.reason,
             )
+        return _PreparedToolExecution(
+            run_id=run_id,
+            session_id=session_id,
+            ctx=ctx,
+            execution_name=execution_name,
+            sanitized_name=sanitized_name,
+            guarded_call=guarded_call,
+            parallel_execution_safe=bool(
+                tool is not None and getattr(tool, "parallel_execution_safe", False)
+            ),
+        )
+
+    def _subagent_intent_mismatch_result(
+        self,
+        *,
+        execution_name: str,
+        execution_params: dict[str, object],
+        explicit_skills: set[str],
+        explicit_subagents: set[str],
+    ) -> ToolResult | None:
+        requested_names: tuple[str, ...]
+        if execution_name == "subagent.run":
+            requested_names = (str(execution_params.get("subagent_name") or "").strip(),)
+        elif execution_name == "session.job.run":
+            jobs = execution_params.get("jobs")
+            requested_names = (
+                tuple(
+                    str(item.get("subagent_name") or "").strip()
+                    for item in jobs
+                    if isinstance(item, dict)
+                    and str(item.get("kind") or "").strip() == "subagent"
+                )
+                if isinstance(jobs, list)
+                else ("",)
+            )
+        else:
+            requested_names = ("",)
+        for requested_subagent in requested_names:
+            result = self._tool_invocation_gates.subagent_intent_mismatch_result(
+                requested_subagent=requested_subagent,
+                explicit_skills=explicit_skills,
+                explicit_subagents=explicit_subagents,
+            )
+            if result is not None:
+                return result
+        return None
+
+    async def _execute_prepared_tool_call(self, prepared: _PreparedToolExecution) -> ToolResult:
+        """Execute one already-guarded tool call."""
+
+        result = await self.execute_tool_call(
+            tool_call=prepared.guarded_call,
+            ctx=prepared.ctx,
+        )
+        if result.ok and prepared.execution_name == "subagent.run":
+            return await self.await_subagent_result_after_run(
+                run_id=prepared.run_id,
+                session_id=prepared.session_id,
+                ctx=prepared.ctx,
+                run_result=result,
+            )
+        return result
+
+    @staticmethod
+    def _session_job_params_include_subagent(params: dict[str, object]) -> bool:
+        jobs = params.get("jobs")
+        if not isinstance(jobs, list):
+            return False
+        for job in jobs:
+            if isinstance(job, dict) and str(job.get("kind") or "").strip() == "subagent":
+                return True
+        return False
+
+    async def _log_tool_result(
+        self,
+        *,
+        run_id: int,
+        session_id: str,
+        sanitized_name: str,
+        result: ToolResult,
+    ) -> None:
+        """Persist one sanitized tool result event."""
+
+        await self._log_event(
+            run_id=run_id,
+            session_id=session_id,
+            event_type="tool.result",
+            payload=self._tool_log_payload(
+                tool_name=sanitized_name,
+                payload={
+                    "name": sanitized_name,
+                    "result": self._sanitize_value(result.model_dump()),
+                },
+            ),
+        )
 
     async def _execute_internal_tool_with_logging(
         self,

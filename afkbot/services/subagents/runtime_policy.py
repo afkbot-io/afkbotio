@@ -15,6 +15,7 @@ class SubagentRuntimePolicy:
     actor: Literal["subagent"] = "subagent"
     child_session_prefix: str = "subagent:"
     disabled_tool_plugins: tuple[str, ...] = (
+        "session_job_run",
         "subagent_run",
         "subagent_wait",
         "subagent_result",

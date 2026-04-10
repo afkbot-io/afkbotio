@@ -29,6 +29,7 @@ class FakeLoop:
         session_id: str,
         message: str,
         context_overrides: TurnContextOverrides | None = None,
+        **_unused: object,
     ) -> object:
         self.calls.append(
             {
@@ -55,6 +56,7 @@ class FailingOnceLoop(FakeLoop):
         session_id: str,
         message: str,
         context_overrides: TurnContextOverrides | None = None,
+        **_unused: object,
     ) -> object:
         payload = {
             "profile_id": profile_id,
@@ -84,6 +86,7 @@ class BlockingLoop(FakeLoop):
         session_id: str,
         message: str,
         context_overrides: TurnContextOverrides | None = None,
+        **_unused: object,
     ) -> object:
         self.calls.append(
             {

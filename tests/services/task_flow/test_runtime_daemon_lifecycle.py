@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from afkbot.db.session import session_scope
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
@@ -96,6 +97,28 @@ class _CompletingLoop:
             profile_id=profile_id,
             envelope=ActionEnvelope(action="finalize", message="task complete"),
         )
+
+
+class _CompletingSessionRunner:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        context_overrides: object | None = None,
+        **_unused: object,
+    ) -> TurnResult:
+        async with session_scope(self._session_factory) as session:
+            return await _CompletingLoop(session).run_turn(
+                profile_id=profile_id,
+                session_id=session_id,
+                message=message,
+                context_overrides=context_overrides,
+            )
 
 
 async def test_taskflow_runtime_daemon_polls_workers_and_stops_cleanly(tmp_path: Path) -> None:
@@ -193,7 +216,7 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
     runtime_service = TaskFlowRuntimeService(
         settings=settings,
         session_factory=factory,
-        agent_loop_factory=lambda session, _profile_id: _CompletingLoop(session),
+        session_runner_factory=lambda session, _profile_id: _CompletingSessionRunner(session),
     )
     daemon = TaskFlowRuntimeDaemon(settings=settings, service=runtime_service)
     service = TaskFlowService(factory)

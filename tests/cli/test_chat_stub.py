@@ -265,6 +265,57 @@ def test_chat_invocation_settings_keep_profile_workspace_when_scope_is_restricte
     assert resolved.tool_invocation_cwd is None
 
 
+def test_chat_invocation_settings_cap_default_interactive_llm_budgets(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive chat should fail faster than long-running automation defaults."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    resolved = module._resolve_chat_invocation_settings(
+        settings=get_settings(),
+        profile_id="default",
+        invocation_cwd=Path.cwd(),
+    )
+
+    assert resolved.llm_request_timeout_sec == 120.0
+    assert resolved.llm_execution_budget_low_sec == 120.0
+    assert resolved.llm_execution_budget_medium_sec == 180.0
+    assert resolved.llm_execution_budget_high_sec == 300.0
+    assert resolved.llm_execution_budget_very_high_sec == 600.0
+
+
+def test_chat_invocation_settings_keep_explicit_llm_budget_overrides(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Chat-specific caps should not overwrite explicit operator LLM budgets."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("AFKBOT_LLM_REQUEST_TIMEOUT_SEC", "600")
+    monkeypatch.setenv("AFKBOT_LLM_EXECUTION_BUDGET_LOW_SEC", "600")
+    monkeypatch.setenv("AFKBOT_LLM_EXECUTION_BUDGET_MEDIUM_SEC", "700")
+    monkeypatch.setenv("AFKBOT_LLM_EXECUTION_BUDGET_HIGH_SEC", "800")
+    monkeypatch.setenv("AFKBOT_LLM_EXECUTION_BUDGET_VERY_HIGH_SEC", "900")
+    get_settings.cache_clear()
+
+    resolved = module._resolve_chat_invocation_settings(
+        settings=get_settings(),
+        profile_id="default",
+        invocation_cwd=Path.cwd(),
+    )
+
+    assert resolved.llm_request_timeout_sec == 600.0
+    assert resolved.llm_execution_budget_low_sec == 600.0
+    assert resolved.llm_execution_budget_medium_sec == 700.0
+    assert resolved.llm_execution_budget_high_sec == 800.0
+    assert resolved.llm_execution_budget_very_high_sec == 900.0
+
+
 def test_chat_cli_repl_smoke_via_stdin(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """Chat REPL should process one turn from stdin and exit on slash command."""
 

@@ -11,13 +11,16 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.automation import Automation
 from afkbot.settings import Settings
-from afkbot.services.automations.webhook_tokens import hash_webhook_token
+from afkbot.services.automations.webhook_tokens import (
+    hash_webhook_token,
+    stored_webhook_token_ref,
+)
 
 
-async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
+async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
     tmp_path: Path,
 ) -> None:
-    """Legacy webhook rows without plaintext tokens should receive a usable replacement token."""
+    """Legacy webhook rows should not keep plaintext token values after schema upgrade."""
 
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_webhook_schema.db'}",
@@ -124,9 +127,9 @@ async def test_create_schema_backfills_plaintext_tokens_for_legacy_webhook_rows(
             ).one()
         token = str(row[0] or "")
         token_hash = str(row[1] or "")
-        assert token
+        assert token == stored_webhook_token_ref(token_hash)
         assert token != "legacy-token"
-        assert token_hash == hash_webhook_token(token)
+        assert token_hash == hash_webhook_token("legacy-token")
         assert row[2] is None
         assert row[3] is None
         assert row[4] is None
@@ -202,9 +205,7 @@ async def test_create_schema_adds_delivery_columns_for_legacy_automation_rows(
         async with engine.connect() as conn:
             columns = {
                 str(row[1]): str(row[4] or "")
-                for row in (
-                    await conn.execute(text("PRAGMA table_info('automation')"))
-                ).fetchall()
+                for row in (await conn.execute(text("PRAGMA table_info('automation')"))).fetchall()
             }
             row = (
                 await conn.execute(

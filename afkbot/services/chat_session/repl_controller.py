@@ -115,9 +115,7 @@ async def run_queueable_chat_session(
                             ChatTurnInteractiveOptions(interactive_confirm=True),
                         )
 
-                    current_turn_task = asyncio.create_task(
-                        run_interruptible_turn(_run_next_turn)
-                    )
+                    current_turn_task = asyncio.create_task(run_interruptible_turn(_run_next_turn))
                 elif input_task is None:
                     await refresh_catalog()
                     input_task = asyncio.create_task(read_input())
@@ -180,6 +178,8 @@ async def run_queueable_chat_session(
                         emit_notice(input_outcome.message)
                     if input_outcome.notice:
                         emit_notice(input_outcome.notice)
+                    if input_outcome.cancel_active_turn and current_turn_task is not None:
+                        current_turn_task.cancel()
                     if input_outcome.exit_repl:
                         ux.stop_progress()
                         return
@@ -193,7 +193,10 @@ async def run_queueable_chat_session(
 
             completed_turn_task = current_turn_task if current_turn_task in done else None
             if completed_turn_task is not None:
-                result = completed_turn_task.result()
+                try:
+                    result = completed_turn_task.result()
+                except asyncio.CancelledError:
+                    result = None
                 current_turn_task = None
                 repl_state.active_turn = False
                 repl_state.active_turn_started_at = None

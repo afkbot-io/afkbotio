@@ -38,3 +38,30 @@ async def test_run_with_lease_refresh_fails_fast_on_lease_loss() -> None:
     assert exc_info.value.error_code == "automation_lease_lost"
     assert run_cancelled.is_set()
     assert refresh_calls >= 1
+
+
+async def test_run_with_lease_refresh_times_out_running_task() -> None:
+    """A hard run timeout should cancel the task even while its lease is healthy."""
+
+    run_cancelled = asyncio.Event()
+
+    async def _run() -> object:
+        try:
+            await asyncio.sleep(5)
+            return {"ok": True}
+        finally:
+            run_cancelled.set()
+
+    async def _refresh() -> bool:
+        return True
+
+    with pytest.raises(AutomationsServiceError) as exc_info:
+        await run_with_lease_refresh(
+            run=_run,
+            refresh=_refresh,
+            ttl=timedelta(seconds=30),
+            timeout_sec=0.01,
+        )
+
+    assert exc_info.value.error_code == "automation_run_timeout"
+    assert run_cancelled.is_set()

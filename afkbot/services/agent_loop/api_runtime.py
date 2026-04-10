@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -29,7 +30,11 @@ from afkbot.services.agent_loop.api_runtime_support import (
 from afkbot.services.agent_loop.api_runtime_turns import (
     run_idempotent_chat_turn,
 )
-from afkbot.services.agent_loop.progress_stream import ProgressCursor, ProgressStream
+from afkbot.services.agent_loop.progress_stream import (
+    ProgressCursor,
+    ProgressEvent,
+    ProgressStream,
+)
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_runtime import run_once_result
 from afkbot.services.tools.base import ToolCall
@@ -179,6 +184,30 @@ async def run_chat_turn(
 ) -> TurnResult:
     """Execute one chat turn via the canonical runtime service."""
 
+    settings = get_settings()
+    session_factory = get_api_session_factory()
+
+    async def _execute_api_turn(
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        planned_tool_calls: list[ToolCall] | None = None,
+        progress_sink: Callable[[ProgressEvent], None] | None = None,
+        context_overrides: TurnContextOverrides | None = None,
+    ) -> TurnResult:
+        return await run_once_result(
+            message=message,
+            profile_id=profile_id,
+            session_id=session_id,
+            settings=settings,
+            session_factory=session_factory,
+            planned_tool_calls=planned_tool_calls,
+            progress_sink=progress_sink,
+            context_overrides=context_overrides,
+            source="api",
+        )
+
     normalized_client_msg_id = (client_msg_id or "").strip()
     if normalized_client_msg_id:
         return await run_idempotent_chat_turn(
@@ -188,22 +217,14 @@ async def run_chat_turn(
             client_msg_id=normalized_client_msg_id,
             planned_tool_calls=planned_tool_calls,
             context_overrides=context_overrides,
-            settings=get_settings(),
-            shared_session_factory=get_api_session_factory(),
-            execute_turn=run_once_result,
+            settings=settings,
+            shared_session_factory=session_factory,
+            execute_turn=_execute_api_turn,
             wait_for_claimed_turn_result=_wait_for_claimed_turn_result,
             heartbeat_turn_claim=_heartbeat_turn_claim,
         )
 
-    if context_overrides is None:
-        return await run_once_result(
-            message=message,
-            profile_id=profile_id,
-            session_id=session_id,
-            planned_tool_calls=planned_tool_calls,
-            progress_sink=None,
-        )
-    return await run_once_result(
+    return await _execute_api_turn(
         message=message,
         profile_id=profile_id,
         session_id=session_id,

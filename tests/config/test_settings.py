@@ -37,6 +37,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert "AGENTS.md" in settings.bootstrap_files
     assert settings.tool_timeout_default_sec == 15
     assert settings.tool_timeout_max_sec == 120
+    assert settings.agent_tool_parallel_max_concurrent == 4
     assert settings.subagent_timeout_grace_sec == 5
     assert settings.subagent_wait_default_sec == 5
     assert settings.subagent_wait_max_sec == 300
@@ -107,6 +108,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "skill_marketplace_list",
         "skill_marketplace_search",
         "skill_marketplace_install",
+        "session_job_run",
         "subagent_run",
         "subagent_wait",
         "subagent_result",
@@ -256,6 +258,8 @@ def test_settings_runtime_limits_validation() -> None:
         Settings(runtime_queue_max_size=0)
     with pytest.raises(ValueError):
         Settings(runtime_worker_count=0)
+    with pytest.raises(ValueError):
+        Settings(agent_tool_parallel_max_concurrent=0)
     with pytest.raises(ValueError):
         Settings(runtime_read_timeout_sec=0.0)
     with pytest.raises(ValueError):

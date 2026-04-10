@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import shutil
 import sys
+import time
 
 import pytest
 
@@ -27,6 +28,7 @@ from afkbot.settings import Settings
 def _registry(settings: Settings) -> ToolRegistry:
     return ToolRegistry.from_plugins(
         (
+            "session_job_run",
             "file_list",
             "file_read",
             "file_write",
@@ -179,6 +181,163 @@ async def test_file_read_applies_max_body_limit(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.payload["truncated"] is True
     assert len(str(result.payload["content"])) == 8
+
+
+async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_path: Path) -> None:
+    """session.job.run should run independent non-interactive commands concurrently."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("session.job.run")
+    assert tool is not None
+
+    python_bin = shlex.quote(sys.executable)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {
+                    "kind": "bash",
+                    "cmd": f"{python_bin} -c \"import time; time.sleep(0.25); print('first')\"",
+                },
+                {
+                    "kind": "bash",
+                    "cmd": f"{python_bin} -c \"import time; time.sleep(0.25); print('second')\"",
+                },
+            ],
+            "timeout_sec": 2,
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    started = time.monotonic()
+    result = await tool.execute(ctx, params)
+    elapsed = time.monotonic() - started
+
+    assert result.ok is True
+    assert result.payload["completed"] == 2
+    assert elapsed < 0.45
+    outputs = [
+        str(item["payload"]["stdout"]).strip()
+        for item in result.payload["results"]
+        if isinstance(item["payload"], dict)
+    ]
+    assert outputs == ["first", "second"]
+
+
+def test_session_job_run_outer_timeout_covers_nested_command_timeout(tmp_path: Path) -> None:
+    """Nested per-command timeouts should extend the outer batch wrapper."""
+
+    settings = Settings(root_dir=tmp_path, tool_timeout_default_sec=5, tool_timeout_max_sec=30)
+    registry = _registry(settings)
+    tool = registry.get("session.job.run")
+    assert tool is not None
+
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "bash", "cmd": "echo first", "timeout_sec": 20},
+                {"kind": "bash", "cmd": "echo second", "timeout_sec": 10},
+            ],
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    assert params.timeout_sec == 20
+
+
+async def test_session_job_run_suppresses_nested_progress_callback(tmp_path: Path) -> None:
+    """session.job.run should not emit concurrent nested bash.exec progress events."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    progress_events: list[dict[str, object]] = []
+
+    async def _capture_progress(payload: dict[str, object]) -> None:
+        progress_events.append({str(key): value for key, value in payload.items()})
+
+    ctx = ToolContext(
+        profile_id="default",
+        session_id="s",
+        run_id=1,
+        progress_callback=_capture_progress,
+    )
+    tool = registry.get("session.job.run")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "bash", "cmd": "printf 'one\\n'; sleep 0.2; printf 'two\\n'"},
+                {"kind": "bash", "cmd": "printf 'three\\n'; sleep 0.2; printf 'four\\n'"},
+            ],
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert progress_events == []
+
+
+async def test_session_job_run_terminates_all_process_groups_when_parent_task_is_cancelled(
+    tmp_path: Path,
+) -> None:
+    """Parent cancellation should terminate every running session.job.run child command."""
+
+    if not hasattr(os, "killpg"):
+        pytest.skip("Process groups are not supported on this platform")
+
+    pid_files = [tmp_path / "bash-batch-pgid-1.txt", tmp_path / "bash-batch-pgid-2.txt"]
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("session.job.run")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {
+                    "kind": "bash",
+                    "cmd": f"printf '%s' $$ > {shlex.quote(str(pid_files[0]))}; sleep 30",
+                },
+                {
+                    "kind": "bash",
+                    "cmd": f"printf '%s' $$ > {shlex.quote(str(pid_files[1]))}; sleep 30",
+                },
+            ],
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    task = asyncio.create_task(tool.execute(ctx, params))
+    pgids: list[int] = []
+    for pid_file in pid_files:
+        for _ in range(100):
+            if pid_file.exists():
+                raw_pgid = pid_file.read_text(encoding="utf-8").strip()
+                if raw_pgid:
+                    pgids.append(int(raw_pgid))
+                    break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail(f"session.job.run did not write pgid file: {pid_file}")
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for pgid in pgids:
+        for _ in range(100):
+            try:
+                os.killpg(pgid, 0)
+            except ProcessLookupError:
+                break
+            await asyncio.sleep(0.01)
+        else:  # pragma: no cover - deterministic assertion branch
+            pytest.fail(f"session.job.run left process group running: {pgid}")
 
 
 async def test_file_read_streams_without_read_bytes(tmp_path: Path, monkeypatch) -> None:
@@ -382,7 +541,9 @@ async def test_bash_exec_clamps_timeout_above_runtime_max(tmp_path: Path) -> Non
     assert result.payload["stdout"] == "ok"
 
 
-async def test_bash_exec_streams_output_without_process_communicate(tmp_path: Path, monkeypatch) -> None:
+async def test_bash_exec_streams_output_without_process_communicate(
+    tmp_path: Path, monkeypatch
+) -> None:
     """bash.exec should stream output and avoid Process.communicate buffering."""
 
     settings = Settings(root_dir=tmp_path, runtime_max_body_bytes=64)
@@ -420,12 +581,7 @@ async def test_bash_exec_keeps_truncated_session_output_in_result(tmp_path: Path
     ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
     tool = registry.get("bash.exec")
     assert tool is not None
-    script = (
-        "import sys, time; "
-        "sys.stdout.write('ABCDEFGH'); "
-        "sys.stdout.flush(); "
-        "time.sleep(0.5)"
-    )
+    script = "import sys, time; sys.stdout.write('ABCDEFGH'); sys.stdout.flush(); time.sleep(0.5)"
 
     # Act
     result = await tool.execute(
@@ -583,13 +739,7 @@ async def test_bash_exec_dedupes_identical_live_preview_snapshots(tmp_path: Path
     params = tool.parse_params(
         {
             "profile_key": "default",
-            "cmd": (
-                "printf 'one\\n'; "
-                "sleep 0.2; "
-                "printf 'two\\n'; "
-                "sleep 0.2; "
-                "printf 'three\\n'"
-            ),
+            "cmd": ("printf 'one\\n'; sleep 0.2; printf 'two\\n'; sleep 0.2; printf 'three\\n'"),
             "cwd": ".",
         },
         default_timeout_sec=settings.tool_timeout_default_sec,
@@ -598,7 +748,10 @@ async def test_bash_exec_dedupes_identical_live_preview_snapshots(tmp_path: Path
 
     # Act
     result = await tool.execute(ctx, params)
-    snapshots = [tuple(str(line) for line in list(event.get("preview_lines") or [])) for event in progress_events]
+    snapshots = [
+        tuple(str(line) for line in list(event.get("preview_lines") or []))
+        for event in progress_events
+    ]
 
     # Assert
     assert result.ok is True
@@ -727,10 +880,7 @@ async def test_bash_exec_empty_poll_collects_later_output(tmp_path: Path) -> Non
     tool = registry.get("bash.exec")
     assert tool is not None
     script = (
-        "import sys, time; "
-        "print('first', flush=True); "
-        "time.sleep(0.3); "
-        "print('second', flush=True)"
+        "import sys, time; print('first', flush=True); time.sleep(0.3); print('second', flush=True)"
     )
     start_result = await tool.execute(
         ctx,
@@ -864,6 +1014,44 @@ async def test_bash_exec_applies_env_overrides(tmp_path: Path) -> None:
     assert result.payload["env_keys"] == ["AFKBOT_TEST_VALUE"]
 
 
+async def test_bash_exec_does_not_inherit_host_secret_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bash.exec should not expose AFKBOT/OpenAI/GitHub secrets from daemon env."""
+
+    monkeypatch.setenv("OPENAI_API_KEY", "host-openai-secret")
+    monkeypatch.setenv("AFKBOT_LLM_API_KEY", "host-afk-secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "host-github-secret")
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    script = (
+        "import json, os; "
+        "keys = ('OPENAI_API_KEY', 'AFKBOT_LLM_API_KEY', 'GITHUB_TOKEN'); "
+        "print(json.dumps({key: os.environ[key] for key in keys if key in os.environ}, sort_keys=True))"
+    )
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["stdout"].strip() == "{}"
+    assert "host-openai-secret" not in result.payload["stdout"]
+    assert "host-afk-secret" not in result.payload["stdout"]
+    assert "host-github-secret" not in result.payload["stdout"]
+    assert result.payload["env_keys"] == []
+
+
 async def test_bash_exec_rejects_protected_env_overrides(tmp_path: Path) -> None:
     """bash.exec should reject env overrides for protected loader and linker variables."""
 
@@ -892,6 +1080,34 @@ async def test_bash_exec_rejects_protected_env_overrides(tmp_path: Path) -> None
     assert result.ok is False
     assert result.error_code == "bash_exec_invalid"
     assert "PATH" in str(result.reason)
+
+
+async def test_bash_exec_rejects_literal_secret_env_overrides(tmp_path: Path) -> None:
+    """Secret-like env override names should use credential placeholders, not literals."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("bash.exec")
+    assert tool is not None
+
+    result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "cmd": "printf 'blocked'",
+                "env": {"OPENAI_API_KEY": "literal-secret"},
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_invalid"
+    assert "OPENAI_API_KEY" in str(result.reason)
+    assert "credential placeholder" in str(result.reason)
 
 
 async def test_bash_exec_respects_requested_shell_and_login_flag(tmp_path: Path) -> None:
@@ -1171,7 +1387,9 @@ async def test_custom_scope_keeps_profile_workspace_and_extra_roots(tmp_path: Pa
     )
     bash_result = await bash_tool.execute(ctx, bash_params)
     assert bash_result.ok is True
-    assert str(bash_result.payload["stdout"]).strip() == str((tmp_path / "profiles/default").resolve())
+    assert str(bash_result.payload["stdout"]).strip() == str(
+        (tmp_path / "profiles/default").resolve()
+    )
     assert bash_result.payload["cwd"] == "."
 
 
@@ -1322,7 +1540,9 @@ async def test_file_list_stops_iteration_after_max_entries(tmp_path: Path, monke
     assert str(result.payload["entries"][0]["path"]).endswith("a.txt")
 
 
-async def test_file_tools_reject_absolute_paths_outside_hard_workspace_override(tmp_path: Path) -> None:
+async def test_file_tools_reject_absolute_paths_outside_hard_workspace_override(
+    tmp_path: Path,
+) -> None:
     """Explicit hard workspace override should reject absolute paths outside that scope."""
 
     workspace = tmp_path / "workspace"

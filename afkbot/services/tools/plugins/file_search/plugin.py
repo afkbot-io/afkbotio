@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import Field
@@ -37,6 +38,7 @@ class FileSearchTool(ToolBase):
     description = "Search text in files and return matching lines."
     parameters_model = FileSearchParams
     required_skill = "file-ops"
+    parallel_execution_safe = True
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -48,7 +50,9 @@ class FileSearchTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -64,7 +68,8 @@ class FileSearchTool(ToolBase):
             FileSearchTool._validate_glob_pattern(payload.glob)
 
             max_bytes = min(payload.max_bytes_per_file, self._settings.runtime_max_body_bytes)
-            matches = self._search(
+            matches = await asyncio.to_thread(
+                self._search,
                 base_dir=base_dir,
                 base=base,
                 query=payload.query,
@@ -77,7 +82,9 @@ class FileSearchTool(ToolBase):
         except ValueError as exc:
             return ToolResult.error(error_code="file_search_invalid", reason=str(exc))
         except OSError as exc:
-            return ToolResult.error(error_code="file_search_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="file_search_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
     @staticmethod
     def _search(

@@ -18,7 +18,6 @@ from afkbot.services.agent_loop.security_guard import SecurityGuard
 from afkbot.services.agent_loop.sessions import SessionService
 from afkbot.services.agent_loop.state_machine import StateMachine
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
-from afkbot.services.agent_loop.tracked_turns import TurnTracker
 from afkbot.services.agent_loop.turn_execution_context import resolve_turn_execution_context
 from afkbot.services.agent_loop.turn_finalizer import TurnFinalizer
 from afkbot.services.agent_loop.turn_planning_artifacts import (
@@ -45,7 +44,6 @@ class TurnExecutionRuntime:
         sessions: SessionService,
         security_guard: SecurityGuard,
         turn_preparation: TurnPreparationRuntime,
-        turn_tracker: TurnTracker,
         run_repo: RunRepository,
         runlog: RunlogRuntime,
         tool_execution: ToolExecutionRuntime,
@@ -70,7 +68,6 @@ class TurnExecutionRuntime:
         self._sessions = sessions
         self._security_guard = security_guard
         self._turn_preparation = turn_preparation
-        self._turn_tracker = turn_tracker
         self._run_repo = run_repo
         self._runlog = runlog
         self._tool_execution = tool_execution
@@ -103,7 +100,6 @@ class TurnExecutionRuntime:
 
         machine = StateMachine()
         run_id: int | None = None
-        profile_key: str | None = None
         session_key: str | None = None
         final_spec_patch: dict[str, object] | None = None
         raw_user_message = message.strip()
@@ -118,7 +114,6 @@ class TurnExecutionRuntime:
                 session_id=session_id,
                 profile_id=profile_id,
             )
-            profile_key = profile_id
 
             run = await self._run_repo.create_run(
                 session_id=session_key,
@@ -126,11 +121,6 @@ class TurnExecutionRuntime:
                 status="running",
             )
             run_id = run.id
-            await self._turn_tracker.set_run_id(
-                profile_id=profile_id,
-                session_id=session_key,
-                run_id=run_id,
-            )
             await self._runlog.raise_if_cancel_requested(run_id=run_id)
             resolved_context = resolve_turn_execution_context(
                 policy=policy,
@@ -403,13 +393,6 @@ class TurnExecutionRuntime:
                     machine=machine,
                 )
             raise
-        finally:
-            if profile_key is not None and session_key is not None:
-                await self._turn_tracker.cleanup_by_task(
-                    profile_id=profile_key,
-                    session_id=session_key,
-                    task=asyncio.current_task(),
-                )
 
     async def _resolve_assistant_message(
         self,

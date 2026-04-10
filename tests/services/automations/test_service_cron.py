@@ -13,7 +13,12 @@ from afkbot.models.automation_trigger_cron import AutomationTriggerCron
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations import AutomationsService
 from afkbot.settings import Settings
-from tests.services.automations._harness import FailingOnceLoop, FakeLoop, prepare_service
+from tests.services.automations._harness import (
+    BlockingLoop,
+    FailingOnceLoop,
+    FakeLoop,
+    prepare_service,
+)
 
 
 async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None:
@@ -47,14 +52,13 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
             _ = session, profile_id
             return fake_loop
 
-        tick_result = await service.tick_cron(now_utc=now, agent_loop_factory=factory_fn)
+        tick_result = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
         assert set(tick_result.triggered_ids) == {due_star.id, due_fallback.id}
         assert tick_result.failed_ids == []
 
         call_sessions = {call["session_id"] for call in fake_loop.calls}
         assert any(
-            session_id.startswith(f"automation-cron-{due_star.id}-")
-            for session_id in call_sessions
+            session_id.startswith(f"automation-cron-{due_star.id}-") for session_id in call_sessions
         )
         assert any(
             session_id.startswith(f"automation-cron-{due_fallback.id}-")
@@ -91,13 +95,12 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
             expected_now = now.replace(tzinfo=None)
             assert star.last_run_at == expected_now
             assert fallback.last_run_at == expected_now
-            expected_star_next = (
-                now.astimezone(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1)
-            )
-            expected_fallback_next = (
-                now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-                + timedelta(hours=1)
-            )
+            expected_star_next = now.astimezone(timezone.utc).replace(
+                second=0, microsecond=0
+            ) + timedelta(minutes=1)
+            expected_fallback_next = now.astimezone(timezone.utc).replace(
+                minute=0, second=0, microsecond=0
+            ) + timedelta(hours=1)
             assert star.next_run_at == expected_star_next.replace(tzinfo=None)
             assert fallback.next_run_at == expected_fallback_next.replace(tzinfo=None)
     finally:
@@ -129,8 +132,8 @@ async def test_cron_concurrency_claims_once_across_service_instances(tmp_path: P
             return fake_loop
 
         tick_a, tick_b = await asyncio.gather(
-            service_a.tick_cron(now_utc=now, agent_loop_factory=factory_fn),
-            service_b.tick_cron(now_utc=now, agent_loop_factory=factory_fn),
+            service_a.tick_cron(now_utc=now, session_runner_factory=factory_fn),
+            service_b.tick_cron(now_utc=now, session_runner_factory=factory_fn),
         )
         all_triggered = tick_a.triggered_ids + tick_b.triggered_ids
         assert all_triggered.count(due.id) == 1
@@ -170,13 +173,58 @@ async def test_cron_failed_execution_is_retryable(tmp_path: Path) -> None:
             _ = session, profile_id
             return flaky_loop
 
-        first = await service.tick_cron(now_utc=now, agent_loop_factory=factory_fn)
+        first = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
         assert first.triggered_ids == []
         assert first.failed_ids == [due.id]
 
-        second = await service.tick_cron(now_utc=now, agent_loop_factory=factory_fn)
+        second = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
         assert second.triggered_ids == [due.id]
         assert second.failed_ids == []
         assert len(flaky_loop.calls) == 2
+    finally:
+        await engine.dispose()
+
+
+async def test_cron_timed_out_execution_is_retryable(tmp_path: Path) -> None:
+    """Cron task should be claim-released on timeout and retried on next tick."""
+
+    engine, factory, _ = await prepare_service(tmp_path)
+    service = AutomationsService(
+        factory,
+        settings=Settings(root_dir=tmp_path, automation_run_timeout_sec=0.01),
+    )
+    try:
+        now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            due, _ = await repo.create_cron_automation(
+                profile_id="default",
+                name="timeout-cron",
+                prompt="timeout me",
+                cron_expr="* * * * *",
+                timezone="UTC",
+                next_run_at=now - timedelta(seconds=1),
+            )
+
+        blocking_loop = BlockingLoop()
+
+        def blocking_factory(session: AsyncSession, profile_id: str) -> BlockingLoop:
+            _ = session, profile_id
+            return blocking_loop
+
+        first = await service.tick_cron(now_utc=now, session_runner_factory=blocking_factory)
+        assert first.triggered_ids == []
+        assert first.failed_ids == [due.id]
+
+        followup_loop = FakeLoop()
+
+        def followup_factory(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return followup_loop
+
+        second = await service.tick_cron(now_utc=now, session_runner_factory=followup_factory)
+        assert second.triggered_ids == [due.id]
+        assert second.failed_ids == []
+        assert len(followup_loop.calls) == 1
     finally:
         await engine.dispose()

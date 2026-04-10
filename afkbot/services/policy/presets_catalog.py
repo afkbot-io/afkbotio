@@ -39,7 +39,7 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
         id=PolicyCapabilityId.SHELL,
         label="Shell execution",
         description="Execute shell commands under policy restrictions.",
-        tool_names=("bash.exec",),
+        tool_names=("bash.exec", "session.job.run"),
     ),
     PolicyCapabilityId.MEMORY: PolicyCapabilitySpec(
         id=PolicyCapabilityId.MEMORY,
@@ -56,7 +56,8 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
     PolicyCapabilityId.SUBAGENTS: PolicyCapabilitySpec(
         id=PolicyCapabilityId.SUBAGENTS,
         label="Subagents",
-        description="Run/wait/result for subagent tasks.",
+        description="Run subagent jobs and manage subagent definitions.",
+        tool_names=("session.job.run",),
         tool_prefixes=("subagent.",),
     ),
     PolicyCapabilityId.AUTOMATION: PolicyCapabilitySpec(
@@ -131,7 +132,9 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
 PRESETS: dict[PolicyPresetLevel, PolicyPresetSpec] = {
     PolicyPresetLevel.SIMPLE: PolicyPresetSpec(
         level=PolicyPresetLevel.SIMPLE,
-        default_capabilities=tuple(item for item in CAPABILITY_ORDER if item != PolicyCapabilityId.DEBUG),
+        default_capabilities=tuple(
+            item for item in CAPABILITY_ORDER if item != PolicyCapabilityId.DEBUG
+        ),
         max_iterations_main=DEFAULT_LLM_MAX_ITERATIONS,
         max_iterations_subagent=DEFAULT_LLM_MAX_ITERATIONS,
     ),

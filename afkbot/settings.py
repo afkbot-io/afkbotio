@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     bootstrap_files: tuple[str, ...] = ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md")
     tool_timeout_default_sec: int = 15
     tool_timeout_max_sec: int = 120
+    agent_tool_parallel_max_concurrent: int = 4
     subagent_timeout_default_sec: int = 900
     subagent_timeout_max_sec: int = 900
     subagent_timeout_grace_sec: int = 5
@@ -157,6 +158,7 @@ class Settings(BaseSettings):
         "skill_marketplace_list",
         "skill_marketplace_search",
         "skill_marketplace_install",
+        "session_job_run",
         "subagent_run",
         "subagent_wait",
         "subagent_result",
@@ -229,6 +231,7 @@ class Settings(BaseSettings):
     runtime_cron_max_due_per_tick: int = 32
     runtime_shutdown_timeout_sec: float = 10.0
     runtime_read_timeout_sec: float = 5.0
+    automation_run_timeout_sec: float = 1800.0
     runtime_max_header_bytes: int = 16384
     runtime_max_body_bytes: int = 262144
     taskflow_runtime_poll_interval_sec: float = 5.0
@@ -266,7 +269,9 @@ class Settings(BaseSettings):
     memory_max_items_per_profile: int = 5000
     memory_gc_batch_size: int = 500
     memory_auto_search_enabled: bool = False
-    memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
+    memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = (
+        "auto"
+    )
     memory_auto_search_limit: int = 3
     memory_auto_search_include_global: bool = True
     memory_auto_search_chat_limit: int = 3
@@ -274,7 +279,9 @@ class Settings(BaseSettings):
     memory_global_fallback_enabled: bool = True
     memory_auto_context_item_chars: int = 240
     memory_auto_save_enabled: bool = False
-    memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
+    memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = (
+        "auto"
+    )
     memory_auto_promote_enabled: bool = False
     memory_auto_save_kinds: tuple[str, ...] = (
         "fact",
@@ -342,7 +349,9 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("minimax_portal_token_expires_at", "minimax_portal_resource_url", mode="before")
+    @field_validator(
+        "minimax_portal_token_expires_at", "minimax_portal_resource_url", mode="before"
+    )
     @classmethod
     def _normalize_optional_secret_metadata_text(cls, value: str | None) -> str | None:
         """Normalize optional profile-local secret metadata text values."""
@@ -423,6 +432,7 @@ class Settings(BaseSettings):
         "connect_revoke_rate_limit_max_attempts",
         "connect_claim_pin_max_attempts",
         "runtime_worker_count",
+        "agent_tool_parallel_max_concurrent",
         "runtime_cron_max_due_per_tick",
         "runtime_max_header_bytes",
         "runtime_max_body_bytes",
@@ -496,19 +506,11 @@ class Settings(BaseSettings):
         if value is None:
             return ("cli", "api", "automation")
         if isinstance(value, str):
-            return tuple(
-                item.strip().lower()
-                for item in value.split(",")
-                if item.strip()
-            )
+            return tuple(item.strip().lower() for item in value.split(",") if item.strip())
         if isinstance(value, Mapping):
             return value
         if isinstance(value, (list, tuple, set, frozenset)):
-            return tuple(
-                str(item).strip().lower()
-                for item in value
-                if str(item).strip()
-            )
+            return tuple(str(item).strip().lower() for item in value if str(item).strip())
         return value
 
     @model_validator(mode="before")
@@ -531,13 +533,18 @@ class Settings(BaseSettings):
         # Preserve source-checkout semantics for tests and local development:
         # when callers relocate the runtime root inside a checkout, bundled
         # assets are still expected under that same tree.
-        if root_is_configured and not app_is_configured and _looks_like_source_checkout(_package_root()):
+        if (
+            root_is_configured
+            and not app_is_configured
+            and _looks_like_source_checkout(_package_root())
+        ):
             data["app_dir"] = root_dir
         return data
 
     @field_validator(
         "runtime_cron_interval_sec",
         "runtime_read_timeout_sec",
+        "automation_run_timeout_sec",
         "taskflow_runtime_poll_interval_sec",
         "llm_request_timeout_sec",
     )
@@ -555,7 +562,9 @@ class Settings(BaseSettings):
         """Validate configured LLM timeout upper bound."""
 
         if value > MAX_LLM_REQUEST_TIMEOUT_SEC:
-            raise ValueError(f"llm_request_timeout_sec must be <= {int(MAX_LLM_REQUEST_TIMEOUT_SEC)}")
+            raise ValueError(
+                f"llm_request_timeout_sec must be <= {int(MAX_LLM_REQUEST_TIMEOUT_SEC)}"
+            )
         return value
 
     @field_validator("runtime_shutdown_timeout_sec")
@@ -574,7 +583,7 @@ class Settings(BaseSettings):
         for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
             if not self.db_url.startswith(prefix):
                 continue
-            relative_path = self.db_url[len(prefix):]
+            relative_path = self.db_url[len(prefix) :]
             if relative_path == ":memory:" or relative_path.startswith("/"):
                 return self
             resolved = (self.root_dir / relative_path).resolve(strict=False)

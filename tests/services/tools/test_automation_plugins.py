@@ -96,7 +96,9 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         webhook_id = int(webhook_automation["id"])
         issued_token = webhook_automation["webhook"]["webhook_token"]
         assert isinstance(issued_token, str)
-        assert webhook_automation["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
+        assert webhook_automation["webhook"]["webhook_path"] == build_webhook_path(
+            "default", issued_token
+        )
         assert webhook_automation["webhook"]["webhook_url"] == build_webhook_url(
             _runtime_base_url(settings),
             "default",
@@ -124,13 +126,10 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(listed, list)
         assert len(listed) == 2
         webhook_list_item = next(item for item in listed if int(item["id"]) == webhook_id)
-        assert webhook_list_item["webhook"]["webhook_token"] == issued_token
-        assert webhook_list_item["webhook"]["webhook_path"] == build_webhook_path("default", issued_token)
-        assert webhook_list_item["webhook"]["webhook_url"] == build_webhook_url(
-            _runtime_base_url(settings),
-            "default",
-            issued_token,
-        )
+        assert webhook_list_item["webhook"]["webhook_token"] is None
+        assert webhook_list_item["webhook"]["webhook_path"] is None
+        assert webhook_list_item["webhook"]["webhook_url"] is None
+        assert webhook_list_item["webhook"]["webhook_token_masked"] == "[HIDDEN]"
         assert webhook_list_item["webhook"]["last_execution_status"] == "idle"
 
         update_tool = registry.get("automation.update")
@@ -192,13 +191,10 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert webhook_get_result.ok is True
         webhook_get = webhook_get_result.payload["automation"]
         assert isinstance(webhook_get, dict)
-        assert webhook_get["webhook"]["webhook_token"] == rotated_token
-        assert webhook_get["webhook"]["webhook_path"] == build_webhook_path("default", rotated_token)
-        assert webhook_get["webhook"]["webhook_url"] == build_webhook_url(
-            _runtime_base_url(settings),
-            "default",
-            rotated_token,
-        )
+        assert webhook_get["webhook"]["webhook_token"] is None
+        assert webhook_get["webhook"]["webhook_path"] is None
+        assert webhook_get["webhook"]["webhook_url"] is None
+        assert webhook_get["webhook"]["webhook_token_masked"] == "[HIDDEN]"
         assert webhook_get["webhook"]["last_execution_status"] == "idle"
 
         get_params = get_tool.parse_params(
@@ -212,8 +208,8 @@ async def test_automation_plugins_crud(tmp_path: Path, monkeypatch: MonkeyPatch)
         assert isinstance(get_automation, dict)
         assert isinstance(get_automation["webhook"], (dict, type(None)))
         if get_automation["webhook"] is not None:
-            assert get_automation["webhook"]["webhook_token"] is not None
-            assert get_automation["webhook"]["webhook_path"] is not None
+            assert get_automation["webhook"]["webhook_token"] is None
+            assert get_automation["webhook"]["webhook_path"] is None
 
         delete_tool = registry.get("automation.delete")
         assert delete_tool is not None

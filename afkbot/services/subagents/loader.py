@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import asyncio
 from pathlib import Path
 from typing import Literal
 
@@ -26,9 +27,13 @@ class SubagentLoader:
         """List merged core + profile subagents with profile override precedence."""
 
         merged: dict[str, SubagentInfo] = {}
-        for item in self._discover_core_subagents():
+        core_items, profile_items = await asyncio.gather(
+            asyncio.to_thread(self._discover_core_subagents),
+            asyncio.to_thread(self._discover_profile_subagents, profile_id),
+        )
+        for item in core_items:
             merged[item.name] = item
-        for item in self._discover_profile_subagents(profile_id):
+        for item in profile_items:
             merged[item.name] = item
         return sorted(merged.values(), key=lambda item: item.name)
 
@@ -39,11 +44,11 @@ class SubagentLoader:
         self._validate_subagent_name(resolved_name)
 
         profile_path = self._safe_profile_subagent_path(profile_id, resolved_name)
-        if profile_path.exists():
+        if await asyncio.to_thread(profile_path.exists):
             return SubagentInfo(name=resolved_name, path=profile_path, origin="profile")
 
         core_path = self._safe_core_subagent_path(resolved_name)
-        if core_path.exists():
+        if await asyncio.to_thread(core_path.exists):
             return SubagentInfo(name=resolved_name, path=core_path, origin="core")
 
         raise FileNotFoundError(f"Subagent not found: {resolved_name}")
@@ -63,7 +68,7 @@ class SubagentLoader:
         """Load markdown content for a resolved subagent descriptor."""
 
         info = await self.resolve_subagent(name=name, profile_id=profile_id)
-        return info.path.read_text(encoding="utf-8")
+        return await asyncio.to_thread(info.path.read_text, encoding="utf-8")
 
     def _discover_core_subagents(self) -> list[SubagentInfo]:
         root = self._settings.subagents_dir

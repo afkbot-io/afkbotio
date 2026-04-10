@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import secrets
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -22,30 +22,16 @@ from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
 from afkbot.services.task_flow.message_factory import compose_task_message, task_session_id
 from afkbot.services.task_flow.runtime_target import build_task_flow_runtime_target
+from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from afkbot.services.agent_loop.action_contracts import TurnResult
-    from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-    from afkbot.services.agent_loop.loop import AgentLoop
 
 _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
 _LEASE_EXPIRED_ERROR_CODE = "task_lease_expired"
 _LEASE_EXPIRED_ERROR_TEXT = "Task claim lease expired before execution completed."
-
-
-class AgentLoopLike(Protocol):
-    """Minimal AgentLoop contract used by Task Flow runtime execution."""
-
-    async def run_turn(
-        self,
-        *,
-        profile_id: str,
-        session_id: str,
-        message: str,
-        context_overrides: TurnContextOverrides | None = None,
-    ) -> TurnResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,14 +79,18 @@ class TaskFlowRuntimeService:
         settings: Settings | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         engine: AsyncEngine | None = None,
-        agent_loop_factory: Callable[[AsyncSession, str], AgentLoopLike] | None = None,
+        session_runner_factory: Callable[
+            [async_sessionmaker[AsyncSession], str],
+            SessionTurnRunner,
+        ]
+        | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._session_factory = session_factory
         self._engine = engine
         self._managed_engine: AsyncEngine | None = None
         self._start_lock = asyncio.Lock()
-        self._agent_loop_factory = agent_loop_factory or _default_agent_loop_factory(
+        self._session_runner_factory = session_runner_factory or _default_session_runner_factory(
             self._settings
         )
 
@@ -299,15 +289,15 @@ class TaskFlowRuntimeService:
 
         async def _run() -> TurnResult:
             session_factory = self._require_session_factory()
-            async with session_scope(session_factory) as session:
-                loop = self._agent_loop_factory(session, claimed.execution_profile_id)
-                result = await loop.run_turn(
-                    profile_id=runtime_target.profile_id,
-                    session_id=runtime_target.session_id,
-                    message=message,
-                    context_overrides=runtime_target.context_overrides,
-                )
-                return result
+            runner = self._session_runner_factory(session_factory, claimed.execution_profile_id)
+            result = await runner.run_turn(
+                profile_id=runtime_target.profile_id,
+                session_id=runtime_target.session_id,
+                message=message,
+                context_overrides=runtime_target.context_overrides,
+                source="taskflow",
+            )
+            return result
 
         async def _refresh() -> bool:
             return await self._refresh_claim(claimed=claimed)
@@ -685,29 +675,26 @@ class TaskFlowRuntimeService:
         return self._session_factory
 
 
-def build_taskflow_runtime_agent_loop(
-    session: AsyncSession,
+def build_taskflow_runtime_session_runner(
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     profile_id: str,
     settings: Settings | None = None,
-) -> "AgentLoop":
-    """Build AgentLoop instance used by Task Flow detached runtime execution."""
-
-    from afkbot.services.agent_loop.runtime_factory import build_profile_agent_loop
+) -> SessionTurnRunner:
+    """Build the session runner used by Task Flow detached runtime execution."""
 
     effective_settings = settings or get_settings()
-    return build_profile_agent_loop(
-        session,
+    return SessionOrchestrator(
         settings=effective_settings,
-        profile_id=profile_id,
+        session_factory=session_factory,
     )
 
 
-def _default_agent_loop_factory(
+def _default_session_runner_factory(
     settings: Settings,
-) -> Callable[[AsyncSession, str], AgentLoopLike]:
-    return lambda session, profile_id: build_taskflow_runtime_agent_loop(
-        session,
+) -> Callable[[async_sessionmaker[AsyncSession], str], SessionTurnRunner]:
+    return lambda session_factory, profile_id: build_taskflow_runtime_session_runner(
+        session_factory,
         profile_id=profile_id,
         settings=settings,
     )

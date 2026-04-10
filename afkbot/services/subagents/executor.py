@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from afkbot.services.subagents.loader import SubagentLoader
 from afkbot.services.subagents.runner import (
     SubagentExecutionError,
-    SubagentExecutionResult,
     SubagentRunner,
 )
 from afkbot.services.subagents.state_transitions import SubagentStateTransitions
@@ -59,21 +56,18 @@ class SubagentExecutor:
             return False
 
         try:
-            async def _run_with_session(session: AsyncSession) -> SubagentExecutionResult:
-                return await asyncio.wait_for(
-                    self._runner.execute(
-                        session=session,
-                        task_id=task_id,
-                        profile_id=state.profile_id,
-                        parent_session_id=state.session_id,
-                        subagent_name=state.subagent_name,
-                        subagent_markdown=markdown,
-                        prompt=state.prompt,
-                    ),
-                    timeout=float(state.timeout_sec),
-                )
-
-            execution = await self._task_store.with_session(_run_with_session)
+            execution = await asyncio.wait_for(
+                self._runner.execute(
+                    session_factory=self._task_store.session_factory,
+                    task_id=task_id,
+                    profile_id=state.profile_id,
+                    parent_session_id=state.session_id,
+                    subagent_name=state.subagent_name,
+                    subagent_markdown=markdown,
+                    prompt=state.prompt,
+                ),
+                timeout=float(state.timeout_sec),
+            )
             await self._transitions.complete(
                 task_id=task_id,
                 child_session_id=execution.child_session_id,

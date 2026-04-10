@@ -8,6 +8,7 @@ from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 
 _EXIT_NOTICE = "Exit requested after current turn. Pending queue cleared."
+_CANCEL_NOTICE = "Cancelling current turn. Pending queue cleared."
 
 
 def consume_chat_repl_input(
@@ -19,6 +20,18 @@ def consume_chat_repl_input(
     queue_messages: bool = True,
 ) -> ChatReplInputOutcome:
     """Apply one input line to local controls, exit flow, or the queued turn FIFO."""
+
+    normalized = raw_message.strip().lower()
+    if normalized in {"//cancel", "/cancel"}:
+        turn_queue.clear()
+        repl_state.queued_messages = 0
+        if turn_active:
+            return ChatReplInputOutcome(
+                consumed=True,
+                notice=_CANCEL_NOTICE,
+                cancel_active_turn=True,
+            )
+        return ChatReplInputOutcome(consumed=True, message="No active turn to cancel.")
 
     local_command = handle_chat_repl_local_command(raw_message, state=repl_state)
     if local_command.consumed:
@@ -39,7 +52,6 @@ def consume_chat_repl_input(
             )
         return ChatReplInputOutcome(consumed=True, message=local_command.message)
 
-    normalized = raw_message.strip().lower()
     if normalized in {"exit", "quit"}:
         turn_queue.request_exit()
         repl_state.queued_messages = 0
@@ -55,14 +67,20 @@ def consume_chat_repl_input(
     if not queue_messages:
         return ChatReplInputOutcome(consumed=False)
 
+    if turn_queue.full:
+        repl_state.queued_messages = turn_queue.size
+        return ChatReplInputOutcome(
+            consumed=True,
+            notice=(
+                f"Message not queued. Pending queue is full ({turn_queue.size}). "
+                "Wait for the current turn or use //cancel."
+            ),
+        )
+
     pending_count = turn_queue.enqueue(raw_message)
     repl_state.queued_messages = pending_count
     return ChatReplInputOutcome(
         consumed=True,
         queued_message=raw_message,
-        notice=(
-            f"Queued next message. Pending queue: {pending_count}"
-            if turn_active
-            else None
-        ),
+        notice=(f"Queued next message. Pending queue: {pending_count}" if turn_active else None),
     )

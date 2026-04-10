@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from afkbot.db.session import session_scope
 from afkbot.models.automation import Automation
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
 from afkbot.services.automations.errors import AutomationsServiceError
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
-from afkbot.services.automations.loop_factory import AgentLoopLike, build_automation_agent_loop
 from afkbot.services.automations.message_factory import (
     compose_webhook_message,
     webhook_session_id,
@@ -23,6 +21,11 @@ from afkbot.services.automations.message_factory import (
 from afkbot.services.automations.payloads import resolve_webhook_event_hash, sanitize_payload
 from afkbot.services.automations.runtime_contracts import WithAutomationRepo
 from afkbot.services.automations.runtime_target import build_automation_runtime_target
+from afkbot.services.automations.session_runner_factory import (
+    AutomationSessionRunnerFactory,
+    build_automation_session_runner,
+)
+from afkbot.settings import Settings
 
 WEBHOOK_CLAIM_TTL = timedelta(minutes=15)
 
@@ -34,7 +37,9 @@ async def trigger_webhook_automation(
     profile_id: str,
     token: str,
     payload: Mapping[str, object],
-    agent_loop_factory: Callable[..., AgentLoopLike],
+    settings: Settings,
+    session_runner_factory: AutomationSessionRunnerFactory | None,
+    run_timeout_sec: float | None = None,
 ) -> AutomationWebhookTriggerResult:
     """Trigger one webhook automation and run its prompt through AgentLoop."""
 
@@ -81,99 +86,101 @@ async def trigger_webhook_automation(
             deduplicated=True,
         )
 
-    async with session_scope(session_factory) as session:
-        loop = build_automation_agent_loop(
-            agent_loop_factory=agent_loop_factory,
-            session=session,
-            profile_id=automation.profile_id,
-        )
-        message = compose_webhook_message(
-            automation.prompt,
-            sanitized_payload,
-        )
-        runtime_target = build_automation_runtime_target(
-            profile_id=automation.profile_id,
-            session_id=session_id,
+    runner = build_automation_session_runner(
+        session_factory=session_factory,
+        profile_id=automation.profile_id,
+        settings=settings,
+        runner_factory=session_runner_factory,
+    )
+    message = compose_webhook_message(
+        automation.prompt,
+        sanitized_payload,
+    )
+    runtime_target = build_automation_runtime_target(
+        profile_id=automation.profile_id,
+        session_id=session_id,
+        automation_id=automation.id,
+        trigger_type="webhook",
+        event_hash=event_hash,
+        payload=sanitized_payload,
+    )
+
+    async def _refresh_webhook_lease() -> bool:
+        async def _refresh(repo: AutomationRepository) -> bool:
+            return await repo.refresh_webhook_claim(
+                automation_id=automation.id,
+                event_hash=event_hash,
+                claim_token=claim_token,
+                lease_until=datetime.now(timezone.utc) + WEBHOOK_CLAIM_TTL,
+            )
+
+        return await with_repo(_refresh)
+
+    async def _mark_started(repo: AutomationRepository) -> bool:
+        return await repo.mark_webhook_started(
             automation_id=automation.id,
-            trigger_type="webhook",
             event_hash=event_hash,
-            payload=sanitized_payload,
+            claim_token=claim_token,
+            started_at=datetime.now(timezone.utc),
         )
 
-        async def _refresh_webhook_lease() -> bool:
-            async def _refresh(repo: AutomationRepository) -> bool:
-                return await repo.refresh_webhook_claim(
-                    automation_id=automation.id,
-                    event_hash=event_hash,
-                    claim_token=claim_token,
-                    lease_until=datetime.now(timezone.utc) + WEBHOOK_CLAIM_TTL,
-                )
+    async def _release(repo: AutomationRepository) -> bool:
+        return await repo.release_webhook_event(
+            automation_id=automation.id,
+            event_hash=event_hash,
+            claim_token=claim_token,
+            failed_at=datetime.now(timezone.utc),
+            error_message=_format_webhook_execution_error(exc_info),
+        )
 
-            return await with_repo(_refresh)
+    async def _complete(repo: AutomationRepository) -> bool:
+        return await repo.complete_webhook_event(
+            automation_id=automation.id,
+            event_hash=event_hash,
+            claim_token=claim_token,
+            completed_at=datetime.now(timezone.utc),
+        )
 
-        async def _mark_started(repo: AutomationRepository) -> bool:
-            return await repo.mark_webhook_started(
-                automation_id=automation.id,
-                event_hash=event_hash,
-                claim_token=claim_token,
-                started_at=datetime.now(timezone.utc),
+    completed = False
+    exc_info: BaseException | None = None
+    try:
+        started = await with_repo(_mark_started)
+        if not started:
+            raise AutomationsServiceError(
+                error_code="automation_webhook_state_conflict",
+                reason="Failed to mark webhook execution as started",
             )
-
-        async def _release(repo: AutomationRepository) -> bool:
-            return await repo.release_webhook_event(
-                automation_id=automation.id,
-                event_hash=event_hash,
-                claim_token=claim_token,
-                failed_at=datetime.now(timezone.utc),
-                error_message=_format_webhook_execution_error(exc_info),
-            )
-
-        async def _complete(repo: AutomationRepository) -> bool:
-            return await repo.complete_webhook_event(
-                automation_id=automation.id,
-                event_hash=event_hash,
-                claim_token=claim_token,
-                completed_at=datetime.now(timezone.utc),
-            )
-
-        completed = False
-        exc_info: BaseException | None = None
-        try:
-            started = await with_repo(_mark_started)
-            if not started:
-                raise AutomationsServiceError(
-                    error_code="automation_webhook_state_conflict",
-                    reason="Failed to mark webhook execution as started",
-                )
-            await run_with_lease_refresh(
-                run=lambda: loop.run_turn(
-                    profile_id=runtime_target.profile_id,
-                    session_id=runtime_target.session_id,
-                    message=message,
-                    context_overrides=runtime_target.context_overrides,
-                ),
-                refresh=_refresh_webhook_lease,
-                ttl=WEBHOOK_CLAIM_TTL,
-            )
-            completed = await with_repo(_complete)
-        except asyncio.CancelledError as exc:
-            exc_info = exc
-            released = await with_repo(_release)
-            if not released:
-                raise AutomationsServiceError(
-                    error_code="automation_webhook_state_conflict",
-                    reason="Failed to release webhook claim",
-                ) from exc
-            raise
-        except Exception as exc:
-            exc_info = exc
-            released = await with_repo(_release)
-            if not released:
-                raise AutomationsServiceError(
-                    error_code="automation_webhook_state_conflict",
-                    reason="Failed to release webhook claim",
-                ) from exc
-            raise
+        await run_with_lease_refresh(
+            run=lambda: runner.run_turn(
+                profile_id=runtime_target.profile_id,
+                session_id=runtime_target.session_id,
+                message=message,
+                context_overrides=runtime_target.context_overrides,
+                source="automation",
+            ),
+            refresh=_refresh_webhook_lease,
+            ttl=WEBHOOK_CLAIM_TTL,
+            timeout_sec=run_timeout_sec,
+        )
+        completed = await with_repo(_complete)
+    except asyncio.CancelledError as exc:
+        exc_info = exc
+        released = await with_repo(_release)
+        if not released:
+            raise AutomationsServiceError(
+                error_code="automation_webhook_state_conflict",
+                reason="Failed to release webhook claim",
+            ) from exc
+        raise
+    except Exception as exc:
+        exc_info = exc
+        released = await with_repo(_release)
+        if not released:
+            raise AutomationsServiceError(
+                error_code="automation_webhook_state_conflict",
+                reason="Failed to release webhook claim",
+            ) from exc
+        raise
 
     if not completed:
         raise AutomationsServiceError(
@@ -193,6 +200,8 @@ def _format_webhook_execution_error(exc: BaseException | None) -> str:
 
     if exc is None:
         return "Webhook execution failed"
+    if isinstance(exc, AutomationsServiceError):
+        return f"{exc.error_code}: {exc.reason}"[:2000]
     message = str(exc).strip()
     if message:
         return f"{type(exc).__name__}: {message}"[:2000]

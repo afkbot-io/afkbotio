@@ -10,18 +10,21 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationCronTickResult
 from afkbot.services.automations.errors import AutomationsServiceError
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
-from afkbot.services.automations.loop_factory import AgentLoopLike, build_automation_agent_loop
 from afkbot.services.automations.message_factory import (
     compose_cron_message,
     cron_session_id,
 )
 from afkbot.services.automations.runtime_contracts import WithAutomationRepo
 from afkbot.services.automations.runtime_target import build_automation_runtime_target
+from afkbot.services.automations.session_runner_factory import (
+    AutomationSessionRunnerFactory,
+    build_automation_session_runner,
+)
+from afkbot.settings import Settings
 
 CRON_CLAIM_TTL = timedelta(minutes=15)
 _LOGGER = logging.getLogger(__name__)
@@ -32,9 +35,11 @@ async def tick_cron_automations(
     session_factory: async_sessionmaker[AsyncSession],
     with_repo: WithAutomationRepo,
     now_utc: datetime,
-    agent_loop_factory: Callable[..., AgentLoopLike],
+    settings: Settings,
+    session_runner_factory: AutomationSessionRunnerFactory | None,
     compute_next_run_at: Callable[[str, datetime], datetime],
     max_due_per_tick: int | None = None,
+    run_timeout_sec: float | None = None,
 ) -> AutomationCronTickResult:
     """Run due cron automations and update their next execution timestamp."""
 
@@ -109,25 +114,28 @@ async def tick_cron_automations(
             return await with_repo(_refresh)
 
         async def _run() -> object:
-            async with session_scope(session_factory) as session:
-                loop = build_automation_agent_loop(
-                    agent_loop_factory=agent_loop_factory,
-                    session=session,
-                    profile_id=profile_id,
-                )
-                return await loop.run_turn(
-                    profile_id=runtime_target.profile_id,
-                    session_id=runtime_target.session_id,
-                    message=message,
-                    context_overrides=runtime_target.context_overrides,
-                )
+            runner = build_automation_session_runner(
+                session_factory=session_factory,
+                profile_id=profile_id,
+                settings=settings,
+                runner_factory=session_runner_factory,
+            )
+            return await runner.run_turn(
+                profile_id=runtime_target.profile_id,
+                session_id=runtime_target.session_id,
+                message=message,
+                context_overrides=runtime_target.context_overrides,
+                source="automation",
+            )
 
         try:
             await run_with_lease_refresh(
                 run=_run,
                 refresh=_refresh_cron_lease,
                 ttl=CRON_CLAIM_TTL,
+                timeout_sec=run_timeout_sec,
             )
+
             async def _complete(repo: AutomationRepository) -> bool:
                 return await repo.mark_cron_executed(
                     automation_id=automation_id,

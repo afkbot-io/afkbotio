@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 from packaging.version import InvalidVersion, Version
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,11 @@ _SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
 _LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
 _DEFAULT_API_PORT_OFFSET = 1
 _CODE_CHECKOUT_ROOT = Path(__file__).resolve(strict=False).parents[2]
+_GIT_NETWORK_TIMEOUT_SEC = 10.0
+_SSH_BATCHMODE_OPTION_RE = re.compile(
+    r"BatchMode\s*(?:=\s*)?(?:yes|no|true|false)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +142,7 @@ def format_update_success_for_language(
 
     normalized_lang = _normalize_update_language(lang)
     lines = [
-        "Обновление AFKBOT завершено."
-        if normalized_lang == "ru"
-        else "AFKBOT update complete."
+        "Обновление AFKBOT завершено." if normalized_lang == "ru" else "AFKBOT update complete."
     ]
     lines.append(
         f"Режим установки: {result.install_mode}"
@@ -151,11 +155,7 @@ def format_update_success_for_language(
         else (
             "Источник: уже актуален"
             if normalized_lang == "ru"
-            else (
-                "Source: updated"
-                if result.source_updated
-                else "Source: already up to date"
-            )
+            else ("Source: updated" if result.source_updated else "Source: already up to date")
         )
     )
     lines.append(
@@ -164,11 +164,7 @@ def format_update_success_for_language(
         else (
             "Обслуживание: пропущено"
             if normalized_lang == "ru"
-            else (
-                "Maintenance: applied"
-                if result.maintenance_applied
-                else "Maintenance: skipped"
-            )
+            else ("Maintenance: applied" if result.maintenance_applied else "Maintenance: skipped")
         )
     )
     lines.append(
@@ -178,9 +174,7 @@ def format_update_success_for_language(
             "Runtime: без managed-перезапуска"
             if normalized_lang == "ru"
             else (
-                "Runtime: restarted"
-                if result.runtime_restarted
-                else "Runtime: no managed restart"
+                "Runtime: restarted" if result.runtime_restarted else "Runtime: no managed restart"
             )
         )
     )
@@ -204,6 +198,8 @@ def _inspect_host_update(*, settings: Settings) -> UpdateAvailability | None:
         ["git", "-C", str(project_root), "fetch", "--depth", "1", "--no-tags", "origin", branch],
         error_code="update_check_failed",
         fallback=f"failed to fetch latest source for branch {branch}",
+        timeout_sec=_GIT_NETWORK_TIMEOUT_SEC,
+        env=_build_noninteractive_git_env(),
     )
     fetched_head = _git_stdout(project_root, "rev-parse", "FETCH_HEAD")
     if not fetched_head or fetched_head == current_head:
@@ -329,11 +325,7 @@ def _run_host_update(*, settings: Settings) -> UpdateResult:
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
         f"Git branch: {branch}",
-        (
-            f"Git source reset to origin/{branch} after history rewrite"
-            if history_rewritten
-            else ""
-        ),
+        (f"Git source reset to origin/{branch} after history rewrite" if history_rewritten else ""),
         (
             "Runtime health: ok"
             if (runtime_restarted and _wait_for_local_health(settings=settings))
@@ -472,11 +464,7 @@ def _run_installer_source_update(
         f"Tool source mode: {install_source.mode}",
         f"Tool source: {install_source.spec}",
         f"Tool executable: {afk_executable}",
-        (
-            "Shell integration: refreshed"
-            if shell_updated
-            else "Shell integration: unchanged"
-        ),
+        ("Shell integration: refreshed" if shell_updated else "Shell integration: unchanged"),
         "Bootstrap setup: refreshed",
         "Doctor: skipped until `afk setup` completes" if not doctor_ran else "",
         (
@@ -535,6 +523,8 @@ def _sync_host_checkout(*, project_root: Path, branch: str) -> bool:
         ["git", "-C", str(project_root), "fetch", "--depth", "1", "--no-tags", "origin", branch],
         error_code="update_failed",
         fallback=f"failed to fetch latest source for branch {branch}",
+        timeout_sec=_GIT_NETWORK_TIMEOUT_SEC,
+        env=_build_noninteractive_git_env(),
     )
     fetched_head = _git_stdout(project_root, "rev-parse", "FETCH_HEAD")
     current_head = _git_stdout(project_root, "rev-parse", "HEAD")
@@ -649,9 +639,7 @@ def _resolve_uv_tool_afk_executable(*, uv_executable: Path) -> Path:
 
     bin_dir = _resolve_uv_tool_bin_dir(uv_executable=uv_executable)
     candidates = (
-        (bin_dir / "afk.exe", bin_dir / "afk.cmd")
-        if os.name == "nt"
-        else (bin_dir / "afk",)
+        (bin_dir / "afk.exe", bin_dir / "afk.cmd") if os.name == "nt" else (bin_dir / "afk",)
     )
     for candidate in candidates:
         if candidate.exists():
@@ -735,7 +723,16 @@ def _git_worktree_is_dirty(project_root: Path) -> bool:
     if unstaged.returncode != 0:
         return True
     staged = _run_command(
-        ["git", "-C", str(project_root), "diff", "--cached", "--quiet", "--ignore-submodules", "--"],
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+            "--",
+        ],
         cwd=project_root,
     )
     if staged.returncode != 0:
@@ -1009,8 +1006,7 @@ def _localize_update_detail(detail: str, *, lang: str) -> str:
     if detail.startswith("Git source reset to origin/"):
         return (
             "Git checkout сброшен на "
-            + detail.removeprefix("Git source reset to ")
-            .removesuffix(" after history rewrite")
+            + detail.removeprefix("Git source reset to ").removesuffix(" after history rewrite")
             + " после переписанной истории"
         )
     if detail == "Runtime health: ok":
@@ -1036,14 +1032,47 @@ def _localize_update_detail(detail: str, *, lang: str) -> str:
     return detail
 
 
+def _build_noninteractive_git_env() -> dict[str, str]:
+    """Return a git environment that fails fast instead of prompting on chat startup."""
+
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env["GIT_SSH_COMMAND"] = _force_git_ssh_batch_mode(
+        str(env.get("GIT_SSH_COMMAND") or "").strip()
+    )
+    return env
+
+
+def _force_git_ssh_batch_mode(command: str) -> str:
+    """Return a GIT_SSH_COMMAND value that disables interactive SSH prompts."""
+
+    if not command:
+        return "ssh -oBatchMode=yes"
+    if _SSH_BATCHMODE_OPTION_RE.search(command):
+        return _SSH_BATCHMODE_OPTION_RE.sub("BatchMode=yes", command)
+    return f"{command} -oBatchMode=yes"
+
+
 def _run_checked(
     command: list[str],
     *,
     cwd: Path | None = None,
     error_code: str,
     fallback: str,
+    timeout_sec: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = _run_command(command, cwd=cwd)
+    try:
+        result = _run_command(command, cwd=cwd, timeout_sec=timeout_sec, env=env)
+    except subprocess.TimeoutExpired as exc:
+        timeout_label = (
+            f" timed out after {timeout_sec:g} seconds" if timeout_sec is not None else " timed out"
+        )
+        raise UpdateRuntimeError(
+            error_code=error_code,
+            reason=f"{fallback}; command{timeout_label}",
+        ) from exc
     if result.returncode == 0:
         return result
     reason = _command_reason(result, fallback=fallback)
@@ -1054,6 +1083,8 @@ def _run_command(
     command: list[str],
     *,
     cwd: Path | None = None,
+    timeout_sec: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -1061,6 +1092,8 @@ def _run_command(
         check=False,
         capture_output=True,
         text=True,
+        timeout=timeout_sec,
+        env=env,
     )
 
 

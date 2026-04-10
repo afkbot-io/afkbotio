@@ -13,6 +13,7 @@ from afkbot.services.automations.webhook_tokens import (
     build_webhook_path,
     build_webhook_url,
     hash_webhook_token,
+    stored_webhook_token_ref,
 )
 from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
@@ -28,7 +29,7 @@ def _runtime_base_url(service: object) -> str:
 async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
     """Update should modify allowed fields and rotate webhook token when requested."""
 
-    engine, _, service = await prepare_service(tmp_path)
+    engine, factory, service = await prepare_service(tmp_path)
     try:
         created_cron = await service.create_cron(
             profile_id="default",
@@ -68,6 +69,18 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             "default",
             old_token,
         )
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            created_row = await repo.get_by_id(
+                profile_id="default",
+                automation_id=created_webhook.id,
+            )
+            assert created_row is not None
+            assert created_row[2] is not None
+            old_token_hash = hash_webhook_token(old_token)
+            assert created_row[2].webhook_token_hash == old_token_hash
+            assert created_row[2].webhook_token == stored_webhook_token_ref(old_token_hash)
+
         rotated_webhook = await service.update(
             profile_id="default",
             automation_id=created_webhook.id,
@@ -83,6 +96,17 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             "default",
             new_token,
         )
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            rotated_row = await repo.get_by_id(
+                profile_id="default",
+                automation_id=created_webhook.id,
+            )
+            assert rotated_row is not None
+            assert rotated_row[2] is not None
+            new_token_hash = hash_webhook_token(new_token)
+            assert rotated_row[2].webhook_token_hash == new_token_hash
+            assert rotated_row[2].webhook_token == stored_webhook_token_ref(new_token_hash)
 
         fake_loop = FakeLoop()
 
@@ -95,7 +119,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
                 profile_id="default",
                 token=old_token,
                 payload={"event_id": "evt-old-token"},
-                agent_loop_factory=factory_fn,
+                session_runner_factory=factory_fn,
             )
         assert old_token_exc.value.error_code == "automation_not_found"
 
@@ -103,7 +127,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             profile_id="default",
             token=new_token,
             payload={"event_id": "evt-new-token"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert new_token_result.deduplicated is False
     finally:

@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from afkbot.models import load_all_models
 from afkbot.models.base import Base
-from afkbot.services.automations.webhook_tokens import hash_webhook_token, issue_webhook_token
+from afkbot.services.automations.webhook_tokens import (
+    hash_webhook_token,
+    issue_webhook_token,
+    stored_webhook_token_ref,
+    stored_webhook_token_ref_hash,
+)
 
 
 async def create_schema(engine: AsyncEngine) -> None:
@@ -38,9 +43,9 @@ def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
     _ensure_automation_delivery_columns(conn)
-    _ensure_webhook_token_column(conn)
+    _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
-    _backfill_missing_webhook_tokens(conn)
+    _backfill_webhook_token_hashes(conn)
 
 
 def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untyped-def]
@@ -57,12 +62,7 @@ def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untype
             )
         )
     if "delivery_target_json" not in columns:
-        conn.execute(
-            text(
-                "ALTER TABLE automation "
-                "ADD COLUMN delivery_target_json TEXT"
-            )
-        )
+        conn.execute(text("ALTER TABLE automation ADD COLUMN delivery_target_json TEXT"))
     conn.execute(
         text(
             "UPDATE automation "
@@ -72,23 +72,32 @@ def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untype
     )
 
 
-def _ensure_webhook_token_column(conn) -> None:  # type: ignore[no-untyped-def]
-    """Ensure webhook plaintext token column/index exist for older installations."""
+def _ensure_webhook_token_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure webhook token hash/ref columns and indexes exist for older installations."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
     if not columns:
         return
     if "webhook_token" not in columns:
         conn.execute(
+            text("ALTER TABLE automation_trigger_webhook ADD COLUMN webhook_token VARCHAR(255)")
+        )
+    if "webhook_token_hash" not in columns:
+        conn.execute(
             text(
-                "ALTER TABLE automation_trigger_webhook "
-                "ADD COLUMN webhook_token VARCHAR(255)"
+                "ALTER TABLE automation_trigger_webhook ADD COLUMN webhook_token_hash VARCHAR(128)"
             )
         )
     conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_automation_webhook_token "
             "ON automation_trigger_webhook (webhook_token)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_automation_webhook_token_hash "
+            "ON automation_trigger_webhook (webhook_token_hash)"
         )
     )
 
@@ -111,31 +120,22 @@ def _ensure_webhook_execution_columns(conn) -> None:  # type: ignore[no-untyped-
             conn.execute(text(ddl))
 
 
-def _backfill_missing_webhook_tokens(conn) -> None:  # type: ignore[no-untyped-def]
-    """Issue replacement tokens for legacy webhook rows that never stored plaintext tokens."""
+def _backfill_webhook_token_hashes(conn) -> None:  # type: ignore[no-untyped-def]
+    """Hash legacy plaintext webhook tokens and replace them with non-bearer refs."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
-    if "webhook_token" not in columns:
+    if "webhook_token" not in columns or "webhook_token_hash" not in columns:
         return
 
-    missing_rows = conn.execute(
+    webhook_rows = conn.execute(
         text(
-            "SELECT automation_id FROM automation_trigger_webhook "
-            "WHERE webhook_token IS NULL OR webhook_token = ''"
+            "SELECT automation_id, webhook_token, webhook_token_hash "
+            "FROM automation_trigger_webhook"
         )
     ).fetchall()
-    if not missing_rows:
+    if not webhook_rows:
         return
 
-    existing_tokens = {
-        str(row[0])
-        for row in conn.execute(
-            text(
-                "SELECT webhook_token FROM automation_trigger_webhook "
-                "WHERE webhook_token IS NOT NULL AND webhook_token != ''"
-            )
-        ).fetchall()
-    }
     existing_hashes = {
         str(row[0])
         for row in conn.execute(
@@ -146,39 +146,42 @@ def _backfill_missing_webhook_tokens(conn) -> None:  # type: ignore[no-untyped-d
         ).fetchall()
     }
 
-    for automation_id, in missing_rows:
-        token, token_hash = _issue_unique_webhook_token(
-            existing_tokens=existing_tokens,
-            existing_hashes=existing_hashes,
-        )
+    for automation_id, stored_token, stored_hash in webhook_rows:
+        token_ref = str(stored_token or "").strip()
+        token_hash = str(stored_hash or "").strip()
+        if not token_hash:
+            token_hash = stored_webhook_token_ref_hash(token_ref) or (
+                hash_webhook_token(token_ref) if token_ref else ""
+            )
+        if not token_hash:
+            token_hash = _issue_unique_webhook_token_hash(existing_hashes=existing_hashes)
+        existing_hashes.add(token_hash)
+        next_token_ref = stored_webhook_token_ref(token_hash)
+        if token_ref == next_token_ref and str(stored_hash or "").strip() == token_hash:
+            continue
         conn.execute(
             text(
                 "UPDATE automation_trigger_webhook "
-                "SET webhook_token = :token, webhook_token_hash = :token_hash "
+                "SET webhook_token = :token_ref, webhook_token_hash = :token_hash "
                 "WHERE automation_id = :automation_id"
             ),
             {
                 "automation_id": int(automation_id),
-                "token": token,
+                "token_ref": next_token_ref,
                 "token_hash": token_hash,
             },
         )
 
 
-def _issue_unique_webhook_token(
-    *,
-    existing_tokens: set[str],
-    existing_hashes: set[str],
-) -> tuple[str, str]:
-    """Issue one webhook token not present in current plaintext/hash sets."""
+def _issue_unique_webhook_token_hash(*, existing_hashes: set[str]) -> str:
+    """Issue one webhook token hash not present in current hash set."""
 
     while True:
         token = issue_webhook_token()
         token_hash = hash_webhook_token(token)
-        if token not in existing_tokens and token_hash not in existing_hashes:
-            existing_tokens.add(token)
+        if token_hash not in existing_hashes:
             existing_hashes.add(token_hash)
-            return token, token_hash
+            return token_hash
 
 
 def _table_columns(conn, table_name: str) -> set[str]:  # type: ignore[no-untyped-def]

@@ -51,6 +51,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "memory.promote",
         "memory.search",
         "memory.upsert",
+        "session.job.run",
         "skill.marketplace.install",
         "skill.marketplace.list",
         "skill.marketplace.search",
@@ -92,6 +93,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     )
     assert registry.get("debug.echo") is not None
     assert registry.get("diffs.render") is not None
+    assert registry.get("session.job.run") is not None
     assert registry.get("subagent.run") is not None
     assert registry.get("app.list") is not None
     assert registry.get("app.run") is not None

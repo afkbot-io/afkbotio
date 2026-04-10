@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,7 +54,6 @@ from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRunti
 from afkbot.services.agent_loop.tool_invocation_gates import ToolInvocationGuards
 from afkbot.services.agent_loop.tool_exposure import ToolExposureBuilder
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
-from afkbot.services.agent_loop.tracked_turns import TurnTracker
 from afkbot.services.agent_loop.turn_execution import TurnExecutionRuntime
 from afkbot.services.agent_loop.turn_finalizer import TurnFinalizer
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
@@ -99,7 +97,9 @@ class AgentLoop:
         secure_request_ttl_sec: int = 900,
         policy_engine: PolicyEngine | None = None,
         memory_auto_search_enabled: bool = False,
-        memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "chat",
+        memory_auto_search_scope_mode: Literal[
+            "auto", "profile", "chat", "thread", "user_in_chat"
+        ] = "chat",
         memory_auto_search_limit: int = 3,
         memory_auto_search_include_global: bool = True,
         memory_auto_search_chat_limit: int = 3,
@@ -107,9 +107,18 @@ class AgentLoop:
         memory_global_fallback_enabled: bool = True,
         memory_auto_context_item_chars: int = 240,
         memory_auto_save_enabled: bool = False,
-        memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "chat",
+        memory_auto_save_scope_mode: Literal[
+            "auto", "profile", "chat", "thread", "user_in_chat"
+        ] = "chat",
         memory_auto_promote_enabled: bool = False,
-        memory_auto_save_kinds: tuple[str, ...] = ("fact", "preference", "decision", "task", "risk", "note"),
+        memory_auto_save_kinds: tuple[str, ...] = (
+            "fact",
+            "preference",
+            "decision",
+            "task",
+            "risk",
+            "note",
+        ),
         memory_auto_save_max_chars: int = 1000,
         session_compaction_enabled: bool = False,
         session_compaction_trigger_turns: int = 12,
@@ -138,7 +147,6 @@ class AgentLoop:
         self._skill_router = SkillRouter()
         self._skill_affinity = SessionSkillAffinityService()
         self._safety_policy = SafetyPolicy()
-        self._turn_tracker = TurnTracker()
         self._policy_engine = policy_engine or PolicyEngine(root_dir=context_builder.root_dir)
         self._tool_skill_resolver = ToolSkillResolver(
             settings=context_builder.settings,
@@ -179,6 +187,7 @@ class AgentLoop:
             tool_invocation_gates=self._tool_invocation_gates,
             tool_timeout_default_sec=self._tool_timeout_default_sec,
             tool_timeout_max_sec=self._tool_timeout_max_sec,
+            parallel_tool_max_concurrent=context_builder.settings.agent_tool_parallel_max_concurrent,
             log_event=self._runlog.log_event,
             raise_if_cancel_requested=self._runlog.raise_if_cancel_requested,
             sanitize=self._sanitize,
@@ -290,7 +299,6 @@ class AgentLoop:
             sessions=self._sessions,
             security_guard=self._security_guard,
             turn_preparation=self._turn_preparation,
-            turn_tracker=self._turn_tracker,
             run_repo=self._run_repo,
             runlog=self._runlog,
             tool_execution=self._tool_execution,
@@ -309,40 +317,6 @@ class AgentLoop:
             turn_finalizer=self._turn_finalizer,
             sanitize=self._sanitize,
             sanitize_value=self._sanitize_value,
-        )
-
-    async def start_tracked_turn(
-        self,
-        *,
-        profile_id: str,
-        session_id: str,
-        message: str,
-        planned_tool_calls: list[ToolCall] | None = None,
-        context_overrides: TurnContextOverrides | None = None,
-    ) -> tuple[str, asyncio.Task[TurnResult]]:
-        """Start one tracked turn task and register it for runtime cancellation."""
-
-        return await self._turn_tracker.start(
-            profile_id=profile_id,
-            session_id=session_id,
-            task_factory=lambda task_id: asyncio.create_task(
-                self.run_turn(
-                    profile_id=profile_id,
-                    session_id=session_id,
-                    message=message,
-                    planned_tool_calls=planned_tool_calls,
-                    context_overrides=context_overrides,
-                ),
-                name=f"agent_turn:{profile_id}:{session_id}:{task_id}",
-            ),
-        )
-
-    async def cancel_turn(self, *, profile_id: str, session_id: str) -> bool:
-        """Cancel active turn for session and profile, if such task exists."""
-
-        return await self._turn_tracker.cancel(
-            profile_id=profile_id,
-            session_id=session_id,
         )
 
     async def run_turn(

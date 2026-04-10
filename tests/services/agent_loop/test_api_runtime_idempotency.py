@@ -81,6 +81,7 @@ async def test_run_chat_turn_reuses_result_for_same_client_msg_id(
         session_id: str,
         planned_tool_calls: list[object] | None = None,
         progress_sink: object | None = None,
+        **_unused: object,
     ) -> TurnResult:
         _ = planned_tool_calls, progress_sink
         calls["count"] += 1
@@ -148,6 +149,7 @@ async def test_run_chat_turn_reclaims_stale_claim(
             session_id: str,
             planned_tool_calls: list[object] | None = None,
             progress_sink: object | None = None,
+            **_unused: object,
         ) -> TurnResult:
             _ = message, planned_tool_calls, progress_sink
             calls["count"] += 1
@@ -194,6 +196,7 @@ async def test_run_chat_turn_runs_again_for_different_client_msg_id(
         session_id: str,
         planned_tool_calls: list[object] | None = None,
         progress_sink: object | None = None,
+        **_unused: object,
     ) -> TurnResult:
         _ = message, planned_tool_calls, progress_sink
         calls["count"] += 1
@@ -249,6 +252,7 @@ async def test_run_chat_turn_parallel_same_key_executes_side_effects_once(
         session_id: str,
         planned_tool_calls: list[object] | None = None,
         progress_sink: object | None = None,
+        **_unused: object,
     ) -> TurnResult:
         _ = message, planned_tool_calls, progress_sink
         calls["count"] += 1
@@ -320,6 +324,7 @@ async def test_run_chat_turn_does_not_reclaim_live_claim_with_heartbeat(
         session_id: str,
         planned_tool_calls: list[object] | None = None,
         progress_sink: object | None = None,
+        **_unused: object,
     ) -> TurnResult:
         _ = message, planned_tool_calls, progress_sink
         calls["count"] += 1

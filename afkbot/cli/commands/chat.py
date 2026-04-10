@@ -32,7 +32,21 @@ from afkbot.services.policy import infer_workspace_scope_mode
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
 from afkbot.services.tools.base import ToolCall
+from afkbot.services.llm_timeout_policy import (
+    DEFAULT_LLM_REQUEST_TIMEOUT_SEC,
+    DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
+)
 from afkbot.settings import Settings, get_settings
+
+_DEFAULT_LLM_EXECUTION_BUDGET_LOW_SEC = 900.0
+_DEFAULT_LLM_EXECUTION_BUDGET_MEDIUM_SEC = 1800.0
+_DEFAULT_LLM_EXECUTION_BUDGET_HIGH_SEC = 3600.0
+
+_CHAT_LLM_REQUEST_TIMEOUT_SEC = 120.0
+_CHAT_LLM_EXECUTION_BUDGET_LOW_SEC = 120.0
+_CHAT_LLM_EXECUTION_BUDGET_MEDIUM_SEC = 180.0
+_CHAT_LLM_EXECUTION_BUDGET_HIGH_SEC = 300.0
+_CHAT_LLM_EXECUTION_BUDGET_VERY_HIGH_SEC = 600.0
 
 
 def register(app: typer.Typer) -> None:
@@ -131,9 +145,10 @@ def register(app: typer.Typer) -> None:
             profile_id=target.profile_id,
             ensure_layout=True,
         )
-        resolved_plan_mode = normalize_chat_planning_mode(
-            plan or effective_profile_settings.chat_planning_mode
-        ) or "off"
+        resolved_plan_mode = (
+            normalize_chat_planning_mode(plan or effective_profile_settings.chat_planning_mode)
+            or "off"
+        )
         resolved_thinking_level = resolve_cli_thinking_level(
             explicit_value=thinking_level,
             default_value=effective_profile_settings.llm_thinking_level,
@@ -146,7 +161,9 @@ def register(app: typer.Typer) -> None:
             thread_id=thread_id,
             user_id=user_id,
         )
-        run_once_result_accepts_settings = "settings" in inspect.signature(run_once_result).parameters
+        run_once_result_accepts_settings = (
+            "settings" in inspect.signature(run_once_result).parameters
+        )
 
         async def _run_once_result_with_chat_settings(
             *,
@@ -176,13 +193,19 @@ def register(app: typer.Typer) -> None:
                 context_overrides=context_overrides,
             )
 
-        run_turn_with_secure_resolution: RunTurnWithSecureResolution = build_run_turn_with_overrides(
-            runtime_overrides,
-            run_once_result_fn=_run_once_result_with_chat_settings,
-            submit_secure_field_fn=submit_secure_field,
-            confirm_space_fn=None if message is not None else confirm_space,
+        run_turn_with_secure_resolution: RunTurnWithSecureResolution = (
+            build_run_turn_with_overrides(
+                runtime_overrides,
+                run_once_result_fn=_run_once_result_with_chat_settings,
+                submit_secure_field_fn=submit_secure_field,
+                confirm_space_fn=None if message is not None else confirm_space,
+            )
         )
-        if not json_output and supports_interactive_tty() and not handle_chat_update_notice(settings=settings):
+        if (
+            not json_output
+            and supports_interactive_tty()
+            and not handle_chat_update_notice(settings=settings)
+        ):
             return
 
         if message is not None:
@@ -217,13 +240,53 @@ def _resolve_chat_invocation_settings(
 ) -> Settings:
     """Return one invocation-scoped settings object for chat cwd behavior."""
 
-    if settings.tool_workspace_root is not None:
+    updates: dict[str, object] = _chat_default_llm_budget_updates(settings)
+    if settings.tool_workspace_root is None and _profile_has_full_chat_workspace_access(
+        settings=settings, profile_id=profile_id
+    ):
+        updates["tool_invocation_cwd"] = invocation_cwd.resolve(strict=False)
+    if not updates:
         return settings
-    if not _profile_has_full_chat_workspace_access(settings=settings, profile_id=profile_id):
-        return settings
-    return settings.model_copy(
-        update={"tool_invocation_cwd": invocation_cwd.resolve(strict=False)}
+    return settings.model_copy(update=updates)
+
+
+def _chat_default_llm_budget_updates(settings: Settings) -> dict[str, object]:
+    """Cap inherited long-running defaults for foreground chat turns."""
+
+    explicit_fields: set[str] = getattr(settings, "model_fields_set", set())
+    budget_specs = (
+        (
+            "llm_request_timeout_sec",
+            DEFAULT_LLM_REQUEST_TIMEOUT_SEC,
+            _CHAT_LLM_REQUEST_TIMEOUT_SEC,
+        ),
+        (
+            "llm_execution_budget_low_sec",
+            _DEFAULT_LLM_EXECUTION_BUDGET_LOW_SEC,
+            _CHAT_LLM_EXECUTION_BUDGET_LOW_SEC,
+        ),
+        (
+            "llm_execution_budget_medium_sec",
+            _DEFAULT_LLM_EXECUTION_BUDGET_MEDIUM_SEC,
+            _CHAT_LLM_EXECUTION_BUDGET_MEDIUM_SEC,
+        ),
+        (
+            "llm_execution_budget_high_sec",
+            _DEFAULT_LLM_EXECUTION_BUDGET_HIGH_SEC,
+            _CHAT_LLM_EXECUTION_BUDGET_HIGH_SEC,
+        ),
+        (
+            "llm_execution_budget_very_high_sec",
+            DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
+            _CHAT_LLM_EXECUTION_BUDGET_VERY_HIGH_SEC,
+        ),
     )
+    return {
+        field_name: chat_limit
+        for field_name, default_value, chat_limit in budget_specs
+        if field_name not in explicit_fields
+        and float(getattr(settings, field_name)) >= default_value
+    }
 
 
 def _profile_has_full_chat_workspace_access(*, settings: Settings, profile_id: str) -> bool:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
@@ -39,7 +39,7 @@ class _PersistingRunner(SubagentRunner):
     async def execute(
         self,
         *,
-        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
         task_id: str,
         profile_id: str,
         parent_session_id: str,
@@ -49,24 +49,25 @@ class _PersistingRunner(SubagentRunner):
     ) -> SubagentExecutionResult:
         _ = parent_session_id, subagent_name, subagent_markdown
         child_session_id = f"subagent:{task_id}"
-        session.add(
-            ChatSession(
-                id=child_session_id,
-                profile_id=profile_id,
-                title="Subagent Session",
-                status="active",
+        async with session_scope(session_factory) as session:
+            session.add(
+                ChatSession(
+                    id=child_session_id,
+                    profile_id=profile_id,
+                    title="Subagent Session",
+                    status="active",
+                )
             )
-        )
-        await session.flush()
-        session.add(
-            ChatTurn(
-                session_id=child_session_id,
-                profile_id=profile_id,
-                user_message=prompt,
-                assistant_message="# researcher | hello",
+            await session.flush()
+            session.add(
+                ChatTurn(
+                    session_id=child_session_id,
+                    profile_id=profile_id,
+                    user_message=prompt,
+                    assistant_message="# researcher | hello",
+                )
             )
-        )
-        await session.flush()
+            await session.flush()
         return SubagentExecutionResult(
             output="# researcher | hello",
             child_session_id=child_session_id,
@@ -84,7 +85,7 @@ class _SleepingRunner(SubagentRunner):
     async def execute(
         self,
         *,
-        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
         task_id: str,
         profile_id: str,
         parent_session_id: str,
@@ -92,7 +93,15 @@ class _SleepingRunner(SubagentRunner):
         subagent_markdown: str,
         prompt: str,
     ) -> SubagentExecutionResult:
-        _ = session, task_id, profile_id, parent_session_id, subagent_name, subagent_markdown, prompt
+        _ = (
+            session_factory,
+            task_id,
+            profile_id,
+            parent_session_id,
+            subagent_name,
+            subagent_markdown,
+            prompt,
+        )
         await asyncio.sleep(self._seconds)
         return SubagentExecutionResult(
             output="done",
@@ -352,6 +361,7 @@ async def test_subagent_runner_raises_when_child_runlog_contains_llm_error(
             session_id: str,
             message: str,
             context_overrides=None,
+            **_unused: object,
         ) -> TurnResult:
             _ = message, context_overrides
             run = await RunRepository(self._session).create_run(
@@ -405,19 +415,20 @@ async def test_subagent_runner_raises_when_child_runlog_contains_llm_error(
             )
         )
         await session.flush()
-        runner = SubagentRunner(settings)
 
-        # Act
-        with pytest.raises(SubagentExecutionError, match="ConnectionError: upstream reset") as exc_info:
-            await runner.execute(
-                session=session,
-                task_id="task-1",
-                profile_id="default",
-                parent_session_id="main-session",
-                subagent_name="researcher",
-                subagent_markdown="# researcher",
-                prompt="hello",
-            )
+    runner = SubagentRunner(settings)
+
+    # Act
+    with pytest.raises(SubagentExecutionError, match="ConnectionError: upstream reset") as exc_info:
+        await runner.execute(
+            session_factory=factory,
+            task_id="task-1",
+            profile_id="default",
+            parent_session_id="main-session",
+            subagent_name="researcher",
+            subagent_markdown="# researcher",
+            prompt="hello",
+        )
 
     # Assert
     await engine.dispose()

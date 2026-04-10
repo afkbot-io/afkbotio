@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -28,9 +28,7 @@ class FakeRuntimeService:
         profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[..., object],
     ) -> object:
-        _ = agent_loop_factory
         self.webhook_calls.append(
             (
                 profile_id,
@@ -47,10 +45,8 @@ class FakeRuntimeService:
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[..., object],
         max_due_per_tick: int | None = None,
     ) -> object:
-        _ = agent_loop_factory
         self.tick_calls.append(now_utc)
         self.tick_limits.append(max_due_per_tick)
         return {"ok": True}
@@ -65,9 +61,8 @@ class FailingWebhookRuntimeService(FakeRuntimeService):
         profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[..., object],
     ) -> object:
-        _ = profile_id, token, payload, agent_loop_factory
+        _ = profile_id, token, payload
         raise RuntimeError("webhook failure")
 
 
@@ -78,10 +73,9 @@ class FailingCronRuntimeService(FakeRuntimeService):
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[..., object],
         max_due_per_tick: int | None = None,
     ) -> object:
-        _ = now_utc, agent_loop_factory, max_due_per_tick
+        _ = now_utc, max_due_per_tick
         raise RuntimeError("cron failure")
 
 

@@ -59,6 +59,8 @@ def handle_chat_repl_local_command(
         )
     if command == "activity":
         return ChatReplCommandResult(consumed=True, message=activity_text_for_chat_workspace(state))
+    if command == "cancel":
+        return ChatReplCommandResult(consumed=True, message="No active turn to cancel.")
     if command == "capabilities":
         return _handle_capabilities_command(args=args, state=state)
     if command == "plan":
@@ -68,8 +70,7 @@ def handle_chat_repl_local_command(
     return ChatReplCommandResult(
         consumed=True,
         message=(
-            f"Unknown local command: //{command}\n"
-            "Use //help to list interactive chat controls."
+            f"Unknown local command: //{command}\nUse //help to list interactive chat controls."
         ),
     )
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from afkbot.db.session import session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.settings import Settings
 from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY, SubagentRuntimePolicy
@@ -44,7 +46,7 @@ class SubagentRunner:
     async def execute(
         self,
         *,
-        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
         task_id: str,
         profile_id: str,
         parent_session_id: str,
@@ -59,6 +61,7 @@ class SubagentRunner:
             build_agent_loop_from_settings,
             resolve_profile_settings,
         )
+        from afkbot.services.session_orchestration import SessionOrchestrator
 
         effective_settings = resolve_profile_settings(
             settings=self._settings,
@@ -67,14 +70,22 @@ class SubagentRunner:
         )
         loop_settings = self._runtime_policy.build_child_settings(effective_settings)
         self._ensure_llm_is_configured(settings=loop_settings)
-        loop = build_agent_loop_from_settings(
-            session,
-            settings=loop_settings,
-            actor=self._runtime_policy.actor,
-            profile_id=profile_id,
-        )
         child_session_id = self._runtime_policy.build_child_session_id(task_id=task_id)
-        result = await loop.run_turn(
+
+        def _build_child_runner(loop_session: AsyncSession, child_profile_id: str) -> Any:
+            return build_agent_loop_from_settings(
+                loop_session,
+                settings=loop_settings,
+                actor=self._runtime_policy.actor,
+                profile_id=child_profile_id,
+            )
+
+        runner = SessionOrchestrator(
+            settings=loop_settings,
+            session_factory=session_factory,
+            turn_runner_factory=_build_child_runner,
+        )
+        result = await runner.run_turn(
             profile_id=profile_id,
             session_id=child_session_id,
             message=prompt,
@@ -91,13 +102,15 @@ class SubagentRunner:
                     }
                 },
             ),
+            source="subagent",
         )
         if result.envelope.action != "finalize":
             raise SubagentExecutionError(
                 error_code="subagent_unexpected_action",
                 reason=f"Subagent child run returned unsupported action: {result.envelope.action}",
             )
-        await self._raise_if_child_run_failed(session=session, run_id=result.run_id)
+        async with session_scope(session_factory) as session:
+            await self._raise_if_child_run_failed(session=session, run_id=result.run_id)
         return SubagentExecutionResult(
             output=result.envelope.message,
             child_session_id=child_session_id,
