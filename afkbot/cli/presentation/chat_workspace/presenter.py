@@ -237,6 +237,7 @@ def build_chat_workspace_outcome_entry(
             kind="plan",
             text=render_chat_plan(
                 outcome.plan_snapshot,
+                phase="planned",
                 include_header=False,
                 leading_blank_line=False,
                 ansi=False,

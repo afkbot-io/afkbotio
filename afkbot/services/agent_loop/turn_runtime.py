@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -15,6 +17,7 @@ from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnSource
+from afkbot.services.session_orchestration.contracts import SerializedSessionTurnRunner
 from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
@@ -48,6 +51,30 @@ async def run_once_result(
         context_overrides=context_overrides,
         source=source,
     )
+
+
+@asynccontextmanager
+async def open_serialized_turn_runner(
+    *,
+    profile_id: str,
+    session_id: str,
+    settings: Settings | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    source: SessionTurnSource = "chat",
+) -> AsyncIterator[SerializedSessionTurnRunner]:
+    """Open one exclusive session slot that can execute several turns in sequence."""
+
+    effective_settings = settings or get_settings()
+    orchestrator = SessionOrchestrator(
+        settings=effective_settings,
+        session_factory=session_factory,
+    )
+    async with orchestrator.open_turn_lease(
+        profile_id=profile_id,
+        session_id=session_id,
+        source=source,
+    ) as lease:
+        yield lease
 
 
 async def submit_secure_field(

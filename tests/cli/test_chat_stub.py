@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -343,11 +344,12 @@ def test_chat_cli_repl_reuses_single_event_loop(tmp_path: Path, monkeypatch: Mon
         message: str,
         profile_id: str,
         session_id: str,
+        settings=None,
         planned_tool_calls=None,
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = message, profile_id, session_id, planned_tool_calls, progress_sink, context_overrides
+        _ = message, profile_id, session_id, settings, planned_tool_calls, progress_sink, context_overrides
         seen_loop_ids.append(id(asyncio.get_running_loop()))
         return await run_once_result(message="hello", profile_id="default", session_id="s")
 
@@ -377,11 +379,12 @@ def test_chat_cli_plan_on_runs_plan_then_execution(
         message: str,
         profile_id: str,
         session_id: str,
+        settings=None,
         planned_tool_calls=None,
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = planned_tool_calls, progress_sink
+        _ = settings, planned_tool_calls, progress_sink
         calls.append(
             {
                 "message": message,
@@ -405,6 +408,32 @@ def test_chat_cli_plan_on_runs_plan_then_execution(
         )
 
     monkeypatch.setattr("afkbot.cli.commands.chat.run_once_result", _fake_run_once_result)
+    @asynccontextmanager
+    async def _fake_open_serialized_turn_runner(*, profile_id: str, session_id: str, **_: object):
+        class _BoundRunner:
+            async def run_turn(
+                self,
+                *,
+                message: str,
+                planned_tool_calls=None,
+                progress_sink=None,
+                context_overrides=None,
+            ):
+                return await _fake_run_once_result(
+                    message=message,
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    planned_tool_calls=planned_tool_calls,
+                    progress_sink=progress_sink,
+                    context_overrides=context_overrides,
+                )
+
+        yield _BoundRunner()
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat.open_serialized_turn_runner",
+        _fake_open_serialized_turn_runner,
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.chat_planning_runtime.confirm_chat_plan_first",
         lambda **_: next(confirmations),
@@ -456,6 +485,7 @@ def test_build_plan_only_overrides_merges_expected_plan_only_context() -> None:
     assert overrides.execution_planning_mode == "off"
     assert overrides.thinking_level == "high"
     assert overrides.tool_access_mode == "read_only"
+    assert overrides.persist_turn is False
 
 
 def test_build_cli_runtime_overrides_enables_cli_approval_surface() -> None:
@@ -508,11 +538,12 @@ def test_chat_cli_single_turn_auto_plan_does_not_prompt_without_tty(
         message: str,
         profile_id: str,
         session_id: str,
+        settings=None,
         planned_tool_calls=None,
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = planned_tool_calls, progress_sink
+        _ = settings, planned_tool_calls, progress_sink
         assert message == "Implement channel routing and update the docs after that."
         assert profile_id == "default"
         assert session_id == "s-auto-plan-no-tty"
@@ -586,11 +617,12 @@ def test_chat_cli_uses_profile_runtime_thinking_defaults(
         message: str,
         profile_id: str,
         session_id: str,
+        settings=None,
         planned_tool_calls=None,
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = planned_tool_calls, progress_sink
+        _ = settings, planned_tool_calls, progress_sink
         assert message == "hello"
         assert profile_id == "planner"
         assert session_id == "s-profile-defaults"
@@ -673,11 +705,12 @@ def test_chat_repl_local_commands_update_future_turn_settings(
         message: str,
         profile_id: str,
         session_id: str,
+        settings=None,
         planned_tool_calls=None,
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = planned_tool_calls, progress_sink
+        _ = settings, planned_tool_calls, progress_sink
         assert message == "hello"
         assert profile_id == "default"
         assert session_id == "s-chat-repl-controls"

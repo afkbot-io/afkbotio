@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import assert_never
 
+from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.cli.presentation.progress_mapper import RenderEvent
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 
@@ -34,10 +34,6 @@ _PRIORITY_PARAM_KEYS: tuple[str, ...] = (
     "subject",
     "name",
 )
-_ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-_ANSI_OSC_RE = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)")
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-
 _ANSI_BLUE = "\033[94m"
 _ANSI_VIOLET = "\033[95m"
 _ANSI_WARNING = "\033[93m"
@@ -48,7 +44,7 @@ _ANSI_ERROR = "\033[91m"
 def render_progress_event(event: RenderEvent) -> str:
     """Render one progress event as short CLI status text."""
 
-    tool_name = _sanitize_terminal_text(event.tool_name) if event.tool_name else None
+    tool_name = sanitize_terminal_text(event.tool_name) if event.tool_name else None
     marker = _status_marker(event)
     if event.event_type == "llm.call.compaction_start":
         return "----- Automatic context compaction -----"
@@ -146,7 +142,7 @@ def render_progress_detail_lines(event: ProgressEvent) -> tuple[str, ...]:
         if not isinstance(preview_lines, list):
             return ()
         lines = tuple(
-            _sanitize_terminal_text(str(item).strip())
+            sanitize_terminal_text(str(item).strip())
             for item in preview_lines
             if str(item).strip()
         )
@@ -336,7 +332,7 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
         parts.append(f"tools={tool_access_mode}")
     if isinstance(selected_skill_names, list):
         normalized_skills = [
-            _sanitize_terminal_text(str(item).strip())
+            sanitize_terminal_text(str(item).strip())
             for item in selected_skill_names
             if str(item).strip()
         ]
@@ -357,22 +353,12 @@ def _fmt_value(value: object, *, limit: int = 72) -> str:
     elif isinstance(value, (int, float)):
         rendered = str(value)
     elif isinstance(value, str):
-        rendered = _sanitize_terminal_text(value)
+        rendered = sanitize_terminal_text(value)
     else:
         rendered = json.dumps(value, ensure_ascii=True, sort_keys=True, default=str)
     if len(rendered) > limit:
         rendered = f"{rendered[: limit - 3]}..."
     return rendered
-
-
-def _sanitize_terminal_text(value: str) -> str:
-    """Remove terminal control sequences from untrusted text fragments."""
-
-    sanitized = _ANSI_OSC_RE.sub("", value)
-    sanitized = _ANSI_CSI_RE.sub("", sanitized)
-    sanitized = sanitized.replace("\x1b", "")
-    sanitized = _CONTROL_RE.sub(" ", sanitized)
-    return " ".join(sanitized.split())
 
 
 def _status_marker(event: RenderEvent) -> str:

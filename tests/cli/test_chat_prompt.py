@@ -270,6 +270,13 @@ def test_chat_repl_local_command_can_show_and_clear_stored_plan() -> None:
                 ChatPlanStep(text="Implement", completed=True),
             ),
         ),
+        latest_plan_phase="executing",
+        latest_activity=ChatActivitySnapshot(
+            stage="tool_call",
+            summary="tool: bash.exec",
+            detail="cmd=pytest tests/cli",
+            running=True,
+        ),
     )
 
     # Act
@@ -277,9 +284,16 @@ def test_chat_repl_local_command_can_show_and_clear_stored_plan() -> None:
     clear_result = handle_chat_repl_local_command("//plan clear", state=state)
 
     # Assert
-    assert show_result.message == "AFK Plan\n  [ ] Inspect\n  [x] Implement"
+    assert show_result.message == (
+        "AFK Plan\n"
+        "  status: executing\n"
+        "  activity: tool: bash.exec · detail=cmd=pytest tests/cli · running=True\n"
+        "  [ ] Inspect\n"
+        "  [x] Implement"
+    )
     assert clear_result.message == "Stored plan cleared."
     assert state.latest_plan is None
+    assert state.latest_plan_phase is None
 
 
 def test_chat_repl_status_and_activity_surface_latest_activity() -> None:
@@ -348,6 +362,32 @@ def test_chat_workspace_status_line_formats_elapsed_time_and_activity(
     assert rendered == (
         "• Working (2s • esc to interrupt) · calling tool: bash.exec · queued 1 message"
     )
+    assert build_chat_workspace_surface_state(state).queue_lines == ("◦ Queued 1 message for the next turn.",)
+
+
+def test_chat_workspace_surface_shows_active_plan_summary() -> None:
+    """Workspace surface should show the active stored plan while execution is running."""
+
+    state = ChatReplSessionState(
+        planning_mode="on",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+        active_turn=True,
+        latest_plan=ChatPlanSnapshot(
+            raw_text="1. Inspect\n2. Implement\n3. Verify",
+            steps=(
+                ChatPlanStep(text="Inspect"),
+                ChatPlanStep(text="Implement"),
+                ChatPlanStep(text="Verify"),
+            ),
+        ),
+        latest_plan_phase="executing",
+    )
+
+    surface_state = build_chat_workspace_surface_state(state)
+
+    assert surface_state.queue_lines == ("◦ Plan executing · 3 step(s) · Inspect, Implement, ...",)
 
 
 def test_chat_workspace_status_line_formats_minutes_and_hours(monkeypatch) -> None:

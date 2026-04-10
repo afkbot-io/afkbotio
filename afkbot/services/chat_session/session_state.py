@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from afkbot.services.agent_loop.planning_policy import ChatPlanningMode
 from afkbot.services.chat_session.activity_state import ChatActivitySnapshot
 from afkbot.services.chat_session.input_catalog import ChatInputCatalog
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
 from afkbot.services.llm.reasoning import ThinkingLevel
+
+ChatPlanPhase = Literal["planned", "executing", "completed", "cancelled"]
 
 
 @dataclass(slots=True)
@@ -23,5 +26,6 @@ class ChatReplSessionState:
     active_turn: bool = False
     active_turn_started_at: float | None = None
     latest_plan: ChatPlanSnapshot | None = None
+    latest_plan_phase: ChatPlanPhase | None = None
     latest_activity: ChatActivitySnapshot | None = None
     latest_catalog: ChatInputCatalog | None = None

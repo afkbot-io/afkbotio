@@ -28,3 +28,16 @@ class SessionTurnRunner(Protocol):
         client_msg_id: str | None = None,
         source: SessionTurnSource = "chat",
     ) -> TurnResult: ...
+
+
+class SerializedSessionTurnRunner(Protocol):
+    """Bound session runner used inside one already-acquired serialized lease."""
+
+    async def run_turn(
+        self,
+        *,
+        message: str,
+        planned_tool_calls: list[ToolCall] | None = None,
+        context_overrides: TurnContextOverrides | None = None,
+        progress_sink: Callable[[ProgressEvent], None] | None = None,
+    ) -> TurnResult: ...

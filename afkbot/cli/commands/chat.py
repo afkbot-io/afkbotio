@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import inspect
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 
 import typer
@@ -27,7 +27,12 @@ from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.runtime_factory import resolve_profile_settings
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-from afkbot.services.agent_loop.turn_runtime import run_once_result, submit_secure_field
+from afkbot.services.agent_loop.turn_runtime import (
+    open_serialized_turn_runner,
+    run_once_result,
+    submit_secure_field,
+)
+from afkbot.services.session_orchestration import SerializedSessionTurnRunner
 from afkbot.services.policy import infer_workspace_scope_mode
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
@@ -161,10 +166,6 @@ def register(app: typer.Typer) -> None:
             thread_id=thread_id,
             user_id=user_id,
         )
-        run_once_result_accepts_settings = (
-            "settings" in inspect.signature(run_once_result).parameters
-        )
-
         async def _run_once_result_with_chat_settings(
             *,
             message: str,
@@ -174,20 +175,11 @@ def register(app: typer.Typer) -> None:
             progress_sink: Callable[[ProgressEvent], None] | None = None,
             context_overrides: TurnContextOverrides | None = None,
         ) -> TurnResult:
-            if run_once_result_accepts_settings:
-                return await run_once_result(
-                    message=message,
-                    profile_id=profile_id,
-                    session_id=session_id,
-                    settings=chat_settings,
-                    planned_tool_calls=planned_tool_calls,
-                    progress_sink=progress_sink,
-                    context_overrides=context_overrides,
-                )
             return await run_once_result(
                 message=message,
                 profile_id=profile_id,
                 session_id=session_id,
+                settings=chat_settings,
                 planned_tool_calls=planned_tool_calls,
                 progress_sink=progress_sink,
                 context_overrides=context_overrides,
@@ -201,6 +193,16 @@ def register(app: typer.Typer) -> None:
                 confirm_space_fn=None if message is not None else confirm_space,
             )
         )
+
+        def _serialized_turn_runner_factory(
+            profile_id: str,
+            session_id: str,
+        ) -> AbstractAsyncContextManager[SerializedSessionTurnRunner]:
+            return open_serialized_turn_runner(
+                profile_id=profile_id,
+                session_id=session_id,
+                settings=chat_settings,
+            )
         if (
             not json_output
             and supports_interactive_tty()
@@ -217,6 +219,7 @@ def register(app: typer.Typer) -> None:
                 run_turn_with_secure_resolution=run_turn_with_secure_resolution,
                 planning_mode=resolved_plan_mode,
                 thinking_level=resolved_thinking_level,
+                serialized_turn_runner_factory=_serialized_turn_runner_factory,
             )
             return
         if json_output:
@@ -229,6 +232,7 @@ def register(app: typer.Typer) -> None:
             get_settings=lambda: chat_settings,
             planning_mode=resolved_plan_mode,
             thinking_level=resolved_thinking_level,
+            serialized_turn_runner_factory=_serialized_turn_runner_factory,
         )
 
 

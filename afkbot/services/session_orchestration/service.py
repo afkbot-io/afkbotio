@@ -6,8 +6,9 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
-from contextlib import suppress
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -33,6 +34,36 @@ _SESSION_QUEUE_WAIT_TIMEOUT_SEC = 86_400.0
 class _SessionResources:
     session_factory: async_sessionmaker[AsyncSession]
     owned_engine: AsyncEngine | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionTurnLease:
+    """Exclusive session slot that can execute multiple AgentLoop turns in sequence."""
+
+    orchestrator: SessionOrchestrator
+    session_factory: async_sessionmaker[AsyncSession]
+    profile_id: str
+    session_id: str
+    _run_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
+
+    async def run_turn(
+        self,
+        *,
+        message: str,
+        planned_tool_calls: list[ToolCall] | None = None,
+        context_overrides: TurnContextOverrides | None = None,
+        progress_sink: Callable[[ProgressEvent], None] | None = None,
+    ) -> TurnResult:
+        async with self._run_lock:
+            return await self.orchestrator._execute_locked_turn(
+                session_factory=self.session_factory,
+                profile_id=self.profile_id,
+                session_id=self.session_id,
+                message=message,
+                planned_tool_calls=planned_tool_calls,
+                context_overrides=context_overrides,
+                progress_sink=progress_sink,
+            )
 
 
 class _AgentLoopRunner(Protocol):
@@ -82,6 +113,46 @@ class SessionOrchestrator:
     ) -> TurnResult:
         """Queue and execute one AgentLoop turn for the target session."""
 
+        async with self.open_turn_lease(
+            profile_id=profile_id,
+            session_id=session_id,
+            source=source,
+            client_msg_id=client_msg_id,
+        ) as lease:
+            return await lease.run_turn(
+                message=message,
+                planned_tool_calls=planned_tool_calls,
+                context_overrides=context_overrides,
+                progress_sink=progress_sink,
+            )
+
+    async def cancel_active_turn(self, *, profile_id: str, session_id: str) -> bool:
+        """Request cancellation for the latest running turn in storage."""
+
+        resources = await _resolve_session_resources(
+            shared_session_factory=self._session_factory,
+            settings=self._settings,
+        )
+        try:
+            async with session_scope(resources.session_factory) as db:
+                return await RunRepository(db).request_cancel(
+                    profile_id=profile_id,
+                    session_id=session_id,
+                )
+        finally:
+            await _dispose_owned_engine(resources)
+
+    @asynccontextmanager
+    async def open_turn_lease(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        source: SessionTurnSource = "chat",
+        client_msg_id: str | None = None,
+    ) -> AsyncIterator[SessionTurnLease]:
+        """Acquire one exclusive session slot that can run multiple turns sequentially."""
+
         resources = await _resolve_session_resources(
             shared_session_factory=self._session_factory,
             settings=self._settings,
@@ -113,14 +184,11 @@ class SessionOrchestrator:
                     session_id=session_id,
                     owner_token=owner_token,
                 )
-                return await self._execute_locked_turn(
+                yield SessionTurnLease(
+                    orchestrator=self,
                     session_factory=resources.session_factory,
                     profile_id=profile_id,
                     session_id=session_id,
-                    message=message,
-                    planned_tool_calls=planned_tool_calls,
-                    context_overrides=context_overrides,
-                    progress_sink=progress_sink,
                 )
             finally:
                 heartbeat_task.cancel()
@@ -130,22 +198,6 @@ class SessionOrchestrator:
                     session_factory=resources.session_factory,
                     queue_item_id=queue_item_id,
                     owner_token=owner_token,
-                )
-        finally:
-            await _dispose_owned_engine(resources)
-
-    async def cancel_active_turn(self, *, profile_id: str, session_id: str) -> bool:
-        """Request cancellation for the latest running turn in storage."""
-
-        resources = await _resolve_session_resources(
-            shared_session_factory=self._session_factory,
-            settings=self._settings,
-        )
-        try:
-            async with session_scope(resources.session_factory) as db:
-                return await RunRepository(db).request_cancel(
-                    profile_id=profile_id,
-                    session_id=session_id,
                 )
         finally:
             await _dispose_owned_engine(resources)

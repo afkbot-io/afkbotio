@@ -143,6 +143,7 @@ async def run_queueable_chat_session(
                 finally:
                     repl_state.active_turn = False
                     repl_state.active_turn_started_at = None
+                    repl_state.latest_activity = None
                     ux.stop_progress()
                     current_turn_task = None
                     _emit_state_change()
@@ -200,6 +201,7 @@ async def run_queueable_chat_session(
                 current_turn_task = None
                 repl_state.active_turn = False
                 repl_state.active_turn_started_at = None
+                repl_state.latest_activity = None
                 ux.stop_progress()
                 repl_state.queued_messages = turn_queue.size
                 _emit_state_change()
@@ -210,6 +212,7 @@ async def run_queueable_chat_session(
     finally:
         repl_state.active_turn = False
         repl_state.active_turn_started_at = None
+        repl_state.latest_activity = None
         repl_state.queued_messages = 0
         _emit_state_change()
         ux.stop_progress()

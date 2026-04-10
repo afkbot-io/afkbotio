@@ -140,6 +140,7 @@ class TurnExecutionRuntime:
             execution_planning_mode = resolved_context.execution_planning_mode
             execution_planning_enabled = resolved_context.execution_planning_enabled
             effective_overrides = resolved_context.effective_overrides
+            persist_turn = effective_overrides.persist_turn is not False
 
             if not user_guard.allow:
                 blocked_message = (
@@ -154,6 +155,7 @@ class TurnExecutionRuntime:
                     blocked_message=blocked_message,
                     blocked_reason=user_guard.error_code,
                     machine_state=machine.state.value,
+                    persist_turn=persist_turn,
                 )
 
             prepared = await self._turn_preparation.prepare(
@@ -304,6 +306,7 @@ class TurnExecutionRuntime:
                         user_message=user_message,
                         machine_state=machine.state.value,
                         envelope=pending_envelope,
+                        persist_turn=persist_turn,
                     )
                 machine.think()
                 machine.plan()
@@ -352,6 +355,7 @@ class TurnExecutionRuntime:
                         user_message=user_message,
                         machine_state=machine.state.value,
                         envelope=pending_envelope,
+                        persist_turn=persist_turn,
                     )
             else:
                 assistant_message = (
@@ -384,6 +388,7 @@ class TurnExecutionRuntime:
                     None if effective_overrides is None else effective_overrides.runtime_metadata
                 ),
                 spec_patch=final_spec_patch,
+                persist_turn=persist_turn,
             )
         except asyncio.CancelledError:
             if run_id is not None and session_key is not None:

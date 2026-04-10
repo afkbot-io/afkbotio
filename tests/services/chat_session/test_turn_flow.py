@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -122,11 +124,60 @@ async def test_run_chat_turn_with_optional_planning_presents_and_records_plan_be
     assert presented_blocks == ["3"]
 
 
+async def test_run_chat_turn_with_optional_planning_persists_explicit_plan_requests() -> None:
+    """Explicit plan requests should remain durable instead of using ephemeral plan persistence."""
+
+    seen_overrides: list[TurnContextOverrides | None] = []
+
+    async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        progress_sink=None,
+        allow_secure_prompt: bool,
+        turn_overrides=None,
+    ):
+        _ = progress_sink, allow_secure_prompt
+        assert message == "Plan the migration in steps."
+        assert profile_id == "default"
+        assert session_id == "s-turn-flow-explicit-plan"
+        seen_overrides.append(turn_overrides)
+        return TurnResult(
+            run_id=15,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(
+                action="finalize",
+                message="1. Inspect\n2. Migrate\n3. Verify",
+            ),
+        )
+
+    outcome = await run_chat_turn_with_optional_planning(
+        message="Plan the migration in steps.",
+        profile_id="default",
+        session_id="s-turn-flow-explicit-plan",
+        progress_sink=None,
+        allow_secure_prompt=False,
+        run_turn_with_secure_resolution=_fake_run_turn_with_secure_resolution,
+        planning_mode="on",
+        thinking_level=None,
+    )
+
+    assert outcome.final_output == "plan"
+    assert outcome.plan_snapshot is not None
+    assert len(seen_overrides) == 1
+    assert seen_overrides[0] is not None
+    assert seen_overrides[0].planning_mode == "plan_only"
+    assert seen_overrides[0].persist_turn is True
+
+
 async def test_run_chat_turn_with_optional_planning_auto_executes_without_confirmation_callback() -> None:
     """Missing plan execution confirmation should continue straight to execution when not explicitly requested."""
 
     # Arrange
     seen_calls: list[tuple[bool, TurnContextOverrides | None]] = []
+    seen_plan_phases: list[str] = []
 
     async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
         *,
@@ -173,6 +224,7 @@ async def test_run_chat_turn_with_optional_planning_auto_executes_without_confir
         confirm_plan_execution=None,
         present_plan=None,
         record_plan=None,
+        update_plan_phase=seen_plan_phases.append,
     )
 
     # Assert
@@ -181,6 +233,48 @@ async def test_run_chat_turn_with_optional_planning_auto_executes_without_confir
     assert len(seen_calls) == 2
     assert seen_calls[0][0] is False
     assert seen_calls[1][0] is True
+    assert seen_plan_phases == ["planned", "executing", "completed"]
+
+
+async def test_run_chat_turn_with_optional_planning_marks_cancelled_plan_execution() -> None:
+    """Cancellation during plan-backed execution should mark the stored plan as cancelled."""
+
+    seen_plan_phases: list[str] = []
+
+    async def _fake_run_turn_with_secure_resolution(  # type: ignore[no-untyped-def]
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        progress_sink=None,
+        allow_secure_prompt: bool,
+        turn_overrides=None,
+    ):
+        _ = message, profile_id, session_id, progress_sink, turn_overrides
+        if allow_secure_prompt is False:
+            return TurnResult(
+                run_id=41,
+                session_id="s-turn-flow-cancel",
+                profile_id="default",
+                envelope=ActionEnvelope(action="finalize", message="1. Inspect\n2. Implement"),
+            )
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_chat_turn_with_optional_planning(
+            message="Implement the feature.",
+            profile_id="default",
+            session_id="s-turn-flow-cancel",
+            progress_sink=None,
+            allow_secure_prompt=True,
+            run_turn_with_secure_resolution=_fake_run_turn_with_secure_resolution,
+            planning_mode="on",
+            thinking_level=None,
+            confirm_plan_execution=None,
+            update_plan_phase=seen_plan_phases.append,
+        )
+
+    assert seen_plan_phases == ["planned", "executing", "cancelled"]
 
 
 async def test_run_chat_turn_with_optional_planning_auto_mode_can_plan_then_execute_without_prompts() -> None:

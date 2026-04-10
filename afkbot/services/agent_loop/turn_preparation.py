@@ -17,6 +17,7 @@ from afkbot.services.agent_loop.runtime_facts import TrustedRuntimeFactsService
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.session_skill_affinity import SessionSkillAffinityService
 from afkbot.services.agent_loop.skill_router import SkillRoute, SkillRouter
+from afkbot.services.agent_loop.thinking import combine_prompt_overlays
 from afkbot.services.agent_loop.tool_exposure import ToolExposureBuilder
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_preparation_support import (
@@ -37,6 +38,7 @@ from afkbot.services.llm.contracts import LLMMessage, LLMToolDefinition
 
 planned_tools_final_message = _planned_tools_final_message
 turn_plan_payload = _turn_plan_payload
+_PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,18 +175,20 @@ class TurnPreparationRuntime:
         available_tools: tuple[LLMToolDefinition, ...] = ()
         executable_tool_names: tuple[str, ...] = ()
         approval_required_tool_names: tuple[str, ...] = ()
+        prompt_overlay = None if context_overrides is None else context_overrides.prompt_overlay
         if llm_enabled:
+            tool_access_mode = (
+                "default"
+                if context_overrides is None or context_overrides.tool_access_mode is None
+                else context_overrides.tool_access_mode
+            )
             tool_surface = self._tool_exposure.build_tool_surface(
                 policy,
                 profile_id=profile_id,
                 skill_route=skill_route,
                 automation_intent=automation_intent,
                 runtime_metadata=runtime_metadata,
-                tool_access_mode=(
-                    "default"
-                    if context_overrides is None or context_overrides.tool_access_mode is None
-                    else context_overrides.tool_access_mode
-                ),
+                tool_access_mode=tool_access_mode,
                 approved_tool_names=(
                     None if context_overrides is None else context_overrides.approved_tool_names
                 ),
@@ -197,6 +201,28 @@ class TurnPreparationRuntime:
             available_tools = tool_surface.visible_tools
             executable_tool_names = tool_surface.executable_tool_names
             approval_required_tool_names = tool_surface.approval_required_tool_names
+            prompt_overlay = combine_prompt_overlays(
+                prompt_overlay,
+                self._plan_only_execution_surface_note(
+                    policy=policy,
+                    profile_id=profile_id,
+                    skill_route=skill_route,
+                    automation_intent=automation_intent,
+                    runtime_metadata=runtime_metadata,
+                    approved_tool_names=(
+                        None if context_overrides is None else context_overrides.approved_tool_names
+                    ),
+                    cli_approval_surface_enabled=(
+                        False
+                        if context_overrides is None
+                        else context_overrides.cli_approval_surface_enabled
+                    ),
+                    planning_mode=(
+                        "off" if context_overrides is None else context_overrides.planning_mode
+                    ),
+                    current_visible_tool_names=tuple(tool.name for tool in available_tools),
+                ),
+            )
         visible_enforceable_skill_names = self._tool_exposure.visible_enforceable_skill_names(
             available_tools=available_tools,
             profile_id=profile_id,
@@ -218,7 +244,7 @@ class TurnPreparationRuntime:
             profile_id=profile_id,
             policy=policy,
             runtime_metadata=runtime_metadata,
-            prompt_overlay=None if context_overrides is None else context_overrides.prompt_overlay,
+            prompt_overlay=prompt_overlay,
             trusted_runtime_notes=trusted_runtime_notes,
             skill_route=skill_route,
             explicit_skill_mentions=explicit_skill_mentions,
@@ -248,6 +274,65 @@ class TurnPreparationRuntime:
             available_tools=available_tools,
             executable_tool_names=executable_tool_names,
             approval_required_tool_names=approval_required_tool_names,
+        )
+
+    def _plan_only_execution_surface_note(
+        self,
+        *,
+        policy: ProfilePolicy,
+        profile_id: str,
+        skill_route: SkillRoute,
+        automation_intent: bool,
+        runtime_metadata: dict[str, object] | None,
+        approved_tool_names: tuple[str, ...] | None,
+        cli_approval_surface_enabled: bool,
+        planning_mode: str,
+        current_visible_tool_names: tuple[str, ...],
+    ) -> str | None:
+        """Explain which execution tools remain available after a read-only planning pass."""
+
+        if planning_mode != "plan_only":
+            return None
+        execution_surface = self._tool_exposure.build_tool_surface(
+            policy,
+            profile_id=profile_id,
+            skill_route=skill_route,
+            automation_intent=automation_intent,
+            runtime_metadata=runtime_metadata,
+            tool_access_mode="default",
+            approved_tool_names=approved_tool_names,
+            cli_approval_surface_enabled=cli_approval_surface_enabled,
+        )
+        current_names = set(current_visible_tool_names)
+        later_visible_tools = [
+            tool
+            for tool in execution_surface.visible_tools
+            if tool.name not in current_names
+        ]
+        if not later_visible_tools:
+            return None
+        listed_names = ", ".join(
+            (
+                f"`{tool.name}` (approval)"
+                if tool.requires_confirmation
+                else f"`{tool.name}`"
+            )
+            for tool in later_visible_tools[:_PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS]
+        )
+        remaining_count = len(later_visible_tools) - min(
+            len(later_visible_tools),
+            _PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS,
+        )
+        remainder = f", and {remaining_count} more" if remaining_count > 0 else ""
+        return (
+            "# Plan-Only Execution Surface\n"
+            "This is a read-only planning pass. Do not call execution tools now.\n"
+            "Do not claim that a tool is unavailable only because it is hidden from direct execution "
+            "during planning.\n"
+            "If a later execution step needs one of these tools, reference it in the plan instead of "
+            "trying to call it now.\n"
+            "Execution-capable tools visible after planning (approval-gated tools are marked): "
+            f"{listed_names}{remainder}."
         )
 
     async def _build_context(

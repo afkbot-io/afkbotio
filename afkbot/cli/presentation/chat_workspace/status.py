@@ -8,9 +8,13 @@ from afkbot.cli.commands.chat_repl_specs import (
     chat_repl_primary_commands,
     chat_repl_slash_aliases,
 )
+from afkbot.cli.presentation.chat_plan_status import (
+    plan_summary_for_chat_workspace,
+    stored_plan_status_for_chat_workspace,
+)
+from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.cli.presentation.chat_workspace.capabilities import capability_catalog_summary
 from afkbot.cli.presentation.chat_workspace.toolbar import build_chat_workspace_footer
-from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 
 
@@ -31,7 +35,8 @@ def status_text_for_chat_workspace(state: ChatReplSessionState) -> str:
         f"- default_thinking_level: {state.default_thinking_level or 'default'}\n"
         f"- active_turn: {state.active_turn}\n"
         f"- queued_messages: {state.queued_messages}\n"
-        f"- stored_plan: {stored_plan_status_for_chat_workspace(state.latest_plan)}\n"
+        f"- stored_plan: {stored_plan_status_for_chat_workspace(state.latest_plan, phase=state.latest_plan_phase)}\n"
+        f"- plan_summary: {plan_summary_for_chat_workspace(state.latest_plan)}\n"
         f"- activity: {_activity_status(state)}\n"
         f"- capability_catalog: {capability_catalog_summary(state.latest_catalog)}\n"
         f"- local_commands: {', '.join(chat_repl_primary_commands())}\n"
@@ -58,16 +63,6 @@ def activity_text_for_chat_workspace(state: ChatReplSessionState) -> str:
     return "Latest activity\n" f"- {_activity_status(state)}"
 
 
-def stored_plan_status_for_chat_workspace(plan: ChatPlanSnapshot | None) -> str:
-    """Render one short stored-plan summary for status surfaces."""
-
-    if plan is None:
-        return "none"
-    if plan.step_count > 0:
-        return f"{plan.step_count} step(s)"
-    return "raw text"
-
-
 def _activity_status(state: ChatReplSessionState) -> str:
     snapshot = state.latest_activity
     if snapshot is None:
@@ -76,7 +71,7 @@ def _activity_status(state: ChatReplSessionState) -> str:
     if snapshot.detail:
         parts.append(f"detail={snapshot.detail}")
     parts.append(f"running={snapshot.running}")
-    return " · ".join(parts)
+    return sanitize_terminal_text(" · ".join(parts))
 
 
 def _help_line(spec: ChatReplCommandSpec, state: ChatReplSessionState) -> str:

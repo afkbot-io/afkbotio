@@ -56,21 +56,23 @@ class TurnFinalizer:
         blocked_message: str,
         blocked_reason: str | None,
         machine_state: str,
+        persist_turn: bool = True,
     ) -> TurnResult:
         """Persist deterministic block/finalize artifacts for rejected user input."""
 
         await self._run_repo.update_status(run_id, "completed")
-        await self._run_repo.create_chat_turn(
-            session_id=session_id,
-            profile_id=profile_id,
-            user_message=user_message,
-            assistant_message=blocked_message,
-        )
-        await self._refresh_session_compaction(
-            run_id=run_id,
-            session_id=session_id,
-            profile_id=profile_id,
-        )
+        if persist_turn:
+            await self._run_repo.create_chat_turn(
+                session_id=session_id,
+                profile_id=profile_id,
+                user_message=user_message,
+                assistant_message=blocked_message,
+            )
+            await self._refresh_session_compaction(
+                run_id=run_id,
+                session_id=session_id,
+                profile_id=profile_id,
+            )
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
@@ -112,40 +114,44 @@ class TurnFinalizer:
         user_message: str,
         machine_state: str,
         envelope: ActionEnvelope,
+        persist_turn: bool = True,
     ) -> TurnResult:
         """Persist pending secure/profile/approval envelope and corresponding turn logs."""
 
         if envelope.action == "request_secure_field":
-            await self._persist_pending_secure_request(
-                run_id=run_id,
-                session_id=session_id,
-                profile_id=profile_id,
-                envelope=envelope,
-            )
+            if persist_turn:
+                await self._persist_pending_secure_request(
+                    run_id=run_id,
+                    session_id=session_id,
+                    profile_id=profile_id,
+                    envelope=envelope,
+                )
             event_type = "turn.request_secure_field"
         elif envelope.action == "ask_question":
             event_type = "turn.ask_question"
         else:
             event_type = "turn.pending"
-        await self._persist_pending_resume_envelope(
-            run_id=run_id,
-            session_id=session_id,
-            profile_id=profile_id,
-            envelope=envelope,
-        )
+        if persist_turn:
+            await self._persist_pending_resume_envelope(
+                run_id=run_id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=envelope,
+            )
 
         await self._run_repo.update_status(run_id, "completed")
-        await self._run_repo.create_chat_turn(
-            session_id=session_id,
-            profile_id=profile_id,
-            user_message=user_message,
-            assistant_message=envelope.message,
-        )
-        await self._refresh_session_compaction(
-            run_id=run_id,
-            session_id=session_id,
-            profile_id=profile_id,
-        )
+        if persist_turn:
+            await self._run_repo.create_chat_turn(
+                session_id=session_id,
+                profile_id=profile_id,
+                user_message=user_message,
+                assistant_message=envelope.message,
+            )
+            await self._refresh_session_compaction(
+                run_id=run_id,
+                session_id=session_id,
+                profile_id=profile_id,
+            )
         payload = {
             "user_message": user_message,
             "assistant_message": envelope.message,
@@ -182,31 +188,34 @@ class TurnFinalizer:
         policy: ProfilePolicy,
         runtime_metadata: dict[str, object] | None = None,
         spec_patch: dict[str, object] | None = None,
+        persist_turn: bool = True,
     ) -> TurnResult:
         """Persist finalized turn artifacts, including optional auto-memory save."""
 
-        await self._memory_runtime.auto_save_turn(
-            run_id=run_id,
-            session_id=session_id,
-            profile_id=profile_id,
-            user_message=user_message,
-            assistant_message=assistant_message,
-            action=action,
-            policy=policy,
-            runtime_metadata=runtime_metadata,
-        )
+        if persist_turn:
+            await self._memory_runtime.auto_save_turn(
+                run_id=run_id,
+                session_id=session_id,
+                profile_id=profile_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                action=action,
+                policy=policy,
+                runtime_metadata=runtime_metadata,
+            )
         await self._run_repo.update_status(run_id, "completed")
-        await self._run_repo.create_chat_turn(
-            session_id=session_id,
-            profile_id=profile_id,
-            user_message=user_message,
-            assistant_message=assistant_message,
-        )
-        await self._refresh_session_compaction(
-            run_id=run_id,
-            session_id=session_id,
-            profile_id=profile_id,
-        )
+        if persist_turn:
+            await self._run_repo.create_chat_turn(
+                session_id=session_id,
+                profile_id=profile_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
+            await self._refresh_session_compaction(
+                run_id=run_id,
+                session_id=session_id,
+                profile_id=profile_id,
+            )
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
