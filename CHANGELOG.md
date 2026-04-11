@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.12] - 2026-04-11
+
+### Added
+
+- README now documents the runtime execution model directly in the repository root, including planning modes, per-session queueing, the `chat` vs `session.job.run` vs `Task Flow` decision model, and copy-paste chat examples for parallel work.
+- Regression coverage for runtime subagent name normalization, cross-instance subagent cancellation, and subagent-specific validation errors surfaced through `subagent.run` and `session.job.run`.
+
+### Changed
+
+- Chat, API, automations, Task Flow, and child subagents now share the same session-orchestration model: one serialized turn queue per `(profile_id, session_id)` with parallel fan-out only inside the active turn.
+- Planning-first chat now runs `plan -> execute` inside the same serialized session slot and no longer requires a second user message to continue after a visible plan pass.
+- Runtime subagent lookup now normalizes requested names the same way profile subagent creation does, so case and localized input resolve to the same runtime-safe slug when a matching subagent exists.
+- API idempotent turn execution no longer keeps the legacy optional-shape shim around the turn executor call contract.
+
+### Fixed
+
+- Detached subagent cancellation is now durable across service instances: when another runtime instance marks a subagent task cancelled, the active worker observes the persisted state, forwards cancellation into the child session runtime, and avoids orphan child turns continuing after visible cancellation.
+- `subagent.run` and `session.job.run` now return `invalid_subagent_name` for invalid runtime names instead of collapsing those failures into a generic parameter error.
+- Missing subagent lookup errors now include the visible runtime subagent names for the current profile, making it easier to distinguish “bad name” from “valid name but not installed in this AFK profile”.
+- Release metadata, API versioning, README examples, and update-runtime expectations are aligned to `1.0.12`.
+
 ## [1.0.11] - 2026-04-09
 
 ### Fixed

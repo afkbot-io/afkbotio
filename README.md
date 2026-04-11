@@ -15,6 +15,67 @@ Use the docs site for setup, configuration, MCP, automations, and command refere
 - Includes browser, web, app, MCP, automation, and channel integration surfaces.
 - Exposes a local runtime and API layer for longer-running workflows.
 
+## Runtime Model
+
+AFKBOT uses one session-oriented execution model across chat, API, automations,
+Task Flow workers, and child subagents.
+
+- One active turn runs at a time for each `(profile_id, session_id)`.
+- If you send another message while a turn is still running, the next message is
+  queued and starts after the current turn releases the session slot.
+- `afk chat` planning modes control whether the agent starts with a read-only
+  planning pass before execution:
+  - `off`: execute immediately
+  - `auto`: use plan-first for complex requests
+  - `on`: always show a plan first, then execute
+- A public `plan -> execute` flow runs inside the same serialized session slot,
+  so execution starts automatically after planning unless you explicitly asked
+  for only a plan.
+- Inside one turn, the agent can fan out independent work in parallel with
+  `session.job.run`, wait for every child job to finish, and then return one
+  final answer.
+- Subagents and Task Flow runs use separate child sessions, so they do not steal
+  the parent chat session slot.
+
+## Choosing the Execution Path
+
+Use this mental model:
+
+| Path | Use it when | Wait for the answer now? | Durable state? | Typical outcome |
+| --- | --- | --- | --- | --- |
+| `Chat turn` | The work fits in one bounded conversation turn | Yes | No | Plan, inspect files, run tools, answer in chat |
+| `session.job.run` + subagents | You want parallel work inside the current turn | Yes | No | Fan out independent bash or subagent jobs, wait for all, merge results |
+| `Task Flow` | The work is long-running, needs dependencies, review, handoff, or a backlog trail | Not necessarily | Yes | Create durable tasks, run them in background, inspect task runs and comments later |
+
+Subagents are profile-local runtime assets, not global assistant personas. List
+the subagents that the current AFKBOT profile can actually run with:
+
+```bash
+uv run afk subagent list --profile default
+```
+
+## Chat And Planning
+
+`afk chat` is the main orchestrator. It decides whether to stay in one turn,
+fan out parallel jobs, or create durable Task Flow work.
+
+Planning mode examples:
+
+```bash
+uv run afk chat --plan off
+uv run afk chat --plan auto
+uv run afk chat --plan on
+```
+
+Behavior:
+
+- `off`: the turn executes immediately.
+- `auto`: the runtime may do a read-only planning pass for multi-step work.
+- `on`: the runtime always shows a plan first and then executes in the same
+  request.
+- If you explicitly ask only for a plan, AFKBOT returns the plan and stops
+  without starting execution.
+
 ## License Model
 
 - AFKBOT source code is available under the `Sustainable Use License 1.0`.
@@ -69,7 +130,7 @@ Common installer flags:
 curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
 
 # install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.11
+curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.12
 
 # install from a local checkout
 bash scripts/install.sh --repo-url "file://$PWD"
@@ -105,6 +166,30 @@ afk chat
 - `afk setup` also asks whether `afk chat` should check for AFKBOT updates before opening chat
 - `afk doctor` prints the effective runtime/chat ports and checks local readiness
 - `afk chat` is the main entrypoint for real work
+
+Setup and profile policy directly control the tool surface that the runtime can
+use. In practice:
+
+- enable `Shell` if you want the agent to run shell commands or parallel bash
+  jobs through `session.job.run`
+- enable `Subagents` if you want the agent to run profile-local subagents
+- enable `Task Flow` if you want durable backlog tasks, dependencies, review,
+  and background execution
+- enable `MCP`, `Browser`, `HTTP`, `Apps`, and other capability groups only for
+  the surfaces you actually want exposed to the profile
+
+Useful first-run checks:
+
+```bash
+uv run afk doctor
+uv run afk profile show default
+uv run afk subagent list --profile default
+uv run afk task board --profile default
+```
+
+`afk profile show default` lets you confirm the effective runtime policy and
+capabilities. `afk subagent list --profile default` shows the actual subagent
+names that this profile can run.
 
 If update notices are enabled in setup, interactive `afk chat` checks for a newer AFKBOT build before opening the session and asks:
 
@@ -152,6 +237,9 @@ uv run afk doctor
 # doctor prints the effective runtime_port and api_port for this install
 ```
 
+`afk start` launches the local runtime stack, including API routes, automation
+delivery, and Task Flow background workers.
+
 Webhook trigger example:
 
 ```bash
@@ -173,6 +261,48 @@ uv run afk mcp list
 uv run afk profile show default
 uv run afk update
 ```
+
+## Chat Examples
+
+Paste prompts like these into `uv run afk chat`.
+
+Parallel work inside one turn:
+
+```text
+Do one session.job.run call.
+Run 2 bash jobs in parallel:
+1) sleep 5 && echo FIRST
+2) sleep 5 && echo SECOND
+Wait for both and summarize the result.
+```
+
+Parallel profile-local subagents inside one turn:
+
+```text
+Do one session.job.run call.
+Run 2 subagent jobs in parallel:
+1) subagent_name=poet-10-lines, prompt="Write 10 lines about orchestration"
+2) subagent_name=ui-reviewer, prompt="Review: button text has low contrast"
+Wait for both and merge the results.
+```
+
+Durable work as Task Flow instead of one large chat turn:
+
+```text
+Break this project into durable Task Flow work:
+- create a flow
+- create the tasks
+- add dependencies
+- assign AI-owned tasks to the default profile
+- leave me with the task ids and next review points
+```
+
+Rule of thumb:
+
+- keep work in one chat turn when you want the answer now
+- use `session.job.run` when the current turn contains independent parallel work
+- use `Task Flow` when the work must survive the current chat session and keep a
+  durable execution trail
 
 ## Plugins
 

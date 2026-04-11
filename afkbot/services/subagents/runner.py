@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import json
+from contextlib import suppress
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
+from afkbot.repositories.subagent_task_repo import SubagentTaskRepository
 from afkbot.settings import Settings
 from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY, SubagentRuntimePolicy
+
+_CANCEL_POLL_SEC = 0.2
+_CANCEL_GRACE_SEC = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,25 +91,42 @@ class SubagentRunner:
             session_factory=session_factory,
             turn_runner_factory=_build_child_runner,
         )
-        result = await runner.run_turn(
-            profile_id=profile_id,
-            session_id=child_session_id,
-            message=prompt,
-            context_overrides=TurnContextOverrides(
-                prompt_overlay=self._runtime_policy.build_prompt_overlay(
-                    subagent_name=subagent_name,
-                    subagent_markdown=subagent_markdown,
+        turn_task = asyncio.create_task(
+            runner.run_turn(
+                profile_id=profile_id,
+                session_id=child_session_id,
+                message=prompt,
+                context_overrides=TurnContextOverrides(
+                    prompt_overlay=self._runtime_policy.build_prompt_overlay(
+                        subagent_name=subagent_name,
+                        subagent_markdown=subagent_markdown,
+                    ),
+                    runtime_metadata={
+                        "subagent_task": {
+                            "task_id": task_id,
+                            "name": subagent_name,
+                            "parent_session_id": parent_session_id,
+                        }
+                    },
                 ),
-                runtime_metadata={
-                    "subagent_task": {
-                        "task_id": task_id,
-                        "name": subagent_name,
-                        "parent_session_id": parent_session_id,
-                    }
-                },
+                source="subagent",
             ),
-            source="subagent",
+            name=f"subagent-child-turn:{task_id}",
         )
+        try:
+            result = await self._await_child_result(
+                session_factory=session_factory,
+                runner=runner,
+                turn_task=turn_task,
+                task_id=task_id,
+                profile_id=profile_id,
+                child_session_id=child_session_id,
+            )
+        finally:
+            if not turn_task.done():
+                turn_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await turn_task
         if result.envelope.action != "finalize":
             raise SubagentExecutionError(
                 error_code="subagent_unexpected_action",
@@ -116,6 +139,63 @@ class SubagentRunner:
             child_session_id=child_session_id,
             child_run_id=result.run_id,
         )
+
+    async def _await_child_result(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        runner: Any,
+        turn_task: "asyncio.Task[Any]",
+        task_id: str,
+        profile_id: str,
+        child_session_id: str,
+    ) -> Any:
+        while True:
+            done, _pending = await asyncio.wait(
+                {turn_task},
+                timeout=_CANCEL_POLL_SEC,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if done:
+                return await turn_task
+            active, error_code, reason = await self._load_task_state(
+                session_factory=session_factory,
+                task_id=task_id,
+            )
+            if not active:
+                await runner.cancel_active_turn(
+                    profile_id=profile_id,
+                    session_id=child_session_id,
+                )
+                try:
+                    return await asyncio.wait_for(turn_task, timeout=_CANCEL_GRACE_SEC)
+                except asyncio.TimeoutError:
+                    turn_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await turn_task
+                except asyncio.CancelledError:
+                    pass
+                raise SubagentExecutionError(
+                    error_code=error_code or "subagent_cancelled",
+                    reason=reason or "Subagent task was cancelled",
+                )
+
+    @staticmethod
+    async def _load_task_state(
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        task_id: str,
+    ) -> tuple[bool, str | None, str | None]:
+        async with session_scope(session_factory) as session:
+            row = await SubagentTaskRepository(session).get_task(task_id=task_id)
+        if row is None:
+            return False, None, None
+        status = str(row.status or "").strip().lower()
+        if status == "running":
+            return True, None, None
+        error_code = str(row.error_code or "").strip() or None
+        reason = str(row.reason or "").strip() or None
+        return False, error_code, reason
 
     @staticmethod
     def _ensure_llm_is_configured(*, settings: Settings) -> None:

@@ -156,6 +156,29 @@ async def test_subagent_run_accepts_long_timeout_with_subagent_policy(
     assert result.payload["timeout_sec"] == 600
 
 
+async def test_subagent_run_reports_invalid_subagent_name(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """subagent.run should surface invalid runtime names with a subagent-specific error code."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-1", run_id=1)
+    run_tool = create_subagent_run_tool(settings)
+
+    params = run_tool.parse_params(
+        {"prompt": "hello", "subagent_name": "___"},
+        default_timeout_sec=15,
+        max_timeout_sec=900,
+    )
+    result = await run_tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "invalid_subagent_name"
+    assert result.reason == "Invalid subagent name: ___"
+
+
 async def test_session_job_run_executes_children_concurrently(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -226,6 +249,37 @@ async def test_session_job_run_executes_children_concurrently(
     outputs = [item["output"] for item in result.payload["results"]]
     assert outputs == ["researcher:first", "researcher:second"]
     await service.shutdown()
+
+
+async def test_session_job_run_reports_invalid_subagent_name_per_item(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """session.job.run should preserve subagent-specific validation errors at item granularity."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "subagent", "prompt": "hello", "subagent_name": "___"},
+            ],
+            "timeout_sec": 2,
+        },
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["failed"] == 1
+    item = result.payload["results"][0]
+    assert item["ok"] is False
+    assert item["error_code"] == "invalid_subagent_name"
+    assert item["reason"] == "Invalid subagent name: ___"
 
 
 async def test_session_job_run_reports_one_child_failure_without_crashing(

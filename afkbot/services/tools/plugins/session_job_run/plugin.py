@@ -252,7 +252,7 @@ class SessionJobRunTool(ToolBase):
             return self._error_result(
                 index=index,
                 kind="subagent",
-                error_code="tool_params_invalid",
+                error_code=_subagent_value_error_code(exc),
                 reason=str(exc),
             )
         except asyncio.CancelledError:
@@ -386,3 +386,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create session.job.run tool instance."""
 
     return SessionJobRunTool(settings=settings)
+
+
+def _subagent_value_error_code(exc: ValueError) -> str:
+    reason = str(exc).strip()
+    if reason.startswith("Invalid subagent name:"):
+        return "invalid_subagent_name"
+    return "tool_params_invalid"

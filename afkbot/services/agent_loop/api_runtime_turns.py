@@ -67,35 +67,6 @@ class ClaimHeartbeater(Protocol):
     ) -> None: ...
 
 
-async def _execute_turn_once(
-    *,
-    execute_turn: TurnExecutor,
-    message: str,
-    profile_id: str,
-    session_id: str,
-    planned_tool_calls: list[ToolCall] | None,
-    context_overrides: TurnContextOverrides | None,
-) -> TurnResult:
-    """Run one turn while preserving the legacy optional context-overrides call shape."""
-
-    if context_overrides is None:
-        return await execute_turn(
-            message=message,
-            profile_id=profile_id,
-            session_id=session_id,
-            planned_tool_calls=planned_tool_calls,
-            progress_sink=None,
-        )
-    return await execute_turn(
-        message=message,
-        profile_id=profile_id,
-        session_id=session_id,
-        planned_tool_calls=planned_tool_calls,
-        progress_sink=None,
-        context_overrides=context_overrides,
-    )
-
-
 async def _claim_or_load_existing_result(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -235,12 +206,12 @@ async def run_idempotent_chat_turn(
                 ),
                 name=f"chat-turn-claim-heartbeat:{profile_id}:{session_id}:{client_msg_id}",
             )
-            result = await _execute_turn_once(
-                execute_turn=execute_turn,
+            result = await execute_turn(
                 message=message,
                 profile_id=profile_id,
                 session_id=session_id,
                 planned_tool_calls=planned_tool_calls,
+                progress_sink=None,
                 context_overrides=context_overrides,
             )
             return await _store_or_reuse_result(
