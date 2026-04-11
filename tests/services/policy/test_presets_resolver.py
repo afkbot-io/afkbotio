@@ -126,6 +126,33 @@ def test_resolve_policy_maps_new_tool_capabilities() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("capabilities",),
+    [
+        ((PolicyCapabilityId.SHELL,),),
+        ((PolicyCapabilityId.SUBAGENTS,),),
+        ((PolicyCapabilityId.SHELL, PolicyCapabilityId.SUBAGENTS),),
+    ],
+)
+def test_resolve_policy_grants_session_job_run_for_shell_and_subagents(
+    capabilities: tuple[PolicyCapabilityId, ...],
+) -> None:
+    """session.job.run should be granted by either shell or subagent capability selection."""
+
+    selection = PolicySelection(
+        enabled=True,
+        preset=PolicyPresetLevel.MEDIUM,
+        capabilities=capabilities,
+    )
+
+    resolved = resolve_policy(
+        selection=selection,
+        available_tool_names=("bash.exec", "session.job.run", "subagent.run"),
+    )
+
+    assert "session.job.run" in resolved.allowed_tools
+
+
 def test_resolve_policy_adds_wildcard_for_mcp_runtime_capability() -> None:
     """MCP runtime capability should preserve wildcard allow rules for profile-aware bridges."""
 

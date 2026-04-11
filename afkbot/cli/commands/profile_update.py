@@ -9,6 +9,7 @@ import typer
 
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.commands.profile_common import emit_profile_error
+from afkbot.cli.commands.policy_option_help import policy_capability_option_help
 from afkbot.cli.commands.profile_mutation_support import (
     collect_profile_mutation_inputs,
     render_profile_mutation_success,
@@ -224,7 +225,7 @@ def register_update(profile_app: typer.Typer) -> None:
         policy_capability: list[str] = typer.Option(
             [],
             "--policy-capability",
-            help="Capability id (repeatable) used to resolve allowed tool surface.",
+            help=policy_capability_option_help(),
         ),
         policy_file_access_mode: str | None = typer.Option(
             None,

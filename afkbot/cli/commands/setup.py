@@ -11,6 +11,7 @@ from afkbot.cli.command_errors import raise_usage_error
 from afkbot.cli.commands.profile_mutation_support import (
     collect_setup_profile_inputs,
 )
+from afkbot.cli.commands.policy_option_help import policy_capability_option_help
 from afkbot.cli.commands.setup_support import (
     format_setup_runtime_error,
     load_current_default_profile,
@@ -138,11 +139,7 @@ def register(app: typer.Typer) -> None:
         policy_capability: list[str] = typer.Option(
             [],
             "--policy-capability",
-            help=(
-                "Capability id (repeatable): "
-                "files,shell,memory,credentials,subagents,automation,http,web,browser,skills,apps,debug "
-                "(legacy aliases: email,telegram)"
-            ),
+            help=policy_capability_option_help(),
         ),
         policy_file_access_mode: str | None = typer.Option(
             None,

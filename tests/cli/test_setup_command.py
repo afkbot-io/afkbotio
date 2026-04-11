@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
 import importlib
 import json
 from pathlib import Path
@@ -90,11 +91,32 @@ except ImportError:
     sys.modules["mcp.client.websocket"] = mcp_client_websocket_module
 
 from afkbot.cli.main import app
+from afkbot.cli.commands.policy_option_help import policy_capability_option_help
 from afkbot.cli.commands.setup_support import load_current_default_profile
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.services.profile_runtime import ProfileServiceError
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.settings import get_settings
 from tests.cli._setup_harness import bootstrap_platform, prepare_root
+
+
+def _load_allowed_tools(*, profile_id: str) -> tuple[str, ...]:
+    async def _run() -> tuple[str, ...]:
+        settings = get_settings()
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            async with session_scope(factory) as session:
+                row = await ProfilePolicyRepository(session).get(profile_id)
+                assert row is not None
+                return tuple(json.loads(row.allowed_tools_json))
+        finally:
+            await engine.dispose()
+
+    get_settings.cache_clear()
+    return asyncio.run(_run())
 
 
 def test_setup_cli_runs_without_prior_platform_bootstrap(
@@ -140,6 +162,52 @@ def test_setup_cli_seeds_global_bootstrap_files(
     assert result.exit_code == 0
     for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
         assert (tmp_path / "afkbot/bootstrap" / file_name).exists()
+
+
+def test_setup_cli_recommended_policy_includes_session_job_run(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Default setup policy should grant session.job.run through recommended subagent capability."""
+
+    prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.setup.reload_install_managed_runtime_notice",
+        lambda _settings: None,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--accept-risk", "--skip-llm-token-verify"])
+
+    assert result.exit_code == 0
+    allowed_tools = _load_allowed_tools(
+        profile_id="default",
+    )
+    assert "session.job.run" in allowed_tools
+
+
+def test_policy_capability_help_lists_taskflow_and_mcp_for_setup_and_profile_commands(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """CLI help should advertise the full canonical capability list anywhere policy is configured."""
+
+    prepare_root(tmp_path, monkeypatch)
+    runner = CliRunner()
+    help_text = policy_capability_option_help()
+
+    assert "taskflow" in help_text
+    assert "mcp" in help_text
+    assert "legacy aliases: email,telegram" in help_text
+
+    setup_help = runner.invoke(app, ["setup", "--help"])
+    add_help = runner.invoke(app, ["profile", "add", "--help"])
+    update_help = runner.invoke(app, ["profile", "update", "--help"])
+
+    for result in (setup_help, add_help, update_help):
+        assert result.exit_code == 0
+        assert "Capability id" in result.stdout
+        assert "legacy aliases:" in result.stdout
 
 
 def test_setup_cli_bootstrap_only_seeds_platform_runtime_without_marker(
