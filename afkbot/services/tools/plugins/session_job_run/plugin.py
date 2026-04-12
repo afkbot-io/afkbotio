@@ -47,7 +47,10 @@ class SessionJobRunTool(ToolBase):
     name = "session.job.run"
     description = (
         "Run independent session jobs concurrently and return ordered results. "
-        "Supported kinds: subagent and bash. Use only when jobs do not depend on one another."
+        "Supported kinds: subagent and bash. Prefer this tool over separate `bash.exec` "
+        "or `subagent.run` calls when two or more independent jobs can start immediately "
+        "and every result is needed before continuing. Use only when jobs do not depend "
+        "on one another."
     )
     parameters_model = SessionJobRunParams
 

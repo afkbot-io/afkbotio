@@ -39,6 +39,8 @@ from afkbot.services.llm.contracts import LLMMessage, LLMToolDefinition
 planned_tools_final_message = _planned_tools_final_message
 turn_plan_payload = _turn_plan_payload
 _PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS = 16
+_REPO_FILE_TOOL_NAMES = frozenset({"file.list", "file.read", "file.search"})
+_SESSION_JOB_NESTED_TOOL_NAMES = frozenset({"bash.exec", "subagent.run"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +205,25 @@ class TurnPreparationRuntime:
             approval_required_tool_names = tool_surface.approval_required_tool_names
             prompt_overlay = combine_prompt_overlays(
                 prompt_overlay,
+                self._parallel_tool_strategy_note(
+                    policy=policy,
+                    profile_id=profile_id,
+                    skill_route=skill_route,
+                    automation_intent=automation_intent,
+                    runtime_metadata=runtime_metadata,
+                    approved_tool_names=(
+                        None if context_overrides is None else context_overrides.approved_tool_names
+                    ),
+                    cli_approval_surface_enabled=(
+                        False
+                        if context_overrides is None
+                        else context_overrides.cli_approval_surface_enabled
+                    ),
+                    planning_mode=(
+                        "off" if context_overrides is None else context_overrides.planning_mode
+                    ),
+                    current_visible_tool_names=tuple(tool.name for tool in available_tools),
+                ),
                 self._plan_only_execution_surface_note(
                     policy=policy,
                     profile_id=profile_id,
@@ -334,6 +355,72 @@ class TurnPreparationRuntime:
             "Execution-capable tools visible after planning (approval-gated tools are marked): "
             f"{listed_names}{remainder}."
         )
+
+    def _parallel_tool_strategy_note(
+        self,
+        *,
+        policy: ProfilePolicy,
+        profile_id: str,
+        skill_route: SkillRoute,
+        automation_intent: bool,
+        runtime_metadata: dict[str, object] | None,
+        approved_tool_names: tuple[str, ...] | None,
+        cli_approval_surface_enabled: bool,
+        planning_mode: str,
+        current_visible_tool_names: tuple[str, ...],
+    ) -> str | None:
+        """Explain how to batch independent work and avoid redundant tool probing."""
+
+        current_names = {name for name in current_visible_tool_names if name}
+        future_names: set[str] = set()
+        if planning_mode == "plan_only":
+            execution_surface = self._tool_exposure.build_tool_surface(
+                policy,
+                profile_id=profile_id,
+                skill_route=skill_route,
+                automation_intent=automation_intent,
+                runtime_metadata=runtime_metadata,
+                tool_access_mode="default",
+                approved_tool_names=approved_tool_names,
+                cli_approval_surface_enabled=cli_approval_surface_enabled,
+            )
+            future_names = {
+                tool.name
+                for tool in execution_surface.visible_tools
+                if tool.name not in current_names
+            }
+        known_names = current_names | future_names
+        lines: list[str] = []
+        if known_names & _REPO_FILE_TOOL_NAMES:
+            lines.append(
+                "- Prefer first-class file tools for repository inspection. Use shell wrappers "
+                "such as `find`, `ls`, or ad-hoc Python directory listing only when `file.*` "
+                "tools cannot provide the needed data."
+            )
+            lines.append(
+                "- When several independent file reads, lists, or searches are needed, emit all "
+                "of those `file.*` tool calls in the same assistant response instead of probing "
+                "one-by-one."
+            )
+        if "session.job.run" in known_names:
+            lines.append(
+                "- When two or more independent shell or subagent jobs can start immediately and "
+                "you need every result before continuing, prefer one `session.job.run` call over "
+                "multiple separate `bash.exec` or `subagent.run` calls."
+            )
+        if known_names & (_REPO_FILE_TOOL_NAMES | _SESSION_JOB_NESTED_TOOL_NAMES):
+            lines.append(
+                "- Avoid redundant discovery. Do not repeat equivalent inspection with multiple "
+                "tools after one result already answered the question."
+            )
+        if not lines:
+            return None
+        intro = (
+            "Plan with the later execution surface in mind."
+            if planning_mode == "plan_only"
+            else "Choose the minimal grouped tool strategy that gathers evidence quickly."
+        )
+        return "# Parallel and Tool Strategy\n" + intro + "\n" + "\n".join(lines)
 
     async def _build_context(
         self,

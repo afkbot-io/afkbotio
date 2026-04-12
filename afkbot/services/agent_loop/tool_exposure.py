@@ -282,7 +282,10 @@ class ToolExposureBuilder:
         )
         return LLMToolDefinition(
             name=tool.name,
-            description=self._tool_description_for_llm(tool.description),
+            description=self._tool_description_for_llm(
+                description=tool.description,
+                parallel_execution_safe=bool(getattr(tool, "parallel_execution_safe", False)),
+            ),
             parameters_schema=schema,
             required_skill=tool.required_skill,
             requires_confirmation=approval_required,
@@ -332,10 +335,20 @@ class ToolExposureBuilder:
         return tuple(approval_names)
 
     @staticmethod
-    def _tool_description_for_llm(description: str) -> str:
+    def _tool_description_for_llm(
+        description: str,
+        *,
+        parallel_execution_safe: bool = False,
+    ) -> str:
         """Normalize one tool description before provider-specific annotations."""
 
-        return description.rstrip()
+        normalized = description.rstrip()
+        if parallel_execution_safe:
+            normalized = (
+                f"{normalized} When several independent calls are needed, emit them together "
+                "in one assistant response so the runtime can execute them concurrently."
+            )
+        return normalized
 
     @staticmethod
     def _tool_schema_for_llm(
