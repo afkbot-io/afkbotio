@@ -428,6 +428,16 @@ class ToolExecutionRuntime:
                 error_code="tool_not_allowed_in_turn",
                 reason=f"Tool not available in current turn: {execution_name}",
             )
+        session_job_turn_result = self._session_job_turn_surface_result(
+            execution_name=execution_name,
+            execution_params=execution_params,
+            allowed_tool_names=allowed_tool_names,
+            approval_required_tool_names=approval_required_tool_names,
+            explicit_skills=explicit_skills,
+            explicit_subagents=explicit_subagents,
+        )
+        if session_job_turn_result is not None:
+            return session_job_turn_result
         if execution_name == "subagent.run" or (
             execution_name == "session.job.run"
             and self._session_job_params_include_subagent(execution_params)
@@ -500,6 +510,41 @@ class ToolExecutionRuntime:
             ),
         )
 
+    @classmethod
+    def _session_job_turn_surface_result(
+        cls,
+        *,
+        execution_name: str,
+        execution_params: dict[str, object],
+        allowed_tool_names: set[str] | None,
+        approval_required_tool_names: set[str] | None,
+        explicit_skills: set[str],
+        explicit_subagents: set[str],
+    ) -> ToolResult | None:
+        """Enforce routed turn-surface boundaries for nested session.job.run items."""
+
+        if execution_name != "session.job.run" or (not explicit_skills and not explicit_subagents):
+            return None
+        for nested_tool_name in cls._session_job_nested_turn_tool_names(execution_params):
+            if (
+                approval_required_tool_names is not None
+                and nested_tool_name in approval_required_tool_names
+                and (allowed_tool_names is None or nested_tool_name not in allowed_tool_names)
+            ):
+                return ToolResult.error(
+                    error_code="tool_not_allowed_in_turn",
+                    reason=(
+                        "Tool requires explicit user approval before execution in afk chat: "
+                        f"{nested_tool_name}"
+                    ),
+                )
+            if allowed_tool_names is not None and nested_tool_name not in allowed_tool_names:
+                return ToolResult.error(
+                    error_code="tool_not_allowed_in_turn",
+                    reason=f"Tool not available in current turn: {nested_tool_name}",
+                )
+        return None
+
     def _subagent_intent_mismatch_result(
         self,
         *,
@@ -560,6 +605,29 @@ class ToolExecutionRuntime:
             if isinstance(job, dict) and str(job.get("kind") or "").strip() == "subagent":
                 return True
         return False
+
+    @staticmethod
+    def _session_job_nested_turn_tool_names(params: dict[str, object]) -> tuple[str, ...]:
+        jobs = params.get("jobs")
+        if not isinstance(jobs, list):
+            return ()
+        nested_names: list[str] = []
+        seen: set[str] = set()
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            kind = str(job.get("kind") or "").strip().lower()
+            if kind == "bash":
+                nested_tool_name = "bash.exec"
+            elif kind == "subagent":
+                nested_tool_name = "subagent.run"
+            else:
+                continue
+            if nested_tool_name in seen:
+                continue
+            seen.add(nested_tool_name)
+            nested_names.append(nested_tool_name)
+        return tuple(nested_names)
 
     async def _log_tool_result(
         self,

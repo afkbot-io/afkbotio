@@ -197,6 +197,15 @@ class _EchoTool(ToolBase):
         return ToolResult(ok=True, payload={"ok": True})
 
 
+class _SessionJobTool(ToolBase):
+    name = "session.job.run"
+    description = "Session job tool"
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        raise AssertionError("execute should not run when nested turn-surface gates reject the call")
+
+
 class _ParallelReadParams(ToolParameters):
     path: str = Field(min_length=1)
 
@@ -265,6 +274,106 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
     assert len(results) == 1
     assert results[0].ok is True
     assert policy_engine.calls == [("bash.exec", {"bash.exec"})]
+
+
+async def test_session_job_run_rejects_nested_bash_not_visible_in_current_turn() -> None:
+    """Nested bash jobs must respect the current turn tool surface."""
+
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_SessionJobTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-session-job-bash-turn-surface",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="session.job.run",
+                params={"jobs": [{"kind": "bash", "cmd": "echo hi", "cwd": "."}]},
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests={"worker"},
+        allow_confirmation_markers=False,
+        allowed_tool_names={"session.job.run", "subagent.run"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "tool_not_allowed_in_turn"
+    assert results[0].reason == "Tool not available in current turn: bash.exec"
+
+
+async def test_session_job_run_requires_nested_subagent_turn_approval() -> None:
+    """Nested subagent jobs must respect approval-only turn lanes."""
+
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_SessionJobTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-session-job-subagent-turn-approval",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="session.job.run",
+                params={
+                    "jobs": [
+                        {
+                            "kind": "subagent",
+                            "subagent_name": "worker",
+                            "prompt": "inspect files",
+                        }
+                    ]
+                },
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests={"worker"},
+        allow_confirmation_markers=False,
+        allowed_tool_names={"session.job.run"},
+        approval_required_tool_names={"subagent.run"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "tool_not_allowed_in_turn"
+    assert (
+        results[0].reason
+        == "Tool requires explicit user approval before execution in afk chat: subagent.run"
+    )
 
 
 async def test_execute_requested_tool_calls_parallelizes_parallel_safe_read_only_tools() -> None:

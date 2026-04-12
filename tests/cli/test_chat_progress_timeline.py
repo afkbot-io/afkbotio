@@ -230,7 +230,7 @@ def test_timeline_renders_llm_tick_as_status_line_not_spinner() -> None:
     assert frame is not None
     assert frame.spinner_label is None
     assert frame.status_line == "[iter 1] thinking..."
-    assert frame.detail_line == "llm=tick elapsed_ms=3000 timeout_ms=30000"
+    assert frame.detail_line == "llm=tick elapsed=3s"
 
 
 def test_timeline_renders_context_compaction_step_without_iteration_prefix() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from afkbot.models.profile_policy import ProfilePolicy
@@ -106,6 +107,8 @@ class PolicyEngine:
             tool_name=tool_name,
             approved_tool_names=approved_tool_names,
         )
+        if tool_name == "session.job.run":
+            self._enforce_session_job_nested_tools(policy=policy, params=params)
         self._enforce_path_lists(policy=policy, params=params)
         self._enforce_shell_lists(policy=policy, params=params)
         self._enforce_network_allowlist(
@@ -139,6 +142,34 @@ class PolicyEngine:
             return
         if allowed and not any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in allowed):
             raise PolicyViolationError(reason=f"Tool is not allowed by policy: {tool_name}")
+
+    def _enforce_session_job_nested_tools(
+        self,
+        *,
+        policy: ProfilePolicy,
+        params: dict[str, object],
+    ) -> None:
+        """Enforce nested capability boundaries for session.job.run items."""
+
+        jobs = params.get("jobs")
+        if not isinstance(jobs, list):
+            return
+
+        requires_bash = False
+        requires_subagent = False
+        for job in jobs:
+            if not isinstance(job, Mapping):
+                continue
+            kind = str(job.get("kind") or "").strip().lower()
+            if kind == "bash":
+                requires_bash = True
+            elif kind == "subagent":
+                requires_subagent = True
+
+        if requires_bash:
+            self._enforce_tool_lists(policy=policy, tool_name="bash.exec")
+        if requires_subagent:
+            self.ensure_subagent_run_allowed(policy=policy)
 
     def _enforce_path_lists(
         self,

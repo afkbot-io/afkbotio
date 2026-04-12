@@ -234,7 +234,7 @@ async def test_run_chat_turn_parallel_same_key_executes_side_effects_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Parallel same-key requests should share one execution and one stored response."""
+    """Parallel same-key requests should share one execution through the real orchestrator path."""
 
     settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency-parallel.db")
     await _prepare_api_runtime_db(factory=factory)
@@ -245,27 +245,36 @@ async def test_run_chat_turn_parallel_same_key_executes_side_effects_once(
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def _fake_run_once_result(
-        *,
-        message: str,
-        profile_id: str,
-        session_id: str,
-        planned_tool_calls: list[object] | None = None,
-        progress_sink: object | None = None,
-        **_unused: object,
-    ) -> TurnResult:
-        _ = message, planned_tool_calls, progress_sink
-        calls["count"] += 1
-        entered.set()
-        await release.wait()
-        return await _create_result_with_run(
-            factory=factory,
-            profile_id=profile_id,
-            session_id=session_id,
-            message=f"ok-{calls['count']}",
-        )
+    def _fake_build_agent_loop_runner(self, session, profile_id):  # type: ignore[no-untyped-def]
+        _ = self, session, profile_id
 
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result)
+        class _FakeRunner:
+            async def run_turn(
+                self,
+                *,
+                message: str,
+                profile_id: str,
+                session_id: str,
+                planned_tool_calls: list[object] | None = None,
+                context_overrides: object | None = None,
+            ) -> TurnResult:
+                _ = message, planned_tool_calls, context_overrides
+                calls["count"] += 1
+                entered.set()
+                await release.wait()
+                return await _create_result_with_run(
+                    factory=factory,
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    message=f"ok-{calls['count']}",
+                )
+
+        return _FakeRunner()
+
+    monkeypatch.setattr(
+        "afkbot.services.session_orchestration.service.SessionOrchestrator._build_agent_loop_runner",
+        _fake_build_agent_loop_runner,
+    )
 
     first_task = asyncio.create_task(
         run_chat_turn(
@@ -310,7 +319,7 @@ async def test_run_chat_turn_does_not_reclaim_live_claim_with_heartbeat(
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime._IDEMPOTENCY_HEARTBEAT_SEC", 0.01)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._idempotency_claim_cutoff",
+        "afkbot.services.agent_loop.api_runtime.idempotency_claim_cutoff_support",
         lambda *, settings: datetime.now(UTC) - timedelta(milliseconds=20),
     )
 

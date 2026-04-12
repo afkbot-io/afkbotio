@@ -18,6 +18,7 @@ from afkbot.services.tools.registry import ToolRegistry
 
 _CLI_APPROVAL_CANDIDATE_TOOL_NAMES = (
     "bash.exec",
+    "session.job.run",
     "file.list",
     "file.read",
     "file.search",
