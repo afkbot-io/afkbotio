@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,10 +65,16 @@ class ContextBuilder:
     ) -> str:
         """Build context from BOOTSTRAP_FILES and available skills summary."""
 
-        bootstrap = self._read_bootstrap_files(profile_id)
         resolved_assets = assets or await self.collect_assets(profile_id=profile_id)
         skills = list(resolved_assets.skills)
         subagents = list(resolved_assets.subagents)
+        bootstrap, subagents_block = await asyncio.gather(
+            self._read_bootstrap_files(profile_id),
+            self._subagents_summary_block(
+                subagents=subagents,
+                relevant_subagent_names=relevant_subagent_names,
+            ),
+        )
         skills_block = self._skills_summary_block(
             skills=skills,
             relevant_skill_names=relevant_skill_names,
@@ -75,10 +82,6 @@ class ContextBuilder:
         selected_skill_cards_block = self._selected_skill_cards_block(
             skills=skills,
             selected_skill_names=relevant_skill_names,
-        )
-        subagents_block = self._subagents_summary_block(
-            subagents=subagents,
-            relevant_subagent_names=relevant_subagent_names,
         )
         explicit_skills_block = await self._explicit_skills_block(
             profile_id=profile_id,
@@ -121,8 +124,12 @@ class ContextBuilder:
     async def collect_assets(self, *, profile_id: str) -> ContextAssets:
         """Collect skills/subagents once to avoid repeated filesystem scans in one turn."""
 
-        skills = tuple(await self._skills.list_skills(profile_id))
-        subagents = tuple(await self._subagents.list_subagents(profile_id))
+        skills_list, subagents_list = await asyncio.gather(
+            self._skills.list_skills(profile_id),
+            self._subagents.list_subagents(profile_id),
+        )
+        skills = tuple(skills_list)
+        subagents = tuple(subagents_list)
         skill_triggers: dict[str, str] = {}
         explicit_skill_triggers: dict[str, str] = {}
         for item in skills:
@@ -187,18 +194,20 @@ class ContextBuilder:
     ) -> str:
         """Render markdown bodies for explicitly requested skills."""
 
-        normalized_names = sorted({name.strip() for name in (explicit_skill_names or set()) if name.strip()})
+        normalized_names = sorted(
+            {name.strip() for name in (explicit_skill_names or set()) if name.strip()}
+        )
         if not normalized_names:
             return "- None."
 
-        parts: list[str] = []
-        for name in normalized_names:
+        async def _load_one(name: str) -> str:
             try:
                 body = await self._skills.load_skill(name=name, profile_id=profile_id)
             except (FileNotFoundError, ValueError):
-                parts.append(f"## {name}\nUnavailable in current profile context.")
-                continue
-            parts.append(f"## {name}\n{body.strip()}")
+                return f"## {name}\nUnavailable in current profile context."
+            return f"## {name}\n{body.strip()}"
+
+        parts = await asyncio.gather(*(_load_one(name) for name in normalized_names))
         return "\n\n".join(parts)
 
     async def _explicit_subagents_block(
@@ -215,31 +224,37 @@ class ContextBuilder:
         if not normalized_names:
             return "- None."
 
-        parts: list[str] = []
-        for name in normalized_names:
+        async def _load_one(name: str) -> str:
             try:
-                body = await self._subagents.load_subagent_markdown(name=name, profile_id=profile_id)
+                body = await self._subagents.load_subagent_markdown(
+                    name=name, profile_id=profile_id
+                )
             except (FileNotFoundError, ValueError):
-                parts.append(f"## {name}\nUnavailable in current profile context.")
-                continue
-            parts.append(f"## {name}\n{body.strip()}")
+                return f"## {name}\nUnavailable in current profile context."
+            return f"## {name}\n{body.strip()}"
+
+        parts = await asyncio.gather(*(_load_one(name) for name in normalized_names))
         return "\n\n".join(parts)
 
-    def _read_bootstrap_files(self, profile_id: str) -> str:
+    async def _read_bootstrap_files(self, profile_id: str) -> str:
         parts: list[str] = []
-        profile_bootstrap_dir = get_profile_runtime_config_service(self._settings).bootstrap_dir(profile_id)
+        profile_bootstrap_dir = get_profile_runtime_config_service(self._settings).bootstrap_dir(
+            profile_id
+        )
         for filename in self._settings.bootstrap_files:
             file_path = self._settings.bootstrap_dir / filename
-            if file_path.exists():
-                parts.append(self._format_file(file_path, title=file_path.name))
+            if await asyncio.to_thread(file_path.exists):
+                parts.append(await self._format_file(file_path, title=file_path.name))
             profile_path = profile_bootstrap_dir / filename
-            if profile_path.exists():
-                parts.append(self._format_file(profile_path, title=f"Profile {profile_path.name}"))
+            if await asyncio.to_thread(profile_path.exists):
+                parts.append(
+                    await self._format_file(profile_path, title=f"Profile {profile_path.name}")
+                )
         return "\n\n".join(parts)
 
     @staticmethod
-    def _format_file(file_path: Path, *, title: str) -> str:
-        content = file_path.read_text(encoding="utf-8")
+    async def _format_file(file_path: Path, *, title: str) -> str:
+        content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
         return f"## {title}\n{content.strip()}"
 
     @staticmethod
@@ -289,9 +304,7 @@ class ContextBuilder:
             "subagent_task",
         }
         return {
-            str(key): value
-            for key, value in runtime_metadata.items()
-            if key not in excluded_keys
+            str(key): value for key, value in runtime_metadata.items() if key not in excluded_keys
         }
 
     @staticmethod
@@ -327,7 +340,7 @@ class ContextBuilder:
         )
 
     @staticmethod
-    def _subagents_summary_block(
+    async def _subagents_summary_block(
         *,
         subagents: list[SubagentInfo],
         relevant_subagent_names: set[str] | None,
@@ -338,11 +351,18 @@ class ContextBuilder:
         if relevant_subagent_names:
             relevant = {name.strip() for name in relevant_subagent_names if name.strip()}
 
-        lines: list[str] = []
+        selected_items: list[SubagentInfo] = []
         for item in subagents:
             if relevant is not None and item.name not in relevant:
                 continue
-            summary = ContextBuilder._extract_subagent_summary(item.path) or "No summary provided."
+            selected_items.append(item)
+
+        summaries = await asyncio.gather(
+            *(ContextBuilder._extract_subagent_summary(item.path) for item in selected_items)
+        )
+        lines: list[str] = []
+        for item, summary in zip(selected_items, summaries, strict=True):
+            summary = summary or "No summary provided."
             lines.append(f"- {item.name}: {summary}")
 
         if not lines:
@@ -380,16 +400,12 @@ class ContextBuilder:
                 else "-"
             )
             preferred = (
-                ", ".join(manifest.preferred_tool_order)
-                if manifest.preferred_tool_order
-                else "-"
+                ", ".join(manifest.preferred_tool_order) if manifest.preferred_tool_order else "-"
             )
             availability = "available" if item.available else "unavailable"
             manifest_errors = ", ".join(item.manifest_errors) if item.manifest_errors else "-"
             missing_requirements = (
-                ", ".join(item.missing_requirements)
-                if item.missing_requirements
-                else "-"
+                ", ".join(item.missing_requirements) if item.missing_requirements else "-"
             )
             summary = item.summary or "No summary provided."
             parts.append(
@@ -417,12 +433,12 @@ class ContextBuilder:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _extract_subagent_summary(path: Path) -> str:
+    async def _extract_subagent_summary(path: Path) -> str:
         """Extract deterministic one-line summary from one subagent markdown body."""
 
-        if not path.exists():
+        if not await asyncio.to_thread(path.exists):
             return ""
-        content = path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
         for raw in content.splitlines():
             line = raw.strip()
             if not line:

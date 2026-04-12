@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol, cast
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -26,10 +26,6 @@ from afkbot.services.automations.runtime_http import (
     HttpRequest,
     write_json_response,
 )
-from afkbot.services.automations.runtime_service import (
-    build_runtime_agent_loop,
-)
-from afkbot.services.automations.loop_factory import AgentLoopLike
 from afkbot.services.automations.service import get_automations_service
 from afkbot.settings import Settings, get_settings
 
@@ -45,7 +41,6 @@ class AutomationsRuntimeService(Protocol):
         profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[..., AgentLoopLike],
     ) -> object:
         """Execute one webhook automation run."""
         ...
@@ -54,7 +49,6 @@ class AutomationsRuntimeService(Protocol):
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[..., AgentLoopLike],
         max_due_per_tick: int | None = None,
     ) -> object:
         """Execute one cron scheduler tick."""
@@ -271,14 +265,6 @@ class RuntimeDaemon:
             try:
                 await self._service.tick_cron(
                     now_utc=datetime.now(timezone.utc),
-                    agent_loop_factory=lambda session, profile_id: cast(
-                        AgentLoopLike,
-                        build_runtime_agent_loop(
-                            session,
-                            profile_id=profile_id,
-                            settings=self._settings,
-                        ),
-                    ),
                     max_due_per_tick=self._settings.runtime_cron_max_due_per_tick,
                 )
             except asyncio.CancelledError:
@@ -327,14 +313,6 @@ class RuntimeDaemon:
                         profile_id=task.profile_id,
                         token=task.token,
                         payload=task.payload,
-                        agent_loop_factory=lambda session, profile_id: cast(
-                            AgentLoopLike,
-                            build_runtime_agent_loop(
-                                session,
-                                profile_id=profile_id,
-                                settings=self._settings,
-                            ),
-                        ),
                     )
             except asyncio.CancelledError:
                 raise

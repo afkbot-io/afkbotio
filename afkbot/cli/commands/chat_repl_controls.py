@@ -7,11 +7,14 @@ from dataclasses import dataclass
 from afkbot.cli.commands.chat_planning import normalize_chat_planning_mode
 from afkbot.cli.commands.chat_repl_specs import chat_repl_primary_commands
 from afkbot.cli.presentation.chat_plan_renderer import render_chat_plan
+from afkbot.cli.presentation.chat_plan_status import (
+    plan_summary_for_chat_workspace,
+    stored_plan_status_for_chat_workspace,
+)
 from afkbot.cli.presentation.chat_workspace.capabilities import render_capability_catalog
 from afkbot.cli.presentation.chat_workspace.status import (
     activity_text_for_chat_workspace,
     help_text_for_chat_workspace,
-    stored_plan_status_for_chat_workspace,
     status_text_for_chat_workspace,
 )
 from afkbot.services.chat_session.session_state import ChatReplSessionState
@@ -59,6 +62,8 @@ def handle_chat_repl_local_command(
         )
     if command == "activity":
         return ChatReplCommandResult(consumed=True, message=activity_text_for_chat_workspace(state))
+    if command == "cancel":
+        return ChatReplCommandResult(consumed=True, message="No active turn to cancel.")
     if command == "capabilities":
         return _handle_capabilities_command(args=args, state=state)
     if command == "plan":
@@ -68,8 +73,7 @@ def handle_chat_repl_local_command(
     return ChatReplCommandResult(
         consumed=True,
         message=(
-            f"Unknown local command: //{command}\n"
-            "Use //help to list interactive chat controls."
+            f"Unknown local command: //{command}\nUse //help to list interactive chat controls."
         ),
     )
 
@@ -84,7 +88,8 @@ def _handle_plan_command(
             consumed=True,
             message=(
                 f"Current planning mode: {state.planning_mode}\n"
-                f"Stored plan: {stored_plan_status_for_chat_workspace(state.latest_plan)}\n"
+                f"Stored plan: {stored_plan_status_for_chat_workspace(state.latest_plan, phase=state.latest_plan_phase)}\n"
+                f"Plan summary: {plan_summary_for_chat_workspace(state.latest_plan)}\n"
                 "Use //plan off, //plan auto, //plan on, //plan default, //plan show, or //plan clear."
             ),
         )
@@ -101,6 +106,8 @@ def _handle_plan_command(
             consumed=True,
             message=render_chat_plan(
                 state.latest_plan,
+                phase=state.latest_plan_phase,
+                activity=_plan_activity_text(state),
                 include_header=True,
                 leading_blank_line=False,
                 ansi=False,
@@ -110,6 +117,7 @@ def _handle_plan_command(
         if len(args) > 1:
             return ChatReplCommandResult(consumed=True, message="Usage: //plan clear")
         state.latest_plan = None
+        state.latest_plan_phase = None
         return ChatReplCommandResult(consumed=True, message="Stored plan cleared.")
     if len(args) > 1:
         return ChatReplCommandResult(
@@ -214,3 +222,13 @@ def _local_command_body(stripped: str) -> str | None:
     if f"//{command}" not in chat_repl_primary_commands():
         return None
     return body
+
+
+def _plan_activity_text(state: ChatReplSessionState) -> str | None:
+    if state.latest_plan_phase != "executing":
+        return None
+    activity_message = activity_text_for_chat_workspace(state)
+    prefix = "Latest activity\n- "
+    if not activity_message.startswith(prefix):
+        return None
+    return activity_message.removeprefix(prefix)

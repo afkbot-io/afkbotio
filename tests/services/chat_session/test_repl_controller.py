@@ -114,9 +114,7 @@ async def test_run_queueable_chat_session_runs_queued_follow_up_after_current_tu
         return ChatReplInputOutcome(
             consumed=True,
             notice=(
-                f"Queued next message. Pending queue: {pending_count}"
-                if turn_active
-                else None
+                f"Queued next message. Pending queue: {pending_count}" if turn_active else None
             ),
         )
 
@@ -164,6 +162,101 @@ async def test_run_queueable_chat_session_runs_queued_follow_up_after_current_tu
     assert "Queued next message. Pending queue: 1" in captured.out
     assert "done:first" in captured.out
     assert "done:second" in captured.out
+
+
+async def test_run_queueable_chat_session_cancels_active_turn_from_input_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The queued-session controller should honor in-band active-turn cancellation."""
+
+    input_queue: asyncio.Queue[str] = asyncio.Queue()
+    ux = _FakeUX()
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+    )
+    seen_messages: list[str] = []
+    turn_started = asyncio.Event()
+    turn_cancelled = asyncio.Event()
+
+    async def _read_input() -> str:
+        return await input_queue.get()
+
+    async def _run_turn(
+        message: str,
+        progress_sink: object,
+        repl_state: ChatReplSessionState,
+        turn_options: ChatTurnInteractiveOptions,
+    ) -> ChatTurnOutcome:
+        _ = progress_sink, repl_state, turn_options
+        seen_messages.append(message)
+        turn_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            turn_cancelled.set()
+            raise
+        raise AssertionError("unreachable")
+
+    def _consume_input(
+        raw_message: str,
+        turn_queue: ChatReplTurnQueue,
+        turn_active: bool,
+    ) -> ChatReplInputOutcome:
+        if raw_message == "//cancel":
+            turn_queue.clear()
+            state.queued_messages = 0
+            return ChatReplInputOutcome(
+                consumed=True,
+                notice="Cancelling current turn. Pending queue cleared.",
+                cancel_active_turn=True,
+            )
+        if raw_message == "//quit":
+            turn_queue.request_exit()
+            state.queued_messages = 0
+            return ChatReplInputOutcome(consumed=True, exit_repl=True)
+        pending_count = turn_queue.enqueue(raw_message)
+        state.queued_messages = pending_count
+        return ChatReplInputOutcome(consumed=True)
+
+    async def _run_interruptible_turn(
+        run_turn: Callable[[], Coroutine[object, object, ChatTurnOutcome]],
+    ) -> ChatTurnOutcome | None:
+        try:
+            return await run_turn()
+        except asyncio.CancelledError:
+            return None
+
+    loop_task = asyncio.create_task(
+        run_queueable_chat_session(
+            ux=ux,
+            read_input=_read_input,
+            run_turn=_run_turn,
+            repl_state=state,
+            refresh_catalog=_noop_refresh,
+            consume_input=_consume_input,
+            progress_sink=lambda event: ux.on_progress(event),
+            run_interruptible_turn=_run_interruptible_turn,
+            emit_turn_output=lambda _result: None,
+            emit_notice=print,
+        )
+    )
+
+    await input_queue.put("first")
+    await turn_started.wait()
+    await input_queue.put("//cancel")
+    await _wait_until(turn_cancelled.is_set)
+    await _wait_until(lambda: state.active_turn is False)
+    await input_queue.put("//quit")
+    await loop_task
+
+    captured = capsys.readouterr()
+    assert seen_messages == ["first"]
+    assert turn_cancelled.is_set() is True
+    assert state.queued_messages == 0
+    assert "Cancelling current turn. Pending queue cleared." in captured.out
 
 
 async def test_run_queueable_chat_session_pauses_background_input_for_blocking_turns() -> None:
@@ -340,7 +433,9 @@ async def test_run_queueable_chat_session_cancels_running_turn_during_final_clea
     assert state.queued_messages == 0
 
 
-async def test_run_queueable_chat_session_pauses_background_input_before_interactive_prompt() -> None:
+async def test_run_queueable_chat_session_pauses_background_input_before_interactive_prompt() -> (
+    None
+):
     """Interactive prompt hook should cancel the active background input reader."""
 
     input_queue: asyncio.Queue[str] = asyncio.Queue()

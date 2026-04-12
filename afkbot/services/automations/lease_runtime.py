@@ -15,6 +15,7 @@ async def run_with_lease_refresh(
     run: Callable[[], Awaitable[object]],
     refresh: Callable[[], Awaitable[bool]],
     ttl: timedelta,
+    timeout_sec: float | None = None,
 ) -> object:
     """Run one task while periodically refreshing claim lease."""
 
@@ -22,6 +23,7 @@ async def run_with_lease_refresh(
     refresh_interval_sec = max(1.0, ttl.total_seconds() / 3.0)
     lease_error: AutomationsServiceError | None = None
     run_task: asyncio.Task[object] = asyncio.ensure_future(run())
+    run_timeout_sec = None if timeout_sec is None else max(0.001, float(timeout_sec))
 
     async def _refresh_loop() -> None:
         nonlocal lease_error
@@ -51,7 +53,22 @@ async def run_with_lease_refresh(
     refresh_task = asyncio.create_task(_refresh_loop())
     try:
         try:
-            result = await run_task
+            result = (
+                await run_task
+                if run_timeout_sec is None
+                else await asyncio.wait_for(run_task, timeout=run_timeout_sec)
+            )
+        except TimeoutError as exc:
+            if lease_error is not None:
+                raise lease_error from exc
+            if not run_task.done():
+                run_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await run_task
+            raise AutomationsServiceError(
+                error_code="automation_run_timeout",
+                reason=f"Automation run timed out after {run_timeout_sec:g} seconds",
+            ) from exc
         except asyncio.CancelledError as exc:
             if lease_error is not None:
                 raise lease_error from exc

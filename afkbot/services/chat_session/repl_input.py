@@ -14,3 +14,4 @@ class ChatReplInputOutcome:
     message: str | None = None
     notice: str | None = None
     queued_message: str | None = None
+    cancel_active_turn: bool = False

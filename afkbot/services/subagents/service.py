@@ -105,6 +105,21 @@ class SubagentService:
             session_id=session_id,
         )
 
+    async def cancel(
+        self,
+        *,
+        task_id: str,
+        profile_id: str,
+        session_id: str,
+    ) -> SubagentResultResponse:
+        """Cancel one owned persisted task."""
+
+        return await self._lifecycle.cancel(
+            task_id=task_id,
+            profile_id=profile_id,
+            session_id=session_id,
+        )
+
     async def execute_persisted_task(self, *, task_id: str) -> bool:
         """Run one persisted task from inline or worker context."""
 

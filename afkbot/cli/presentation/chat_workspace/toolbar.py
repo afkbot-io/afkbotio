@@ -5,6 +5,11 @@ from __future__ import annotations
 import os
 from time import monotonic
 
+from afkbot.cli.presentation.chat_plan_status import (
+    plan_summary_for_chat_workspace,
+    stored_plan_status_for_chat_workspace,
+)
+from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.services.chat_session.activity_state import ChatActivitySnapshot
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 
@@ -41,10 +46,15 @@ def build_chat_workspace_status_line(
 def build_chat_workspace_queue_lines(state: ChatReplSessionState) -> tuple[str, ...]:
     """Render the queued-message preview lines above the composer."""
 
+    lines: list[str] = []
+    plan_line = _active_plan_line(state)
+    if plan_line is not None:
+        lines.append(plan_line)
     if state.queued_messages <= 0:
-        return ()
+        return tuple(lines)
     label = "message" if state.queued_messages == 1 else "messages"
-    return (f"◦ Queued {state.queued_messages} {label} for the next turn.",)
+    lines.append(f"◦ Queued {state.queued_messages} {label} for the next turn.")
+    return tuple(lines)
 
 
 def build_chat_workspace_footer(state: ChatReplSessionState) -> str:
@@ -52,7 +62,7 @@ def build_chat_workspace_footer(state: ChatReplSessionState) -> str:
 
     mode_tokens: list[str] = []
     try:
-        cwd = os.getcwd().strip()
+        cwd = sanitize_terminal_text(os.getcwd().strip())
     except OSError:
         cwd = ""
     if cwd:
@@ -104,7 +114,7 @@ def activity_line_for_chat_workspace(snapshot: ChatActivitySnapshot | None) -> s
         return "response ready"
     if snapshot.stage == "cancelled":
         return "cancelled"
-    return truncate_activity_summary(snapshot.summary)
+    return truncate_activity_summary(sanitize_terminal_text(snapshot.summary))
 
 
 def truncate_activity_summary(value: str) -> str:
@@ -137,7 +147,7 @@ def _toolish_activity_label(
     fallback: str,
     snapshot: ChatActivitySnapshot,
 ) -> str:
-    name = snapshot.summary.strip()
+    name = sanitize_terminal_text(snapshot.summary.strip())
     for prefix in ("tool: ", "tool done: ", "subagent: ", "subagent done: "):
         if name.startswith(prefix):
             name = name.removeprefix(prefix).strip()
@@ -146,3 +156,21 @@ def _toolish_activity_label(
         name = fallback
     prefix = running_prefix if snapshot.running else completed_prefix
     return f"{prefix}: {name}"
+
+
+def _active_plan_line(state: ChatReplSessionState) -> str | None:
+    if (
+        not state.active_turn
+        or state.latest_plan is None
+        or state.latest_plan_phase not in {"planned", "executing"}
+    ):
+        return None
+    status = stored_plan_status_for_chat_workspace(
+        state.latest_plan,
+        phase=state.latest_plan_phase,
+    )
+    summary = plan_summary_for_chat_workspace(state.latest_plan)
+    parts = [f"◦ Plan {status}"]
+    if summary != "none":
+        parts.append(summary)
+    return sanitize_terminal_text(" · ".join(parts))

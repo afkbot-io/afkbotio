@@ -33,7 +33,15 @@ from afkbot.services.setup.state import (
     read_setup_state_payload,
     write_setup_state,
 )
-from afkbot.services.policy.file_access import default_allowed_directories
+from afkbot.services.policy import (
+    PolicySelection,
+    apply_file_access_mode,
+    default_allowed_directories,
+    infer_file_access_mode,
+    parse_capability_ids,
+    parse_preset_level,
+    resolve_policy,
+)
 from afkbot.services.profile_runtime.contracts import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.runtime_config import (
     PROFILE_RUNTIME_CONFIG_VERSION,
@@ -43,6 +51,7 @@ from afkbot.services.profile_runtime.runtime_secrets import (
     PROFILE_RUNTIME_SECRETS_VERSION,
     get_profile_runtime_secrets_service,
 )
+from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.upgrade.contracts import UpgradeApplyReport, UpgradeStepReport
 from afkbot.settings import Settings
 
@@ -83,6 +92,12 @@ class UpgradeService:
         async with session_scope(self._session_factory) as session:
             steps.append(
                 await self._upgrade_profile_policy_workspace_scope(
+                    session,
+                    apply_changes=apply_changes,
+                )
+            )
+            steps.append(
+                await self._upgrade_profile_policy_runtime_surface(
                     session,
                     apply_changes=apply_changes,
                 )
@@ -412,6 +427,78 @@ class UpgradeService:
                     f"{changed} channel endpoint(s) need canonical rewrite"
                     if changed
                     else "already canonical"
+                )
+            ),
+        )
+
+    async def _upgrade_profile_policy_runtime_surface(
+        self,
+        session: AsyncSession,
+        *,
+        apply_changes: bool,
+    ) -> UpgradeStepReport:
+        result = await session.execute(select(ProfilePolicy).order_by(ProfilePolicy.profile_id.asc()))
+        rows = list(result.scalars().all())
+        if not rows:
+            return UpgradeStepReport(
+                name="profile_policy_runtime_surface",
+                changed=False,
+                details="no profile policies present",
+            )
+
+        changed = 0
+        for row in rows:
+            try:
+                selection = PolicySelection(
+                    enabled=bool(row.policy_enabled),
+                    preset=parse_preset_level(str(row.policy_preset or "medium")),
+                    capabilities=parse_capability_ids(_decode_json_list(row.policy_capabilities_json)),
+                )
+            except ValueError:
+                continue
+
+            effective_settings = self._runtime_configs.build_effective_settings(
+                profile_id=row.profile_id,
+                base_settings=self._settings,
+            )
+            resolved = resolve_policy(
+                selection=selection,
+                available_tool_names=ToolRegistry.from_settings(effective_settings).list_names(),
+            )
+            current_allowed_tools = tuple(_decode_json_list(getattr(row, "allowed_tools_json", "[]")))
+            file_access_mode = infer_file_access_mode(allowed_tools=current_allowed_tools)
+            canonical_allowed_tools = apply_file_access_mode(
+                allowed_tools=resolved.allowed_tools,
+                file_access_mode=file_access_mode,
+            )
+            if (
+                current_allowed_tools == canonical_allowed_tools
+                and int(row.max_iterations_main) == resolved.max_iterations_main
+                and int(row.max_iterations_subagent) == resolved.max_iterations_subagent
+            ):
+                continue
+            if apply_changes:
+                row.allowed_tools_json = json.dumps(
+                    list(canonical_allowed_tools),
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+                row.max_iterations_main = resolved.max_iterations_main
+                row.max_iterations_subagent = resolved.max_iterations_subagent
+            changed += 1
+
+        if changed and apply_changes:
+            await session.flush()
+        return UpgradeStepReport(
+            name="profile_policy_runtime_surface",
+            changed=changed > 0,
+            details=(
+                f"recomputed {changed} profile policy runtime surface(s)"
+                if apply_changes and changed
+                else (
+                    f"{changed} profile policy runtime surface(s) need recompute"
+                    if changed
+                    else "already current"
                 )
             ),
         )

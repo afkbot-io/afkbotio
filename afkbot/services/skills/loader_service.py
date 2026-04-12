@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from afkbot.services.path_scope import resolve_in_scope_or_none
@@ -40,9 +41,11 @@ class SkillLoader:
     async def list_skills(self, profile_id: str) -> list[SkillInfo]:
         """List all visible skills, including mandatory always skills."""
 
-        core = self._discover_core_skills()
-        plugin = self._discover_plugin_skills()
-        profile = self._discover_profile_skills(profile_id)
+        core, plugin, profile = await asyncio.gather(
+            asyncio.to_thread(self._discover_core_skills),
+            asyncio.to_thread(self._discover_plugin_skills),
+            asyncio.to_thread(self._discover_profile_skills, profile_id),
+        )
         core_map = {item.name: item for item in core}
         merged: dict[str, SkillInfo] = {item.name: item for item in [*core, *plugin, *profile]}
 
@@ -58,12 +61,12 @@ class SkillLoader:
     async def list_profile_skills(self, profile_id: str) -> list[SkillInfo]:
         """List only profile-local skills without mandatory core rewrites."""
 
-        return self._discover_profile_skills(profile_id)
+        return await asyncio.to_thread(self._discover_profile_skills, profile_id)
 
     async def list_core_skills(self) -> list[SkillInfo]:
         """List only core skills from the built-in skills directory."""
 
-        return self._discover_core_skills()
+        return await asyncio.to_thread(self._discover_core_skills)
 
     async def load_skill(self, name: str, profile_id: str) -> str:
         """Load one skill markdown file with mandatory/core precedence rules."""
@@ -72,22 +75,22 @@ class SkillLoader:
         profile_root = self._safe_profile_skills_root(profile_id)
         if name in self.ALWAYS_SKILLS:
             core_path = self._safe_skill_path(self._settings.skills_dir, name)
-            if core_path.exists():
-                return core_path.read_text(encoding="utf-8")
+            if await asyncio.to_thread(core_path.exists):
+                return await asyncio.to_thread(core_path.read_text, encoding="utf-8")
             raise FileNotFoundError(f"Skill not found: {name}")
 
         profile_path = self._safe_skill_path(profile_root, name)
-        if profile_path.exists():
-            return profile_path.read_text(encoding="utf-8")
+        if await asyncio.to_thread(profile_path.exists):
+            return await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
 
         for plugin_root in self._plugin_skill_roots():
             plugin_path = self._safe_skill_path(plugin_root, name)
-            if plugin_path.exists():
-                return plugin_path.read_text(encoding="utf-8")
+            if await asyncio.to_thread(plugin_path.exists):
+                return await asyncio.to_thread(plugin_path.read_text, encoding="utf-8")
 
         core_path = self._safe_skill_path(self._settings.skills_dir, name)
-        if core_path.exists():
-            return core_path.read_text(encoding="utf-8")
+        if await asyncio.to_thread(core_path.exists):
+            return await asyncio.to_thread(core_path.read_text, encoding="utf-8")
 
         raise FileNotFoundError(f"Skill not found: {name}")
 

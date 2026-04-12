@@ -41,9 +41,49 @@ from afkbot.settings import Settings
 _DEFAULT_RESUME_YIELD_TIME_MS = 1000
 _PROTECTED_ENV_NAMES = {"PATH"}
 _PROTECTED_ENV_PREFIXES = ("LD_", "DYLD_")
+_SAFE_INHERITED_ENV_NAMES = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "USER",
+}
+_SECRET_ENV_NAME_FRAGMENTS = (
+    "API_KEY",
+    "AUTH",
+    "BEARER",
+    "COOKIE",
+    "CREDENTIAL",
+    "PASSWD",
+    "PASSWORD",
+    "PRIVATE_KEY",
+    "SECRET",
+    "TOKEN",
+)
+_CREDENTIAL_PLACEHOLDER_MARKERS = ("${{CRED:", "${CRED_")
 _ALLOWED_SHELL_NAMES = {"ash", "bash", "dash", "fish", "ksh", "sh", "zsh"}
 _LOGIN_SHELL_NAMES = {"bash", "fish", "zsh"}
 _RUNNING_HEARTBEAT_INTERVAL_SEC = 8.0
+
+
+def _looks_like_secret_env_name(name: str) -> bool:
+    """Return whether an environment variable name likely carries a secret."""
+
+    normalized = name.upper()
+    return any(fragment in normalized for fragment in _SECRET_ENV_NAME_FRAGMENTS)
+
+
+def _uses_credential_placeholder(value: str) -> bool:
+    """Return whether one raw value references the credential store."""
+
+    return any(marker in value for marker in _CREDENTIAL_PLACEHOLDER_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -317,7 +357,9 @@ class BashExecTool(ToolBase):
                 reason=f"Command timed out after {payload.timeout_sec} seconds",
             )
         except OSError as exc:
-            return ToolResult.error(error_code="bash_exec_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="bash_exec_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
     async def _resolve_env_overrides(
         self,
@@ -338,6 +380,12 @@ class BashExecTool(ToolBase):
                 _PROTECTED_ENV_PREFIXES
             ):
                 raise ValueError(f"Environment override is not allowed for {key}")
+            if _looks_like_secret_env_name(normalized_key) and not _uses_credential_placeholder(
+                str(raw_value)
+            ):
+                raise ValueError(
+                    f"Secret-like environment override must use a credential placeholder: {key}"
+                )
             value = await resolve_secret_placeholders(
                 settings=self._settings,
                 profile_id=profile_id,
@@ -597,7 +645,13 @@ class BashExecTool(ToolBase):
     def _build_process_env(overrides: Mapping[str, str]) -> dict[str, str]:
         """Return process environment with user-provided overrides applied."""
 
-        base_env = dict(os.environ)
+        base_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper() in _SAFE_INHERITED_ENV_NAMES
+            and not _looks_like_secret_env_name(key.upper())
+        }
+        base_env.setdefault("PATH", os.defpath)
         for key, value in overrides.items():
             base_env[str(key)] = str(value)
         return base_env
@@ -745,8 +799,10 @@ class BashExecTool(ToolBase):
             path = path.resolve(strict=False)
         resolved_path = path.resolve(strict=False)
         try:
-            if not resolved_path.exists() or not resolved_path.is_file() or not os.access(
-                resolved_path, os.X_OK
+            if (
+                not resolved_path.exists()
+                or not resolved_path.is_file()
+                or not os.access(resolved_path, os.X_OK)
             ):
                 return None
         except OSError:
@@ -777,6 +833,7 @@ class BashExecTool(ToolBase):
             if len(chunk) > remaining:
                 truncated = True
         return bytes(data), truncated
+
 
 def create_tool(settings: Settings) -> ToolBase:
     """Create bash.exec tool instance."""

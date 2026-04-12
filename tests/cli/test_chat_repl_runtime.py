@@ -14,7 +14,7 @@ from afkbot.cli.commands.chat_repl_runtime import _run_repl_sequential, run_repl
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.services.chat_session.input_catalog import ChatInputCatalog, ChatInputCatalogStore
 from afkbot.services.chat_session.repl_input import ChatReplInputOutcome
-from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
+from afkbot.services.chat_session.repl_queue import ChatReplQueueFullError, ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -27,7 +27,6 @@ from afkbot.services.task_flow import (
     TaskMetadata,
 )
 from afkbot.settings import Settings
-
 
 
 def test_consume_chat_repl_input_queues_follow_up_message() -> None:
@@ -58,6 +57,70 @@ def test_consume_chat_repl_input_queues_follow_up_message() -> None:
     assert outcome.queued_message == "follow up"
     assert state.queued_messages == 1
     assert turn_queue.size == 1
+
+
+def test_consume_chat_repl_input_rejects_follow_up_when_queue_is_full() -> None:
+    """Active-turn input should not grow the follow-up queue without bound."""
+
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+    )
+    turn_queue = ChatReplTurnQueue()
+    for index in range(turn_queue.max_size):
+        turn_queue.enqueue(f"queued {index}")
+
+    outcome = consume_chat_repl_input(
+        raw_message="one too many",
+        repl_state=state,
+        turn_queue=turn_queue,
+        turn_active=True,
+    )
+
+    assert outcome.consumed is True
+    assert outcome.queued_message is None
+    assert outcome.notice == (
+        f"Message not queued. Pending queue is full ({turn_queue.max_size}). "
+        "Wait for the current turn or use //cancel."
+    )
+    assert state.queued_messages == turn_queue.max_size
+    assert turn_queue.size == turn_queue.max_size
+    try:
+        turn_queue.enqueue("still too many")
+    except ChatReplQueueFullError:
+        pass
+    else:
+        raise AssertionError("full chat queue accepted another message")
+
+
+def test_consume_chat_repl_input_cancel_clears_queue_and_requests_turn_cancel() -> None:
+    """The local cancel command should abort the active turn instead of queueing text."""
+
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+        queued_messages=1,
+    )
+    turn_queue = ChatReplTurnQueue()
+    turn_queue.enqueue("stale follow up")
+
+    outcome = consume_chat_repl_input(
+        raw_message="//cancel",
+        repl_state=state,
+        turn_queue=turn_queue,
+        turn_active=True,
+    )
+
+    assert outcome.consumed is True
+    assert outcome.cancel_active_turn is True
+    assert outcome.notice == "Cancelling current turn. Pending queue cleared."
+    assert outcome.queued_message is None
+    assert state.queued_messages == 0
+    assert turn_queue.size == 0
 
 
 def test_consume_chat_repl_input_returns_local_command_message_in_sequential_mode() -> None:
@@ -443,7 +506,9 @@ async def test_compose_human_task_startup_message_prefers_llm_digest(monkeypatch
 
     monkeypatch.setattr(module, "resolve_prompt_language", lambda **kwargs: PromptLanguage.RU)
     monkeypatch.setattr(module, "resolve_profile_settings", lambda **kwargs: kwargs["settings"])
-    provider = MockLLMProvider([LLMResponse.final("Для вас 2 задачи: одна на review, одна в todo. Начните с review.")])
+    provider = MockLLMProvider(
+        [LLMResponse.final("Для вас 2 задачи: одна на review, одна в todo. Начните с review.")]
+    )
     monkeypatch.setattr(module, "build_llm_provider", lambda _settings: provider)
 
     summary = HumanTaskStartupSummary(
@@ -466,7 +531,9 @@ async def test_compose_human_task_startup_message_prefers_llm_digest(monkeypatch
     assert provider.requests
 
 
-async def test_compose_human_task_startup_message_falls_back_when_provider_errors(monkeypatch) -> None:
+async def test_compose_human_task_startup_message_falls_back_when_provider_errors(
+    monkeypatch,
+) -> None:
     """Startup digest should fall back to deterministic copy on provider failure."""
 
     from afkbot.cli.commands import chat_task_startup_digest as module

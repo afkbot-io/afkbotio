@@ -99,6 +99,14 @@ def resolve_turn_execution_context(
         execution_planning_mode=execution_planning_mode,
         thinking_level=thinking_config.thinking_level,
         tool_access_mode=thinking_config.tool_access_mode,
+        persist_turn=(
+            False
+            if (
+                effective_overrides_planning_mode == "plan_only"
+                and (context_overrides is None or context_overrides.persist_turn is None)
+            )
+            else None if context_overrides is None else context_overrides.persist_turn
+        ),
     )
     return ResolvedTurnExecutionContext(
         thinking_config=thinking_config,

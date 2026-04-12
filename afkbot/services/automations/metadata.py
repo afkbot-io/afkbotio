@@ -26,11 +26,13 @@ def to_metadata(
     cron: AutomationTriggerCron | None,
     webhook: AutomationTriggerWebhook | None,
     runtime_base_url: str | None = None,
+    issued_webhook_token: str | None = None,
 ) -> AutomationMetadata:
     """Map repository automation row parts into public metadata DTO."""
 
     trigger_type = as_trigger_type(automation.trigger_type)
     status = as_status(automation.status)
+    public_webhook_token = issued_webhook_token
     return AutomationMetadata(
         id=automation.id,
         profile_id=automation.profile_id,
@@ -51,14 +53,14 @@ def to_metadata(
         webhook=None
         if webhook is None
         else AutomationWebhookMetadata(
-            webhook_token=webhook.webhook_token,
-            webhook_path=build_webhook_path(automation.profile_id, webhook.webhook_token),
+            webhook_token=public_webhook_token,
+            webhook_path=build_webhook_path(automation.profile_id, public_webhook_token),
             webhook_url=build_webhook_url(
                 runtime_base_url,
                 automation.profile_id,
-                webhook.webhook_token,
+                public_webhook_token,
             ),
-            webhook_token_masked=mask_webhook_token(webhook.webhook_token),
+            webhook_token_masked=mask_webhook_token(public_webhook_token),
             last_execution_status=_resolve_webhook_execution_status(webhook),
             last_received_at=webhook.last_received_at,
             last_started_at=webhook.last_started_at,

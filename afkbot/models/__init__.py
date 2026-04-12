@@ -15,6 +15,7 @@ _MODEL_EXPORT_MODULES = {
     "ChatTurn": "chat_turn",
     "ChatTurnIdempotency": "chat_turn_idempotency",
     "ChatTurnIdempotencyClaim": "chat_turn_idempotency",
+    "ChatSessionTurnQueueItem": "chat_session_turn_queue",
     "ChannelBinding": "channel_binding",
     "ChannelEndpoint": "channel_endpoint",
     "ChannelIngressEvent": "channel_ingress_event",

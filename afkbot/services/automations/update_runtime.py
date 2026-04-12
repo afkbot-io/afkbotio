@@ -127,7 +127,6 @@ async def apply_automation_update(
                 )
             updated_webhook = await repo.update_webhook_trigger(
                 automation_id=automation_id,
-                webhook_token=issued_webhook_token,
                 webhook_token_hash=issued_token_hash,
             )
             if updated_webhook is None:
@@ -154,6 +153,7 @@ async def apply_automation_update(
             automation=automation,
             cron=cron,
             webhook=webhook,
+            issued_webhook_token=issued_webhook_token,
         )
 
     return await with_repo(_op)

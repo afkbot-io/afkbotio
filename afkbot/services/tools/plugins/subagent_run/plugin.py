@@ -81,7 +81,7 @@ class SubagentRunTool(ToolBase):
             )
         except ValueError as exc:
             return ToolResult.error(
-                error_code="tool_params_invalid",
+                error_code=_subagent_value_error_code(exc),
                 reason=str(exc),
             )
 
@@ -90,3 +90,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create subagent.run tool instance."""
 
     return SubagentRunTool(settings=settings)
+
+
+def _subagent_value_error_code(exc: ValueError) -> str:
+    reason = str(exc).strip()
+    if reason.startswith("Invalid subagent name:"):
+        return "invalid_subagent_name"
+    return "tool_params_invalid"

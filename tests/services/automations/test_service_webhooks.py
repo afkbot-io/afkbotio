@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from afkbot.services.automations import AutomationsService
+from afkbot.services.automations import AutomationsService, AutomationsServiceError
 from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
@@ -64,7 +64,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             profile_id="default",
             token=token,
             payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert hook_result.automation_id == webhook.id
         assert hook_result.session_id.startswith(f"automation-webhook-{webhook.id}-")
@@ -79,7 +79,9 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert '"api_token": "[REDACTED]"' in webhook_messages[0]
         assert '"api_token": "short"' not in webhook_messages[0]
 
-        matching_call = next(call for call in fake_loop.calls if call["session_id"] == hook_result.session_id)
+        matching_call = next(
+            call for call in fake_loop.calls if call["session_id"] == hook_result.session_id
+        )
         overrides = matching_call["context_overrides"]
         assert overrides is not None
         assert overrides.runtime_metadata is not None
@@ -115,7 +117,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             profile_id="default",
             token=token,
             payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert duplicate_result.deduplicated is True
         webhook_messages_after_duplicate = [
@@ -183,7 +185,7 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
                 profile_id="default",
                 token=token,
                 payload={"event_id": "e-1"},
-                agent_loop_factory=factory_fn,
+                session_runner_factory=factory_fn,
             )
         metadata_after_failure = await service.get(profile_id="default", automation_id=created.id)
         assert metadata_after_failure.webhook is not None
@@ -191,14 +193,17 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
         assert metadata_after_failure.webhook.last_started_at is not None
         assert metadata_after_failure.webhook.last_failed_at is not None
         assert metadata_after_failure.webhook.last_succeeded_at is None
-        assert metadata_after_failure.webhook.last_error == "RuntimeError: simulated failure after side-effect"
+        assert (
+            metadata_after_failure.webhook.last_error
+            == "RuntimeError: simulated failure after side-effect"
+        )
         assert metadata_after_failure.webhook.last_session_id is not None
 
         second_result = await service.trigger_webhook(
             profile_id="default",
             token=token,
             payload={"event_id": "e-1"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert second_result.deduplicated is False
         assert len(flaky_loop.calls) == 2
@@ -214,7 +219,7 @@ async def test_webhook_claim_persists_when_run_fails(tmp_path: Path) -> None:
             profile_id="default",
             token=token,
             payload={"event_id": "e-1"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert third_result.deduplicated is True
         assert len(flaky_loop.calls) == 2
@@ -247,7 +252,7 @@ async def test_webhook_claim_released_on_cancellation(tmp_path: Path) -> None:
                 profile_id="default",
                 token=token,
                 payload={"event_id": "cancel-1"},
-                agent_loop_factory=blocking_factory,
+                session_runner_factory=blocking_factory,
             )
         )
         await asyncio.wait_for(blocking_loop.started.wait(), timeout=1.0)
@@ -265,8 +270,68 @@ async def test_webhook_claim_released_on_cancellation(tmp_path: Path) -> None:
             profile_id="default",
             token=token,
             payload={"event_id": "cancel-2"},
-            agent_loop_factory=followup_factory,
+            session_runner_factory=followup_factory,
         )
+        assert followup_result.deduplicated is False
+        assert len(followup_loop.calls) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_webhook_claim_released_on_run_timeout(tmp_path: Path) -> None:
+    """Timed-out webhook executions should release claims and be retryable."""
+
+    engine, factory, _ = await prepare_service(tmp_path)
+    timeout_service = AutomationsService(
+        factory,
+        settings=Settings(root_dir=tmp_path, automation_run_timeout_sec=0.01),
+    )
+    try:
+        created = await timeout_service.create_webhook(
+            profile_id="default",
+            name="timeout hook",
+            prompt="handle timeout",
+        )
+        assert created.webhook is not None
+        token = created.webhook.webhook_token
+        assert token is not None
+
+        blocking_loop = BlockingLoop()
+
+        def blocking_factory(session: AsyncSession, profile_id: str) -> BlockingLoop:
+            _ = session, profile_id
+            return blocking_loop
+
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await timeout_service.trigger_webhook(
+                profile_id="default",
+                token=token,
+                payload={"event_id": "timeout-1"},
+                session_runner_factory=blocking_factory,
+            )
+        assert exc_info.value.error_code == "automation_run_timeout"
+        metadata_after_timeout = await timeout_service.get(
+            profile_id="default",
+            automation_id=created.id,
+        )
+        assert metadata_after_timeout.webhook is not None
+        assert metadata_after_timeout.webhook.last_execution_status == "failed"
+        assert metadata_after_timeout.webhook.last_error is not None
+        assert "automation_run_timeout" in metadata_after_timeout.webhook.last_error
+
+        followup_loop = FakeLoop()
+
+        def followup_factory(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return followup_loop
+
+        followup_result = await timeout_service.trigger_webhook(
+            profile_id="default",
+            token=token,
+            payload={"event_id": "timeout-2"},
+            session_runner_factory=followup_factory,
+        )
+
         assert followup_result.deduplicated is False
         assert len(followup_loop.calls) == 1
     finally:
@@ -299,13 +364,13 @@ async def test_webhook_concurrency_deduplicates_across_service_instances(tmp_pat
                 profile_id="default",
                 token=token,
                 payload={"event_id": "same"},
-                agent_loop_factory=factory_fn,
+                session_runner_factory=factory_fn,
             ),
             service_b.trigger_webhook(
                 profile_id="default",
                 token=token,
                 payload={"event_id": "same"},
-                agent_loop_factory=factory_fn,
+                session_runner_factory=factory_fn,
             ),
         )
         assert sorted([res_a.deduplicated, res_b.deduplicated]) == [False, True]
@@ -346,19 +411,19 @@ async def test_webhook_same_body_different_event_id_executes_twice(tmp_path: Pat
             profile_id="default",
             token=token,
             payload={"event_id": "evt-a", "body": "same"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         second = await service.trigger_webhook(
             profile_id="default",
             token=token,
             payload={"event_id": "evt-b", "body": "same"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         replay = await service.trigger_webhook(
             profile_id="default",
             token=token,
             payload={"event_id": "evt-a", "body": "same"},
-            agent_loop_factory=factory_fn,
+            session_runner_factory=factory_fn,
         )
         assert first.deduplicated is False
         assert second.deduplicated is False

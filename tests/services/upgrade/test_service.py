@@ -94,6 +94,51 @@ async def test_upgrade_service_migrates_legacy_non_default_profile_policy_scope(
     await engine.dispose()
 
 
+async def test_upgrade_service_recomputes_profile_policy_runtime_surface_for_new_tools(
+    tmp_path: Path,
+) -> None:
+    """Upgrade runner should backfill tools introduced after older policy snapshots were stored."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    engine = create_engine(settings)
+    await create_schema(engine)
+    session_factory = create_session_factory(engine)
+    async with session_scope(session_factory) as session:
+        session.add(Profile(id="default", name="Default", is_default=True, status="active"))
+        session.add(
+            ProfilePolicy(
+                profile_id="default",
+                policy_enabled=True,
+                policy_preset="simple",
+                policy_capabilities_json=json.dumps(["shell", "subagents"], ensure_ascii=True),
+                allowed_tools_json=json.dumps(["bash.exec", "subagent.run"], ensure_ascii=True),
+                denied_tools_json="[]",
+                allowed_directories_json=json.dumps([str((tmp_path / "profiles/default").resolve())], ensure_ascii=True),
+                shell_allowed_commands_json="[]",
+                shell_denied_commands_json="[]",
+                network_allowlist_json="[]",
+                max_iterations_main=15,
+                max_iterations_subagent=15,
+            )
+        )
+
+    service = UpgradeService(settings)
+    try:
+        report = await service.apply()
+    finally:
+        await service.shutdown()
+
+    step = next(item for item in report.steps if item.name == "profile_policy_runtime_surface")
+    assert step.changed is True
+    async with session_scope(session_factory) as session:
+        row = await session.get(ProfilePolicy, "default")
+        assert row is not None
+        assert "session.job.run" in json.loads(row.allowed_tools_json)
+        assert row.max_iterations_main == settings.llm_max_iterations
+        assert row.max_iterations_subagent == settings.llm_max_iterations
+    await engine.dispose()
+
+
 async def test_upgrade_service_canonicalizes_profile_runtime_config_payload(tmp_path: Path) -> None:
     """Upgrade runner should rewrite unversioned profile config payloads to canonical shape."""
 

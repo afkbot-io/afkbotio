@@ -24,6 +24,10 @@ from afkbot.services.chat_session.turn_flow import ChatTurnOutcome
 
 _VISIBLE_LLM_CALL_EVENT_TYPES = frozenset(
     {
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.timeout",
+        "llm.call.error",
         "llm.call.compaction_start",
         "llm.call.compaction_done",
         "llm.call.compaction_failed",
@@ -74,14 +78,12 @@ def build_chat_workspace_progress_entries(
 ) -> tuple[ProgressTimelineState, tuple[ChatWorkspaceTranscriptEntry, ...]]:
     """Convert one progress event into zero or more transcript entries."""
 
-    if event.stage == "thinking" and event.event_type not in _VISIBLE_LLM_CALL_EVENT_TYPES:
+    visible_llm_call_event = _is_visible_llm_call_event(event)
+    if event.stage == "thinking" and not visible_llm_call_event:
         next_state, _ = reduce_progress_event(state, event)
         return next_state, ()
 
-    if (
-        event.event_type.startswith("llm.call.")
-        and event.event_type not in _VISIBLE_LLM_CALL_EVENT_TYPES
-    ):
+    if event.event_type.startswith("llm.call.") and not visible_llm_call_event:
         return state, ()
 
     next_state, frame = reduce_progress_event(state, event)
@@ -176,6 +178,17 @@ def build_chat_workspace_progress_entries(
     return next_state, tuple(entries)
 
 
+def _is_visible_llm_call_event(event: ProgressEvent) -> bool:
+    """Return whether a low-level LLM event should reach the chat transcript."""
+
+    if event.event_type in _VISIBLE_LLM_CALL_EVENT_TYPES:
+        return True
+    if event.event_type != "llm.call.done":
+        return False
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    return bool(str(payload.get("error_code") or "").strip())
+
+
 def _strip_progress_iteration_prefix(value: str) -> str:
     """Remove `[iter N] ` prefix so transcript stays compact."""
 
@@ -224,6 +237,7 @@ def build_chat_workspace_outcome_entry(
             kind="plan",
             text=render_chat_plan(
                 outcome.plan_snapshot,
+                phase="planned",
                 include_header=False,
                 leading_blank_line=False,
                 ansi=False,

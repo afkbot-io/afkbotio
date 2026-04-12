@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import Field
@@ -33,6 +34,7 @@ class FileListTool(ToolBase):
     description = "List files and directories."
     parameters_model = FileListParams
     required_skill = "file-ops"
+    parallel_execution_safe = True
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -44,7 +46,9 @@ class FileListTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -58,7 +62,8 @@ class FileListTool(ToolBase):
             if not base.is_dir():
                 raise ValueError(f"Path is not a directory: {payload.path}")
 
-            entries = self._collect_entries(
+            entries = await asyncio.to_thread(
+                self._collect_entries,
                 base_dir=base_dir,
                 base=base,
                 recursive=payload.recursive,
@@ -67,7 +72,10 @@ class FileListTool(ToolBase):
             )
             return ToolResult(
                 ok=True,
-                payload={"base_path": to_workspace_relative(base_dir=base_dir, path=base), "entries": entries},
+                payload={
+                    "base_path": to_workspace_relative(base_dir=base_dir, path=base),
+                    "entries": entries,
+                },
             )
         except ValueError as exc:
             return ToolResult.error(error_code="file_list_invalid", reason=str(exc))

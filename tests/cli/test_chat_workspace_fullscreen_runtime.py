@@ -9,6 +9,7 @@ from afkbot.cli.commands.chat_fullscreen_support import (
     cancel_background_task,
     interrupt_action,
 )
+from afkbot.cli.commands.chat_fullscreen_runtime import _allow_background_input_during_turn
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions
 
@@ -29,7 +30,6 @@ def test_build_workspace_turn_options_keeps_auto_mode_non_blocking() -> None:
     resolved = build_workspace_turn_options(
         state,
         turn_options,
-        confirm_plan_execution=lambda: _bool_result(True),
         present_plan=lambda _result, _plan: _none_result(),
         confirm_space_fn=lambda **_: _bool_result(True),
     )
@@ -43,8 +43,8 @@ def test_build_workspace_turn_options_keeps_auto_mode_non_blocking() -> None:
     assert resolved.confirm_space_fn is not None
 
 
-def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -> None:
-    """Explicit plan-on mode should inject only the fullscreen execution callbacks."""
+def test_build_workspace_turn_options_preserves_auto_execute_for_plan_on_mode() -> None:
+    """Explicit plan-on mode should present the plan without overriding auto-execution."""
 
     # Arrange
     state = ChatReplSessionState(
@@ -54,9 +54,6 @@ def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -
         default_thinking_level=None,
     )
 
-    async def _confirm_plan_execution() -> bool:
-        return await _bool_result(True)
-
     async def _present_plan(_result, _plan) -> None:
         _ = _result, _plan
         await _none_result()
@@ -65,15 +62,27 @@ def test_build_workspace_turn_options_injects_confirm_hooks_for_plan_on_mode() -
     resolved = build_workspace_turn_options(
         state,
         ChatTurnInteractiveOptions(interactive_confirm=True),
-        confirm_plan_execution=_confirm_plan_execution,
         present_plan=_present_plan,
     )
 
     # Assert
     assert resolved.interactive_confirm is True
     assert resolved.prompt_to_plan_first is None
-    assert resolved.confirm_plan_execution is _confirm_plan_execution
+    assert resolved.confirm_plan_execution is None
     assert resolved.present_plan is _present_plan
+
+
+def test_fullscreen_runtime_keeps_background_input_enabled_during_plan_on_turns() -> None:
+    """Plan-on fullscreen sessions should still accept queued follow-up input."""
+
+    state = ChatReplSessionState(
+        planning_mode="on",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+    )
+
+    assert _allow_background_input_during_turn(state) is True
 
 
 def test_build_workspace_turn_options_injects_workspace_prompt_callbacks_in_auto_mode() -> None:
@@ -98,7 +107,6 @@ def test_build_workspace_turn_options_injects_workspace_prompt_callbacks_in_auto
     resolved = build_workspace_turn_options(
         state,
         ChatTurnInteractiveOptions(interactive_confirm=True),
-        confirm_plan_execution=lambda: _bool_result(True),
         present_plan=lambda _result, _plan: _none_result(),
         confirm_space_fn=_confirm_space,
         tool_not_allowed_prompt_fn=_tool_prompt,

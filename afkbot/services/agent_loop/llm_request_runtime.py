@@ -62,6 +62,17 @@ class LLMRequestRuntime:
         )
         timeout_ms = int(timeout_sec * 1000)
         queued_at = time.monotonic()
+        await self._log_event(
+            run_id=run_id,
+            session_id=session_id,
+            event_type="llm.call.queued",
+            payload={
+                "iteration": iteration,
+                "timeout_ms": timeout_ms,
+                "available_tool_names": [tool.name for tool in request.available_tools],
+                "reasoning_effort": request.reasoning_effort,
+            },
+        )
         async with self._request_gate.claim(
             scope=self._shared_request_scope,
             lane_key=self._request_lane_key,

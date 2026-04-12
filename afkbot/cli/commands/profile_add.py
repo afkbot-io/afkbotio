@@ -8,6 +8,7 @@ import json
 import typer
 
 from afkbot.cli.commands.profile_common import emit_profile_error, resolve_profile_id
+from afkbot.cli.commands.policy_option_help import policy_capability_option_help
 from afkbot.cli.commands.profile_mutation_support import (
     build_profile_defaults,
     collect_profile_mutation_inputs,
@@ -231,7 +232,7 @@ def register_add(profile_app: typer.Typer) -> None:
         policy_capability: list[str] = typer.Option(
             [],
             "--policy-capability",
-            help="Capability id (repeatable) used to resolve allowed tool surface.",
+            help=policy_capability_option_help(),
         ),
         policy_file_access_mode: str | None = typer.Option(
             None,

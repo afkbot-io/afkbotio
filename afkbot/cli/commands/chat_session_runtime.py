@@ -9,7 +9,6 @@ import typer
 
 from afkbot.cli.commands.chat_planning_runtime import (
     build_repl_planning_callbacks,
-    confirm_chat_plan_execution,
     confirm_chat_plan_first,
     render_captured_plan,
 )
@@ -27,7 +26,7 @@ from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.browser_sessions import BrowserSessionManager
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
-from afkbot.services.chat_session.session_state import ChatReplSessionState
+from afkbot.services.chat_session.session_state import ChatPlanPhase, ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import (
     ChatTurnInteractiveOptions,
     ChatTurnOutcome,
@@ -35,6 +34,7 @@ from afkbot.services.chat_session.turn_flow import (
     run_chat_turn_with_optional_planning,
 )
 from afkbot.services.llm.reasoning import ThinkingLevel
+from afkbot.services.chat_session.turn_flow import SerializedTurnRunnerFactory
 from afkbot.settings import Settings
 
 
@@ -47,6 +47,7 @@ def run_single_turn(
     run_turn_with_secure_resolution: RunTurnWithSecureResolution,
     planning_mode: ChatPlanningMode,
     thinking_level: ThinkingLevel | None,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None = None,
 ) -> None:
     """Execute one non-REPL chat turn with progress rendering."""
 
@@ -103,11 +104,7 @@ def run_single_turn(
                     if _supports_interactive_confirm() and not json_output
                     else None
                 ),
-                confirm_plan_execution=(
-                    confirm_chat_plan_execution
-                    if _supports_interactive_confirm() and not json_output
-                    else None
-                ),
+                confirm_plan_execution=None,
                 present_plan=lambda plan_result, plan_snapshot: typer.echo(
                     render_captured_plan(
                         plan_result=plan_result,
@@ -115,6 +112,7 @@ def run_single_turn(
                     )
                 ),
                 record_plan=None,
+                serialized_turn_runner_factory=serialized_turn_runner_factory,
             )
         )
     except asyncio.CancelledError:
@@ -146,6 +144,7 @@ def run_repl(
     get_settings: Callable[[], Settings],
     planning_mode: ChatPlanningMode,
     thinking_level: ThinkingLevel | None,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None = None,
 ) -> None:
     """Run interactive loop until explicit exit command or EOF."""
 
@@ -163,6 +162,7 @@ def run_repl(
             run_turn_with_secure_resolution=run_turn_with_secure_resolution,
             repl_state=repl_state,
             turn_options=turn_options,
+            serialized_turn_runner_factory=serialized_turn_runner_factory,
         )
 
     run_repl_transport(
@@ -180,6 +180,15 @@ def _store_repl_plan(snapshot: ChatPlanSnapshot, repl_state: ChatReplSessionStat
     """Persist the latest plan snapshot in local REPL session state."""
 
     repl_state.latest_plan = snapshot
+    repl_state.latest_plan_phase = "planned"
+
+
+def _update_repl_plan_phase(phase: ChatPlanPhase, repl_state: ChatReplSessionState) -> None:
+    """Track the current execution phase for the latest stored plan."""
+
+    if repl_state.latest_plan is None:
+        return
+    repl_state.latest_plan_phase = phase
 
 
 async def _run_repl_turn(
@@ -191,6 +200,7 @@ async def _run_repl_turn(
     run_turn_with_secure_resolution: RunTurnWithSecureResolution,
     repl_state: ChatReplSessionState,
     turn_options: ChatTurnInteractiveOptions,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None = None,
 ) -> ChatTurnOutcome:
     """Run one REPL turn with the current local planning and thinking settings."""
 
@@ -225,9 +235,11 @@ async def _run_repl_turn(
         ),
         present_plan=present_plan,
         record_plan=lambda snapshot: _store_repl_plan(snapshot, repl_state),
+        update_plan_phase=lambda phase: _update_repl_plan_phase(phase, repl_state),
         confirm_space_fn=turn_options.confirm_space_fn,
         tool_not_allowed_prompt_fn=turn_options.tool_not_allowed_prompt_fn,
         credential_profile_prompt_fn=turn_options.credential_profile_prompt_fn,
+        serialized_turn_runner_factory=serialized_turn_runner_factory,
     )
 
 

@@ -11,6 +11,7 @@ def build_plan_only_overrides(
     *,
     base_overrides: TurnContextOverrides | None,
     thinking_level: ThinkingLevel | None,
+    persist_turn: bool = False,
 ) -> TurnContextOverrides:
     """Build trusted overrides for safe plan-only execution."""
 
@@ -25,6 +26,7 @@ def build_plan_only_overrides(
             execution_planning_mode="off",
             thinking_level=minimum_plan_level,
             tool_access_mode="read_only",
+            persist_turn=persist_turn,
         ),
     )
     assert merged is not None

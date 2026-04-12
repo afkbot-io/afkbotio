@@ -1,4 +1,4 @@
-"""Automation service orchestration over repository and AgentLoop execution."""
+"""Automation service orchestration over repository and session turn execution."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from afkbot.services.automations.contracts import (
 )
 from afkbot.services.automations.cron_execution import tick_cron_automations
 from afkbot.services.automations.errors import AutomationsServiceError
-from afkbot.services.automations.loop_factory import AgentLoopLike
 from afkbot.services.automations.metadata import to_metadata
 from afkbot.services.automations.repository_support import ensure_profile_exists
 from afkbot.services.automations.update_runtime import apply_automation_update
@@ -40,11 +39,13 @@ from afkbot.services.automations.webhook_tokens import (
     issue_webhook_token,
 )
 from afkbot.services.automations.webhook_execution import trigger_webhook_automation
-from afkbot.settings import Settings
+from afkbot.services.automations.session_runner_factory import AutomationSessionRunnerFactory
+from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "AutomationsService"] = {}
 TValue = TypeVar("TValue")
 _WEBHOOK_TOKEN_ISSUE_ATTEMPTS = 5
+_DEFAULT_AUTOMATION_RUN_TIMEOUT_SEC = 1800.0
 
 __all__ = [
     "AutomationsService",
@@ -124,11 +125,15 @@ class AutomationsService:
                     profile_id=profile_id,
                     name=stripped_name,
                     prompt=normalized_prompt,
-                    webhook_token=token,
                     webhook_token_hash=token_hash,
                     delivery_mode="tool",
                 )
-                return self._to_metadata(automation=automation, cron=None, webhook=webhook)
+                return self._to_metadata(
+                    automation=automation,
+                    cron=None,
+                    webhook=webhook,
+                    issued_webhook_token=token,
+                )
 
             try:
                 return await self._with_repo(_op)
@@ -212,11 +217,7 @@ class AutomationsService:
         has_base_updates = any(field is not None for field in (name, prompt, status))
         has_cron_updates = cron_expr is not None or timezone_name is not None
         should_rotate_webhook_token = bool(rotate_webhook_token)
-        if (
-            not has_base_updates
-            and not has_cron_updates
-            and not should_rotate_webhook_token
-        ):
+        if not has_base_updates and not has_cron_updates and not should_rotate_webhook_token:
             raise AutomationsServiceError(
                 error_code="invalid_update_payload",
                 reason="At least one update field is required",
@@ -291,9 +292,9 @@ class AutomationsService:
         profile_id: str,
         token: str,
         payload: Mapping[str, object],
-        agent_loop_factory: Callable[..., AgentLoopLike],
+        session_runner_factory: AutomationSessionRunnerFactory | None = None,
     ) -> AutomationWebhookTriggerResult:
-        """Trigger one webhook automation and run its prompt through AgentLoop."""
+        """Trigger one webhook automation and run its prompt through session orchestration."""
 
         return await trigger_webhook_automation(
             session_factory=self._session_factory,
@@ -301,14 +302,16 @@ class AutomationsService:
             profile_id=profile_id,
             token=token,
             payload=payload,
-            agent_loop_factory=agent_loop_factory,
+            settings=self._resolve_execution_settings(),
+            session_runner_factory=session_runner_factory,
+            run_timeout_sec=self._resolve_automation_run_timeout_sec(),
         )
 
     async def tick_cron(
         self,
         *,
         now_utc: datetime,
-        agent_loop_factory: Callable[..., AgentLoopLike],
+        session_runner_factory: AutomationSessionRunnerFactory | None = None,
         max_due_per_tick: int | None = None,
     ) -> AutomationCronTickResult:
         """Run due cron automations and update their next execution timestamp."""
@@ -317,9 +320,11 @@ class AutomationsService:
             session_factory=self._session_factory,
             with_repo=self._with_repo,
             now_utc=now_utc,
-            agent_loop_factory=agent_loop_factory,
+            settings=self._resolve_execution_settings(),
+            session_runner_factory=session_runner_factory,
             compute_next_run_at=compute_next_run_at,
             max_due_per_tick=max_due_per_tick,
+            run_timeout_sec=self._resolve_automation_run_timeout_sec(),
         )
 
     async def _with_repo(
@@ -336,6 +341,7 @@ class AutomationsService:
         automation: Automation,
         cron: AutomationTriggerCron | None,
         webhook: AutomationTriggerWebhook | None,
+        issued_webhook_token: str | None = None,
     ) -> AutomationMetadata:
         """Map automation rows into public metadata using current runtime base URL settings."""
 
@@ -344,6 +350,7 @@ class AutomationsService:
             cron=cron,
             webhook=webhook,
             runtime_base_url=self._resolve_runtime_base_url(),
+            issued_webhook_token=issued_webhook_token,
         )
 
     def _resolve_runtime_base_url(self) -> str | None:
@@ -358,6 +365,18 @@ class AutomationsService:
         if not host or host in {"0.0.0.0", "::", "*"}:
             return None
         return f"http://{host}:{int(self._settings.runtime_port)}"
+
+    def _resolve_automation_run_timeout_sec(self) -> float:
+        """Return the hard wall-clock timeout for one automation run."""
+
+        if self._settings is None:
+            return _DEFAULT_AUTOMATION_RUN_TIMEOUT_SEC
+        return max(0.001, float(self._settings.automation_run_timeout_sec))
+
+    def _resolve_execution_settings(self) -> Settings:
+        """Return concrete runtime settings for automation turn execution."""
+
+        return self._settings or get_settings()
 
     async def shutdown(self) -> None:
         """Dispose owned async engine when the service created it."""

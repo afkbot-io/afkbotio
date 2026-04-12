@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -9,7 +10,28 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
+from afkbot.settings import get_settings
 from tests.cli.profile_cli._harness import _prepare_env
+
+
+def _load_allowed_tools(*, profile_id: str) -> tuple[str, ...]:
+    async def _run() -> tuple[str, ...]:
+        settings = get_settings()
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        try:
+            async with session_scope(factory) as session:
+                row = await ProfilePolicyRepository(session).get(profile_id)
+                assert row is not None
+                return tuple(json.loads(row.allowed_tools_json))
+        finally:
+            await engine.dispose()
+
+    get_settings.cache_clear()
+    return asyncio.run(_run())
 
 
 def test_profile_update_updates_history_memory_and_compaction(
@@ -279,3 +301,38 @@ def test_profile_add_uses_safe_policy_defaults_for_new_profiles(
     payload = json.loads(result.stdout)
     assert payload["profile"]["policy"]["enabled"] is True
     assert "*" not in payload["profile"]["policy"]["network_allowlist"]
+
+
+def test_profile_add_resolves_session_job_run_for_shell_and_subagent_capabilities(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Profile add should persist session.job.run when shell or subagent capabilities are selected."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "ops",
+            "--name",
+            "Ops",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--policy-capability",
+            "shell",
+            "--policy-capability",
+            "subagents",
+        ],
+    )
+
+    assert result.exit_code == 0
+    allowed_tools = _load_allowed_tools(profile_id="ops")
+    assert "session.job.run" in allowed_tools

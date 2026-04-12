@@ -174,3 +174,40 @@ class SubagentLifecycle:
             error_code=state.error_code,
             reason=state.reason,
         )
+
+    async def cancel(
+        self,
+        *,
+        task_id: str,
+        profile_id: str,
+        session_id: str,
+    ) -> SubagentResultResponse:
+        """Cancel one owned running task and return its terminal state."""
+
+        await self._task_store.ensure_schema()
+        await self._task_store.prune_expired_tasks()
+        state = await self._task_store.load_state(
+            task_id=task_id,
+            profile_id=profile_id,
+            session_id=session_id,
+            mark_overdue_timeout=False,
+        )
+        if state.status in _FINAL_STATUSES:
+            return SubagentResultResponse(
+                task_id=task_id,
+                status=state.status,
+                child_session_id=state.child_session_id,
+                child_run_id=state.child_run_id,
+                output=state.output,
+                error_code=state.error_code,
+                reason=state.reason,
+            )
+
+        self._launcher.cancel(task_id=task_id)
+        await self._transitions.cancel(task_id=task_id)
+        return SubagentResultResponse(
+            task_id=task_id,
+            status="cancelled",
+            error_code="subagent_cancelled",
+            reason="Subagent task was cancelled",
+        )

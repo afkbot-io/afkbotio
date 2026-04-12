@@ -88,6 +88,139 @@ def test_build_chat_workspace_progress_entries_skips_llm_internal_ticks() -> Non
     assert entries == ()
 
 
+def test_build_chat_workspace_progress_entries_shows_llm_start_details() -> None:
+    """Fullscreen chat should surface when one provider request actually starts."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=30,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="llm.call.start",
+        payload={
+            "timeout_ms": 30000,
+            "queue_wait_ms": 12,
+            "reasoning_effort": "medium",
+            "available_tool_names": ["file.read", "web.fetch"],
+        },
+    )
+
+    next_state, entries = build_chat_workspace_progress_entries(
+        state,
+        event,
+        first_progress_entry=True,
+    )
+
+    assert next_state.active_spinner_label is None
+    assert len(entries) == 2
+    assert entries[0].text == "thinking..."
+    assert entries[0].accent == "thinking"
+    assert entries[1].text == "llm=start timeout_ms=30000 reasoning=medium visible_tools=2"
+    assert entries[1].accent == "detail"
+
+
+def test_build_chat_workspace_progress_entries_shows_llm_queue_details() -> None:
+    """Fullscreen chat should show when a request is waiting for the shared LLM lane."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=29,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="llm.call.queued",
+        payload={
+            "timeout_ms": 120000,
+            "reasoning_effort": "medium",
+            "available_tool_names": ["file.read"],
+        },
+    )
+
+    next_state, entries = build_chat_workspace_progress_entries(
+        state,
+        event,
+        first_progress_entry=True,
+    )
+
+    assert next_state.active_spinner_label is None
+    assert len(entries) == 2
+    assert entries[0].text == "thinking..."
+    assert entries[0].accent == "thinking"
+    assert entries[1].text == "llm=queued timeout_ms=120000 reasoning=medium visible_tools=1"
+    assert entries[1].accent == "detail"
+
+
+def test_build_chat_workspace_progress_entries_shows_llm_timeout_details() -> None:
+    """Fullscreen chat should surface provider timeout failures instead of looking idle."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=31,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="llm.call.timeout",
+        payload={
+            "elapsed_ms": 30000,
+            "timeout_ms": 30000,
+            "error_code": "llm_timeout",
+        },
+    )
+
+    next_state, entries = build_chat_workspace_progress_entries(
+        state,
+        event,
+        first_progress_entry=True,
+    )
+
+    assert next_state.active_spinner_label is None
+    assert len(entries) == 2
+    assert entries[0].text == "thinking..."
+    assert entries[0].accent == "thinking"
+    assert entries[1].text == "llm=timeout elapsed_ms=30000 timeout_ms=30000 error=llm_timeout"
+    assert entries[1].accent == "detail"
+
+
+def test_build_chat_workspace_progress_entries_shows_llm_done_errors() -> None:
+    """Provider-side failures returned as responses should not stay hidden."""
+
+    state = ProgressTimelineState()
+    event = ProgressEvent(
+        event_id=32,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="llm.call.done",
+        payload={
+            "elapsed_ms": 1200,
+            "timeout_ms": 120000,
+            "response_kind": "final",
+            "error_code": "llm_provider_network_error",
+        },
+    )
+
+    next_state, entries = build_chat_workspace_progress_entries(
+        state,
+        event,
+        first_progress_entry=True,
+    )
+
+    assert next_state.active_spinner_label is None
+    assert len(entries) == 2
+    assert entries[0].text == "thinking..."
+    assert entries[0].accent == "thinking"
+    assert (
+        entries[1].text == "llm=done elapsed_ms=1200 timeout_ms=120000 kind=final "
+        "error=llm_provider_network_error"
+    )
+    assert entries[1].accent == "detail"
+
+
 def test_build_chat_workspace_progress_entries_shows_context_compaction_steps() -> None:
     """Visible compaction events should reach the fullscreen transcript."""
 
@@ -195,7 +328,9 @@ def test_build_chat_workspace_progress_entries_only_appends_new_preview_tail_lin
         tool_name="bash.exec",
         event_type="tool.progress",
     )
-    first_progress.attach_tool_details(tool_progress={"preview_lines": ["stdout | one", "stdout | two"]})
+    first_progress.attach_tool_details(
+        tool_progress={"preview_lines": ["stdout | one", "stdout | two"]}
+    )
     second_progress = ProgressEvent(
         event_id=22,
         run_id=1,

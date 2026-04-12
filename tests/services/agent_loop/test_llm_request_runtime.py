@@ -103,7 +103,11 @@ async def test_llm_request_runtime_logs_successful_completion() -> None:
 
     assert response.kind == "final"
     assert response.final_message == "ok"
-    assert [item["event_type"] for item in events] == ["llm.call.start", "llm.call.done"]
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.done",
+    ]
 
 
 async def test_llm_request_runtime_returns_timeout_fallback() -> None:
@@ -131,6 +135,7 @@ async def test_llm_request_runtime_returns_timeout_fallback() -> None:
     assert response.error_code == "llm_timeout"
     assert response.final_message == "LLM request timed out before planning could complete."
     assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
         "llm.call.start",
         "llm.call.tick",
         "llm.call.timeout",
@@ -158,7 +163,11 @@ async def test_llm_request_runtime_returns_provider_error_fallback() -> None:
     assert response.kind == "final"
     assert response.error_code == "llm_provider_error"
     assert response.final_message == "LLM provider failed before planning could complete."
-    assert [item["event_type"] for item in events] == ["llm.call.start", "llm.call.error"]
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.error",
+    ]
 
 
 async def test_llm_request_runtime_honors_request_timeout_override() -> None:
@@ -184,7 +193,11 @@ async def test_llm_request_runtime_honors_request_timeout_override() -> None:
 
     assert response.kind == "final"
     assert response.final_message == "slow ok"
-    assert [item["event_type"] for item in events] == ["llm.call.start", "llm.call.done"]
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.done",
+    ]
 
 
 async def test_llm_request_runtime_caps_oversized_request_timeout_override() -> None:
@@ -210,8 +223,15 @@ async def test_llm_request_runtime_caps_oversized_request_timeout_override() -> 
     # Assert
     assert response.kind == "final"
     assert response.final_message == "ok"
-    assert [item["event_type"] for item in events] == ["llm.call.start", "llm.call.done"]
-    start_payload = events[0]["payload"]
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.done",
+    ]
+    queued_payload = events[0]["payload"]
+    assert isinstance(queued_payload, dict)
+    assert queued_payload["timeout_ms"] == 1_800_000
+    start_payload = events[1]["payload"]
     assert isinstance(start_payload, dict)
     assert start_payload["timeout_ms"] == 1_800_000
 
@@ -254,8 +274,12 @@ async def test_llm_request_runtime_serializes_shared_provider_lane() -> None:
     )
 
     await asyncio.gather(
-        runtime_one.complete_with_progress(run_id=10, session_id="s-10", iteration=1, request=_request()),
-        runtime_two.complete_with_progress(run_id=11, session_id="s-11", iteration=1, request=_request()),
+        runtime_one.complete_with_progress(
+            run_id=10, session_id="s-10", iteration=1, request=_request()
+        ),
+        runtime_two.complete_with_progress(
+            run_id=11, session_id="s-11", iteration=1, request=_request()
+        ),
     )
 
     assert max(active_counts) == 1
@@ -300,8 +324,12 @@ async def test_llm_request_runtime_allows_parallel_requests_when_lane_capacity_i
 
     # Act
     await asyncio.gather(
-        runtime_one.complete_with_progress(run_id=30, session_id="s-30", iteration=1, request=_request()),
-        runtime_two.complete_with_progress(run_id=31, session_id="s-31", iteration=1, request=_request()),
+        runtime_one.complete_with_progress(
+            run_id=30, session_id="s-30", iteration=1, request=_request()
+        ),
+        runtime_two.complete_with_progress(
+            run_id=31, session_id="s-31", iteration=1, request=_request()
+        ),
     )
 
     # Assert
@@ -423,8 +451,12 @@ async def test_llm_request_runtime_enforces_shared_start_interval() -> None:
     )
 
     await asyncio.gather(
-        runtime_one.complete_with_progress(run_id=20, session_id="s-20", iteration=1, request=_request()),
-        runtime_two.complete_with_progress(run_id=21, session_id="s-21", iteration=1, request=_request()),
+        runtime_one.complete_with_progress(
+            run_id=20, session_id="s-20", iteration=1, request=_request()
+        ),
+        runtime_two.complete_with_progress(
+            run_id=21, session_id="s-21", iteration=1, request=_request()
+        ),
     )
 
     assert len(calls) == 2

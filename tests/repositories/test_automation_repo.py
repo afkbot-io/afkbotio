@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
+from afkbot.services.automations.webhook_tokens import stored_webhook_token_ref
 from tests.repositories._harness import build_repository_factory
 
 
@@ -36,12 +37,12 @@ async def test_repository_create_list_get_delete(tmp_path: Path) -> None:
                 timezone="UTC",
                 next_run_at=datetime.now(timezone.utc),
             )
+            webhook_hash = sha256("tok_abc".encode("utf-8")).hexdigest()
             created_webhook, webhook = await repo.create_webhook_automation(
                 profile_id="other",
                 name="incoming webhook",
                 prompt="handle webhook",
-                webhook_token="tok_abc",
-                webhook_token_hash=sha256("tok_abc".encode("utf-8")).hexdigest(),
+                webhook_token_hash=webhook_hash,
             )
 
             fetched = await repo.get_by_id(profile_id="default", automation_id=created_cron.id)
@@ -60,7 +61,7 @@ async def test_repository_create_list_get_delete(tmp_path: Path) -> None:
             assert len(listed_other) == 1
             assert listed_other[0][0].id == created_webhook.id
             assert listed_other[0][2] is not None
-            assert listed_other[0][2].webhook_token == webhook.webhook_token
+            assert listed_other[0][2].webhook_token == stored_webhook_token_ref(webhook_hash)
             assert listed_other[0][2].webhook_token_hash == webhook.webhook_token_hash
 
             assert (
@@ -128,18 +129,18 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 profile_id="default",
                 name="hook",
                 prompt="hook prompt",
-                webhook_token="tok_lookup",
                 webhook_token_hash=sha256("tok_lookup".encode("utf-8")).hexdigest(),
             )
             deleted_webhook, _ = await repo.create_webhook_automation(
                 profile_id="default",
                 name="deleted-hook",
                 prompt="deleted hook",
-                webhook_token="tok_deleted",
                 webhook_token_hash=sha256("tok_deleted".encode("utf-8")).hexdigest(),
             )
 
-            webhook_row = await repo.find_webhook_by_target(profile_id="default", token="tok_lookup")
+            webhook_row = await repo.find_webhook_by_target(
+                profile_id="default", token="tok_lookup"
+            )
             assert webhook_row is not None
             assert webhook_row[0].id == webhook_automation.id
             assert await repo.find_webhook_by_target(profile_id="default", token="missing") is None
@@ -247,9 +248,9 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
             assert webhook_row_after[2].last_failed_at == (now + timedelta(seconds=5)).replace(
                 tzinfo=None
             )
-            assert webhook_row_after[2].last_succeeded_at == (
-                now + timedelta(seconds=11)
-            ).replace(tzinfo=None)
+            assert webhook_row_after[2].last_succeeded_at == (now + timedelta(seconds=11)).replace(
+                tzinfo=None
+            )
 
             due_rows = await repo.list_due_cron(now_utc=now)
             due_ids = {row[0].id for row in due_rows}
@@ -344,7 +345,6 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 profile_id="default",
                 name="webhook-original",
                 prompt="webhook prompt",
-                webhook_token="tok_old",
                 webhook_token_hash=sha256("tok_old".encode("utf-8")).hexdigest(),
             )
 
@@ -394,11 +394,10 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
             new_token_hash = sha256("tok_new".encode("utf-8")).hexdigest()
             updated_webhook = await repo.update_webhook_trigger(
                 automation_id=webhook_automation.id,
-                webhook_token="tok_new",
                 webhook_token_hash=new_token_hash,
             )
             assert updated_webhook is not None
-            assert updated_webhook.webhook_token == "tok_new"
+            assert updated_webhook.webhook_token == stored_webhook_token_ref(new_token_hash)
             assert updated_webhook.webhook_token_hash == new_token_hash
             assert updated_webhook.in_progress_event_hash == event_hash
             assert updated_webhook.claim_token == "repo-claim"

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
+from pydantic import Field
+
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
@@ -179,7 +183,9 @@ class _PolicyCaptureEngine(_FakePolicyEngine):
         approved_tool_names: set[str] | None = None,
     ) -> None:
         _ = policy, params
-        self.calls.append((tool_name, None if approved_tool_names is None else set(approved_tool_names)))
+        self.calls.append(
+            (tool_name, None if approved_tool_names is None else set(approved_tool_names))
+        )
 
 
 class _EchoTool(ToolBase):
@@ -189,6 +195,36 @@ class _EchoTool(ToolBase):
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         _ = ctx, params
         return ToolResult(ok=True, payload={"ok": True})
+
+
+class _ParallelReadParams(ToolParameters):
+    path: str = Field(min_length=1)
+
+
+class _ParallelSafeReadTool(ToolBase):
+    name = "file.read"
+    description = "Parallel-safe read tool"
+    parameters_model = _ParallelReadParams
+    parallel_execution_safe = True
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self.started: list[str] = []
+        self.progress_callback_seen = False
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        payload = self._coerce_params(params=params, expected=_ParallelReadParams)
+        if ctx.progress_callback is not None:
+            self.progress_callback_seen = True
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        self.started.append(payload.path)
+        try:
+            await asyncio.sleep(0.05)
+            return ToolResult(ok=True, payload={"path": payload.path})
+        finally:
+            self.active -= 1
 
 
 async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_override() -> None:
@@ -229,3 +265,47 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
     assert len(results) == 1
     assert results[0].ok is True
     assert policy_engine.calls == [("bash.exec", {"bash.exec"})]
+
+
+async def test_execute_requested_tool_calls_parallelizes_parallel_safe_read_only_tools() -> None:
+    """Explicitly parallel-safe tools should run concurrently and keep result order."""
+
+    tool = _ParallelSafeReadTool()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(tool),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        parallel_tool_max_concurrent=2,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-parallel",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(name="file.read", params={"path": "a.txt"}),
+            ToolCall(name="file.read", params={"path": "b.txt"}),
+            ToolCall(name="file.read", params={"path": "c.txt"}),
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"file.read"},
+    )
+
+    assert tool.max_active == 2
+    assert tool.progress_callback_seen is False
+    assert [item.payload["path"] for item in results] == ["a.txt", "b.txt", "c.txt"]

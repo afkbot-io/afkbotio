@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from afkbot.cli.commands.chat_planning_runtime import PLAN_EXECUTION_PROMPT
 from afkbot.cli.commands.chat_startup_notices import build_startup_assistant_outcome
 from afkbot.cli.commands.chat_fullscreen_support import (
     FullscreenChatWorkspaceUX,
@@ -28,7 +27,6 @@ from afkbot.cli.presentation.chat_workspace.presenter import (
     build_chat_workspace_progress_entries,
     build_chat_workspace_surface_state,
     build_chat_workspace_toolbar_text,
-    build_chat_workspace_user_entry,
 )
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -52,6 +50,16 @@ RunReplTurnFn = Callable[
     Coroutine[Any, Any, ChatTurnOutcome],
 ]
 RefreshCatalogFn = Callable[[], Coroutine[Any, Any, None]]
+
+
+def _allow_background_input_during_turn(_state: ChatReplSessionState) -> bool:
+    """Keep queued-input handling enabled during plan-first turns.
+
+    Interactive prompts already pause the reader explicitly via the controller hook, so
+    planning mode itself should not disable same-session queueing.
+    """
+
+    return True
 
 
 async def run_fullscreen_chat_workspace_session(
@@ -141,11 +149,6 @@ async def run_fullscreen_chat_workspace_session(
             turn_queue=turn_queue,
             turn_active=turn_active,
         )
-        if outcome.queued_message:
-            workspace.append_transcript_entry(
-                build_chat_workspace_user_entry(outcome.queued_message),
-                echo=False,
-            )
         return outcome
 
     def _emit_notice(message: str) -> None:
@@ -163,17 +166,6 @@ async def run_fullscreen_chat_workspace_session(
                 profile_id=profile_id,
                 session_id=session_id,
             )
-        )
-
-    async def _confirm_plan_execution() -> bool:
-        return await workspace.confirm(
-            title=PLAN_EXECUTION_PROMPT.title,
-            question=PLAN_EXECUTION_PROMPT.question,
-            default=PLAN_EXECUTION_PROMPT.default,
-            yes_label=PLAN_EXECUTION_PROMPT.yes_label,
-            no_label=PLAN_EXECUTION_PROMPT.no_label,
-            hint_text=PLAN_EXECUTION_PROMPT.hint_text,
-            cancel_result=PLAN_EXECUTION_PROMPT.cancel_result,
         )
 
     async def _confirm_workspace_operation(
@@ -278,7 +270,6 @@ async def run_fullscreen_chat_workspace_session(
                 build_workspace_turn_options(
                     state=state,
                     turn_options=turn_options,
-                    confirm_plan_execution=_confirm_plan_execution,
                     present_plan=_present_plan,
                     confirm_space_fn=_confirm_workspace_operation,
                     tool_not_allowed_prompt_fn=_prompt_workspace_tool_access,
@@ -307,7 +298,7 @@ async def run_fullscreen_chat_workspace_session(
             emit_turn_output=_emit_turn_output,
             emit_notice=_emit_notice,
             on_state_change=lambda _state: _sync_workspace_from_state(),
-            allow_background_input=lambda state: state.planning_mode != "on",
+            allow_background_input=_allow_background_input_during_turn,
         )
         workspace.request_exit()
 

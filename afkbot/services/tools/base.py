@@ -75,6 +75,7 @@ class ToolBase(ABC):
     required_credentials: ClassVar[tuple[str, ...]] = ()
     required_skill: ClassVar[str | None] = None
     requires_automation_intent: ClassVar[bool] = False
+    parallel_execution_safe: ClassVar[bool] = False
 
     def parse_params(
         self,
@@ -95,9 +96,7 @@ class ToolBase(ABC):
     def llm_parameters_schema(self) -> dict[str, object]:
         """Return the LLM-visible parameters schema for this tool."""
 
-        return {
-            str(key): value for key, value in self.parameters_model.model_json_schema().items()
-        }
+        return {str(key): value for key, value in self.parameters_model.model_json_schema().items()}
 
     @staticmethod
     def _coerce_params(params: ToolParameters, expected: type[TParams]) -> TParams:

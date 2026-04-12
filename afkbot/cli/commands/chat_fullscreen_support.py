@@ -56,7 +56,6 @@ def build_workspace_turn_options(
     state: ChatReplSessionState,
     turn_options: ChatTurnInteractiveOptions,
     *,
-    confirm_plan_execution: Callable[[], Coroutine[Any, Any, bool]],
     present_plan: PlanPresentationFn,
     confirm_space_fn: Callable[..., bool | Coroutine[Any, Any, bool]] | None = None,
     tool_not_allowed_prompt_fn: Callable[..., str | Coroutine[Any, Any, str]] | None = None,
@@ -74,11 +73,7 @@ def build_workspace_turn_options(
     return ChatTurnInteractiveOptions(
         interactive_confirm=turn_options.interactive_confirm,
         prompt_to_plan_first=turn_options.prompt_to_plan_first,
-        confirm_plan_execution=(
-            confirm_plan_execution
-            if state.planning_mode == "on"
-            else turn_options.confirm_plan_execution
-        ),
+        confirm_plan_execution=turn_options.confirm_plan_execution,
         present_plan=(
             present_plan
             if state.planning_mode == "on"

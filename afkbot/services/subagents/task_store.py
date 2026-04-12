@@ -42,6 +42,12 @@ class SubagentTaskStore:
 
         await self._engine.dispose()
 
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Return the shared subagent persistence session factory."""
+
+        return self._session_factory
+
     async def ensure_schema(self) -> None:
         """Create schema lazily once per store instance."""
 

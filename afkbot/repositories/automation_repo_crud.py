@@ -13,6 +13,10 @@ from afkbot.models.automation_trigger_cron import AutomationTriggerCron
 from afkbot.models.automation_trigger_webhook import AutomationTriggerWebhook
 from afkbot.repositories.automation_repo_common import AutomationRow, base_automation_join
 from afkbot.repositories.support import profile_exists
+from afkbot.services.automations.webhook_tokens import (
+    hash_webhook_token,
+    stored_webhook_token_ref,
+)
 
 
 class AutomationRepositoryCrudMixin:
@@ -62,8 +66,8 @@ class AutomationRepositoryCrudMixin:
         profile_id: str,
         name: str,
         prompt: str,
-        webhook_token: str,
         webhook_token_hash: str,
+        webhook_token_ref: str | None = None,
         delivery_mode: str = "tool",
     ) -> tuple[Automation, AutomationTriggerWebhook]:
         """Create automation row with webhook trigger row."""
@@ -81,7 +85,7 @@ class AutomationRepositoryCrudMixin:
 
         webhook = AutomationTriggerWebhook(
             automation_id=automation.id,
-            webhook_token=webhook_token,
+            webhook_token=webhook_token_ref or stored_webhook_token_ref(webhook_token_hash),
             webhook_token_hash=webhook_token_hash,
         )
         self._session.add(webhook)
@@ -95,10 +99,14 @@ class AutomationRepositoryCrudMixin:
 
         statement: Select[
             tuple[Automation, AutomationTriggerCron | None, AutomationTriggerWebhook | None]
-        ] = base_automation_join().where(
-            Automation.profile_id == profile_id,
-            Automation.id == automation_id,
-        ).execution_options(populate_existing=True)
+        ] = (
+            base_automation_join()
+            .where(
+                Automation.profile_id == profile_id,
+                Automation.id == automation_id,
+            )
+            .execution_options(populate_existing=True)
+        )
         row = (await self._session.execute(statement)).one_or_none()
         if row is None:
             return None
@@ -115,7 +123,9 @@ class AutomationRepositoryCrudMixin:
         statement = base_automation_join().where(Automation.profile_id == profile_id)
         if not include_deleted:
             statement = statement.where(Automation.status != "deleted")
-        statement = statement.order_by(Automation.id.asc()).execution_options(populate_existing=True)
+        statement = statement.order_by(Automation.id.asc()).execution_options(
+            populate_existing=True
+        )
         result = await self._session.execute(statement)
         return [(row[0], row[1], row[2]) for row in result.all()]
 
@@ -210,8 +220,8 @@ class AutomationRepositoryCrudMixin:
         self,
         *,
         automation_id: int,
-        webhook_token: str | None = None,
         webhook_token_hash: str | None = None,
+        webhook_token_ref: str | None = None,
     ) -> AutomationTriggerWebhook | None:
         """Update webhook trigger mutable fields for one automation id."""
 
@@ -221,10 +231,11 @@ class AutomationRepositoryCrudMixin:
         )
         if webhook is None:
             return None
-        if webhook_token is not None:
-            webhook.webhook_token = webhook_token
         if webhook_token_hash is not None:
             webhook.webhook_token_hash = webhook_token_hash
+            webhook.webhook_token = webhook_token_ref or stored_webhook_token_ref(
+                webhook_token_hash
+            )
         await self._session.flush()
         await self._session.refresh(webhook)
         return webhook
@@ -235,14 +246,15 @@ class AutomationRepositoryCrudMixin:
         profile_id: str,
         token: str,
     ) -> tuple[Automation, AutomationTriggerWebhook] | None:
-        """Find active non-deleted webhook automation by profile id and plaintext token."""
+        """Find active non-deleted webhook automation by profile id and bearer token hash."""
 
+        token_hash = hash_webhook_token(token)
         statement: Select[tuple[Automation, AutomationTriggerWebhook]] = (
             select(Automation, AutomationTriggerWebhook)
             .join(AutomationTriggerWebhook, AutomationTriggerWebhook.automation_id == Automation.id)
             .where(
                 Automation.profile_id == profile_id,
-                AutomationTriggerWebhook.webhook_token == token,
+                AutomationTriggerWebhook.webhook_token_hash == token_hash,
                 Automation.status == "active",
                 Automation.trigger_type == "webhook",
             )

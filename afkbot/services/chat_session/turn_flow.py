@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -16,11 +18,13 @@ from afkbot.services.agent_loop.planning_policy import (
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot, capture_chat_plan
+from afkbot.services.chat_session.session_state import ChatPlanPhase
 from afkbot.services.chat_session.turn_planning import (
     build_execution_overrides_from_plan,
     build_plan_only_overrides,
 )
 from afkbot.services.llm.reasoning import ThinkingLevel
+from afkbot.services.session_orchestration import SerializedSessionTurnRunner
 
 RunTurnWithSecureResolution = Callable[..., Coroutine[Any, Any, TurnResult]]
 PlanDecisionFn = Callable[[], bool | Awaitable[bool]]
@@ -29,9 +33,14 @@ PlanPresentationFn = Callable[
     None | Awaitable[None],
 ]
 PlanRecorderFn = Callable[[ChatPlanSnapshot], None]
+PlanPhaseUpdaterFn = Callable[[ChatPlanPhase], None]
 InteractiveConfirmFn = Callable[..., bool | Awaitable[bool]]
 InteractiveToolAccessPromptFn = Callable[..., str | Awaitable[str]]
 InteractiveCredentialProfilePromptFn = Callable[..., str | None | Awaitable[str | None]]
+SerializedTurnRunnerFactory = Callable[
+    [str, str],
+    AbstractAsyncContextManager[SerializedSessionTurnRunner],
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,9 +79,11 @@ async def run_chat_turn_with_optional_planning(
     confirm_plan_execution: PlanDecisionFn | None = None,
     present_plan: PlanPresentationFn | None = None,
     record_plan: PlanRecorderFn | None = None,
+    update_plan_phase: PlanPhaseUpdaterFn | None = None,
     confirm_space_fn: InteractiveConfirmFn | None = None,
     tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None = None,
     credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None = None,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None = None,
 ) -> ChatTurnOutcome:
     """Optionally run one safe planning turn before the execution turn."""
 
@@ -92,55 +103,93 @@ async def run_chat_turn_with_optional_planning(
     )
     if not should_plan_first:
         return ChatTurnOutcome(
-            result=await run_turn_with_secure_resolution(
+            result=await _run_secure_turn(
+                run_turn_with_secure_resolution=run_turn_with_secure_resolution,
                 message=message,
                 profile_id=profile_id,
                 session_id=session_id,
                 progress_sink=progress_sink,
                 allow_secure_prompt=allow_secure_prompt,
                 turn_overrides=execution_overrides,
-                **_interactive_prompt_kwargs(
-                    confirm_space_fn=confirm_space_fn,
-                    tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
-                    credential_profile_prompt_fn=credential_profile_prompt_fn,
-                ),
+                confirm_space_fn=confirm_space_fn,
+                tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+                credential_profile_prompt_fn=credential_profile_prompt_fn,
+                serialized_turn_runner=None,
             )
         )
 
-    plan_result = await run_turn_with_secure_resolution(
-        message=message,
+    async with _serialized_turn_runner_scope(
+        serialized_turn_runner_factory=(
+            None if explicit_plan_request else serialized_turn_runner_factory
+        ),
         profile_id=profile_id,
         session_id=session_id,
-        progress_sink=progress_sink,
-        allow_secure_prompt=False,
-        turn_overrides=build_plan_only_overrides(
-            base_overrides=execution_overrides,
-            thinking_level=thinking_level,
-        ),
-        **_interactive_prompt_kwargs(
+    ) as serialized_turn_runner:
+        plan_result = await _run_secure_turn(
+            run_turn_with_secure_resolution=run_turn_with_secure_resolution,
+            message=message,
+            profile_id=profile_id,
+            session_id=session_id,
+            progress_sink=progress_sink,
+            allow_secure_prompt=False,
+            turn_overrides=build_plan_only_overrides(
+                base_overrides=execution_overrides,
+                thinking_level=thinking_level,
+                persist_turn=explicit_plan_request,
+            ),
             confirm_space_fn=confirm_space_fn,
             tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
             credential_profile_prompt_fn=credential_profile_prompt_fn,
-        ),
-    )
-    plan_snapshot = capture_chat_plan(plan_result.envelope.message)
-    if plan_snapshot is not None and record_plan is not None:
-        record_plan(plan_snapshot)
-    if explicit_plan_request:
-        return ChatTurnOutcome(
-            result=plan_result,
-            plan_snapshot=plan_snapshot,
-            final_output="plan" if plan_snapshot is not None else "assistant",
+            serialized_turn_runner=serialized_turn_runner,
         )
-    if present_plan is not None:
-        await _present_captured_plan(
-            present_plan=present_plan,
-            plan_result=plan_result,
-            plan_snapshot=plan_snapshot,
-        )
-    if confirm_plan_execution is None:
+        plan_snapshot = capture_chat_plan(plan_result.envelope.message)
+        if plan_snapshot is not None and record_plan is not None:
+            record_plan(plan_snapshot)
+        if plan_snapshot is not None and update_plan_phase is not None:
+            update_plan_phase("planned")
+        if explicit_plan_request:
+            return ChatTurnOutcome(
+                result=plan_result,
+                plan_snapshot=plan_snapshot,
+                final_output="plan" if plan_snapshot is not None else "assistant",
+            )
+        if present_plan is not None:
+            await _present_captured_plan(
+                present_plan=present_plan,
+                plan_result=plan_result,
+                plan_snapshot=plan_snapshot,
+            )
+        if confirm_plan_execution is None:
+            return ChatTurnOutcome(
+                result=await _run_planned_execution_turn(
+                    run_turn_with_secure_resolution=run_turn_with_secure_resolution,
+                    message=message,
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    progress_sink=progress_sink,
+                    allow_secure_prompt=allow_secure_prompt,
+                    turn_overrides=build_execution_overrides_from_plan(
+                        base_overrides=execution_overrides,
+                        approved_plan=plan_result.envelope.message,
+                        thinking_level=thinking_level,
+                    ),
+                    confirm_space_fn=confirm_space_fn,
+                    tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+                    credential_profile_prompt_fn=credential_profile_prompt_fn,
+                    serialized_turn_runner=serialized_turn_runner,
+                    update_plan_phase=update_plan_phase,
+                ),
+                plan_snapshot=plan_snapshot,
+            )
+        if not await _resolve_plan_decision(confirm_plan_execution):
+            return ChatTurnOutcome(
+                result=plan_result,
+                plan_snapshot=plan_snapshot,
+                final_output="none",
+            )
         return ChatTurnOutcome(
-            result=await run_turn_with_secure_resolution(
+            result=await _run_planned_execution_turn(
+                run_turn_with_secure_resolution=run_turn_with_secure_resolution,
                 message=message,
                 profile_id=profile_id,
                 session_id=session_id,
@@ -151,41 +200,14 @@ async def run_chat_turn_with_optional_planning(
                     approved_plan=plan_result.envelope.message,
                     thinking_level=thinking_level,
                 ),
-                **_interactive_prompt_kwargs(
-                    confirm_space_fn=confirm_space_fn,
-                    tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
-                    credential_profile_prompt_fn=credential_profile_prompt_fn,
-                ),
-            ),
-            plan_snapshot=plan_snapshot,
-        )
-
-    if not await _resolve_plan_decision(confirm_plan_execution):
-        return ChatTurnOutcome(
-            result=plan_result,
-            plan_snapshot=plan_snapshot,
-            final_output="none",
-        )
-    return ChatTurnOutcome(
-        result=await run_turn_with_secure_resolution(
-            message=message,
-            profile_id=profile_id,
-            session_id=session_id,
-            progress_sink=progress_sink,
-            allow_secure_prompt=allow_secure_prompt,
-            turn_overrides=build_execution_overrides_from_plan(
-                base_overrides=execution_overrides,
-                approved_plan=plan_result.envelope.message,
-                thinking_level=thinking_level,
-            ),
-            **_interactive_prompt_kwargs(
                 confirm_space_fn=confirm_space_fn,
                 tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
                 credential_profile_prompt_fn=credential_profile_prompt_fn,
+                serialized_turn_runner=serialized_turn_runner,
+                update_plan_phase=update_plan_phase,
             ),
-        ),
-        plan_snapshot=plan_snapshot,
-    )
+            plan_snapshot=plan_snapshot,
+        )
 
 
 def _interactive_prompt_kwargs(
@@ -241,3 +263,89 @@ async def _present_captured_plan(
     rendered = present_plan(plan_result, plan_snapshot)
     if inspect.isawaitable(rendered):
         await rendered
+
+
+async def _run_secure_turn(
+    *,
+    run_turn_with_secure_resolution: RunTurnWithSecureResolution,
+    message: str,
+    profile_id: str,
+    session_id: str,
+    progress_sink: Callable[[ProgressEvent], None] | None,
+    allow_secure_prompt: bool,
+    turn_overrides: TurnContextOverrides | None,
+    confirm_space_fn: InteractiveConfirmFn | None,
+    tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None,
+    credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None,
+    serialized_turn_runner: SerializedSessionTurnRunner | None,
+) -> TurnResult:
+    kwargs = _interactive_prompt_kwargs(
+        confirm_space_fn=confirm_space_fn,
+        tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+        credential_profile_prompt_fn=credential_profile_prompt_fn,
+    )
+    if serialized_turn_runner is not None:
+        kwargs["serialized_turn_runner"] = serialized_turn_runner
+    return await run_turn_with_secure_resolution(
+        message=message,
+        profile_id=profile_id,
+        session_id=session_id,
+        progress_sink=progress_sink,
+        allow_secure_prompt=allow_secure_prompt,
+        turn_overrides=turn_overrides,
+        **kwargs,
+    )
+
+
+async def _run_planned_execution_turn(
+    *,
+    run_turn_with_secure_resolution: RunTurnWithSecureResolution,
+    message: str,
+    profile_id: str,
+    session_id: str,
+    progress_sink: Callable[[ProgressEvent], None] | None,
+    allow_secure_prompt: bool,
+    turn_overrides: TurnContextOverrides | None,
+    confirm_space_fn: InteractiveConfirmFn | None,
+    tool_not_allowed_prompt_fn: InteractiveToolAccessPromptFn | None,
+    credential_profile_prompt_fn: InteractiveCredentialProfilePromptFn | None,
+    serialized_turn_runner: SerializedSessionTurnRunner | None,
+    update_plan_phase: PlanPhaseUpdaterFn | None,
+) -> TurnResult:
+    if update_plan_phase is not None:
+        update_plan_phase("executing")
+    try:
+        result = await _run_secure_turn(
+            run_turn_with_secure_resolution=run_turn_with_secure_resolution,
+            message=message,
+            profile_id=profile_id,
+            session_id=session_id,
+            progress_sink=progress_sink,
+            allow_secure_prompt=allow_secure_prompt,
+            turn_overrides=turn_overrides,
+            confirm_space_fn=confirm_space_fn,
+            tool_not_allowed_prompt_fn=tool_not_allowed_prompt_fn,
+            credential_profile_prompt_fn=credential_profile_prompt_fn,
+            serialized_turn_runner=serialized_turn_runner,
+        )
+    except asyncio.CancelledError:
+        if update_plan_phase is not None:
+            update_plan_phase("cancelled")
+        raise
+    if update_plan_phase is not None:
+        update_plan_phase("completed")
+    return result
+
+
+@asynccontextmanager
+async def _serialized_turn_runner_scope(
+    *,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None,
+    profile_id: str,
+    session_id: str,
+) -> AsyncIterator[SerializedSessionTurnRunner | None]:
+    if serialized_turn_runner_factory is None:
+        yield None
+        return
+    async with serialized_turn_runner_factory(profile_id, session_id) as serialized_turn_runner:
+        yield serialized_turn_runner

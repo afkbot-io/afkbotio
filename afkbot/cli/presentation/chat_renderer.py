@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import sys
 
+from afkbot.cli.presentation.terminal_text import sanitize_terminal_line
 from afkbot.services.agent_loop.action_contracts import TurnResult
 
 _AGENT_HEADER = "\033[96mAFK Agent\033[0m"
+_AGENT_HEADER_TEXT = "AFK Agent"
 _ERROR_HEADER = "\033[91mERROR\033[0m"
+_ERROR_HEADER_TEXT = "ERROR"
 _RESET = "\033[0m"
 _DIFF_ADD = "\033[92m"
 _DIFF_REMOVE = "\033[91m"
@@ -53,7 +56,7 @@ def _render_agent_block(
     lines = _normalize_lines(message, ansi=ansi)
     body = "\n".join(f"  {line}" for line in lines)
     if include_header:
-        body = _AGENT_HEADER + "\n" + body
+        body = (_AGENT_HEADER if ansi else _AGENT_HEADER_TEXT) + "\n" + body
     if leading_blank_line:
         return "\n" + body
     return body
@@ -76,7 +79,7 @@ def _render_error_block(
                 lines.append(f"{key}: {value}")
     body = "\n".join(f"  {line}" for line in lines)
     if include_header:
-        body = _ERROR_HEADER + "\n" + body
+        body = (_ERROR_HEADER if ansi else _ERROR_HEADER_TEXT) + "\n" + body
     if leading_blank_line:
         return "\n" + body
     return body
@@ -85,7 +88,8 @@ def _render_error_block(
 def _normalize_lines(message: str, *, ansi: bool) -> list[str]:
     if not message:
         return ["(empty response)"]
-    lines = [line.rstrip() for line in message.splitlines()] or ["(empty response)"]
+    lines = [sanitize_terminal_line(line.rstrip()) for line in message.splitlines()]
+    lines = lines or ["(empty response)"]
     if not ansi:
         return lines
     return _render_markdown_for_terminal(lines)

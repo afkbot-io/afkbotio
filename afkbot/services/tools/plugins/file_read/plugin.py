@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import Field
 
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
@@ -30,6 +32,7 @@ class FileReadTool(ToolBase):
     description = "Read one file with bounded output size."
     parameters_model = FileReadParams
     required_skill = "file-ops"
+    parallel_execution_safe = True
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -41,7 +44,9 @@ class FileReadTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -56,7 +61,11 @@ class FileReadTool(ToolBase):
                 raise ValueError(f"Path is not a file: {payload.path}")
 
             max_bytes = min(payload.max_bytes, self._settings.runtime_max_body_bytes)
-            content, truncated, size_bytes = snapshot_path_text(path=path, max_bytes=max_bytes)
+            content, truncated, size_bytes = await asyncio.to_thread(
+                snapshot_path_text,
+                path=path,
+                max_bytes=max_bytes,
+            )
             return ToolResult(
                 ok=True,
                 payload={
@@ -69,7 +78,9 @@ class FileReadTool(ToolBase):
         except ValueError as exc:
             return ToolResult.error(error_code="file_read_invalid", reason=str(exc))
         except OSError as exc:
-            return ToolResult.error(error_code="file_read_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="file_read_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
 
 def create_tool(settings: Settings) -> ToolBase:

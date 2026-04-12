@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -61,8 +62,10 @@ class TrustedRuntimeFactsService:
     async def build_prompt_block(self, *, profile_id: str) -> str:
         """Return prompt-ready trusted runtime facts for the active profile."""
 
-        facts = self._collect_facts(profile_id=profile_id)
-        package_managers = ", ".join(facts.package_managers) if facts.package_managers else "none detected"
+        facts = await asyncio.to_thread(self._collect_facts, profile_id=profile_id)
+        package_managers = (
+            ", ".join(facts.package_managers) if facts.package_managers else "none detected"
+        )
         shell_line = facts.shell_path or "unknown"
         repo_root = str(facts.repo_root) if facts.repo_root is not None else "not detected"
         distro_line = facts.distro or "unknown"
@@ -131,7 +134,8 @@ class TrustedRuntimeFactsService:
             os_name = platform.system().strip().lower() or "unknown"
             distro = self._read_linux_distro() if os_name == "linux" else None
             package_managers = tuple(
-                name for name in ("apt", "apt-get", "dnf", "yum", "brew", "pacman")
+                name
+                for name in ("apt", "apt-get", "dnf", "yum", "brew", "pacman")
                 if shutil.which(name) is not None
             )
             self._process_facts = _ProcessRuntimeFacts(

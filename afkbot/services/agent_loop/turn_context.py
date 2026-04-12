@@ -21,6 +21,7 @@ class TurnContextOverrides:
     execution_planning_mode: ChatPlanningMode | None = None
     thinking_level: ThinkingLevel | None = None
     tool_access_mode: ToolAccessMode | None = None
+    persist_turn: bool | None = None
 
 
 def merge_turn_context_overrides(
@@ -36,6 +37,7 @@ def merge_turn_context_overrides(
     execution_planning_mode: ChatPlanningMode | None = None
     thinking_level: ThinkingLevel | None = None
     tool_access_mode: ToolAccessMode | None = None
+    persist_turn: bool | None = None
     saw_value = False
 
     for part in parts:
@@ -59,6 +61,8 @@ def merge_turn_context_overrides(
             thinking_level = part.thinking_level
         if part.tool_access_mode is not None:
             tool_access_mode = part.tool_access_mode
+        if part.persist_turn is not None:
+            persist_turn = part.persist_turn
 
     if not saw_value:
         return None
@@ -71,6 +75,7 @@ def merge_turn_context_overrides(
         and execution_planning_mode is None
         and thinking_level is None
         and tool_access_mode is None
+        and persist_turn is None
     ):
         return None
     return TurnContextOverrides(
@@ -82,6 +87,7 @@ def merge_turn_context_overrides(
         execution_planning_mode=execution_planning_mode,
         thinking_level=thinking_level,
         tool_access_mode=tool_access_mode,
+        persist_turn=persist_turn,
     )
 
 

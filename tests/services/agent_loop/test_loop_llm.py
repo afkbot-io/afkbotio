@@ -20,6 +20,7 @@ from afkbot.services.agent_loop.llm_tool_followup import LLMToolFollowupPolicy
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.services.llm import BaseLLMProvider, LLMRequest, LLMResponse, MockLLMProvider, ToolCallRequest
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolParameters
 from afkbot.services.skills.skills import SkillLoader
@@ -454,6 +455,105 @@ async def test_plan_only_turn_exposes_read_only_tools_and_reasoning_budget(tmp_p
         assert "file.read" in visible_names
         assert request.reasoning_effort == "high"
         assert request.request_timeout_sec == 45.0
+        assert (
+            await ChatTurnRepository(session).count(
+                profile_id="default",
+                session_id="s-plan-only",
+            )
+        ) == 0
+
+    await engine.dispose()
+
+
+async def test_plan_only_turn_context_mentions_execution_tools_hidden_from_direct_execution(
+    tmp_path: Path,
+) -> None:
+    """Plan-only turns should tell the planner which execution tools become available later."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "loop_llm_plan_only_execution_surface_note.db",
+    )
+    provider = MockLLMProvider([LLMResponse.final("1. Inspect\n2. Execute")])
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.allowed_tools_json = json.dumps(
+            ["file.read", "file.search", "bash.exec", "session.job.run"],
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        await session.flush()
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=2,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-plan-only-execution-surface-note",
+            message="Run two independent shell jobs in parallel and summarize them.",
+            context_overrides=TurnContextOverrides(
+                planning_mode="plan_only",
+                thinking_level="high",
+            ),
+        )
+
+        assert provider.requests
+        context = provider.requests[0].context
+        assert "# Plan-Only Execution Surface" in context
+        assert "`session.job.run`" in context
+        assert "`bash.exec`" in context
+
+    await engine.dispose()
+
+
+async def test_plan_only_turn_context_mentions_approval_surface_tools_hidden_from_direct_execution(
+    tmp_path: Path,
+) -> None:
+    """Plan-only turns should mention approval-gated tools that become visible in trusted chat."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "loop_llm_plan_only_approval_surface_note.db",
+    )
+    provider = MockLLMProvider([LLMResponse.final("1. Inspect\n2. Execute")])
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.allowed_tools_json = json.dumps(["debug.echo"], ensure_ascii=True, sort_keys=True)
+        await session.flush()
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=2,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-plan-only-approval-surface-note",
+            message="Read a file and run a shell command after planning.",
+            context_overrides=TurnContextOverrides(
+                planning_mode="plan_only",
+                thinking_level="high",
+                cli_approval_surface_enabled=True,
+            ),
+        )
+
+        assert provider.requests
+        context = provider.requests[0].context
+        assert "# Plan-Only Execution Surface" in context
+        assert "`bash.exec` (approval)" in context
+        assert "`file.read` (approval)" in context
 
     await engine.dispose()
 

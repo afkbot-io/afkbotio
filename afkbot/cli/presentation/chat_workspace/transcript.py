@@ -8,6 +8,8 @@ from typing import Literal
 
 from prompt_toolkit.formatted_text.base import StyleAndTextTuples
 
+from afkbot.cli.presentation.terminal_text import sanitize_terminal_line
+
 ChatWorkspaceTranscriptKind = Literal[
     "assistant",
     "user",
@@ -179,7 +181,7 @@ def _normalize_lines(text: str) -> tuple[str, ...]:
     collapsed_lines: list[str] = []
     last_was_blank = False
     for raw_line in stripped_text.splitlines():
-        normalized_line = raw_line.rstrip()
+        normalized_line = sanitize_terminal_line(raw_line.rstrip())
         if not normalized_line.strip():
             if collapsed_lines and not last_was_blank:
                 collapsed_lines.append("")

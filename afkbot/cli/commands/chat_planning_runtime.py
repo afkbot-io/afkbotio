@@ -112,8 +112,8 @@ def build_repl_planning_callbacks(
         prompt_to_plan_first = accept_plan_automatically
         confirm_plan_execution = accept_plan_automatically
     elif planning_mode == "on":
+        confirm_plan_execution = accept_plan_automatically
         if interactive_confirm:
-            confirm_plan_execution = confirm_chat_plan_execution
             def _present_plan(plan_result: TurnResult, plan_snapshot: ChatPlanSnapshot | None) -> None:
                 print_intermediate(
                     render_captured_plan(
@@ -122,8 +122,6 @@ def build_repl_planning_callbacks(
                     )
                 )
             present_plan = _present_plan
-        else:
-            confirm_plan_execution = accept_plan_automatically
 
     return ChatReplPlanningCallbacks(
         prompt_to_plan_first=prompt_to_plan_first,
@@ -152,5 +150,7 @@ async def _confirm_prompt(prompt: ChatPlanningPrompt) -> bool:
         hint_text=prompt.hint_text,
     )
     if selected is None:
+        if prompt.cancel_result is not None:
+            return prompt.cancel_result
         return prompt.default
     return selected == "yes"

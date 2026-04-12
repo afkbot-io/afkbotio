@@ -12,6 +12,7 @@ def test_subagent_runtime_policy_filters_recursive_plugins() -> None:
     settings = Settings(
         enabled_tool_plugins=(
             "debug_echo",
+            "session_job_run",
             "subagent_run",
             "subagent_wait",
             "subagent_result",

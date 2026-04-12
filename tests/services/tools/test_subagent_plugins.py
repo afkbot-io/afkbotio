@@ -14,10 +14,18 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
+from afkbot.services.subagents import reset_subagent_services_async
+from afkbot.services.subagents.contracts import (
+    SubagentResultResponse,
+    SubagentRunAccepted,
+    SubagentWaitResponse,
+)
 from afkbot.services.subagents.runner import SubagentExecutionResult, SubagentRunner
 from afkbot.services.subagents.service import SubagentService
-from afkbot.services.subagents import reset_subagent_services_async
 from afkbot.services.tools.base import ToolContext
+from afkbot.services.tools.plugins.session_job_run import (
+    create_tool as create_session_job_run_tool,
+)
 from afkbot.services.tools.plugins.subagent_result import create_tool as create_subagent_result_tool
 from afkbot.services.tools.plugins.subagent_run import create_tool as create_subagent_run_tool
 from afkbot.services.tools.plugins.subagent_wait import create_tool as create_subagent_wait_tool
@@ -54,7 +62,7 @@ async def test_subagent_run_wait_result_plugins_roundtrip(
         async def execute(
             self,
             *,
-            session,
+            session_factory,
             task_id: str,
             profile_id: str,
             parent_session_id: str,
@@ -62,7 +70,7 @@ async def test_subagent_run_wait_result_plugins_roundtrip(
             subagent_markdown: str,
             prompt: str,
         ) -> SubagentExecutionResult:
-            _ = session, profile_id, parent_session_id, subagent_markdown
+            _ = session_factory, profile_id, parent_session_id, subagent_markdown
             return SubagentExecutionResult(
                 output=f"{subagent_name}:{prompt}",
                 child_session_id=f"child:{task_id}",
@@ -146,6 +154,402 @@ async def test_subagent_run_accepts_long_timeout_with_subagent_policy(
     result = await run_tool.execute(ctx, params)
     assert result.ok is True
     assert result.payload["timeout_sec"] == 600
+
+
+async def test_subagent_run_reports_invalid_subagent_name(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """subagent.run should surface invalid runtime names with a subagent-specific error code."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-1", run_id=1)
+    run_tool = create_subagent_run_tool(settings)
+
+    params = run_tool.parse_params(
+        {"prompt": "hello", "subagent_name": "___"},
+        default_timeout_sec=15,
+        max_timeout_sec=900,
+    )
+    result = await run_tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "invalid_subagent_name"
+    assert result.reason == "Invalid subagent name: ___"
+
+
+async def test_session_job_run_executes_children_concurrently(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """session.job.run should fan out children concurrently and preserve result order."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+
+    class _SlowRunner(SubagentRunner):
+        def __init__(self) -> None:
+            super().__init__(settings)
+            self.active = 0
+            self.max_active = 0
+
+        async def execute(
+            self,
+            *,
+            session_factory,
+            task_id: str,
+            profile_id: str,
+            parent_session_id: str,
+            subagent_name: str,
+            subagent_markdown: str,
+            prompt: str,
+        ) -> SubagentExecutionResult:
+            _ = session_factory, task_id, profile_id, parent_session_id, subagent_markdown
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                await asyncio.sleep(0.05)
+                return SubagentExecutionResult(
+                    output=f"{subagent_name}:{prompt}",
+                    child_session_id=f"child:{prompt}",
+                    child_run_id=7,
+                )
+            finally:
+                self.active -= 1
+
+    runner = _SlowRunner()
+    service = SubagentService(
+        settings=settings,
+        runner=runner,
+        launch_mode="inline",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.session_job_run.plugin.get_subagent_service",
+        lambda settings: service,
+    )
+
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "subagent", "prompt": "first", "subagent_name": "researcher"},
+                {"kind": "subagent", "prompt": "second", "subagent_name": "researcher"},
+            ],
+            "timeout_sec": 2,
+        },
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert runner.max_active == 2
+    outputs = [item["output"] for item in result.payload["results"]]
+    assert outputs == ["researcher:first", "researcher:second"]
+    await service.shutdown()
+
+
+async def test_session_job_run_reports_invalid_subagent_name_per_item(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """session.job.run should preserve subagent-specific validation errors at item granularity."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "subagent", "prompt": "hello", "subagent_name": "___"},
+            ],
+            "timeout_sec": 2,
+        },
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["failed"] == 1
+    item = result.payload["results"][0]
+    assert item["ok"] is False
+    assert item["error_code"] == "invalid_subagent_name"
+    assert item["reason"] == "Invalid subagent name: ___"
+
+
+async def test_session_job_run_reports_one_child_failure_without_crashing(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """session.job.run should return item-level errors for unexpected child failures."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+
+    class _MixedService:
+        async def run(
+            self,
+            *,
+            ctx: ToolContext,
+            prompt: str,
+            subagent_name: str | None,
+            timeout_sec: int | None,
+        ) -> SubagentRunAccepted:
+            _ = ctx, timeout_sec
+            if prompt == "boom":
+                raise RuntimeError("child failed")
+            return SubagentRunAccepted(
+                task_id=f"task:{prompt}",
+                status="running",
+                subagent_name=subagent_name or "researcher",
+                timeout_sec=1,
+            )
+
+        async def wait(
+            self,
+            *,
+            task_id: str,
+            timeout_sec: int,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentWaitResponse:
+            _ = timeout_sec, profile_id, session_id
+            return SubagentWaitResponse(task_id=task_id, status="completed", done=True)
+
+        async def result(
+            self,
+            *,
+            task_id: str,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentResultResponse:
+            _ = profile_id, session_id
+            return SubagentResultResponse(
+                task_id=task_id,
+                status="completed",
+                output=f"done:{task_id}",
+            )
+
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.session_job_run.plugin.get_subagent_service",
+        lambda settings: _MixedService(),
+    )
+
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "subagent", "prompt": "ok", "subagent_name": "researcher"},
+                {"kind": "subagent", "prompt": "boom", "subagent_name": "researcher"},
+            ],
+        },
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["completed"] == 1
+    assert result.payload["failed"] == 1
+    assert result.payload["results"][0]["status"] == "completed"
+    assert result.payload["results"][1]["status"] == "failed"
+    assert result.payload["results"][1]["error_code"] == "subagent_run_failed"
+
+
+async def test_session_job_run_cancels_accepted_children_on_parent_cancel(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Parent cancellation should cascade to already accepted subagent tasks."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+
+    class _CancellableService:
+        def __init__(self) -> None:
+            self.accepted: set[str] = set()
+            self.cancelled: set[str] = set()
+            self.wait_started = asyncio.Event()
+
+        async def run(
+            self,
+            *,
+            ctx: ToolContext,
+            prompt: str,
+            subagent_name: str | None,
+            timeout_sec: int | None,
+        ) -> SubagentRunAccepted:
+            _ = ctx, timeout_sec
+            task_id = f"task:{prompt}"
+            self.accepted.add(task_id)
+            return SubagentRunAccepted(
+                task_id=task_id,
+                status="running",
+                subagent_name=subagent_name or "researcher",
+                timeout_sec=30,
+            )
+
+        async def wait(
+            self,
+            *,
+            task_id: str,
+            timeout_sec: int,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentWaitResponse:
+            _ = task_id, timeout_sec, profile_id, session_id
+            self.wait_started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def result(
+            self,
+            *,
+            task_id: str,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentResultResponse:
+            _ = task_id, profile_id, session_id
+            raise AssertionError("result should not be reached")
+
+        async def cancel(
+            self,
+            *,
+            task_id: str,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentResultResponse:
+            _ = profile_id, session_id
+            self.cancelled.add(task_id)
+            return SubagentResultResponse(
+                task_id=task_id,
+                status="cancelled",
+                error_code="subagent_cancelled",
+                reason="cancelled",
+            )
+
+    service = _CancellableService()
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.session_job_run.plugin.get_subagent_service",
+        lambda settings: service,
+    )
+
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {
+            "jobs": [
+                {"kind": "subagent", "prompt": "first", "subagent_name": "researcher"},
+                {"kind": "subagent", "prompt": "second", "subagent_name": "researcher"},
+            ],
+        },
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+    task = asyncio.create_task(tool.execute(ctx, params))
+    await service.wait_started.wait()
+    while len(service.accepted) < 2:
+        await asyncio.sleep(0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert service.cancelled == {"task:first", "task:second"}
+
+
+async def test_session_job_run_cancels_child_on_batch_timeout(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Batch timeout should not leave accepted subagent tasks running in background."""
+
+    _prepare_environment(tmp_path, monkeypatch)
+    settings = get_settings()
+    ctx = ToolContext(profile_id="default", session_id="s-batch", run_id=1)
+
+    class _TimeoutService:
+        def __init__(self) -> None:
+            self.cancelled: set[str] = set()
+
+        async def run(
+            self,
+            *,
+            ctx: ToolContext,
+            prompt: str,
+            subagent_name: str | None,
+            timeout_sec: int | None,
+        ) -> SubagentRunAccepted:
+            _ = ctx, timeout_sec
+            return SubagentRunAccepted(
+                task_id=f"task:{prompt}",
+                status="running",
+                subagent_name=subagent_name or "researcher",
+                timeout_sec=1,
+            )
+
+        async def wait(
+            self,
+            *,
+            task_id: str,
+            timeout_sec: int,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentWaitResponse:
+            _ = task_id, timeout_sec, profile_id, session_id
+            await asyncio.sleep(0.01)
+            return SubagentWaitResponse(task_id=task_id, status="running", done=False)
+
+        async def result(
+            self,
+            *,
+            task_id: str,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentResultResponse:
+            _ = task_id, profile_id, session_id
+            raise AssertionError("result should not be reached after timeout")
+
+        async def cancel(
+            self,
+            *,
+            task_id: str,
+            profile_id: str,
+            session_id: str,
+        ) -> SubagentResultResponse:
+            _ = profile_id, session_id
+            self.cancelled.add(task_id)
+            return SubagentResultResponse(
+                task_id=task_id,
+                status="cancelled",
+                error_code="subagent_cancelled",
+                reason="cancelled",
+            )
+
+    service = _TimeoutService()
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.session_job_run.plugin.get_subagent_service",
+        lambda settings: service,
+    )
+
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {"jobs": [{"kind": "subagent", "prompt": "slow", "subagent_name": "researcher"}]},
+        default_timeout_sec=15,
+        max_timeout_sec=120,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["failed"] == 1
+    assert result.payload["results"][0]["status"] == "timeout"
+    assert service.cancelled == {"task:slow"}
 
 
 def test_subagent_wait_uses_wait_defaults(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

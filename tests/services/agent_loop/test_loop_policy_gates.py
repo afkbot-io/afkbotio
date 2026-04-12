@@ -80,6 +80,61 @@ async def test_medium_policy_requires_confirmation_for_destructive_bash(tmp_path
     await engine.dispose()
 
 
+async def test_medium_policy_requires_confirmation_for_destructive_bash_batch(
+    tmp_path: Path,
+) -> None:
+    """Medium preset should ask confirmation before destructive session.job.run items."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_medium_batch_confirmation.db")
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.policy_preset = "medium"
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-medium-batch-confirm",
+            message="очисти файл",
+            planned_tool_calls=[
+                ToolCall(
+                    name="session.job.run",
+                    params={
+                        "jobs": [
+                            {"kind": "bash", "cmd": "echo ok", "cwd": "."},
+                            {"kind": "bash", "cmd": "truncate -s 0 tmp/data.txt", "cwd": "."},
+                        ],
+                    },
+                )
+            ],
+        )
+
+        assert result.envelope.action == "ask_question"
+        assert result.envelope.question_id is not None
+        assert result.envelope.spec_patch is not None
+        assert result.envelope.spec_patch.get("tool_name") == "session.job.run"
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+        assert result_payload["result"]["ok"] is False
+        assert result_payload["result"]["error_code"] == "approval_required"
+
+    await engine.dispose()
+
+
 async def test_llm_tool_call_cannot_bypass_approval_with_internal_markers(tmp_path: Path) -> None:
     """LLM-generated hidden confirmation params must not bypass approval gates."""
 
@@ -192,7 +247,11 @@ async def test_app_tool_executes_without_public_skill_name(tmp_path: Path) -> No
             planned_tool_calls=[
                 ToolCall(
                     name="app.run",
-                    params={"app_name": "telegram", "action": "send_message", "params": {"text": "hi"}},
+                    params={
+                        "app_name": "telegram",
+                        "action": "send_message",
+                        "params": {"text": "hi"},
+                    },
                 )
             ],
         )
@@ -251,7 +310,9 @@ async def test_llm_tool_schema_hides_legacy_skill_name_for_routed_tools(
 async def test_llm_credential_tool_schemas_hide_secret_value_fields(tmp_path: Path) -> None:
     """LLM-visible credential tools must not expose plaintext secret params."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_tool_schema_credentials_secret_fields.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_tool_schema_credentials_secret_fields.db"
+    )
 
     async with session_scope(factory) as session:
         loop = AgentLoop(
@@ -286,7 +347,9 @@ async def test_llm_credential_tool_schemas_hide_secret_value_fields(tmp_path: Pa
 async def test_llm_hides_credentials_tools_for_user_facing_channels(tmp_path: Path) -> None:
     """User-facing channel turns must not expose credential inventory or management tools."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_tool_schema_user_channel_creds_block.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_tool_schema_user_channel_creds_block.db"
+    )
 
     async with session_scope(factory) as session:
         loop = AgentLoop(
@@ -300,7 +363,11 @@ async def test_llm_hides_credentials_tools_for_user_facing_channels(tmp_path: Pa
         tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
-            runtime_metadata={"transport": "telegram_user", "account_id": "personal-user", "peer_id": "42"},
+            runtime_metadata={
+                "transport": "telegram_user",
+                "account_id": "personal-user",
+                "peer_id": "42",
+            },
         )
         tools = tool_surface.visible_tools
         tool_names = {item.name for item in tools}
@@ -321,7 +388,9 @@ async def test_credentials_tools_are_hard_blocked_in_user_facing_channel_turns(
     """Credential tools must fail closed in user-facing channels even if manually requested."""
 
     # Arrange
-    settings, engine, factory = await create_test_db(tmp_path, "loop_user_channel_creds_hard_block.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_user_channel_creds_hard_block.db"
+    )
 
     async with session_scope(factory) as session:
         loop = AgentLoop(
@@ -378,7 +447,9 @@ async def test_credentials_tools_are_hard_blocked_in_user_facing_channel_turns(
 async def test_llm_app_run_schema_binds_only_selected_app_names(tmp_path: Path) -> None:
     """Routed app.run schema should keep app_name restricted without exposing skill_name."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_tool_schema_app_skill_pairs.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_tool_schema_app_skill_pairs.db"
+    )
 
     async with session_scope(factory) as session:
         from afkbot.services.agent_loop.skill_router import SkillRoute
@@ -504,7 +575,9 @@ async def test_workspace_tool_executes_without_public_skill_name(tmp_path: Path)
 async def test_channel_tool_profile_filters_llm_visible_tools(tmp_path: Path) -> None:
     """Channel tool profiles should narrow the visible tool catalog before planning."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_channel_tool_profile_catalog.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_channel_tool_profile_catalog.db"
+    )
 
     async with session_scope(factory) as session:
         policy = await _ensure_default_profile_policy(session)
@@ -592,7 +665,9 @@ async def test_channel_tool_profile_blocks_manual_tool_execution(tmp_path: Path)
 async def test_channel_tool_profile_blocks_app_run_in_user_channels(tmp_path: Path) -> None:
     """Safe channel tool profiles must block broad app.run access in user-facing channels."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_channel_tool_profile_app_block.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_channel_tool_profile_app_block.db"
+    )
 
     async with session_scope(factory) as session:
         policy = await _ensure_default_profile_policy(session)
@@ -613,7 +688,11 @@ async def test_channel_tool_profile_blocks_app_run_in_user_channels(tmp_path: Pa
             planned_tool_calls=[
                 ToolCall(
                     name="app.run",
-                    params={"app_name": "telegram", "action": "send_message", "params": {"text": "hi"}},
+                    params={
+                        "app_name": "telegram",
+                        "action": "send_message",
+                        "params": {"text": "hi"},
+                    },
                 )
             ],
             context_overrides=TurnContextOverrides(
@@ -674,6 +753,60 @@ async def test_policy_invalid_json_is_fail_closed(tmp_path: Path) -> None:
         )
         assert result_payload["result"]["error_code"] == "profile_policy_violation"
         assert "invalid JSON list" in result_payload["result"]["reason"]
+        assert result.envelope.message.startswith(
+            "The requested operation is blocked by the current profile policy."
+        )
+
+    await engine.dispose()
+
+
+async def test_loop_blocks_session_job_run_nested_denied_command(tmp_path: Path) -> None:
+    """AgentLoop policy path should block denied commands nested in session.job.run."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_batch_denied_command.db")
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.policy_preset = "simple"
+        policy.shell_denied_commands_json = '["rm"]'
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-batch-denied",
+            message="delete file",
+            planned_tool_calls=[
+                ToolCall(
+                    name="session.job.run",
+                    params={
+                        "jobs": [
+                            {"kind": "bash", "cmd": "echo ok", "cwd": "."},
+                            {"kind": "bash", "cmd": "rm -rf tmp/data.txt", "cwd": "."},
+                        ],
+                    },
+                )
+            ],
+        )
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+        assert result_payload["result"]["ok"] is False
+        assert result_payload["result"]["error_code"] == "profile_policy_violation"
+        assert "Shell command is denied by policy: rm" in result_payload["result"]["reason"]
         assert result.envelope.message.startswith(
             "The requested operation is blocked by the current profile policy."
         )

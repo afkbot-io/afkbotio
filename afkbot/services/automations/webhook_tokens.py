@@ -10,6 +10,8 @@ from sqlalchemy.exc import IntegrityError
 
 from afkbot.services.automations.contracts import WEBHOOK_INGRESS_PATH
 
+_WEBHOOK_TOKEN_REF_PREFIX = "sha256:"
+
 
 def issue_webhook_token() -> str:
     """Issue one new webhook token suitable for path-based delivery."""
@@ -21,6 +23,23 @@ def hash_webhook_token(token: str) -> str:
     """Hash one plaintext webhook token for storage/lookup."""
 
     return sha256(token.encode("utf-8")).hexdigest()
+
+
+def stored_webhook_token_ref(token_hash: str) -> str:
+    """Build a non-bearer value for the legacy plaintext-token column."""
+
+    normalized = token_hash.strip()
+    return f"{_WEBHOOK_TOKEN_REF_PREFIX}{normalized}"
+
+
+def stored_webhook_token_ref_hash(value: str | None) -> str | None:
+    """Extract a hash from one stored legacy-column token reference."""
+
+    normalized = (value or "").strip()
+    if not normalized.startswith(_WEBHOOK_TOKEN_REF_PREFIX):
+        return None
+    token_hash = normalized.removeprefix(_WEBHOOK_TOKEN_REF_PREFIX).strip()
+    return token_hash or None
 
 
 def mask_webhook_token(token: str | None) -> str:

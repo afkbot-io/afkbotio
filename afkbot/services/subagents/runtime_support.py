@@ -76,9 +76,9 @@ def build_worker_env(settings: Settings) -> dict[str, str]:
     return env
 
 
-def spawn_worker(*, task_id: str, settings: Settings) -> None:
+def spawn_worker(*, task_id: str, settings: Settings) -> subprocess.Popen[Any]:
     """Start detached worker process for one persisted subagent task."""
-    _spawn_worker_with_popen(task_id=task_id, settings=settings, popen=subprocess.Popen)
+    return _spawn_worker_with_popen(task_id=task_id, settings=settings, popen=subprocess.Popen)
 
 
 def _spawn_worker_with_popen(
@@ -86,7 +86,7 @@ def _spawn_worker_with_popen(
     task_id: str,
     settings: Settings,
     popen: Callable[..., subprocess.Popen[Any]],
-) -> None:
+) -> subprocess.Popen[Any]:
     """Start detached worker process using injectable Popen seam."""
 
     command = [
@@ -96,7 +96,7 @@ def _spawn_worker_with_popen(
         "--task-id",
         task_id,
     ]
-    popen(  # noqa: S603
+    return popen(  # noqa: S603
         command,
         cwd=str(PROJECT_ROOT),
         env=build_worker_env(settings),

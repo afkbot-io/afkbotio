@@ -23,6 +23,7 @@ from afkbot.services.managed_install import (
 )
 from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.services.update_runtime import (
+    _build_noninteractive_git_env,
     _run_afk_executable_with_env,
     _resolve_uv_tool_afk_executable,
     _wait_for_local_health,
@@ -49,29 +50,57 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
     # Arrange
     settings = _prepare_settings(tmp_path, monkeypatch)
     (tmp_path / ".git").mkdir()
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     commands: list[list[str]] = []
     afk_calls: list[tuple[str, ...]] = []
     rev_parse_values = iter(["before-sha", "before-sha", "after-sha"])
 
-    def _fake_run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
         commands.append(command)
         if command[:4] == ["git", "-C", str(tmp_path), "remote"]:
-            return subprocess.CompletedProcess(command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr=""
+            )
         if command[:6] == ["git", "-C", str(tmp_path), "symbolic-ref", "--quiet", "--short"]:
             return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
         if command[:6] == ["git", "-C", str(tmp_path), "diff", "--quiet", "--ignore-submodules"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[:6] == ["git", "-C", str(tmp_path), "diff", "--cached", "--quiet", "--ignore-submodules"]:
+        if command[:6] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:5] == ["git", "-C", str(tmp_path), "ls-files", "--others"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "HEAD"]:
-            return subprocess.CompletedProcess(command, 0, stdout=f"{next(rev_parse_values)}\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout=f"{next(rev_parse_values)}\n", stderr=""
+            )
         if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "FETCH_HEAD"]:
             return subprocess.CompletedProcess(command, 0, stdout="after-sha\n", stderr="")
-        if command[:7] == ["git", "-C", str(tmp_path), "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]:
+        if command[:7] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            "FETCH_HEAD",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -105,7 +134,17 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
         ("doctor", "--no-integrations", "--no-upgrades"),
         ("upgrade", "apply", "--quiet"),
     ]
-    assert ["git", "-C", str(tmp_path), "fetch", "--depth", "1", "--no-tags", "origin", "main"] in commands
+    assert [
+        "git",
+        "-C",
+        str(tmp_path),
+        "fetch",
+        "--depth",
+        "1",
+        "--no-tags",
+        "origin",
+        "main",
+    ] in commands
     assert ["git", "-C", str(tmp_path), "merge", "--ff-only", "FETCH_HEAD"] in commands
     assert [
         str(tmp_path / ("uv.exe" if os.name == "nt" else "uv")),
@@ -127,29 +166,57 @@ def test_run_update_resets_checkout_after_history_rewrite(
     # Arrange
     settings = _prepare_settings(tmp_path, monkeypatch)
     (tmp_path / ".git").mkdir()
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     commands: list[list[str]] = []
     afk_calls: list[tuple[str, ...]] = []
     rev_parse_values = iter(["before-sha", "before-sha", "after-sha"])
 
-    def _fake_run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
         commands.append(command)
         if command[:4] == ["git", "-C", str(tmp_path), "remote"]:
-            return subprocess.CompletedProcess(command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr=""
+            )
         if command[:6] == ["git", "-C", str(tmp_path), "symbolic-ref", "--quiet", "--short"]:
             return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
         if command[:6] == ["git", "-C", str(tmp_path), "diff", "--quiet", "--ignore-submodules"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[:6] == ["git", "-C", str(tmp_path), "diff", "--cached", "--quiet", "--ignore-submodules"]:
+        if command[:6] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:5] == ["git", "-C", str(tmp_path), "ls-files", "--others"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "HEAD"]:
-            return subprocess.CompletedProcess(command, 0, stdout=f"{next(rev_parse_values)}\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout=f"{next(rev_parse_values)}\n", stderr=""
+            )
         if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "FETCH_HEAD"]:
             return subprocess.CompletedProcess(command, 0, stdout="rewritten-sha\n", stderr="")
-        if command[:7] == ["git", "-C", str(tmp_path), "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]:
+        if command[:7] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            "FETCH_HEAD",
+        ]:
             return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -195,12 +262,22 @@ def test_run_update_rejects_dirty_checkout(
     # Arrange
     settings = _prepare_settings(tmp_path, monkeypatch)
     (tmp_path / ".git").mkdir()
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
 
-    def _fake_run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
         if command[:4] == ["git", "-C", str(tmp_path), "remote"]:
-            return subprocess.CompletedProcess(command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr=""
+            )
         if command[:6] == ["git", "-C", str(tmp_path), "symbolic-ref", "--quiet", "--short"]:
             return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
         if command[:6] == ["git", "-C", str(tmp_path), "diff", "--quiet", "--ignore-submodules"]:
@@ -230,7 +307,9 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
     current_app_dir.mkdir(parents=True, exist_ok=True)
     staged_source = tmp_path / "staged" / "source"
     (staged_source / "afkbot").mkdir(parents=True, exist_ok=True)
-    (staged_source / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (staged_source / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     next_app_dir = install_dir / "app" / "release-1"
     python_target = tmp_path / "python-target"
     python_target.write_text("", encoding="utf-8")
@@ -255,13 +334,19 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
         cwd: Path | None = None,
         error_code: str,
         fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd, error_code, fallback
+        del cwd, error_code, fallback, timeout_sec, env
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source)
-    monkeypatch.setattr("afkbot.services.update_runtime.build_next_app_dir", lambda context: next_app_dir)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.build_next_app_dir", lambda context: next_app_dir
+    )
     monkeypatch.setattr("afkbot.services.update_runtime.sys.executable", str(python_link))
     monkeypatch.setattr(
         "afkbot.services.update_runtime._resolve_uv_executable",
@@ -304,7 +389,9 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
     ]
     launcher_name = "afk.cmd" if os.name == "nt" else "afk"
     launcher_text = (install_dir / "bin" / launcher_name).read_text(encoding="utf-8")
-    metadata_payload = json.loads((install_dir / "managed-install.json").read_text(encoding="utf-8"))
+    metadata_payload = json.loads(
+        (install_dir / "managed-install.json").read_text(encoding="utf-8")
+    )
     assert MANAGED_RUNTIME_DIR_ENV in launcher_text
     assert MANAGED_METADATA_PATH_ENV in launcher_text
     assert str(runtime_root) not in launcher_text
@@ -365,23 +452,48 @@ def test_run_update_uses_checkout_root_when_runtime_root_is_separate(
     checkout_root = tmp_path / "checkout"
     checkout_root.mkdir(parents=True, exist_ok=True)
     (checkout_root / ".git").mkdir()
-    (checkout_root / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(runtime_root))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{runtime_root / 'afkbot.db'}")
     get_settings.cache_clear()
     settings = get_settings()
     commands: list[list[str]] = []
 
-    def _fake_run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
         commands.append(command)
         if command[:4] == ["git", "-C", str(checkout_root), "remote"]:
-            return subprocess.CompletedProcess(command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr="")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="git@github.com:afkbot-io/afkbotio.git\n", stderr=""
+            )
         if command[:6] == ["git", "-C", str(checkout_root), "symbolic-ref", "--quiet", "--short"]:
             return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
-        if command[:6] == ["git", "-C", str(checkout_root), "diff", "--quiet", "--ignore-submodules"]:
+        if command[:6] == [
+            "git",
+            "-C",
+            str(checkout_root),
+            "diff",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[:6] == ["git", "-C", str(checkout_root), "diff", "--cached", "--quiet", "--ignore-submodules"]:
+        if command[:6] == [
+            "git",
+            "-C",
+            str(checkout_root),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         if command[:5] == ["git", "-C", str(checkout_root), "ls-files", "--others"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
@@ -389,14 +501,26 @@ def test_run_update_uses_checkout_root_when_runtime_root_is_separate(
             return subprocess.CompletedProcess(command, 0, stdout="same-sha\n", stderr="")
         if command[:5] == ["git", "-C", str(checkout_root), "rev-parse", "FETCH_HEAD"]:
             return subprocess.CompletedProcess(command, 0, stdout="same-sha\n", stderr="")
-        if command[:7] == ["git", "-C", str(checkout_root), "merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD"]:
+        if command[:7] == [
+            "git",
+            "-C",
+            str(checkout_root),
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            "FETCH_HEAD",
+        ]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", checkout_root)
     monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
-    monkeypatch.setattr("afkbot.services.update_runtime._run_afk_subcommand", lambda *, settings, args: None)
-    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_subcommand", lambda *, settings, args: None
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
 
     # Act
     result = run_update(settings)
@@ -404,8 +528,22 @@ def test_run_update_uses_checkout_root_when_runtime_root_is_separate(
     # Assert
     assert result.install_mode == "host"
     assert result.source_updated is False
-    assert ["git", "-C", str(checkout_root), "fetch", "--depth", "1", "--no-tags", "origin", "main"] in commands
-    assert all(str(runtime_root) not in " ".join(command) for command in commands if command and command[0] == "git")
+    assert [
+        "git",
+        "-C",
+        str(checkout_root),
+        "fetch",
+        "--depth",
+        "1",
+        "--no-tags",
+        "origin",
+        "main",
+    ] in commands
+    assert all(
+        str(runtime_root) not in " ".join(command)
+        for command in commands
+        if command and command[0] == "git"
+    )
 
 
 def test_run_update_upgrades_uv_tool_install(
@@ -431,8 +569,10 @@ def test_run_update_upgrades_uv_tool_install(
         cwd: Path | None = None,
         error_code: str,
         fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd, error_code, fallback
+        del cwd, error_code, fallback, timeout_sec, env
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -440,8 +580,10 @@ def test_run_update_upgrades_uv_tool_install(
         command: list[str],
         *,
         cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd
+        del cwd, timeout_sec, env
         shell_commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -455,8 +597,12 @@ def test_run_update_upgrades_uv_tool_install(
         del executable, settings
         bootstrap_calls.append((args, dict(env)))
 
-    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool")
-    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
         lambda *, uv_executable: afk_executable,
@@ -467,7 +613,9 @@ def test_run_update_upgrades_uv_tool_install(
         "afkbot.services.update_runtime._run_afk_executable_with_env",
         _fake_bootstrap,
     )
-    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
         lambda install_source: "1.2.3",
@@ -513,7 +661,9 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
     checkout_root = tmp_path / "checkout"
     checkout_root.mkdir(parents=True, exist_ok=True)
     (checkout_root / ".git").mkdir()
-    (checkout_root / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     source_path = tmp_path / "editable-source"
     source_path.mkdir(parents=True, exist_ok=True)
     tool_bin = tmp_path / "tool-bin"
@@ -540,8 +690,10 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         cwd: Path | None = None,
         error_code: str,
         fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd, error_code, fallback
+        del cwd, error_code, fallback, timeout_sec, env
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -549,8 +701,10 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         command: list[str],
         *,
         cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd
+        del cwd, timeout_sec, env
         shell_commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -565,7 +719,9 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         bootstrap_calls.append((args, dict(env)))
 
     monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", checkout_root)
-    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
         lambda *, uv_executable: afk_executable,
@@ -576,7 +732,9 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
         "afkbot.services.update_runtime._run_afk_executable_with_env",
         _fake_bootstrap,
     )
-    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
         lambda install_source: None,
@@ -632,8 +790,10 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         cwd: Path | None = None,
         error_code: str,
         fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd, error_code, fallback
+        del cwd, error_code, fallback, timeout_sec, env
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -641,8 +801,10 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         command: list[str],
         *,
         cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        del cwd
+        del cwd, timeout_sec, env
         shell_commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -656,8 +818,12 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         del executable, settings
         bootstrap_calls.append((args, dict(env)))
 
-    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool")
-    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
         lambda *, uv_executable: afk_executable,
@@ -668,10 +834,12 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         "afkbot.services.update_runtime._run_afk_executable_with_env",
         _fake_bootstrap,
     )
-    monkeypatch.setattr("afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.11",
+        lambda install_source: "1.0.12",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
@@ -730,6 +898,112 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
     assert availability.install_mode == "uv-tool"
     assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
 
+
+def test_inspect_available_update_ignores_host_git_fetch_timeout(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Chat update checks should fail open when host-checkout fetch blocks or times out."""
+
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    monkeypatch.setenv("GCM_INTERACTIVE", "always")
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -oBatchMode=no -i /tmp/key")
+    settings = _prepare_settings(tmp_path / "runtime", monkeypatch)
+    checkout_root = tmp_path / "checkout"
+    checkout_root.mkdir(parents=True, exist_ok=True)
+    (checkout_root / ".git").mkdir()
+    (checkout_root / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n",
+        encoding="utf-8",
+    )
+    subprocess_calls: list[dict[str, object]] = []
+
+    def _fake_subprocess_run(
+        command: list[str],
+        *,
+        cwd: str | None = None,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        timeout: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, check, capture_output, text
+        subprocess_calls.append(
+            {
+                "command": command,
+                "timeout": timeout,
+                "env": env,
+            }
+        )
+        if command[:4] == ["git", "-C", str(checkout_root), "remote"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout="git@github.com:afkbot-io/afkbotio.git\n",
+                stderr="",
+            )
+        if command[:6] == ["git", "-C", str(checkout_root), "symbolic-ref", "--quiet", "--short"]:
+            return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
+        if command[:6] == [
+            "git",
+            "-C",
+            str(checkout_root),
+            "diff",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:6] == [
+            "git",
+            "-C",
+            str(checkout_root),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:5] == ["git", "-C", str(checkout_root), "ls-files", "--others"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:5] == ["git", "-C", str(checkout_root), "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, stdout="current-sha\n", stderr="")
+        if command[:4] == ["git", "-C", str(checkout_root), "fetch"]:
+            raise subprocess.TimeoutExpired(cmd=command, timeout=timeout or 0.0)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", checkout_root)
+    monkeypatch.setattr("afkbot.services.update_runtime.subprocess.run", _fake_subprocess_run)
+
+    availability = inspect_available_update(settings)
+
+    assert availability is None
+    fetch_call = next(
+        call
+        for call in subprocess_calls
+        if call["command"][:4] == ["git", "-C", str(checkout_root), "fetch"]
+    )
+    assert isinstance(fetch_call["timeout"], float)
+    env = fetch_call["env"]
+    assert isinstance(env, dict)
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GCM_INTERACTIVE"] == "never"
+    assert "BatchMode=yes" in env["GIT_SSH_COMMAND"]
+    assert "BatchMode=no" not in env["GIT_SSH_COMMAND"]
+
+
+def test_noninteractive_git_env_uses_valid_default_ssh_command(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Default GIT_SSH_COMMAND should include an executable, not only ssh options."""
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+
+    env = _build_noninteractive_git_env()
+
+    assert env["GIT_SSH_COMMAND"] == "ssh -oBatchMode=yes"
+
+
 def test_inspect_available_update_uses_package_source_without_metadata(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -739,7 +1013,7 @@ def test_inspect_available_update_uses_package_source_without_metadata(
     settings = _prepare_settings(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.11",
+        lambda install_source: "1.0.12",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.load_cli_version_info",
@@ -762,8 +1036,8 @@ def test_inspect_available_update_uses_package_source_without_metadata(
 
     assert availability is not None
     assert availability.install_mode == "uv-tool"
-    assert availability.target_id == "package:afkbotio:1.0.11"
-    assert availability.target_label == "afkbotio 1.0.11"
+    assert availability.target_id == "package:afkbotio:1.0.12"
+    assert availability.target_label == "afkbotio 1.0.12"
 
 
 def test_inspect_available_update_ignores_uv_tool_http_404(
@@ -857,7 +1131,9 @@ def test_resolve_uv_tool_afk_executable_prefers_windows_exe(
     afk_executable = tool_bin / "afk.exe"
     afk_executable.write_text("", encoding="utf-8")
 
-    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin
+    )
     monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
 
     result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
@@ -878,7 +1154,9 @@ def test_resolve_uv_tool_afk_executable_falls_back_to_windows_cmd(
     afk_executable = tool_bin / "afk.cmd"
     afk_executable.write_text("", encoding="utf-8")
 
-    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_bin_dir", lambda *, uv_executable: tool_bin
+    )
     monkeypatch.setattr("afkbot.services.update_runtime.os.name", "nt", raising=False)
 
     result = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
@@ -913,14 +1191,23 @@ def test_run_update_cleans_staged_source_when_parent_creation_fails(
     next_app_dir = install_dir / "app" / "release-1"
     real_mkdir = Path.mkdir
 
-    def _fake_mkdir(self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False) -> None:
+    def _fake_mkdir(
+        self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
+    ) -> None:
         if self == next_app_dir.parent:
             raise OSError("disk full")
         real_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
 
-    monkeypatch.setattr("afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source)
-    monkeypatch.setattr("afkbot.services.update_runtime.build_next_app_dir", lambda context: next_app_dir)
-    monkeypatch.setattr("afkbot.services.update_runtime.cleanup_staged_source", lambda path: cleanup_calls.append(path))
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.build_next_app_dir", lambda context: next_app_dir
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.cleanup_staged_source",
+        lambda path: cleanup_calls.append(path),
+    )
     monkeypatch.setattr(Path, "mkdir", _fake_mkdir)
 
     # Act / Assert
