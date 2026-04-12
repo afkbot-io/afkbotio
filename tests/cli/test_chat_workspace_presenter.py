@@ -117,7 +117,7 @@ def test_build_chat_workspace_progress_entries_shows_llm_start_details() -> None
     assert len(entries) == 2
     assert entries[0].text == "thinking..."
     assert entries[0].accent == "thinking"
-    assert entries[1].text == "llm=start timeout_ms=30000 reasoning=medium visible_tools=2"
+    assert entries[1].text == "llm=start waited=12ms reasoning=medium tools=2"
     assert entries[1].accent == "detail"
 
 
@@ -149,7 +149,7 @@ def test_build_chat_workspace_progress_entries_shows_llm_queue_details() -> None
     assert len(entries) == 2
     assert entries[0].text == "thinking..."
     assert entries[0].accent == "thinking"
-    assert entries[1].text == "llm=queued timeout_ms=120000 reasoning=medium visible_tools=1"
+    assert entries[1].text == "llm=queued reasoning=medium tools=1"
     assert entries[1].accent == "detail"
 
 
@@ -181,7 +181,7 @@ def test_build_chat_workspace_progress_entries_shows_llm_timeout_details() -> No
     assert len(entries) == 2
     assert entries[0].text == "thinking..."
     assert entries[0].accent == "thinking"
-    assert entries[1].text == "llm=timeout elapsed_ms=30000 timeout_ms=30000 error=llm_timeout"
+    assert entries[1].text == "llm=timeout elapsed=30s error=llm_timeout"
     assert entries[1].accent == "detail"
 
 
@@ -215,7 +215,7 @@ def test_build_chat_workspace_progress_entries_shows_llm_done_errors() -> None:
     assert entries[0].text == "thinking..."
     assert entries[0].accent == "thinking"
     assert (
-        entries[1].text == "llm=done elapsed_ms=1200 timeout_ms=120000 kind=final "
+        entries[1].text == "llm=done elapsed=1.2s kind=final "
         "error=llm_provider_network_error"
     )
     assert entries[1].accent == "detail"

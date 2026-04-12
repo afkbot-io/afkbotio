@@ -14,7 +14,7 @@ from afkbot.repositories.run_repo import RunRepository
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.api_runtime import (
-    _resolve_trusted_pending_envelope,
+    resolve_pending_question_envelope,
     resume_chat_after_secure_submit,
     resume_chat_interaction,
 )
@@ -58,7 +58,7 @@ async def test_resume_chat_interaction_approval_replays_with_confirmation(monkey
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -112,7 +112,7 @@ async def test_resume_chat_interaction_profile_selection_applies_profile_name(mo
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -155,7 +155,7 @@ async def test_resume_chat_interaction_denied_confirmation_returns_finalize(monk
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -197,7 +197,7 @@ async def test_resume_chat_interaction_text_answer_replays_as_user_message(monke
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -248,7 +248,7 @@ async def test_resume_chat_interaction_approval_prioritizes_resume_over_answer_t
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -307,7 +307,7 @@ async def test_resume_chat_after_secure_submit_replays_pending_tool(monkeypatch)
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -350,7 +350,7 @@ async def test_resume_chat_after_secure_submit_without_tool_uses_synthetic_resum
 
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_trusted,
     )
 
@@ -373,7 +373,7 @@ async def test_resume_chat_interaction_blocks_when_question_not_trusted(monkeypa
         return None
 
     monkeypatch.setattr(
-        "afkbot.services.agent_loop.api_runtime._resolve_trusted_pending_envelope",
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
         _resolve_none,
     )
 
@@ -485,7 +485,7 @@ async def test_trusted_pending_resume_uses_internal_raw_patch_not_sanitized_runl
             limit=10,
         )
 
-    trusted = await _resolve_trusted_pending_envelope(
+    trusted = await resolve_pending_question_envelope(
         profile_id="default",
         session_id="api-s",
         question_id=question_id,

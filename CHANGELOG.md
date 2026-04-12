@@ -19,9 +19,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Detached subagent cancellation is now durable across service instances: when another runtime instance marks a subagent task cancelled, the active worker observes the persisted state, forwards cancellation into the child session runtime, and avoids orphan child turns continuing after visible cancellation.
+- `session.job.run` now respects nested capability boundaries: shell-only profiles cannot spawn batch subagents, and subagent-only profiles cannot execute batch shell commands through the shared wrapper tool.
 - `subagent.run` and `session.job.run` now return `invalid_subagent_name` for invalid runtime names instead of collapsing those failures into a generic parameter error.
 - Missing subagent lookup errors now include the visible runtime subagent names for the current profile, making it easier to distinguish “bad name” from “valid name but not installed in this AFK profile”.
 - Release metadata, API versioning, README examples, and update-runtime expectations are aligned to `1.0.12`.
+- Publish workflow now enforces `vX.Y.Z == project.version` on tag releases and runs `twine check` before uploading artifacts.
 
 ## [1.0.11] - 2026-04-09
 

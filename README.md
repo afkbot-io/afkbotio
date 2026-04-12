@@ -482,8 +482,8 @@ uvx twine upload --repository testpypi dist/*
 
 This repository also includes a GitHub Actions publish workflow prepared for trusted publishing:
 
-- `workflow_dispatch`: builds distributions and publishes to `testpypi`
-- `push` on `v*` tags: builds distributions, attaches them to the GitHub release, and publishes to `pypi`
+- `workflow_dispatch`: builds distributions, runs `twine check`, and publishes to `testpypi`
+- `push` on `v*` tags: verifies the tag matches `project.version`, builds distributions, runs `twine check`, attaches them to the GitHub release, and publishes to `pypi`
 
 Before using the workflow, create matching trusted publishing environments in PyPI:
 

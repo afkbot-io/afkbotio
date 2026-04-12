@@ -812,3 +812,113 @@ async def test_loop_blocks_session_job_run_nested_denied_command(tmp_path: Path)
         )
 
     await engine.dispose()
+
+
+async def test_loop_blocks_session_job_run_bash_when_profile_allows_only_subagents(
+    tmp_path: Path,
+) -> None:
+    """Nested bash jobs should be denied when profile only exposes session.job.run via subagents."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_batch_subagents_only.db")
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.policy_preset = "simple"
+        policy.allowed_tools_json = json.dumps(["session.job.run", "subagent.run"], ensure_ascii=True)
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-batch-subagents-only",
+            message="run shell in batch",
+            planned_tool_calls=[
+                ToolCall(
+                    name="session.job.run",
+                    params={"jobs": [{"kind": "bash", "cmd": "echo ok", "cwd": "."}]},
+                )
+            ],
+        )
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+        assert result_payload["result"]["ok"] is False
+        assert result_payload["result"]["error_code"] == "profile_policy_violation"
+        assert "Tool is not allowed by policy: bash.exec" in result_payload["result"]["reason"]
+        assert result.envelope.message.startswith(
+            "The requested operation is blocked by the current profile policy."
+        )
+
+    await engine.dispose()
+
+
+async def test_loop_blocks_session_job_run_subagent_when_profile_allows_only_shell(
+    tmp_path: Path,
+) -> None:
+    """Nested subagent jobs should be denied when profile only exposes session.job.run via shell."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_batch_shell_only.db")
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.policy_preset = "simple"
+        policy.allowed_tools_json = json.dumps(["bash.exec", "session.job.run"], ensure_ascii=True)
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-batch-shell-only",
+            message="run subagent in batch",
+            planned_tool_calls=[
+                ToolCall(
+                    name="session.job.run",
+                    params={
+                        "jobs": [
+                            {
+                                "kind": "subagent",
+                                "prompt": "inspect",
+                                "subagent_name": "researcher",
+                            }
+                        ]
+                    },
+                )
+            ],
+        )
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+        assert result_payload["result"]["ok"] is False
+        assert result_payload["result"]["error_code"] == "profile_policy_violation"
+        assert "Tool is not allowed by policy: subagent.run" in result_payload["result"]["reason"]
+        assert result.envelope.message.startswith(
+            "The requested operation is blocked by the current profile policy."
+        )
+
+    await engine.dispose()

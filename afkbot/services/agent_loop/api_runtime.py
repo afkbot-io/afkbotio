@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -107,32 +106,6 @@ def get_api_session_factory() -> async_sessionmaker[AsyncSession] | None:
     return state.session_factory
 
 
-async def _resolve_trusted_pending_envelope(
-    *,
-    profile_id: str,
-    session_id: str,
-    question_id: str | None,
-    action: ActionType,
-    secure_field: str | None = None,
-) -> ActionEnvelope | None:
-    """Compatibility wrapper for tests and local callers that expect the old helper."""
-
-    return await resolve_trusted_pending_envelope_support(
-        shared_session_factory=get_api_session_factory(),
-        profile_id=profile_id,
-        session_id=session_id,
-        question_id=question_id,
-        action=action,
-        secure_field=secure_field,
-    )
-
-
-def _idempotency_claim_cutoff(*, settings: Settings) -> datetime:
-    """Compatibility wrapper for stale-claim cutoff overrides in tests."""
-
-    return idempotency_claim_cutoff_support(settings=settings)
-
-
 async def _wait_for_claimed_turn_result(
     *,
     session_factory: async_sessionmaker[AsyncSession],
@@ -149,7 +122,7 @@ async def _wait_for_claimed_turn_result(
         profile_id=profile_id,
         session_id=session_id,
         client_msg_id=client_msg_id,
-        claim_cutoff_factory=_idempotency_claim_cutoff,
+        claim_cutoff_factory=idempotency_claim_cutoff_support,
     )
 
 
@@ -254,7 +227,7 @@ async def resume_chat_interaction(
         answer_text=answer_text,
         client_msg_id=client_msg_id,
         context_overrides=context_overrides,
-        resolve_pending_envelope=_resolve_trusted_pending_envelope,
+        resolve_pending_envelope=resolve_pending_question_envelope,
         run_chat_turn_call=run_chat_turn,
     )
 
@@ -275,7 +248,7 @@ async def resume_chat_after_secure_submit(
         session_id=session_id,
         client_msg_id=client_msg_id,
         context_overrides=context_overrides,
-        resolve_pending_envelope=_resolve_trusted_pending_envelope,
+        resolve_pending_envelope=resolve_pending_question_envelope,
         run_chat_turn_call=run_chat_turn,
     )
 
@@ -306,13 +279,14 @@ async def resolve_pending_question_envelope(
     *,
     profile_id: str,
     session_id: str,
-    question_id: str,
+    question_id: str | None,
     action: ActionType,
     secure_field: str | None = None,
 ) -> ActionEnvelope | None:
     """Resolve one trusted pending envelope by profile, session, and question identifiers."""
 
-    return await _resolve_trusted_pending_envelope(
+    return await resolve_trusted_pending_envelope_support(
+        shared_session_factory=get_api_session_factory(),
         profile_id=profile_id,
         session_id=session_id,
         question_id=question_id,

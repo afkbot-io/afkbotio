@@ -553,6 +553,7 @@ async def test_plan_only_turn_context_mentions_approval_surface_tools_hidden_fro
         context = provider.requests[0].context
         assert "# Plan-Only Execution Surface" in context
         assert "`bash.exec` (approval)" in context
+        assert "`session.job.run` (approval)" in context
         assert "`file.read` (approval)" in context
 
     await engine.dispose()
@@ -1327,8 +1328,10 @@ async def test_llm_visible_tools_include_cli_approval_surface_for_afk_chat(tmp_p
         by_name = {item.name: item for item in visible}
         assert "debug.echo" in by_name
         assert "bash.exec" in by_name
+        assert "session.job.run" in by_name
         assert "file.read" in by_name
         assert by_name["bash.exec"].requires_confirmation is True
+        assert by_name["session.job.run"].requires_confirmation is True
         assert by_name["file.read"].requires_confirmation is True
 
     await engine.dispose()

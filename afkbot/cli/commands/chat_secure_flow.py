@@ -64,6 +64,7 @@ async def run_turn_with_secure_resolution(
     credential_profile_prompt_fn: CredentialProfilePromptFn | None = None,
     session_approved_tools: set[str] | None = None,
     serialized_turn_runner: SerializedSessionTurnRunner | None = None,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None = None,
 ) -> TurnResult:
     """Run turn and resolve secure credential requests without sending secrets to model."""
 
@@ -98,27 +99,34 @@ async def run_turn_with_secure_resolution(
             session_override,
             turn_overrides,
         )
-        if serialized_turn_runner is None:
-            if merged_overrides is None:
-                result = await run_once_result_fn(
+        if serialized_turn_runner is not None:
+            result = await serialized_turn_runner.run_turn(
+                message=current_message,
+                planned_tool_calls=planned_tool_calls,
+                progress_sink=progress_sink,
+                context_overrides=merged_overrides,
+            )
+        elif serialized_turn_runner_factory is not None:
+            async with serialized_turn_runner_factory(profile_id, session_id) as leased_runner:
+                result = await leased_runner.run_turn(
                     message=current_message,
-                    profile_id=profile_id,
-                    session_id=session_id,
-                    planned_tool_calls=planned_tool_calls,
-                    progress_sink=progress_sink,
-                )
-            else:
-                result = await run_once_result_fn(
-                    message=current_message,
-                    profile_id=profile_id,
-                    session_id=session_id,
                     planned_tool_calls=planned_tool_calls,
                     progress_sink=progress_sink,
                     context_overrides=merged_overrides,
                 )
-        else:
-            result = await serialized_turn_runner.run_turn(
+        elif merged_overrides is None:
+            result = await run_once_result_fn(
                 message=current_message,
+                profile_id=profile_id,
+                session_id=session_id,
+                planned_tool_calls=planned_tool_calls,
+                progress_sink=progress_sink,
+            )
+        else:
+            result = await run_once_result_fn(
+                message=current_message,
+                profile_id=profile_id,
+                session_id=session_id,
                 planned_tool_calls=planned_tool_calls,
                 progress_sink=progress_sink,
                 context_overrides=merged_overrides,
@@ -402,34 +410,35 @@ def build_run_turn_with_overrides(
                 ),
                 session_approved_tools=session_approved_tools,
                 serialized_turn_runner=serialized_turn_runner,
+                serialized_turn_runner_factory=None,
             )
-        async with serialized_turn_runner_factory(profile_id, session_id) as leased_runner:
-            return await run_turn_with_secure_resolution(
-                message=message,
-                profile_id=profile_id,
-                session_id=session_id,
-                progress_sink=progress_sink,
-                allow_secure_prompt=allow_secure_prompt,
-                runtime_overrides=runtime_overrides,
-                turn_overrides=turn_overrides,
-                run_once_result_fn=run_once_result_fn,
-                submit_secure_field_fn=submit_secure_field_fn,
-                confirm_space_fn=(
-                    bound_confirm_space_fn if confirm_space_fn is None else confirm_space_fn
-                ),
-                tool_not_allowed_prompt_fn=(
-                    bound_tool_not_allowed_prompt_fn
-                    if tool_not_allowed_prompt_fn is None
-                    else tool_not_allowed_prompt_fn
-                ),
-                credential_profile_prompt_fn=(
-                    bound_credential_profile_prompt_fn
-                    if credential_profile_prompt_fn is None
-                    else credential_profile_prompt_fn
-                ),
-                session_approved_tools=session_approved_tools,
-                serialized_turn_runner=leased_runner,
-            )
+        return await run_turn_with_secure_resolution(
+            message=message,
+            profile_id=profile_id,
+            session_id=session_id,
+            progress_sink=progress_sink,
+            allow_secure_prompt=allow_secure_prompt,
+            runtime_overrides=runtime_overrides,
+            turn_overrides=turn_overrides,
+            run_once_result_fn=run_once_result_fn,
+            submit_secure_field_fn=submit_secure_field_fn,
+            confirm_space_fn=(
+                bound_confirm_space_fn if confirm_space_fn is None else confirm_space_fn
+            ),
+            tool_not_allowed_prompt_fn=(
+                bound_tool_not_allowed_prompt_fn
+                if tool_not_allowed_prompt_fn is None
+                else tool_not_allowed_prompt_fn
+            ),
+            credential_profile_prompt_fn=(
+                bound_credential_profile_prompt_fn
+                if credential_profile_prompt_fn is None
+                else credential_profile_prompt_fn
+            ),
+            session_approved_tools=session_approved_tools,
+            serialized_turn_runner=None,
+            serialized_turn_runner_factory=serialized_turn_runner_factory,
+        )
 
     return _run_turn
 

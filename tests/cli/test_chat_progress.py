@@ -334,7 +334,7 @@ def test_chat_progress_detail_sanitizes_terminal_control_sequences() -> None:
 
 
 def test_chat_progress_detail_for_llm_call_tick() -> None:
-    """LLM call progress events should include elapsed/timeout details."""
+    """LLM call progress events should include compact elapsed details."""
 
     event = ProgressEvent(
         event_id=11,
@@ -345,7 +345,7 @@ def test_chat_progress_detail_for_llm_call_tick() -> None:
         event_type="llm.call.tick",
         payload={"elapsed_ms": 6000, "timeout_ms": 30000},
     )
-    assert render_progress_detail(event) == "llm=tick elapsed_ms=6000 timeout_ms=30000"
+    assert render_progress_detail(event) == "llm=tick elapsed=6s"
 
 
 def test_chat_progress_event_for_context_compaction_steps() -> None:
@@ -403,7 +403,7 @@ def test_chat_progress_detail_for_llm_call_start_includes_reasoning_and_tool_cou
         },
     )
 
-    assert render_progress_detail(event) == "llm=start timeout_ms=45000 reasoning=high visible_tools=3"
+    assert render_progress_detail(event) == "llm=start reasoning=high tools=3"
 
 
 def test_chat_progress_detail_for_turn_plan_includes_planning_metadata() -> None:
@@ -424,7 +424,7 @@ def test_chat_progress_detail_for_turn_plan_includes_planning_metadata() -> None
         },
     )
 
-    assert render_progress_detail(event) == "mode=plan_only thinking=very_high tools=read_only visible_tools=2"
+    assert render_progress_detail(event) == "mode=plan_only thinking=very_high access=read_only tools=2"
 
 
 def test_chat_progress_detail_for_turn_plan_includes_selected_skills() -> None:

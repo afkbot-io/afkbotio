@@ -245,7 +245,7 @@ def _render_tool_result_details(event: ProgressEvent) -> str | None:
 def _render_llm_call_details(event: ProgressEvent) -> str | None:
     payload = event.payload if isinstance(event.payload, dict) else {}
     elapsed_ms = payload.get("elapsed_ms")
-    timeout_ms = payload.get("timeout_ms")
+    queue_wait_ms = payload.get("queue_wait_ms")
     response_kind = str(payload.get("response_kind") or "").strip()
     error_code = str(payload.get("error_code") or "").strip()
     reasoning_effort = str(payload.get("reasoning_effort") or "").strip()
@@ -256,13 +256,13 @@ def _render_llm_call_details(event: ProgressEvent) -> str | None:
     if status:
         parts.append(f"llm={status}")
     if isinstance(elapsed_ms, int):
-        parts.append(f"elapsed_ms={elapsed_ms}")
-    if isinstance(timeout_ms, int):
-        parts.append(f"timeout_ms={timeout_ms}")
+        parts.append(f"elapsed={_format_duration_ms(elapsed_ms)}")
+    if isinstance(queue_wait_ms, int) and queue_wait_ms > 0:
+        parts.append(f"waited={_format_duration_ms(queue_wait_ms)}")
     if reasoning_effort:
         parts.append(f"reasoning={reasoning_effort}")
     if isinstance(available_tool_names, list):
-        parts.append(f"visible_tools={len(available_tool_names)}")
+        parts.append(f"tools={len(available_tool_names)}")
     if response_kind:
         parts.append(f"kind={response_kind}")
     if error_code:
@@ -329,7 +329,7 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
     if thinking_level:
         parts.append(f"thinking={thinking_level}")
     if tool_access_mode:
-        parts.append(f"tools={tool_access_mode}")
+        parts.append(f"access={tool_access_mode}")
     if isinstance(selected_skill_names, list):
         normalized_skills = [
             sanitize_terminal_text(str(item).strip())
@@ -339,10 +339,30 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
         if normalized_skills:
             parts.append(f"selected_skills={','.join(normalized_skills)}")
     if isinstance(available_tools_after_filter, list):
-        parts.append(f"visible_tools={len(available_tools_after_filter)}")
+        parts.append(f"tools={len(available_tools_after_filter)}")
     if not parts:
         return None
     return " ".join(parts)
+
+
+def _format_duration_ms(value: int) -> str:
+    """Render millisecond durations in a compact human-friendly form."""
+
+    normalized = max(0, int(value))
+    if normalized < 1000:
+        return f"{normalized}ms"
+    if normalized < 60_000:
+        seconds = normalized / 1000
+        if normalized % 1000 == 0:
+            return f"{int(seconds)}s"
+        return f"{seconds:.1f}s"
+    minutes, remainder_ms = divmod(normalized, 60_000)
+    seconds = remainder_ms / 1000
+    if remainder_ms == 0:
+        return f"{minutes}m"
+    if remainder_ms % 1000 == 0:
+        return f"{minutes}m{int(seconds)}s"
+    return f"{minutes}m{seconds:.1f}s"
 
 
 def _fmt_value(value: object, *, limit: int = 72) -> str:
