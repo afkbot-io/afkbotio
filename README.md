@@ -47,11 +47,13 @@ Use this mental model:
 | `session.job.run` + subagents | You want parallel work inside the current turn | Yes | No | Fan out independent bash or subagent jobs, wait for all, merge results |
 | `Task Flow` | The work is long-running, needs dependencies, review, handoff, or a backlog trail | Not necessarily | Yes | Create durable tasks, run them in background, inspect task runs and comments later |
 
+Command examples below use the installed `afk` binary. If you are working from a source checkout without installing AFKBOT into your shell yet, run the same commands with `uv run`, for example `uv run afk doctor`.
+
 Subagents are profile-local runtime assets, not global assistant personas. List
 the subagents that the current AFKBOT profile can actually run with:
 
 ```bash
-uv run afk subagent list --profile default
+afk subagent list --profile default
 ```
 
 ## Chat And Planning
@@ -62,9 +64,9 @@ fan out parallel jobs, or create durable Task Flow work.
 Planning mode examples:
 
 ```bash
-uv run afk chat --plan off
-uv run afk chat --plan auto
-uv run afk chat --plan on
+afk chat --plan off
+afk chat --plan auto
+afk chat --plan on
 ```
 
 Behavior:
@@ -181,10 +183,10 @@ use. In practice:
 Useful first-run checks:
 
 ```bash
-uv run afk doctor
-uv run afk profile show default
-uv run afk subagent list --profile default
-uv run afk task board --profile default
+afk doctor
+afk profile show default
+afk subagent list --profile default
+afk task board --profile default
 ```
 
 `afk profile show default` lets you confirm the effective runtime policy and
@@ -205,10 +207,12 @@ Manual local source setup with `uv`:
 
 ```bash
 uv sync --extra dev
-uv run afk setup
-uv run afk doctor
-uv run afk chat
+afk setup
+afk doctor
+afk chat
 ```
+
+If the checkout is not installed into your shell PATH, run the same commands with `uv run afk ...` from the repository root.
 
 Manual local source setup with `pip`:
 
@@ -232,8 +236,8 @@ export AFKBOT_DB_URL='sqlite+aiosqlite:///./afkbot.db'
 Start the local runtime/API:
 
 ```bash
-uv run afk start
-uv run afk doctor
+afk start
+afk doctor
 # doctor prints the effective runtime_port and api_port for this install
 ```
 
@@ -251,20 +255,20 @@ curl -X POST http://127.0.0.1:<runtime_port>/v1/automations/<profile_id>/webhook
 Useful commands:
 
 ```bash
-uv run afk version
-uv run afk doctor
-uv run afk setup
-uv run afk chat --message "Summarize this project"
-uv run afk automation list --profile default
-uv run afk plugin list
-uv run afk mcp list
-uv run afk profile show default
-uv run afk update
+afk version
+afk doctor
+afk setup
+afk chat --message "Summarize this project"
+afk automation list --profile default
+afk plugin list
+afk mcp list
+afk profile show default
+afk update
 ```
 
 ## Chat Examples
 
-Paste prompts like these into `uv run afk chat`.
+Paste prompts like these into `afk chat`.
 
 Parallel work inside one turn:
 
@@ -322,11 +326,11 @@ Current curated plugins:
 Typical operator flow:
 
 ```bash
-uv run afk plugin list
-uv run afk plugin install
-uv run afk plugin inspect afkbotui
-uv run afk plugin config-get afkbotui
-uv run afk plugin update afkbotui
+afk plugin list
+afk plugin install
+afk plugin inspect afkbotui
+afk plugin config-get afkbotui
+afk plugin update afkbotui
 ```
 
 `afk plugin install` now works as a small wizard:
@@ -338,7 +342,7 @@ uv run afk plugin update afkbotui
 You can still install directly without the wizard:
 
 ```bash
-uv run afk plugin install github:afkbot-io/afkbotuiplugin@main
+afk plugin install github:afkbot-io/afkbotuiplugin@main
 ```
 
 Direct `afk plugin install <source>` also still accepts a local path when you want to install a plugin from a checkout on disk.

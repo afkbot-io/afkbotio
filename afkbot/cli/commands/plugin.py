@@ -8,10 +8,16 @@ from pathlib import Path
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
-from afkbot.cli.commands.runtime_assets_common import emit_structured_error
+from afkbot.cli.commands.runtime_assets_common import emit_command_error
 from afkbot.cli.presentation.prompt_i18n import msg, resolve_prompt_language
 from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.cli.presentation.plugin_prompts import prompt_plugin_install_source
+from afkbot.cli.presentation.plugin_text import (
+    format_plugin_config,
+    format_plugin_list,
+    format_plugin_record,
+    format_plugin_scaffold,
+)
 from afkbot.services.plugins import (
     PluginServiceError,
     get_plugin_service,
@@ -30,51 +36,65 @@ def register(app: typer.Typer) -> None:
     app.add_typer(plugin_app, name="plugin")
 
     @plugin_app.command("list")
-    def list_plugins() -> None:
+    def list_plugins(
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
         """List installed plugins."""
 
         try:
             items = get_plugin_service(get_settings()).list_installed()
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(
-            json.dumps(
-                {"plugins": [item.model_dump(mode="json") for item in items]},
-                ensure_ascii=True,
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"plugins": [item.model_dump(mode="json") for item in items]},
+                    ensure_ascii=True,
+                )
             )
-        )
+            return
+        typer.echo(format_plugin_list(items))
 
     @plugin_app.command("inspect")
     def inspect_plugin(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Show one installed plugin record."""
 
         try:
             item = get_plugin_service(get_settings()).inspect(plugin_id=plugin_id)
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin"))
 
     @plugin_app.command("config-get")
     def get_plugin_config(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Show one plugin config payload and its storage paths."""
 
         try:
             item = get_plugin_service(get_settings()).get_config(plugin_id=plugin_id)
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_config(item, heading="Plugin config"))
 
     @plugin_app.command("config-set")
     def set_plugin_config(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
         config_json: str = typer.Argument(..., help="JSON object payload for plugin config."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Replace one plugin config with the provided JSON object."""
 
@@ -84,28 +104,36 @@ def register(app: typer.Typer) -> None:
                 raise ValueError("Plugin config payload must be a JSON object")
             item = get_plugin_service(get_settings()).set_config(plugin_id=plugin_id, config=payload)
         except ValueError as exc:
-            emit_structured_error(
+            emit_command_error(
                 PluginServiceError(error_code="plugin_config_invalid", reason=str(exc)),
                 default_error_code="plugin_error",
+                json_output=json_output,
             )
             raise typer.Exit(code=1) from None
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_config(item, heading="Plugin config updated"))
 
     @plugin_app.command("config-reset")
     def reset_plugin_config(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Reset one plugin config to manifest defaults."""
 
         try:
             item = get_plugin_service(get_settings()).reset_config(plugin_id=plugin_id)
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_config(item, heading="Plugin config reset"))
 
     @plugin_app.command("install")
     def install_plugin(
@@ -123,6 +151,7 @@ def register(app: typer.Typer) -> None:
             "--overwrite",
             help="Replace the same installed version when it already exists.",
         ),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Install one local plugin source directory."""
 
@@ -132,16 +161,18 @@ def register(app: typer.Typer) -> None:
             resolved_source = str(source or "").strip()
             interactive_tty = supports_interactive_tty()
             if not resolved_source:
+                if json_output:
+                    raise_usage_error("Plugin source is required when --json is used.")
                 if not interactive_tty:
                     raise_usage_error("Plugin source is required in non-interactive mode.")
                 prompt_language = resolve_prompt_language(settings=settings, value=None, ru=False)
-                installed_plugin_ids = {
-                    item.plugin_id for item in service.list_installed()
-                }
+                installed_plugins = service.list_installed()
+                installed_plugin_ids = {item.plugin_id for item in installed_plugins}
                 resolved_source = str(
                     prompt_plugin_install_source(
                         settings=settings,
                         installed_plugin_ids=installed_plugin_ids,
+                        installed_plugin_labels=tuple(item.plugin_id for item in installed_plugins),
                     )
                     or ""
                 ).strip()
@@ -160,9 +191,12 @@ def register(app: typer.Typer) -> None:
                 overwrite=overwrite,
             )
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin installed"))
 
     @plugin_app.command("scaffold")
     def scaffold(
@@ -205,6 +239,7 @@ def register(app: typer.Typer) -> None:
             "--force",
             help="Allow scaffolding into a non-empty directory.",
         ),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Create a starter embedded plugin repository layout."""
 
@@ -223,19 +258,22 @@ def register(app: typer.Typer) -> None:
                 force=force,
             )
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(
-            json.dumps(
-                {
-                    "ok": True,
-                    "plugin_root": str(result.plugin_root),
-                    "manifest_path": str(result.manifest_path),
-                    "entrypoint_path": str(result.entrypoint_path),
-                },
-                ensure_ascii=True,
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "plugin_root": str(result.plugin_root),
+                        "manifest_path": str(result.manifest_path),
+                        "entrypoint_path": str(result.entrypoint_path),
+                    },
+                    ensure_ascii=True,
+                )
             )
-        )
+            return
+        typer.echo(format_plugin_scaffold(result))
 
     @plugin_app.command("update")
     def update_plugin(
@@ -245,6 +283,7 @@ def register(app: typer.Typer) -> None:
             "--enable/--disable",
             help="Optionally override enabled state after update.",
         ),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Reinstall one plugin from its persisted source."""
 
@@ -254,35 +293,46 @@ def register(app: typer.Typer) -> None:
                 enable=enable,
             )
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin updated"))
 
     @plugin_app.command("enable")
     def enable_plugin(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Enable one installed plugin."""
 
         try:
             item = get_plugin_service(get_settings()).enable(plugin_id=plugin_id)
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin enabled"))
 
     @plugin_app.command("disable")
     def disable_plugin(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Disable one installed plugin."""
 
         try:
             item = get_plugin_service(get_settings()).disable(plugin_id=plugin_id)
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin disabled"))
 
     @plugin_app.command("remove")
     def remove_plugin(
@@ -292,6 +342,7 @@ def register(app: typer.Typer) -> None:
             "--purge-files",
             help="Delete installed plugin files from the runtime root.",
         ),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Remove one plugin from the install registry."""
 
@@ -301,6 +352,9 @@ def register(app: typer.Typer) -> None:
                 purge_files=purge_files,
             )
         except PluginServiceError as exc:
-            emit_structured_error(exc, default_error_code="plugin_error")
+            emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
-        typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+        if json_output:
+            typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
+            return
+        typer.echo(format_plugin_record(item, heading="Plugin removed"))
