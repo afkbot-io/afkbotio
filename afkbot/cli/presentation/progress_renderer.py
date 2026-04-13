@@ -7,6 +7,7 @@ from typing import assert_never
 
 from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.cli.presentation.progress_mapper import RenderEvent
+from afkbot.services.agent_loop.parallel_planning import render_parallel_strategy_progress_detail
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 
 _HIDDEN_PARAM_KEYS = frozenset(
@@ -339,24 +340,9 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
         ]
         if normalized_skills:
             parts.append(f"selected_skills={','.join(normalized_skills)}")
-    if isinstance(parallel_strategy, dict):
-        execution_mode = str(parallel_strategy.get("execution_mode") or "").strip()
-        hint_names = parallel_strategy.get("hints")
-        if execution_mode == "session_job_run":
-            parts.append("parallel=session-jobs")
-        elif execution_mode == "parallel_tool_calls":
-            parts.append("parallel=file-tools")
-        elif execution_mode == "serial_fanout_candidate":
-            parts.append("parallel_hint=session-jobs")
-        elif isinstance(hint_names, list):
-            normalized_hints = {str(item).strip() for item in hint_names if str(item).strip()}
-            hint_parts: list[str] = []
-            if "group_parallel_safe_file_tools" in normalized_hints:
-                hint_parts.append("file-tools")
-            if "prefer_session_job_run_for_independent_jobs" in normalized_hints:
-                hint_parts.append("session-jobs")
-            if hint_parts:
-                parts.append(f"parallel_hint={'+'.join(hint_parts)}")
+    parallel_detail = render_parallel_strategy_progress_detail(parallel_strategy)
+    if parallel_detail:
+        parts.append(parallel_detail)
     if isinstance(available_tools_after_filter, list):
         parts.append(f"tools={len(available_tools_after_filter)}")
     if not parts:

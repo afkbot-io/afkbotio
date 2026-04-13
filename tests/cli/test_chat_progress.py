@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from afkbot.services.agent_loop.parallel_planning import (
+    PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
+    PARALLEL_HINT_GROUP_FILE_TOOLS,
+    PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+)
 from afkbot.cli.presentation import (
     map_progress_event,
     render_progress_color,
@@ -422,9 +427,9 @@ def test_chat_progress_detail_for_turn_plan_includes_planning_metadata() -> None
             "tool_access_mode": "read_only",
             "parallel_strategy": {
                 "hints": [
-                    "group_parallel_safe_file_tools",
-                    "prefer_session_job_run_for_independent_jobs",
-                    "avoid_redundant_discovery",
+                    PARALLEL_HINT_GROUP_FILE_TOOLS,
+                    PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+                    PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
                 ]
             },
             "available_tools_after_filter": ["file.read", "file.search"],

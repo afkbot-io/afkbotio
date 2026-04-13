@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from afkbot.services.agent_loop.parallel_planning import (
+    PARALLEL_EXECUTION_MODE_FILE_TOOLS,
+    PARALLEL_EXECUTION_MODE_SESSION_JOBS,
+    PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
+    PARALLEL_HINT_GROUP_FILE_TOOLS,
+    PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+)
 from afkbot.services.agent_loop.turn_planning_artifacts import turn_plan_payload
 from afkbot.services.agent_loop.skill_router import SkillRoute
 from afkbot.services.llm.contracts import LLMToolDefinition
@@ -52,9 +59,9 @@ def test_turn_plan_payload_includes_parallel_strategy_hints_for_visible_tools() 
 
     assert payload["parallel_strategy"] == {
         "hints": [
-            "group_parallel_safe_file_tools",
-            "prefer_session_job_run_for_independent_jobs",
-            "avoid_redundant_discovery",
+            PARALLEL_HINT_GROUP_FILE_TOOLS,
+            PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+            PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
         ]
     }
 
@@ -83,7 +90,7 @@ def test_turn_plan_payload_marks_parallel_safe_planned_tool_calls() -> None:
         tool_access_mode="default",
     )
 
-    assert payload["parallel_strategy"]["execution_mode"] == "parallel_tool_calls"
+    assert payload["parallel_strategy"]["execution_mode"] == PARALLEL_EXECUTION_MODE_FILE_TOOLS
     assert payload["parallel_strategy"]["parallel_tool_names"] == ["file.read", "file.read"]
 
 
@@ -119,6 +126,6 @@ def test_turn_plan_payload_marks_session_job_batch_execution() -> None:
         tool_access_mode="default",
     )
 
-    assert payload["parallel_strategy"]["execution_mode"] == "session_job_run"
+    assert payload["parallel_strategy"]["execution_mode"] == PARALLEL_EXECUTION_MODE_SESSION_JOBS
     assert payload["parallel_strategy"]["session_job_count"] == 2
     assert payload["parallel_strategy"]["session_job_kinds"] == ["bash", "subagent"]

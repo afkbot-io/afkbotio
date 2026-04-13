@@ -13,6 +13,7 @@ from afkbot.services.agent_loop.explicit_requests import (
     visible_executable_explicit_skills,
 )
 from afkbot.services.agent_loop.memory_runtime import MemoryRuntime
+from afkbot.services.agent_loop.parallel_planning import build_parallel_strategy_note
 from afkbot.services.agent_loop.runtime_facts import TrustedRuntimeFactsService
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.session_skill_affinity import SessionSkillAffinityService
@@ -39,8 +40,6 @@ from afkbot.services.llm.contracts import LLMMessage, LLMToolDefinition
 planned_tools_final_message = _planned_tools_final_message
 turn_plan_payload = _turn_plan_payload
 _PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS = 16
-_REPO_FILE_TOOL_NAMES = frozenset({"file.list", "file.read", "file.search"})
-_SESSION_JOB_NESTED_TOOL_NAMES = frozenset({"bash.exec", "subagent.run"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,37 +389,10 @@ class TurnPreparationRuntime:
                 if tool.name not in current_names
             }
         known_names = current_names | future_names
-        lines: list[str] = []
-        if known_names & _REPO_FILE_TOOL_NAMES:
-            lines.append(
-                "- Prefer first-class file tools for repository inspection. Use shell wrappers "
-                "such as `find`, `ls`, or ad-hoc Python directory listing only when `file.*` "
-                "tools cannot provide the needed data."
-            )
-            lines.append(
-                "- When several independent file reads, lists, or searches are needed, emit all "
-                "of those `file.*` tool calls in the same assistant response instead of probing "
-                "one-by-one."
-            )
-        if "session.job.run" in known_names:
-            lines.append(
-                "- When two or more independent shell or subagent jobs can start immediately and "
-                "you need every result before continuing, prefer one `session.job.run` call over "
-                "multiple separate `bash.exec` or `subagent.run` calls."
-            )
-        if known_names & (_REPO_FILE_TOOL_NAMES | _SESSION_JOB_NESTED_TOOL_NAMES):
-            lines.append(
-                "- Avoid redundant discovery. Do not repeat equivalent inspection with multiple "
-                "tools after one result already answered the question."
-            )
-        if not lines:
-            return None
-        intro = (
-            "Plan with the later execution surface in mind."
-            if planning_mode == "plan_only"
-            else "Choose the minimal grouped tool strategy that gathers evidence quickly."
+        return build_parallel_strategy_note(
+            known_tool_names=known_names,
+            planning_mode=planning_mode,
         )
-        return "# Parallel and Tool Strategy\n" + intro + "\n" + "\n".join(lines)
 
     async def _build_context(
         self,

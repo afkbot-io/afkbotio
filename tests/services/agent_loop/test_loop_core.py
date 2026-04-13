@@ -17,6 +17,7 @@ from afkbot.models.run import Run
 from afkbot.models.runlog_event import RunlogEvent
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
+from afkbot.services.agent_loop.parallel_planning import PARALLEL_EXECUTION_MODE_SESSION_JOBS
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -233,7 +234,7 @@ async def test_run_turn_plan_payload_marks_session_job_parallel_strategy(tmp_pat
         plan_payload = json.loads([event for event in events if event.event_type == "turn.plan"][0].payload_json)
 
         assert plan_payload["planned_tool_names"] == ["session.job.run"]
-        assert plan_payload["parallel_strategy"]["execution_mode"] == "session_job_run"
+        assert plan_payload["parallel_strategy"]["execution_mode"] == PARALLEL_EXECUTION_MODE_SESSION_JOBS
         assert plan_payload["parallel_strategy"]["session_job_count"] == 2
         assert plan_payload["parallel_strategy"]["session_job_kinds"] == ["bash"]
 
