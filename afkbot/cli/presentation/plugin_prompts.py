@@ -25,6 +25,7 @@ def prompt_plugin_install_source(
     *,
     settings: Settings,
     installed_plugin_ids: set[str] | frozenset[str],
+    installed_plugin_labels: tuple[str, ...] = (),
 ) -> str | None:
     """Prompt for one install source from the curated catalog or a custom source."""
 
@@ -50,16 +51,9 @@ def prompt_plugin_install_source(
     default_value = options[0][0]
     selected = run_inline_single_select(
         title=msg(lang, en="Plugins: Install", ru="Плагины: Установка"),
-        text=msg(
-            lang,
-            en=(
-                "Choose one plugin to install. The list shows known plugins that are not "
-                "installed yet, plus a custom GitHub source option."
-            ),
-            ru=(
-                "Выберите плагин для установки. В списке показаны известные плагины, "
-                "которые ещё не установлены, и отдельный пункт для собственного GitHub-источника."
-            ),
+        text=_plugin_install_prompt_text(
+            lang=lang,
+            installed_plugin_labels=installed_plugin_labels,
         ),
         options=options,
         default_value=default_value,
@@ -118,6 +112,28 @@ def _prompt_custom_plugin_source(*, lang: PromptLanguage) -> str:
         )
 
 
+def _plugin_install_prompt_text(
+    *,
+    lang: PromptLanguage,
+    installed_plugin_labels: tuple[str, ...],
+) -> str:
+    installed_count = len(installed_plugin_labels)
+    installed_summary = ", ".join(installed_plugin_labels)
+    return msg(
+        lang,
+        en=(
+            f"Installed plugins: {installed_count} ({installed_summary or 'none'}).\n\n"
+            "Choose one plugin to install. The list shows known plugins that are not "
+            "installed yet, plus a custom GitHub source option."
+        ),
+        ru=(
+            f"Уже установлено плагинов: {installed_count} ({installed_summary or 'нет'}).\n\n"
+            "Выберите плагин для установки. В списке показаны известные плагины, "
+            "которые ещё не установлены, и отдельный пункт для собственного GitHub-источника."
+        ),
+    )
+
+
 def _is_supported_custom_plugin_source(value: str) -> bool:
     normalized = value.strip()
     if not normalized:
@@ -137,6 +153,7 @@ def _is_supported_custom_plugin_source(value: str) -> bool:
 
 
 __all__ = [
+    "_plugin_install_prompt_text",
     "prompt_plugin_install_source",
     "prompt_update_notices_enabled",
 ]
