@@ -13,6 +13,7 @@ from afkbot.services.agent_loop.explicit_requests import (
     visible_executable_explicit_skills,
 )
 from afkbot.services.agent_loop.memory_runtime import MemoryRuntime
+from afkbot.services.agent_loop.parallel_planning import build_parallel_strategy_note
 from afkbot.services.agent_loop.runtime_facts import TrustedRuntimeFactsService
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.session_skill_affinity import SessionSkillAffinityService
@@ -203,6 +204,25 @@ class TurnPreparationRuntime:
             approval_required_tool_names = tool_surface.approval_required_tool_names
             prompt_overlay = combine_prompt_overlays(
                 prompt_overlay,
+                self._parallel_tool_strategy_note(
+                    policy=policy,
+                    profile_id=profile_id,
+                    skill_route=skill_route,
+                    automation_intent=automation_intent,
+                    runtime_metadata=runtime_metadata,
+                    approved_tool_names=(
+                        None if context_overrides is None else context_overrides.approved_tool_names
+                    ),
+                    cli_approval_surface_enabled=(
+                        False
+                        if context_overrides is None
+                        else context_overrides.cli_approval_surface_enabled
+                    ),
+                    planning_mode=(
+                        "off" if context_overrides is None else context_overrides.planning_mode
+                    ),
+                    current_visible_tool_names=tuple(tool.name for tool in available_tools),
+                ),
                 self._plan_only_execution_surface_note(
                     policy=policy,
                     profile_id=profile_id,
@@ -333,6 +353,45 @@ class TurnPreparationRuntime:
             "trying to call it now.\n"
             "Execution-capable tools visible after planning (approval-gated tools are marked): "
             f"{listed_names}{remainder}."
+        )
+
+    def _parallel_tool_strategy_note(
+        self,
+        *,
+        policy: ProfilePolicy,
+        profile_id: str,
+        skill_route: SkillRoute,
+        automation_intent: bool,
+        runtime_metadata: dict[str, object] | None,
+        approved_tool_names: tuple[str, ...] | None,
+        cli_approval_surface_enabled: bool,
+        planning_mode: str,
+        current_visible_tool_names: tuple[str, ...],
+    ) -> str | None:
+        """Explain how to batch independent work and avoid redundant tool probing."""
+
+        current_names = {name for name in current_visible_tool_names if name}
+        future_names: set[str] = set()
+        if planning_mode == "plan_only":
+            execution_surface = self._tool_exposure.build_tool_surface(
+                policy,
+                profile_id=profile_id,
+                skill_route=skill_route,
+                automation_intent=automation_intent,
+                runtime_metadata=runtime_metadata,
+                tool_access_mode="default",
+                approved_tool_names=approved_tool_names,
+                cli_approval_surface_enabled=cli_approval_surface_enabled,
+            )
+            future_names = {
+                tool.name
+                for tool in execution_surface.visible_tools
+                if tool.name not in current_names
+            }
+        known_names = current_names | future_names
+        return build_parallel_strategy_note(
+            known_tool_names=known_names,
+            planning_mode=planning_mode,
         )
 
     async def _build_context(

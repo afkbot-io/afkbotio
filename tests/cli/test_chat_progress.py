@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from afkbot.services.agent_loop.parallel_planning import (
+    PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
+    PARALLEL_HINT_GROUP_FILE_TOOLS,
+    PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+)
 from afkbot.cli.presentation import (
     map_progress_event,
     render_progress_color,
@@ -420,11 +425,21 @@ def test_chat_progress_detail_for_turn_plan_includes_planning_metadata() -> None
             "planning_mode": "plan_only",
             "thinking_level": "very_high",
             "tool_access_mode": "read_only",
+            "parallel_strategy": {
+                "hints": [
+                    PARALLEL_HINT_GROUP_FILE_TOOLS,
+                    PARALLEL_HINT_PREFER_SESSION_JOB_RUN,
+                    PARALLEL_HINT_AVOID_REDUNDANT_DISCOVERY,
+                ]
+            },
             "available_tools_after_filter": ["file.read", "file.search"],
         },
     )
 
-    assert render_progress_detail(event) == "mode=plan_only thinking=very_high access=read_only tools=2"
+    assert (
+        render_progress_detail(event)
+        == "mode=plan_only thinking=very_high access=read_only parallel_hint=file-tools+session-jobs tools=2"
+    )
 
 
 def test_chat_progress_detail_for_turn_plan_includes_selected_skills() -> None:

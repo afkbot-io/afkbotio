@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from afkbot.services.agent_loop.parallel_planning import build_parallel_strategy_payload
 from afkbot.services.agent_loop.execution_posture import first_execution_blocker
 from afkbot.services.agent_loop.skill_router import SkillRoute
 from afkbot.services.llm.contracts import LLMToolDefinition
@@ -81,4 +82,10 @@ def turn_plan_payload(
         payload["available_tools_after_filter"] = [tool.name for tool in available_tools]
     if planned_tool_calls:
         payload["planned_tool_names"] = [call.name for call in planned_tool_calls]
+    parallel_strategy = build_parallel_strategy_payload(
+        available_tools=available_tools,
+        planned_tool_calls=planned_tool_calls,
+    )
+    if parallel_strategy:
+        payload["parallel_strategy"] = parallel_strategy
     return payload

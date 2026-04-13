@@ -559,6 +559,109 @@ async def test_plan_only_turn_context_mentions_approval_surface_tools_hidden_fro
     await engine.dispose()
 
 
+async def test_llm_context_includes_parallel_tool_strategy_guidance(tmp_path: Path) -> None:
+    """Execution turns should tell the model how to batch independent repo inspection work."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "loop_llm_parallel_tool_strategy.db",
+    )
+    provider = MockLLMProvider([LLMResponse.final("ok")])
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.allowed_tools_json = json.dumps(
+            ["file.list", "file.read", "file.search", "bash.exec", "session.job.run"],
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        await session.flush()
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=1,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-llm-parallel-tool-strategy",
+            message="Inspect the repo root and summarize it.",
+        )
+
+        assert provider.requests
+        request = provider.requests[0]
+        assert "# Parallel and Tool Strategy" in request.context
+        assert "emit all of those `file.*` tool calls in the same assistant response" in request.context
+        assert "prefer one `session.job.run` call" in request.context
+        assert "Do not repeat equivalent inspection" in request.context
+
+        by_name = {tool.name: tool for tool in request.available_tools}
+        assert "file.read" in by_name
+        assert (
+            "emit them together in one assistant response so the runtime can execute them "
+            "concurrently." in by_name["file.read"].description
+        )
+        assert "session.job.run" in by_name
+        assert "Prefer this tool over separate `bash.exec` or `subagent.run` calls" in (
+            by_name["session.job.run"].description
+        )
+
+    await engine.dispose()
+
+
+async def test_plan_only_turn_context_mentions_parallel_strategy_for_later_execution_tools(
+    tmp_path: Path,
+) -> None:
+    """Plan-only turns should teach the planner to group later execution work."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "loop_llm_plan_only_parallel_tool_strategy.db",
+    )
+    provider = MockLLMProvider([LLMResponse.final("1. Inspect\n2. Execute")])
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.allowed_tools_json = json.dumps(
+            ["file.read", "file.search", "bash.exec", "session.job.run"],
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        await session.flush()
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=2,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-plan-only-parallel-tool-strategy",
+            message="Plan how to inspect the repo and then run two independent shell jobs.",
+            context_overrides=TurnContextOverrides(
+                planning_mode="plan_only",
+                thinking_level="high",
+            ),
+        )
+
+        assert provider.requests
+        context = provider.requests[0].context
+        assert "# Parallel and Tool Strategy" in context
+        assert "Plan with the later execution surface in mind." in context
+        assert "prefer one `session.job.run` call" in context
+        assert "Do not repeat equivalent inspection" in context
+
+    await engine.dispose()
+
+
 async def test_execution_planning_auto_injects_overlay_for_complex_tasks(tmp_path: Path) -> None:
     """Auto planning mode should inject internal execution-planning guidance for complex tasks."""
 

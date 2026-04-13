@@ -7,6 +7,7 @@ from typing import assert_never
 
 from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.cli.presentation.progress_mapper import RenderEvent
+from afkbot.services.agent_loop.parallel_planning import render_parallel_strategy_progress_detail
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 
 _HIDDEN_PARAM_KEYS = frozenset(
@@ -322,6 +323,7 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
     tool_access_mode = str(payload.get("tool_access_mode") or "").strip()
     available_tools_after_filter = payload.get("available_tools_after_filter")
     selected_skill_names = payload.get("selected_skill_names")
+    parallel_strategy = payload.get("parallel_strategy")
 
     parts: list[str] = []
     if planning_mode:
@@ -338,6 +340,9 @@ def _render_turn_plan_details(event: ProgressEvent) -> str | None:
         ]
         if normalized_skills:
             parts.append(f"selected_skills={','.join(normalized_skills)}")
+    parallel_detail = render_parallel_strategy_progress_detail(parallel_strategy)
+    if parallel_detail:
+        parts.append(parallel_detail)
     if isinstance(available_tools_after_filter, list):
         parts.append(f"tools={len(available_tools_after_filter)}")
     if not parts:
