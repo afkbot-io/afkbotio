@@ -420,11 +420,21 @@ def test_chat_progress_detail_for_turn_plan_includes_planning_metadata() -> None
             "planning_mode": "plan_only",
             "thinking_level": "very_high",
             "tool_access_mode": "read_only",
+            "parallel_strategy": {
+                "hints": [
+                    "group_parallel_safe_file_tools",
+                    "prefer_session_job_run_for_independent_jobs",
+                    "avoid_redundant_discovery",
+                ]
+            },
             "available_tools_after_filter": ["file.read", "file.search"],
         },
     )
 
-    assert render_progress_detail(event) == "mode=plan_only thinking=very_high access=read_only tools=2"
+    assert (
+        render_progress_detail(event)
+        == "mode=plan_only thinking=very_high access=read_only parallel_hint=file-tools+session-jobs tools=2"
+    )
 
 
 def test_chat_progress_detail_for_turn_plan_includes_selected_skills() -> None:

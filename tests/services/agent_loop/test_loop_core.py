@@ -195,6 +195,51 @@ async def test_run_turn_returns_tool_not_found_for_mcp_names(tmp_path: Path) -> 
     await engine.dispose()
 
 
+async def test_run_turn_plan_payload_marks_session_job_parallel_strategy(tmp_path: Path) -> None:
+    """turn.plan should expose structured parallel strategy for planned session.job.run batches."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_plan_parallel_strategy.db")
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-plan-parallel-strategy",
+            message="run grouped jobs",
+            planned_tool_calls=[
+                ToolCall(
+                    name="session.job.run",
+                    params={
+                        "jobs": [
+                            {"kind": "bash", "cmd": "printf one"},
+                            {"kind": "bash", "cmd": "printf two"},
+                        ]
+                    },
+                )
+            ],
+        )
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        plan_payload = json.loads([event for event in events if event.event_type == "turn.plan"][0].payload_json)
+
+        assert plan_payload["planned_tool_names"] == ["session.job.run"]
+        assert plan_payload["parallel_strategy"]["execution_mode"] == "session_job_run"
+        assert plan_payload["parallel_strategy"]["session_job_count"] == 2
+        assert plan_payload["parallel_strategy"]["session_job_kinds"] == ["bash"]
+
+    await engine.dispose()
+
+
 async def test_automation_tool_requires_explicit_automation_intent(tmp_path: Path) -> None:
     """automation.* calls should be denied when user message has no automation intent."""
 
