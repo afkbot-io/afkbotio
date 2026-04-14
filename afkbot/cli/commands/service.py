@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
+from afkbot.cli.commands.start import run_start_command
 from afkbot.services.managed_runtime_service import (
     ensure_managed_runtime_service,
     inspect_managed_runtime_service,
@@ -55,6 +56,21 @@ def register(app: typer.Typer) -> None:
         result = start_managed_runtime_service(settings)
         typer.echo(_format_service_result(result))
         _exit_for_service_result(result, require_running=True)
+
+    @service_app.command("run-managed", hidden=True)
+    def run_managed() -> None:
+        """Internal managed-service entrypoint used by system service definitions."""
+
+        settings = get_settings()
+        if not setup_is_complete(settings):
+            raise_usage_error("Run `afk setup` before starting the managed AFKBOT daemon.")
+        run_start_command(
+            settings=settings,
+            channels=True,
+            channel_ids=(),
+            strict_channels=False,
+            allow_pending_upgrades=False,
+        )
 
     @service_app.command("stop")
     def stop() -> None:

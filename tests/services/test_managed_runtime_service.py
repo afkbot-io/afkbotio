@@ -80,7 +80,7 @@ def test_ensure_managed_runtime_service_prefers_linux_system_unit_when_available
     rendered = service_path.read_text(encoding="utf-8")
     assert "afkbot-managed-runtime-service" in rendered
     assert "WantedBy=multi-user.target" in rendered
-    assert '\\"completed\\"' in rendered
+    assert "service run-managed" in rendered
     assert str(settings.root_dir) in rendered
     assert str(settings.setup_state_path) in rendered
     assert str(launcher_path) in rendered
@@ -104,14 +104,11 @@ def test_ensure_managed_runtime_service_prefers_linux_system_unit_when_available
 
 
 def test_render_service_start_guard_fails_closed_when_setup_is_missing() -> None:
-    """Service startup guard should not exit successfully before AFKBOT actually starts."""
+    """Service startup command should use the hidden managed-service entrypoint."""
 
     command = _render_service_start_guard()
 
-    assert "AFKBOT setup state not found" in command
-    assert "AFKBOT setup is incomplete" in command
-    assert "exit 1" in command
-    assert 'exec "$AFKBOT_LAUNCHER" start' in command
+    assert command == 'exec "$AFKBOT_LAUNCHER" service run-managed'
 
 
 def test_ensure_managed_runtime_service_falls_back_to_linux_user_unit_when_system_service_is_unavailable(
@@ -163,7 +160,7 @@ def test_ensure_managed_runtime_service_falls_back_to_linux_user_unit_when_syste
     assert service_path.exists()
     assert wants_path.is_symlink()
     rendered = service_path.read_text(encoding="utf-8")
-    assert '\\"completed\\"' in rendered
+    assert "service run-managed" in rendered
     assert "Using a user-level systemd service" in (result.reason or "")
     assert calls == [
         ["systemctl", "--user", "daemon-reload"],

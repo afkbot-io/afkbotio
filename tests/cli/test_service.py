@@ -121,6 +121,29 @@ def test_service_start_command_exits_zero_when_daemon_was_started(
     get_settings.cache_clear()
 
 
+def test_service_run_managed_command_delegates_to_start_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Hidden managed-service entrypoint should reuse the normal runtime starter."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    calls: list[str] = []
+    monkeypatch.setattr("afkbot.cli.commands.service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.service.run_start_command",
+        lambda **kwargs: calls.append(str(kwargs["settings"].root_dir)),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["service", "run-managed"])
+
+    assert result.exit_code == 0
+    assert calls == [str(tmp_path)]
+    get_settings.cache_clear()
+
+
 def test_service_stop_command_exits_zero_when_daemon_was_stopped(
     tmp_path,
     monkeypatch,

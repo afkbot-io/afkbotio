@@ -1314,15 +1314,7 @@ def _current_linux_user_name() -> str:
 
 
 def _render_service_start_guard() -> str:
-    return (
-        'if [ ! -f "$AFKBOT_SETUP_STATE_PATH" ]; '
-        'then echo "AFKBOT setup state not found: $AFKBOT_SETUP_STATE_PATH" >&2; exit 1; '
-        'fi; '
-        'if ! grep -Eq "\\"completed\\"[[:space:]]*:[[:space:]]*true" "$AFKBOT_SETUP_STATE_PATH"; '
-        'then echo "AFKBOT setup is incomplete; rerun afk setup." >&2; exit 1; '
-        'fi; '
-        'exec "$AFKBOT_LAUNCHER" start'
-    )
+    return 'exec "$AFKBOT_LAUNCHER" service run-managed'
 
 
 def _preferred_systemd_system_service_path() -> Path:

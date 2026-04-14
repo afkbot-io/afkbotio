@@ -99,77 +99,102 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Start the full AFKBOT stack and stop all owned services on exit."""
 
-        settings = get_settings()
-        resolved_host = host or settings.runtime_host
-        runtime_config = read_runtime_config(settings)
-        bind_plan = _resolve_runtime_bind_plan(
-            settings=settings,
-            host=resolved_host,
-            runtime_config=runtime_config,
-            runtime_port_override=runtime_port,
-            api_port_override=api_port,
+        run_start_command(
+            settings=None,
+            host=host,
+            runtime_port=runtime_port,
+            api_port=api_port,
+            channels=channels,
+            channel_ids=tuple(channel),
+            strict_channels=strict_channels,
+            allow_pending_upgrades=allow_pending_upgrades,
         )
-        resolved_runtime_port = bind_plan.runtime_port
-        resolved_api_port = bind_plan.api_port
-        persist_runtime_bind = bind_plan.persist_runtime_bind
-        if not allow_pending_upgrades:
-            upgrade_report = asyncio.run(_inspect_pending_upgrades(settings))
-            if upgrade_report.changed:
-                details = "; ".join(
-                    f"{step.name}: {step.details}"
-                    for step in upgrade_report.steps
-                    if step.changed
-                )
-                reason = "Pending persisted-state upgrades detected."
-                if details:
-                    reason = f"{reason} {details}"
-                raise_usage_error(
-                    f"{reason} Run `afk upgrade apply` first, or rerun with --allow-pending-upgrades."
-                )
-        if bind_plan.repaired_from_port is not None:
-            typer.secho(
-                "WARNING configured runtime port pair was busy and AFKBOT was not reachable there; "
-                f"switching from runtime_port={bind_plan.repaired_from_port} "
-                f"to runtime_port={resolved_runtime_port} and saving it.",
-                fg=typer.colors.YELLOW,
-                err=True,
-            )
 
-        typer.echo(
-            f"runtime daemon: http://{resolved_host}:{resolved_runtime_port} "
-            "(webhook + cron scheduler + task flow workers)"
-        )
-        typer.echo(f"chat api/ws: http://{resolved_host}:{resolved_api_port}")
-        typer.echo("Press Ctrl+C to stop.")
 
-        try:
-            asyncio.run(
-                _run_full_stack(
-                    host=resolved_host,
-                    runtime_port=resolved_runtime_port,
-                    api_port=resolved_api_port,
-                    start_channels=channels,
-                    channel_ids=tuple(channel),
-                    strict_channels=strict_channels,
-                    persist_runtime_bind=persist_runtime_bind,
-                    settings=settings,
-                )
+def run_start_command(
+    *,
+    settings: Settings | None = None,
+    host: str | None = None,
+    runtime_port: int | None = None,
+    api_port: int | None = None,
+    channels: bool = True,
+    channel_ids: tuple[str, ...] = (),
+    strict_channels: bool = False,
+    allow_pending_upgrades: bool = False,
+) -> None:
+    """Run the full AFKBOT stack with one shared CLI/runtime implementation."""
+
+    resolved_settings = settings or get_settings()
+    resolved_host = host or resolved_settings.runtime_host
+    runtime_config = read_runtime_config(resolved_settings)
+    bind_plan = _resolve_runtime_bind_plan(
+        settings=resolved_settings,
+        host=resolved_host,
+        runtime_config=runtime_config,
+        runtime_port_override=runtime_port,
+        api_port_override=api_port,
+    )
+    resolved_runtime_port = bind_plan.runtime_port
+    resolved_api_port = bind_plan.api_port
+    persist_runtime_bind = bind_plan.persist_runtime_bind
+    if not allow_pending_upgrades:
+        upgrade_report = asyncio.run(_inspect_pending_upgrades(resolved_settings))
+        if upgrade_report.changed:
+            details = "; ".join(
+                f"{step.name}: {step.details}"
+                for step in upgrade_report.steps
+                if step.changed
             )
-        except ChannelRuntimeManagerError as exc:
-            raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
-        except OSError as exc:
+            reason = "Pending persisted-state upgrades detected."
+            if details:
+                reason = f"{reason} {details}"
             raise_usage_error(
-                _format_runtime_start_os_error(
-                    exc,
-                    host=resolved_host,
-                    runtime_port=resolved_runtime_port,
-                    api_port=resolved_api_port,
-                )
+                f"{reason} Run `afk upgrade apply` first, or rerun with --allow-pending-upgrades."
             )
-        except RuntimeError as exc:
-            raise_usage_error(f"Runtime startup failed: {exc}")
-        except KeyboardInterrupt:
-            typer.echo("\nShutting down...")
+    if bind_plan.repaired_from_port is not None:
+        typer.secho(
+            "WARNING configured runtime port pair was busy and AFKBOT was not reachable there; "
+            f"switching from runtime_port={bind_plan.repaired_from_port} "
+            f"to runtime_port={resolved_runtime_port} and saving it.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+
+    typer.echo(
+        f"runtime daemon: http://{resolved_host}:{resolved_runtime_port} "
+        "(webhook + cron scheduler + task flow workers)"
+    )
+    typer.echo(f"chat api/ws: http://{resolved_host}:{resolved_api_port}")
+    typer.echo("Press Ctrl+C to stop.")
+
+    try:
+        asyncio.run(
+            _run_full_stack(
+                host=resolved_host,
+                runtime_port=resolved_runtime_port,
+                api_port=resolved_api_port,
+                start_channels=channels,
+                channel_ids=channel_ids,
+                strict_channels=strict_channels,
+                persist_runtime_bind=persist_runtime_bind,
+                settings=resolved_settings,
+            )
+        )
+    except ChannelRuntimeManagerError as exc:
+        raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
+    except OSError as exc:
+        raise_usage_error(
+            _format_runtime_start_os_error(
+                exc,
+                host=resolved_host,
+                runtime_port=resolved_runtime_port,
+                api_port=resolved_api_port,
+            )
+        )
+    except RuntimeError as exc:
+        raise_usage_error(f"Runtime startup failed: {exc}")
+    except KeyboardInterrupt:
+        typer.echo("\nShutting down...")
 
 
 async def _run_full_stack(
