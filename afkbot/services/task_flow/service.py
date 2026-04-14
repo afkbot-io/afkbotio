@@ -1950,7 +1950,7 @@ async def _ensure_public_ai_principal_session(
 ) -> None:
     """Validate that one public AI actor really owns the supplied live chat session."""
 
-    if settings is None:
+    if settings is None or not bool(settings.taskflow_public_principal_required):
         return
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
@@ -1981,7 +1981,7 @@ def _ensure_public_principal_identity(
 ) -> None:
     """Require one validated public principal identity on CLI/tool/API-facing service instances."""
 
-    if settings is None:
+    if settings is None or not bool(settings.taskflow_public_principal_required):
         return
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
@@ -2125,14 +2125,16 @@ def _ensure_ai_owner_assignment_allowed(
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_owner_type != "ai_profile" or normalized_owner_ref is None:
         return
-    if settings is not None and normalized_owner_ref not in _taskflow_allowed_ai_profile_ids(
-        settings=settings,
-        profile_id=task_profile_id,
-    ):
-        raise TaskFlowServiceError(
-            error_code="task_owner_forbidden",
-            reason="Task cannot be assigned to this ai_profile",
+    if settings is not None:
+        allowed_profiles = _taskflow_allowed_ai_profile_ids(
+            settings=settings,
+            profile_id=task_profile_id,
         )
+        if allowed_profiles and normalized_owner_ref not in allowed_profiles:
+            raise TaskFlowServiceError(
+                error_code="task_owner_forbidden",
+                reason="Task cannot be assigned to this ai_profile",
+            )
     if normalized_actor_type == "human" and normalized_actor_ref is not None:
         return
     if normalized_actor_type != "ai_profile" or normalized_actor_ref is None:
@@ -2147,7 +2149,10 @@ def _ensure_ai_owner_assignment_allowed(
     )
     if normalized_owner_ref == normalized_actor_ref:
         return
-    if normalized_owner_ref in _taskflow_team_profile_ids(settings=settings, profile_id=task_profile_id):
+    allowed_profiles = _taskflow_allowed_ai_profile_ids(settings=settings, profile_id=task_profile_id)
+    if not allowed_profiles:
+        return
+    if normalized_owner_ref in allowed_profiles:
         return
     raise TaskFlowServiceError(
         error_code="task_owner_forbidden",
@@ -2170,10 +2175,10 @@ def _ensure_ai_actor_admitted_to_backlog(
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_actor_type != "ai_profile" or normalized_actor_ref is None:
         return
-    if normalized_actor_ref in _taskflow_allowed_ai_profile_ids(
-        settings=settings,
-        profile_id=task_profile_id,
-    ):
+    allowed_profiles = _taskflow_allowed_ai_profile_ids(settings=settings, profile_id=task_profile_id)
+    if not allowed_profiles:
+        return
+    if normalized_actor_ref in allowed_profiles:
         return
     raise TaskFlowServiceError(error_code=error_code, reason=reason)
 
@@ -2221,9 +2226,14 @@ def _taskflow_allowed_ai_profile_ids(
 ) -> tuple[str, ...]:
     """Return the AI profiles allowed to participate in one backlog."""
 
+    team_profile_ids = _taskflow_team_profile_ids(settings=settings, profile_id=profile_id)
+    if team_profile_ids is None:
+        if settings is not None and bool(settings.taskflow_strict_team_profile_ids):
+            return (profile_id,)
+        return ()
     allowed: list[str] = [profile_id]
     seen: set[str] = {profile_id}
-    for item in _taskflow_team_profile_ids(settings=settings, profile_id=profile_id):
+    for item in team_profile_ids:
         if item in seen:
             continue
         seen.add(item)
@@ -2231,15 +2241,18 @@ def _taskflow_allowed_ai_profile_ids(
     return tuple(allowed)
 
 
-def _taskflow_team_profile_ids(*, settings: Settings | None, profile_id: str) -> tuple[str, ...]:
+def _taskflow_team_profile_ids(*, settings: Settings | None, profile_id: str) -> tuple[str, ...] | None:
     """Return configured teammate AI profiles for one backlog profile."""
 
     if settings is None:
-        return ()
+        return None
     config = get_profile_runtime_config_service(settings).load(profile_id)
-    if config is None or not config.taskflow_team_profile_ids:
-        return ()
-    return tuple(str(item).strip() for item in config.taskflow_team_profile_ids if str(item).strip())
+    if config is None:
+        return None
+    team_profile_ids = config.taskflow_team_profile_ids
+    if team_profile_ids is None:
+        return None
+    return tuple(str(item).strip() for item in team_profile_ids if str(item).strip())
 
 
 def _new_identifier(prefix: str) -> str:

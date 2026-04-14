@@ -239,6 +239,8 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_public_principal_required: bool = False
+    taskflow_strict_team_profile_ids: bool = False
     taskflow_blocked_revisit_initial_sec: int = 7200
     taskflow_blocked_revisit_max_sec: int = 86400
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND

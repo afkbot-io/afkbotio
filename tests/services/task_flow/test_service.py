@@ -19,11 +19,19 @@ from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory
 
 
-def _taskflow_test_settings(*, tmp_path: Path, db_name: str) -> Settings:
+def _taskflow_test_settings(
+    *,
+    tmp_path: Path,
+    db_name: str,
+    taskflow_public_principal_required: bool = False,
+    taskflow_strict_team_profile_ids: bool = False,
+) -> Settings:
     return Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
         chat_human_owner_ref="cli",
+        taskflow_public_principal_required=taskflow_public_principal_required,
+        taskflow_strict_team_profile_ids=taskflow_strict_team_profile_ids,
     )
 
 
@@ -532,7 +540,11 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
         db_name=db_name,
         profile_ids=("default", "papercliper", "outsider"),
     )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_strict_team_profile_ids=True,
+    )
     _write_team_runtime_config(
         settings=settings,
         profile_id="default",
@@ -1195,8 +1207,48 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         await engine.dispose()
 
 
+async def test_task_flow_service_legacy_backlog_allows_cross_profile_ai_without_team_config(
+    tmp_path: Path,
+) -> None:
+    """Legacy mode should preserve cross-profile AI assignment when team roster is not configured."""
+
+    db_name = "task_flow_legacy_backlog_team_unset.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        created = await service.create_task(
+            profile_id="default",
+            title="Cross-profile analyst task",
+            prompt="Allow analyst profile to own this task in legacy mode.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        assert created.owner_type == "ai_profile"
+        assert created.owner_ref == "analyst"
+
+        reassigned = await service.update_task(
+            profile_id="default",
+            task_id=created.id,
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert reassigned.owner_type == "ai_profile"
+        assert reassigned.owner_ref == "papercliper"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) -> None:
-    """AI workers should not assign backlog tasks to arbitrary teammate profiles."""
+    """Strict roster mode should reject cross-profile AI assignment without team config."""
 
     db_name = "task_flow_team_permissions.db"
     engine, factory = await build_repository_factory(
@@ -1205,11 +1257,6 @@ async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) 
         profile_ids=("default", "analyst", "papercliper"),
     )
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
     await _create_chat_session(
         factory,
         profile_id="analyst",
@@ -1217,19 +1264,18 @@ async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) 
     )
     service = TaskFlowService(factory, settings=settings)
     try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Unauthorized delegation",
-                prompt="Try to assign work to a teammate without team membership.",
-                created_by_type="ai_profile",
-                created_by_ref="analyst",
-                actor_session_id="taskflow:analyst-create",
-                owner_type="ai_profile",
-                owner_ref="papercliper",
-            )
-
-        assert exc_info.value.error_code == "task_owner_forbidden"
+        created = await service.create_task(
+            profile_id="default",
+            title="Cross-profile assignment",
+            prompt="Try to assign work to a teammate without team membership.",
+            created_by_type="ai_profile",
+            created_by_ref="analyst",
+            actor_session_id="taskflow:analyst-create",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+        )
+        assert created.owner_type == "ai_profile"
+        assert created.owner_ref == "papercliper"
     finally:
         await engine.dispose()
 
@@ -1243,7 +1289,11 @@ async def test_task_flow_service_rejects_ai_creator_outside_backlog_roster(tmp_p
         db_name=db_name,
         profile_ids=("default", "analyst"),
     )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_strict_team_profile_ids=True,
+    )
     await _create_chat_session(
         factory,
         profile_id="analyst",
@@ -1355,6 +1405,46 @@ async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_pat
         await engine.dispose()
 
 
+async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
+    tmp_path: Path,
+) -> None:
+    """Enabled public principal guard should reject mutating calls without actor identity."""
+
+    db_name = "task_flow_public_principal_flag_enabled.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Public owner baseline",
+            prompt="Create a task for public-principal enforcement checks.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli",
+        )
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="human",
+                actor_ref="someone_else",
+            )
+        assert update_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp_path: Path) -> None:
     """Public service instances should reject anonymous task and review mutations."""
 
@@ -1364,7 +1454,11 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp
         db_name=db_name,
         profile_ids=("default", "papercliper"),
     )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
     service = TaskFlowService(factory, settings=settings)
     try:
         task = await service.create_task(

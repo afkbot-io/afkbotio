@@ -15,7 +15,7 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
-from afkbot.services.task_flow import reset_task_flow_services
+from afkbot.services.task_flow import get_task_flow_service, reset_task_flow_services
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
@@ -606,6 +606,72 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
         if ready_at.tzinfo is None:
             ready_at = ready_at.replace(tzinfo=timezone.utc)
         assert ready_at >= before_update + timedelta(minutes=119)
+    finally:
+        await engine.dispose()
+
+
+async def test_task_update_plugin_forwards_explicit_ready_at_null(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.update` should propagate explicit `ready_at=null` to clear scheduled revisit state."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        service = get_task_flow_service(settings)
+        task = await service.create_task(
+            profile_id="default",
+            title="Scheduled retry to clear",
+            prompt="Clear explicit ready_at via task.update.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="blocked",
+            blocked_reason_code="blocked_on_dependency",
+            actor_type="human",
+            actor_ref="cli",
+            ready_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+        )
+
+        update_tool = registry.get("task.update")
+        get_tool = registry.get("task.get")
+        assert update_tool is not None
+        assert get_tool is not None
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="tool-session",
+            run_id=1,
+        )
+
+        clear_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task.id,
+                    "ready_at": None,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert clear_result.ok is True
+        assert clear_result.payload["task"]["ready_at"] is None
+
+        fetched_result = await get_tool.execute(
+            ctx,
+            get_tool.parse_params(
+                {"profile_key": "default", "task_id": task.id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert fetched_result.ok is True
+        assert fetched_result.payload["task"]["ready_at"] is None
     finally:
         await engine.dispose()
 

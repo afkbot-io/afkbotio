@@ -76,7 +76,7 @@ class TaskUpdateTool(ToolBase):
                     error_code="task_ready_at_conflict",
                     reason="ready_at and retry_after_sec cannot be used together",
                 )
-            effective_ready_at = payload.ready_at if ready_at_explicit else None
+            effective_ready_at = payload.ready_at
             if retry_after_explicit:
                 if payload.status != "blocked":
                     return ToolResult.error(
