@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.services.automations import AutomationsService, AutomationsServiceError
+from afkbot.services.automations.payloads import sanitize_payload
 from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
@@ -23,6 +24,23 @@ def _runtime_base_url(settings: Settings) -> str:
     """Build the effective local runtime base URL for automation service assertions."""
 
     return f"http://{settings.runtime_host}:{settings.runtime_port}"
+
+
+def test_sanitize_payload_redacts_value_when_sibling_name_marks_secret() -> None:
+    """Webhook payloads should still redact form-style secret values."""
+
+    sanitized = sanitize_payload(
+        {
+            "inputs": [
+                {
+                    "name": "telegram_token",
+                    "value": "short-secret",
+                }
+            ]
+        }
+    )
+
+    assert sanitized["inputs"] == [{"name": "telegram_token", "value": "[REDACTED]"}]
 
 
 async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_path: Path) -> None:
@@ -63,12 +81,18 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         hook_result = await service.trigger_webhook(
             profile_id="default",
             token=token,
-            payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
+            payload={
+                "event_id": "evt-1",
+                "k": "v",
+                "branch": "codex/managed-runtime-service-v1-0-13",
+                "api_token": "short",
+            },
             session_runner_factory=factory_fn,
         )
         assert hook_result.automation_id == webhook.id
         assert hook_result.session_id.startswith(f"automation-webhook-{webhook.id}-")
         assert hook_result.payload["api_token"] == "[REDACTED]"
+        assert hook_result.payload["branch"] == "codex/managed-runtime-service-v1-0-13"
         webhook_messages = [
             call["message"]
             for call in fake_loop.calls
@@ -78,6 +102,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert webhook_messages[0].startswith("process incoming\n\nwebhook_payload=")
         assert '"api_token": "[REDACTED]"' in webhook_messages[0]
         assert '"api_token": "short"' not in webhook_messages[0]
+        assert '"branch": "codex/managed-runtime-service-v1-0-13"' in webhook_messages[0]
 
         matching_call = next(
             call for call in fake_loop.calls if call["session_id"] == hook_result.session_id
@@ -91,6 +116,7 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert overrides.runtime_metadata["automation"]["trigger_type"] == "webhook"
         assert overrides.runtime_metadata["automation"]["payload_keys"] == (
             "api_token",
+            "branch",
             "event_id",
             "k",
         )
@@ -116,7 +142,12 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         duplicate_result = await service.trigger_webhook(
             profile_id="default",
             token=token,
-            payload={"event_id": "evt-1", "k": "v", "api_token": "short"},
+            payload={
+                "event_id": "evt-1",
+                "k": "v",
+                "branch": "codex/managed-runtime-service-v1-0-13",
+                "api_token": "short",
+            },
             session_runner_factory=factory_fn,
         )
         assert duplicate_result.deduplicated is True

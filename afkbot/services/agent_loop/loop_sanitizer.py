@@ -2,30 +2,22 @@
 
 from __future__ import annotations
 
-import re
-
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 
-_TOKEN_LIKE_RE = re.compile(
-    r"(?<!\S)"
-    r"(?=[A-Za-z0-9]{20,}(?!\S))"
-    r"(?=[A-Za-z0-9]*[A-Za-z])"
-    r"(?=[A-Za-z0-9]*\d)"
-    r"[A-Za-z0-9]+"
-)
-_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization", "value")
+_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization")
 _NON_SECRET_ID_FIELDS = frozenset({"id", "task_id", "tool_call_id", "call_id", "question_id"})
+_SENSITIVE_VALUE_HINT_FIELDS = frozenset({"name", "field", "key", "slug", "credential_name", "credential_slug"})
 _SECURITY_GUARD = SecurityGuard()
 
 
 def sanitize(value: str) -> str:
-    """Mask token-like substrings for safe logging."""
+    """Preserve plain text for task/runtime prompts and logs."""
 
-    return _TOKEN_LIKE_RE.sub("[REDACTED]", value)
+    return value
 
 
 def sanitize_value(value: object, *, field_name: str | None = None) -> object:
-    """Mask token-like strings in nested payloads."""
+    """Mask only explicitly secret payload content in nested values."""
 
     if field_name == "error_code":
         return value
@@ -34,22 +26,26 @@ def sanitize_value(value: object, *, field_name: str | None = None) -> object:
     if is_sensitive_field(field_name):
         return "[REDACTED]"
     if isinstance(value, str):
-        redacted = _SECURITY_GUARD.redact_text(value)
-        return sanitize(redacted)
+        return _SECURITY_GUARD.redact_text(value)
     if value is None:
         return None
     if isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, dict):
+        redact_value_field = _mapping_has_sensitive_value_hint(value)
         return {
-            str(key): sanitize_value(item, field_name=str(key))
+            str(key): (
+                "[REDACTED]"
+                if str(key).lower() == "value" and redact_value_field and item is not None
+                else sanitize_value(item, field_name=str(key))
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):
         return [sanitize_value(item) for item in value]
     if isinstance(value, (set, tuple)):
         return [sanitize_value(item) for item in value]
-    return sanitize(repr(value))
+    return _SECURITY_GUARD.redact_text(repr(value))
 
 
 def is_sensitive_field(field_name: str | None) -> bool:
@@ -59,6 +55,15 @@ def is_sensitive_field(field_name: str | None) -> bool:
         return False
     lowered = field_name.lower()
     return any(part in lowered for part in _SENSITIVE_FIELD_PARTS)
+
+
+def _mapping_has_sensitive_value_hint(value: dict[object, object]) -> bool:
+    for key, item in value.items():
+        if str(key).lower() not in _SENSITIVE_VALUE_HINT_FIELDS:
+            continue
+        if isinstance(item, str) and is_sensitive_field(item):
+            return True
+    return False
 
 
 def to_params_dict(value: object) -> dict[str, object]:

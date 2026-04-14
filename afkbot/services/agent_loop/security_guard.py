@@ -30,7 +30,7 @@ _SECRET_KEYWORD_RE = re.compile(
 _GENERIC_SECRET_RE = re.compile(
     r"(?<!\S)(?=[A-Za-z0-9_:\-]{24,}(?!\S))(?=[A-Za-z0-9_:\-]*[A-Za-z])(?=[A-Za-z0-9_:\-]*\d)[A-Za-z0-9_:\-]+"
 )
-_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization", "value")
+_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization")
 _SECURE_TOOL_FIELDS: dict[str, tuple[str, ...]] = {
     "credentials.create": ("value", "secret_value"),
     "credentials.update": ("value", "secret_value"),
@@ -96,11 +96,15 @@ class SecurityGuard:
         redacted_params = self.redact_value(raw_params)
         if not isinstance(redacted_params, dict):
             redacted_params = {}
+        secure_fields = _SECURE_TOOL_FIELDS.get(call.name)
+        if secure_fields:
+            for field_name in secure_fields:
+                if field_name in redacted_params:
+                    redacted_params[field_name] = "[REDACTED]"
         log_call = ToolCall(
             name=call.name,
             params={str(key): item for key, item in redacted_params.items()},
         )
-        secure_fields = _SECURE_TOOL_FIELDS.get(call.name)
         if secure_fields:
             for field_name in secure_fields:
                 field_value = raw_params.get(field_name)

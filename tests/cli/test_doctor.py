@@ -234,6 +234,33 @@ async def test_doctor_fails_when_managed_service_is_installed_but_daemon_is_down
     assert "configured ports are busy" in out
 
 
+async def test_doctor_does_not_require_daemon_when_setup_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """Fresh bootstrap-only installs should not fail doctor just because no daemon is running yet."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    monkeypatch.setattr("afkbot.cli.commands.doctor.setup_is_complete", lambda settings: False)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.describe_managed_runtime_service",
+        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_incomplete_setup.db'}",
+        root_dir=tmp_path,
+    )
+
+    assert await _run_doctor(settings, integrations=False, upgrades=False) is True
+    out = capsys.readouterr().out
+    assert "daemon: not running" in out
+
+
 async def test_doctor_reports_pending_upgrades(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
