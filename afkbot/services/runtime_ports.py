@@ -126,7 +126,7 @@ def probe_runtime_stack(
             return RuntimeStackProbe(runtime=runtime, api=api)
         runtime_ready = _probe_json_health_endpoint(
             url=f"http://{probe_host}:{runtime_port}/readyz",
-            validator=lambda payload: payload.get("ok") is True,
+            validator=_is_runtime_health_payload_shape,
             timeout_sec=timeout_sec,
         )
         api_ready = _probe_json_health_endpoint(
@@ -156,7 +156,12 @@ def probe_runtime_stack(
 
 
 def _is_runtime_health_payload_shape(payload: dict[str, object]) -> bool:
-    return payload.get("ok") is True
+    if payload.get("ok") is True:
+        return True
+    status = payload.get("status")
+    if not isinstance(status, str):
+        return False
+    return status.strip().lower() in {"ok", "ready"}
 
 
 def _is_api_health_payload_shape(payload: dict[str, object]) -> bool:

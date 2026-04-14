@@ -26,9 +26,9 @@ def test_probe_runtime_stack_accepts_legacy_health_payloads(monkeypatch) -> None
 
     responses = iter(
         [
-            _FakeResponse({"ok": True}),
             _FakeResponse({"status": "ok"}),
-            _FakeResponse({"ok": True}),
+            _FakeResponse({"status": "ok"}),
+            _FakeResponse({"status": "ready"}),
             _FakeResponse({"status": "ready"}),
         ]
     )
