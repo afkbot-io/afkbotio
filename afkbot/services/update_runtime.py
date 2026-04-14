@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import platform
 from packaging.version import InvalidVersion, Version
 import re
 import shutil
@@ -27,6 +26,7 @@ from afkbot.services.install_source import (
     read_install_source_from_runtime_config,
     read_install_source_resolved_target_from_runtime_config,
 )
+from afkbot.services.managed_runtime_service import ensure_managed_runtime_service
 from afkbot.services.managed_install import (
     ManagedInstallContext,
     build_next_app_dir,
@@ -39,12 +39,9 @@ from afkbot.services.managed_install import (
 from afkbot.services.setup.state import setup_is_complete
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.runtime_ports import resolve_default_runtime_port
-from afkbot.settings import Settings
+from afkbot.settings import Settings, get_settings
 from afkbot.version import load_cli_version_info
 
-_HOST_SERVICE_MARKER = "afkbot-managed-runtime-service"
-_SYSTEMD_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
-_LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
 _DEFAULT_API_PORT_OFFSET = 1
 _CODE_CHECKOUT_ROOT = Path(__file__).resolve(strict=False).parents[2]
 _GIT_NETWORK_TIMEOUT_SEC = 10.0
@@ -319,7 +316,10 @@ def _run_host_update(*, settings: Settings) -> UpdateResult:
             fallback="failed to refresh local Python environment",
         )
 
-    _run_afk_subcommand(settings=settings, args=("doctor", "--no-integrations", "--no-upgrades"))
+    _run_afk_subcommand(
+        settings=settings,
+        args=("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
+    )
     _run_afk_subcommand(settings=settings, args=("upgrade", "apply", "--quiet"))
 
     runtime_restarted = _restart_managed_host_runtime_service()
@@ -381,7 +381,10 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
             reason=f"failed to refresh managed launcher: {exc}",
         ) from exc
 
-    _run_afk_subcommand(settings=settings, args=("doctor", "--no-integrations", "--no-upgrades"))
+    _run_afk_subcommand(
+        settings=settings,
+        args=("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
+    )
     _run_afk_subcommand(settings=settings, args=("upgrade", "apply", "--quiet"))
 
     runtime_restarted = _restart_managed_host_runtime_service()
@@ -455,7 +458,7 @@ def _run_installer_source_update(
         _run_afk_executable(
             executable=afk_executable,
             settings=settings,
-            args=("doctor", "--no-integrations", "--no-upgrades"),
+            args=("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
         )
         doctor_ran = True
 
@@ -806,55 +809,27 @@ def _ensure_runtime_command_cwd(root_dir: Path) -> Path:
     return root_dir
 
 
-def _restart_managed_host_runtime_service() -> bool:
-    system_name = platform.system().lower()
-    if system_name == "linux":
-        if not _SYSTEMD_SERVICE_PATH.exists():
-            return False
-        if _HOST_SERVICE_MARKER not in _safe_read_text(_SYSTEMD_SERVICE_PATH):
-            return False
-        _run_checked(
-            ["systemctl", "daemon-reload"],
-            error_code="update_failed",
-            fallback="failed to reload systemd units",
-        )
-        _run_checked(
-            ["systemctl", "restart", "afkbot.service"],
-            error_code="update_failed",
-            fallback="failed to restart managed host runtime service",
-        )
-        return True
-    if system_name == "darwin":
-        launchd_path = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
-        if not launchd_path.exists():
-            return False
-        if _HOST_SERVICE_MARKER not in _safe_read_text(launchd_path):
-            return False
-        uid = _run_checked(
-            ["id", "-u"],
-            error_code="update_prereq_failed",
-            fallback="failed to resolve uid",
-        ).stdout.strip()
-        for domain in (f"gui/{uid}", f"user/{uid}"):
-            _run_command(["launchctl", "bootout", domain, str(launchd_path)])
-            result = _run_command(["launchctl", "bootstrap", domain, str(launchd_path)])
-            if result.returncode == 0:
-                _run_command(["launchctl", "kickstart", "-k", f"{domain}/{_LAUNCHD_SERVICE_NAME}"])
-                return True
+def _restart_managed_host_runtime_service(settings: Settings | None = None) -> bool:
+    resolved_settings = settings or get_settings()
+    result = ensure_managed_runtime_service(
+        resolved_settings,
+        start=setup_is_complete(resolved_settings),
+    )
+    if result.status == "failed":
         raise UpdateRuntimeError(
             error_code="update_failed",
-            reason="failed to restart managed host runtime service",
+            reason=result.reason or "failed to restart managed host runtime service",
         )
-    return False
+    return result.status in {"installed", "restarted"}
 
 
 def _wait_for_local_health(*, settings: Settings, timeout_sec: float = 90.0) -> bool:
-    host, runtime_port = _resolve_runtime_health_target(settings)
-    if host in {"0.0.0.0", "::"}:
-        host = "127.0.0.1"
-    url = f"http://{host}:{runtime_port + _DEFAULT_API_PORT_OFFSET}/healthz"
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
+        host, runtime_port = _resolve_runtime_health_target(settings)
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1"
+        url = f"http://{host}:{runtime_port + _DEFAULT_API_PORT_OFFSET}/healthz"
         try:
             with urlopen(url, timeout=5) as response:
                 if 200 <= getattr(response, "status", 200) < 300:
@@ -1109,10 +1084,3 @@ def _command_reason(
     if stdout:
         return stdout
     return fallback
-
-
-def _safe_read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return ""

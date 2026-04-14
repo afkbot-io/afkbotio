@@ -54,7 +54,7 @@ def test_api_health_and_ready_routes() -> None:
 
     # Assert
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    assert health.json() == {"status": "ok", "service": "afkbot-api"}
     assert ready.status_code == 200
     assert ready.json() == {"status": "ready"}
 

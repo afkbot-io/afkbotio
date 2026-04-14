@@ -350,6 +350,21 @@ run_bootstrap_setup() {
     "${AFK_BIN}" setup --bootstrap-only --yes --lang "${RESOLVED_INSTALL_LANG}"
 }
 
+run_managed_service_install() {
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    run "${AFK_BIN}" service install
+    return 0
+  fi
+  if "${AFK_BIN}" service install; then
+    return 0
+  fi
+  warn "$(
+    localized_text \
+      "Managed service install/restart did not complete automatically. Review the message above; you can still run \`afk service status\` or start AFKBOT manually with \`afk start\`." \
+      "Managed service не удалось установить или перезапустить автоматически. Посмотрите сообщение выше; при необходимости используйте \`afk service status\` или запустите AFKBOT вручную через \`afk start\`."
+  )"
+}
+
 path_contains() {
   local target="$1"
   local path_env="${2:-${PATH:-}}"
@@ -408,6 +423,7 @@ main() {
   AFK_BIN="${AFK_BIN_DIR}/afk"
   export PATH="${AFK_BIN_DIR}:${UV_BIN_DIR}:${PATH:-}"
   run_bootstrap_setup
+  run_managed_service_install
   remove_legacy_path_blocks
   remove_legacy_cli_aliases
   print_success

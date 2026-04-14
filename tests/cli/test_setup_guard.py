@@ -17,6 +17,30 @@ from afkbot.settings import get_settings
 from afkbot.version import CliVersionInfo
 
 
+def _isolate_doctor_runtime(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.describe_managed_runtime_service",
+        lambda: type("ServiceStatus", (), {"installed": False, "kind": None, "path": None})(),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: type(
+            "StackProbe",
+            (),
+            {
+                "running": False,
+                "conflict": False,
+                "runtime": type("Endpoint", (), {"ok": False, "url": f"http://{host}:{runtime_port}/healthz"})(),
+                "api": type("Endpoint", (), {"ok": False, "url": f"http://{host}:{runtime_port + 1}/healthz"})(),
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
+
+
 def _prepare_guard_context(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
@@ -190,6 +214,7 @@ def test_cli_allows_runtime_commands_after_setup_marker(
     settings.bootstrap_dir.mkdir(parents=True, exist_ok=True)
     for filename in settings.bootstrap_files:
         (settings.bootstrap_dir / filename).write_text("ok", encoding="utf-8")
+    _isolate_doctor_runtime(monkeypatch)
     runner = CliRunner()
 
     # Act
@@ -226,6 +251,7 @@ def test_cli_allows_runtime_commands_after_legacy_install_marker(
     settings.bootstrap_dir.mkdir(parents=True, exist_ok=True)
     for filename in settings.bootstrap_files:
         (settings.bootstrap_dir / filename).write_text("ok", encoding="utf-8")
+    _isolate_doctor_runtime(monkeypatch)
     runner = CliRunner()
 
     # Act

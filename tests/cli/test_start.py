@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeStepReport
 from typer.testing import CliRunner
 
@@ -138,6 +141,10 @@ def test_start_uses_auto_selected_exotic_port_when_runtime_port_is_unconfigured(
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     monkeypatch.setattr("afkbot.cli.commands.start.read_runtime_config", lambda settings: {})
     monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
+    monkeypatch.setattr(
         "afkbot.cli.commands.start.resolve_default_runtime_port",
         lambda *, settings, host, runtime_config: 46341,
     )
@@ -181,6 +188,10 @@ def test_start_persists_first_successful_auto_selected_runtime_port(monkeypatch,
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     monkeypatch.setattr("afkbot.cli.commands.start.read_runtime_config", lambda settings: {})
     monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
+    monkeypatch.setattr(
         "afkbot.cli.commands.start.resolve_default_runtime_port",
         lambda *, settings, host, runtime_config: 46341,
     )
@@ -197,10 +208,114 @@ def test_start_persists_first_successful_auto_selected_runtime_port(monkeypatch,
     get_settings.cache_clear()
 
 
-def test_start_can_disable_external_channels(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_repairs_persisted_runtime_port_conflict_and_persists_new_port(
+    monkeypatch,
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    """Configured ports occupied by a foreign process should auto-shift and persist."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    writes: list[dict[str, object]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        persist_runtime_bind: bool,
+        settings,
+    ) -> None:
+        del api_port, start_channels, channel_ids, strict_channels
+        assert persist_runtime_bind is True
+        from afkbot.cli.commands.start import _persist_runtime_bind_defaults
+
+        _persist_runtime_bind_defaults(settings=settings, host=host, runtime_port=runtime_port)
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.read_runtime_config",
+        lambda settings: {"runtime_host": "127.0.0.1", "runtime_port": 46339},
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: runtime_port == 46341,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: SimpleNamespace(
+            running=False,
+            conflict=True,
+            runtime=SimpleNamespace(ok=False),
+            api=SimpleNamespace(ok=False),
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.find_available_runtime_port",
+        lambda *, host, preferred_port, attempts=64: 46341,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.write_runtime_config",
+        lambda settings, *, config: writes.append(dict(config)),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 0
+    assert writes == [{"runtime_host": "127.0.0.1", "runtime_port": 46341}]
+    assert "runtime_port=46339" in result.stderr
+    assert "runtime_port=46341" in result.stderr
+    get_settings.cache_clear()
+
+
+def test_start_refuses_to_shift_port_when_afkbot_daemon_is_already_running(
+    monkeypatch,
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    """A second `afk start` must not rewrite the configured port while AFKBOT is already live."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.read_runtime_config",
+        lambda settings: {"runtime_host": "127.0.0.1", "runtime_port": 46339},
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: False,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: SimpleNamespace(
+            running=True,
+            conflict=False,
+            runtime=SimpleNamespace(ok=True),
+            api=SimpleNamespace(ok=True),
+        ),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code != 0
+    assert "already running" in result.stderr.lower()
+    get_settings.cache_clear()
+
+
+def test_start_can_disable_external_channels(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """CLI flag should disable external channel adapters."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
     calls: list[tuple[bool, tuple[str, ...]]] = []
 
@@ -219,6 +334,10 @@ def test_start_can_disable_external_channels(monkeypatch) -> None:  # type: igno
         calls.append((start_channels, channel_ids))
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     runner = CliRunner()
     result = runner.invoke(app, ["start", "--no-channels"])
@@ -227,10 +346,11 @@ def test_start_can_disable_external_channels(monkeypatch) -> None:  # type: igno
     get_settings.cache_clear()
 
 
-def test_start_rejects_pending_upgrades_by_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_rejects_pending_upgrades_by_default(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Start should fail closed when persisted-state upgrades are still pending."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
 
     async def _fake_inspect_pending_upgrades(settings):  # type: ignore[no-untyped-def]
@@ -247,6 +367,10 @@ def test_start_rejects_pending_upgrades_by_default(monkeypatch) -> None:  # type
         )
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
     runner = CliRunner()
     result = runner.invoke(app, ["start"])
     assert result.exit_code != 0
@@ -254,10 +378,11 @@ def test_start_rejects_pending_upgrades_by_default(monkeypatch) -> None:  # type
     get_settings.cache_clear()
 
 
-def test_start_can_bypass_pending_upgrade_guard(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_can_bypass_pending_upgrade_guard(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Explicit override should allow startup when the operator accepts pending upgrades."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
     calls: list[tuple[str, int, int, bool, tuple[str, ...]]] = []
 
@@ -283,6 +408,10 @@ def test_start_can_bypass_pending_upgrade_guard(monkeypatch) -> None:  # type: i
         calls.append((host, runtime_port, api_port, start_channels, channel_ids))
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     runner = CliRunner()
     result = runner.invoke(app, ["start", "--allow-pending-upgrades"])
@@ -291,10 +420,11 @@ def test_start_can_bypass_pending_upgrade_guard(monkeypatch) -> None:  # type: i
     get_settings.cache_clear()
 
 
-def test_start_can_select_specific_channels(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_can_select_specific_channels(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """CLI should pass selected channel endpoint ids to the runtime launcher."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
     calls: list[tuple[bool, tuple[str, ...]]] = []
 
@@ -313,6 +443,10 @@ def test_start_can_select_specific_channels(monkeypatch) -> None:  # type: ignor
         calls.append((start_channels, channel_ids))
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     runner = CliRunner()
     result = runner.invoke(app, ["start", "--channel", "support-bot", "--channel", "sales-bot"])
@@ -378,6 +512,26 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     """Internal launcher should manage both automation and Task Flow runtimes."""
 
     lifecycle: list[str] = []
+    real_event_cls = asyncio.Event
+
+    class _AutoStopEvent:
+        def __init__(self) -> None:
+            self._event = real_event_cls()
+            loop = asyncio.get_running_loop()
+            loop.call_soon(self._event.set)
+
+        def set(self) -> None:
+            self._event.set()
+
+        def clear(self) -> None:
+            self._event.clear()
+
+        def is_set(self) -> bool:
+            return self._event.is_set()
+
+        async def wait(self) -> bool:
+            await self._event.wait()
+            return True
 
     class _FakeAutomationDaemon:
         def __init__(self, *, host: str, port: int) -> None:
@@ -419,7 +573,10 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
 
         async def serve(self) -> None:
             lifecycle.append("api:serve")
+            while not self.should_exit:
+                await asyncio.sleep(0)
 
+    monkeypatch.setattr("afkbot.cli.commands.start.asyncio.Event", _AutoStopEvent)
     monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
     monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
     monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
@@ -448,3 +605,78 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     assert "taskflow:start" in lifecycle
     assert "api:serve" in lifecycle
     assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]
+
+
+async def test_run_full_stack_fails_when_api_server_exits_unexpectedly(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A clean API task exit before shutdown should fail the overall runtime start."""
+
+    class _FakeAutomationDaemon:
+        def __init__(self, *, host: str, port: int) -> None:
+            del host, port
+
+        def begin_shutdown(self) -> None:
+            return
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeTaskFlowDaemon:
+        def __init__(self, *, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        def begin_shutdown(self) -> None:
+            return
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeChannelManager:
+        def __init__(self, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeServer:
+        def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
+            del config
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            return
+
+    monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
+    monkeypatch.setattr("afkbot.cli.commands.start._ManagedUvicornServer", _FakeServer)
+    monkeypatch.setattr("afkbot.cli.commands.start.create_app", lambda: object())
+
+    from afkbot.cli.commands.start import _run_full_stack
+    from afkbot.settings import Settings
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'start_runtime.db'}",
+    )
+
+    try:
+        await _run_full_stack(
+            host="127.0.0.1",
+            runtime_port=18080,
+            api_port=18081,
+            start_channels=False,
+            channel_ids=(),
+            strict_channels=False,
+            persist_runtime_bind=False,
+            settings=settings,
+        )
+    except RuntimeError as exc:
+        assert "exited before shutdown was requested" in str(exc)
+    else:  # pragma: no cover - defensive guard
+        raise AssertionError("expected runtime start to fail on unexpected API exit")

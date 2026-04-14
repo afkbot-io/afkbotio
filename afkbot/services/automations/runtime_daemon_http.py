@@ -50,7 +50,7 @@ class RuntimeDaemonHttpRuntime:
         """Route one parsed HTTP request to health/readiness/webhook handlers."""
 
         if request.method == "GET" and request.path == "/healthz":
-            return 200, {"ok": True}
+            return 200, {"ok": True, "service": "afkbot-runtime"}
         if request.method == "GET" and request.path == "/readyz":
             if self._is_ready():
                 return 200, {"ok": True}

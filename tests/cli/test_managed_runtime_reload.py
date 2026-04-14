@@ -2,28 +2,26 @@
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
 from pytest import CaptureFixture, MonkeyPatch
 
 from afkbot.cli.managed_runtime import (
+    ManagedRuntimeReloadResult,
     reload_install_managed_runtime,
     reload_install_managed_runtime_notice,
 )
 
 
 def test_reload_install_managed_runtime_requires_manual_restart_without_service(
-    tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
     """Without a managed host service file, runtime reload should fall back to manual restart."""
 
-    # Arrange
-    monkeypatch.setattr("afkbot.cli.managed_runtime.sys.platform", "linux")
     monkeypatch.setattr(
-        "afkbot.cli.managed_runtime._managed_service_file_present",
-        lambda path: False,
+        "afkbot.cli.managed_runtime.ensure_managed_runtime_service",
+        lambda settings, *, start: ManagedRuntimeReloadResult(
+            status="manual_restart_required",
+            reason="Changes were saved. Restart `afk start` to apply them locally.",
+        ),
     )
 
     # Act
@@ -35,33 +33,20 @@ def test_reload_install_managed_runtime_requires_manual_restart_without_service(
 
 
 def test_reload_install_managed_runtime_restarts_managed_host_service(
-    tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
     """When the managed service exists, runtime reload should restart it."""
 
-    # Arrange
-    monkeypatch.setattr("afkbot.cli.managed_runtime.sys.platform", "linux")
     monkeypatch.setattr(
-        "afkbot.cli.managed_runtime._managed_service_file_present",
-        lambda path: True,
+        "afkbot.cli.managed_runtime.ensure_managed_runtime_service",
+        lambda settings, *, start: ManagedRuntimeReloadResult(status="installed"),
     )
-    monkeypatch.setattr("afkbot.cli.managed_runtime.os.geteuid", lambda: 0)
-    captured: dict[str, object] = {}
-
-    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured["cmd"] = cmd
-        captured["kwargs"] = kwargs
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr("afkbot.cli.managed_runtime.subprocess.run", _fake_run)
 
     # Act
     result = reload_install_managed_runtime()
 
     # Assert
-    assert result.status == "restarted"
-    assert captured["cmd"] == ["systemctl", "restart", "afkbot.service"]
+    assert result.status == "installed"
 
 
 def test_reload_install_managed_runtime_notice_swallow_unexpected_errors(

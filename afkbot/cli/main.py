@@ -18,6 +18,7 @@ from afkbot.cli.commands.mcp import register as register_mcp
 from afkbot.cli.commands.automation import register as register_automation
 from afkbot.cli.commands.plugin import register as register_plugin
 from afkbot.cli.commands.profile import register as register_profile
+from afkbot.cli.commands.service import register as register_service
 from afkbot.cli.commands.skill import register as register_skill
 from afkbot.cli.commands.start import register as register_start
 from afkbot.cli.commands.subagent import register as register_subagent
@@ -60,6 +61,7 @@ register_memory(app)
 register_mcp(app)
 register_plugin(app)
 register_profile(app)
+register_service(app)
 register_skill(app)
 register_start(app)
 register_subagent(app)
@@ -76,7 +78,18 @@ def _guard_setup(ctx: typer.Context) -> None:
     command = ctx.invoked_subcommand
     if command is None:
         return
-    if command in {"setup", "uninstall", "update", "browser", "bootstrap", "upgrade", "mcp", "plugin", "version"}:
+    if command in {
+        "setup",
+        "uninstall",
+        "update",
+        "browser",
+        "bootstrap",
+        "upgrade",
+        "mcp",
+        "plugin",
+        "service",
+        "version",
+    }:
         return
 
     settings = get_settings()
