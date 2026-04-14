@@ -199,6 +199,28 @@ def test_verify_provider_token_reports_invalid_openai_codex_token(monkeypatch) -
     assert "codex login" in result.reason.lower()
 
 
+def test_verify_provider_token_does_not_treat_openai_codex_rate_limit_as_valid(monkeypatch) -> None:
+    """OpenAI Codex 429 should not be accepted as proof of valid OAuth credentials."""
+
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        _ = request, proxy_url, timeout_sec
+        return 429, '{"error":{"message":"rate limited"}}'
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        api_key="oauth-token",
+        base_url="https://chatgpt.com/backend-api/codex",
+        model="gpt-5.3-codex",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "llm_token_verify_rate_limited"
+    assert result.status_code == 429
+    assert result.reason is not None
+    assert "retry" in result.reason.lower()
+
+
 def test_verify_provider_token_uses_github_copilot_exchange(monkeypatch) -> None:
     """GitHub Copilot verification should use token exchange instead of verify-path GET."""
 

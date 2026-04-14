@@ -284,8 +284,18 @@ def _verify_openai_codex_token(
             reason=f"LLM token verification failed due to network error: {exc}",
             status_code=None,
         )
-    if status_code in {200, 204, 429}:
+    if status_code in {200, 204}:
         return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=status_code)
+    if status_code == 429:
+        return TokenVerificationResult(
+            ok=False,
+            error_code="llm_token_verify_rate_limited",
+            reason=(
+                "OpenAI Codex rate-limited token verification before auth could be confirmed. "
+                "Retry the verification in a few moments."
+            ),
+            status_code=status_code,
+        )
     if status_code in {401, 403}:
         return TokenVerificationResult(
             ok=False,
