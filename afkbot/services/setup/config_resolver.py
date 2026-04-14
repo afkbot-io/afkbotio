@@ -110,6 +110,7 @@ def build_default_profile_runtime_config(
         base_runtime=base_runtime,
         runtime_core=runtime_core,
         llm_history_turns=None,
+        chat_secret_guard_enabled=None,
         tool_plugins=(),
         memory_auto_search_enabled=None,
         memory_auto_search_scope_mode=None,

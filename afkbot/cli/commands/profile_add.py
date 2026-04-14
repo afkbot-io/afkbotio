@@ -124,6 +124,11 @@ def register_add(profile_app: typer.Typer) -> None:
             "--planning-mode",
             help="Default chat planning mode for this profile: off, auto, or on.",
         ),
+        chat_secret_guard_enabled: bool | None = typer.Option(
+            None,
+            "--chat-secret-guard-enabled/--chat-secret-guard-disabled",
+            help="Enable or disable secret masking/blocking in the chat path for this profile.",
+        ),
         tool_plugin: list[str] = typer.Option(
             [],
             "--tool-plugin",
@@ -291,6 +296,7 @@ def register_add(profile_app: typer.Typer) -> None:
                 provider_api_key=provider_api_key,
                 minimax_region=minimax_region,
                 planning_mode=planning_mode,
+                chat_secret_guard_enabled=chat_secret_guard_enabled,
                 current_runtime_secrets=None,
                 policy_enabled=policy_enabled,
                 policy_preset=policy_preset,

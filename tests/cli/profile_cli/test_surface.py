@@ -70,6 +70,7 @@ def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert add_payload["profile"]["effective_runtime"]["llm_thinking_level"] == "very_high"
     assert add_payload["profile"]["effective_runtime"]["llm_history_turns"] == 18
     assert add_payload["profile"]["effective_runtime"]["chat_planning_mode"] == "on"
+    assert add_payload["profile"]["effective_runtime"]["chat_secret_guard_enabled"] is False
     assert add_payload["profile"]["effective_runtime"]["enabled_tool_plugins"] == ["debug_echo"]
     assert add_payload["profile"]["effective_runtime"]["memory_auto_search_scope_mode"] == "auto"
     assert add_payload["profile"]["effective_runtime"]["memory_auto_save_scope_mode"] == "auto"
@@ -86,6 +87,7 @@ def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert show_payload["profile"]["runtime_config"]["llm_thinking_level"] == "very_high"
     assert show_payload["profile"]["runtime_config"]["llm_history_turns"] == 18
     assert show_payload["profile"]["runtime_config"]["chat_planning_mode"] == "on"
+    assert show_payload["profile"]["effective_runtime"]["chat_secret_guard_enabled"] is False
     assert show_payload["profile"]["effective_runtime"]["memory_auto_search_scope_mode"] == "auto"
     assert show_payload["profile"]["effective_runtime"]["memory_auto_save_scope_mode"] == "auto"
     assert show_payload["profile"]["runtime_config"]["session_compaction_enabled"] is True
@@ -117,6 +119,41 @@ def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert list_result.exit_code == 0
     list_payload = json.loads(list_result.stdout)
     assert [item["id"] for item in list_payload["profiles"]] == ["analyst"]
+
+
+def test_profile_add_can_enable_chat_secret_guard(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """Profile CLI should persist explicit chat secret guard enablement."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    add_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "guarded",
+            "--name",
+            "Guarded",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--chat-secret-guard-enabled",
+        ],
+    )
+    show_result = runner.invoke(app, ["profile", "show", "guarded", "--json"])
+
+    assert add_result.exit_code == 0
+    add_payload = json.loads(add_result.stdout)
+    assert add_payload["profile"]["effective_runtime"]["chat_secret_guard_enabled"] is True
+
+    assert show_result.exit_code == 0
+    show_payload = json.loads(show_result.stdout)
+    assert show_payload["profile"]["effective_runtime"]["chat_secret_guard_enabled"] is True
+    assert show_payload["profile"]["runtime_config"]["chat_secret_guard_enabled"] is True
 
 
 def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

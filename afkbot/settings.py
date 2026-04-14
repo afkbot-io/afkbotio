@@ -263,6 +263,7 @@ class Settings(BaseSettings):
     )
     llm_history_turns: int = 8
     chat_planning_mode: Literal["off", "auto", "on"] = "auto"
+    chat_secret_guard_enabled: bool = False
     secure_request_ttl_sec: int = 900
     secure_flow_max_steps: int = 10
     memory_retention_days: int = 180

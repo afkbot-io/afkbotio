@@ -88,6 +88,7 @@ def build_runtime_defaults_from_details(details: ProfileDetails) -> dict[str, st
         "AFKBOT_LLM_PROXY_TYPE": runtime.llm_proxy_type,
         "AFKBOT_LLM_PROXY_URL": runtime.llm_proxy_url or "",
         "AFKBOT_LLM_THINKING_LEVEL": runtime.llm_thinking_level or "medium",
+        "AFKBOT_CHAT_SECRET_GUARD_ENABLED": "1" if runtime.chat_secret_guard_enabled else "0",
     }
 
 
@@ -107,6 +108,7 @@ def resolve_current_runtime_config(details: ProfileDetails) -> ProfileRuntimeCon
         llm_thinking_level=runtime.llm_thinking_level,
         llm_history_turns=runtime.llm_history_turns,
         chat_planning_mode=runtime.chat_planning_mode,
+        chat_secret_guard_enabled=runtime.chat_secret_guard_enabled,
         enabled_tool_plugins=runtime.enabled_tool_plugins,
         memory_auto_search_enabled=runtime.memory_auto_search_enabled,
         memory_auto_search_scope_mode=runtime.memory_auto_search_scope_mode,
