@@ -44,6 +44,27 @@ def test_probe_runtime_stack_accepts_legacy_health_payloads(monkeypatch) -> None
     assert probe.running is True
 
 
+def test_probe_runtime_stack_accepts_legacy_status_only_health_pair(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Legacy status-only runtime/API payloads should remain valid during rolling upgrades."""
+
+    responses = iter(
+        [
+            _FakeResponse({"status": "ok"}),
+            _FakeResponse({"status": "ok"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "afkbot.services.runtime_ports.urlopen",
+        lambda url, timeout=1.0: next(responses),
+    )
+
+    probe = probe_runtime_stack(host="127.0.0.1", runtime_port=18080)
+
+    assert probe.runtime.ok is True
+    assert probe.api.ok is True
+    assert probe.running is True
+
+
 def test_probe_runtime_stack_rejects_generic_non_afkbot_health_pair(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Generic health endpoints without AFKBOT service markers should not count as AFKBOT."""
 

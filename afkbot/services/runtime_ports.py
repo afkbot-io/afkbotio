@@ -124,6 +124,8 @@ def probe_runtime_stack(
             expected="afkbot-api",
         ):
             return RuntimeStackProbe(runtime=runtime, api=api)
+        if _is_api_health_payload_shape(runtime_payload) and _is_api_health_payload_shape(api_payload):
+            return RuntimeStackProbe(runtime=runtime, api=api)
         runtime_ready = _probe_json_health_endpoint(
             url=f"http://{probe_host}:{runtime_port}/readyz",
             validator=_is_runtime_health_payload_shape,
@@ -156,14 +158,7 @@ def probe_runtime_stack(
 
 
 def _is_runtime_health_payload_shape(payload: dict[str, object]) -> bool:
-    if payload.get("ok") is True:
-        return True
-    status = payload.get("status")
-    if not isinstance(status, str):
-        return False
-    return status.strip().lower() in {"ok", "ready"}
-
-
+    return payload.get("ok") is True or _is_api_health_payload_shape(payload)
 def _is_api_health_payload_shape(payload: dict[str, object]) -> bool:
     return str(payload.get("status") or "").strip().lower() == "ok"
 
