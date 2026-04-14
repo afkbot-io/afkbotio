@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import json
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import cast
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request
 
@@ -189,12 +191,13 @@ def _execute_request(
     proxy_url: str | None,
     timeout_sec: float,
 ) -> tuple[int, str]:
+    request_content = cast("str | bytes | Iterable[bytes] | None", request.data)
     with httpx.Client(timeout=timeout_sec, proxy=proxy_url, trust_env=False) as client:
         response = client.request(
             method=request.get_method(),
             url=request.full_url,
             headers=dict(request.header_items()),
-            content=request.data,
+            content=request_content,
         )
         status_code = int(response.status_code)
         body_text = response.text
