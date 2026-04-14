@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import dataclass
 import os
 import signal
 from contextlib import suppress
@@ -20,13 +21,28 @@ from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManagerError,
     ChannelRuntimeStartReport,
 )
-from afkbot.services.runtime_ports import resolve_default_runtime_port
+from afkbot.services.runtime_ports import (
+    find_available_runtime_port,
+    is_runtime_port_pair_available,
+    probe_runtime_stack,
+    resolve_default_runtime_port,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
 
 _DEFAULT_API_PORT_OFFSET: Final[int] = 1
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeBindPlan:
+    """Resolved runtime bind plus persistence/repair metadata."""
+
+    runtime_port: int
+    api_port: int
+    persist_runtime_bind: bool
+    repaired_from_port: int | None = None
 
 
 class _ManagedUvicornServer(uvicorn.Server):
@@ -86,23 +102,16 @@ def register(app: typer.Typer) -> None:
         settings = get_settings()
         resolved_host = host or settings.runtime_host
         runtime_config = read_runtime_config(settings)
-        resolved_runtime_port = (
-            runtime_port
-            if runtime_port is not None
-            else resolve_default_runtime_port(
-                settings=settings,
-                host=resolved_host,
-                runtime_config=runtime_config,
-            )
-        )
-        resolved_api_port = api_port or (resolved_runtime_port + _DEFAULT_API_PORT_OFFSET)
-        if resolved_runtime_port == resolved_api_port:
-            raise_usage_error("--runtime-port and --api-port must be different ports")
-        persist_runtime_bind = _should_persist_runtime_bind_defaults(
+        bind_plan = _resolve_runtime_bind_plan(
+            settings=settings,
+            host=resolved_host,
             runtime_config=runtime_config,
             runtime_port_override=runtime_port,
             api_port_override=api_port,
         )
+        resolved_runtime_port = bind_plan.runtime_port
+        resolved_api_port = bind_plan.api_port
+        persist_runtime_bind = bind_plan.persist_runtime_bind
         if not allow_pending_upgrades:
             upgrade_report = asyncio.run(_inspect_pending_upgrades(settings))
             if upgrade_report.changed:
@@ -117,6 +126,14 @@ def register(app: typer.Typer) -> None:
                 raise_usage_error(
                     f"{reason} Run `afk upgrade apply` first, or rerun with --allow-pending-upgrades."
                 )
+        if bind_plan.repaired_from_port is not None:
+            typer.secho(
+                "WARNING configured runtime port pair was busy and AFKBOT was not reachable there; "
+                f"switching from runtime_port={bind_plan.repaired_from_port} "
+                f"to runtime_port={resolved_runtime_port} and saving it.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
 
         typer.echo(
             f"runtime daemon: http://{resolved_host}:{resolved_runtime_port} "
@@ -292,6 +309,82 @@ def _format_runtime_start_os_error(
             "Choose free ports or stop the conflicting listener."
         )
     return f"Runtime startup failed: {message}"
+
+
+def _resolve_runtime_bind_plan(
+    *,
+    settings: Settings,
+    host: str,
+    runtime_config: Mapping[str, object],
+    runtime_port_override: int | None,
+    api_port_override: int | None,
+) -> _RuntimeBindPlan:
+    """Resolve one start-time runtime bind, repairing saved conflicts when safe."""
+
+    runtime_port = (
+        runtime_port_override
+        if runtime_port_override is not None
+        else resolve_default_runtime_port(
+            settings=settings,
+            host=host,
+            runtime_config=runtime_config,
+        )
+    )
+    api_port = api_port_override or (runtime_port + _DEFAULT_API_PORT_OFFSET)
+    if runtime_port == api_port:
+        raise_usage_error("--runtime-port and --api-port must be different ports")
+    if runtime_port_override is not None or api_port_override is not None:
+        return _RuntimeBindPlan(
+            runtime_port=runtime_port,
+            api_port=api_port,
+            persist_runtime_bind=False,
+        )
+
+    if is_runtime_port_pair_available(host=host, runtime_port=runtime_port):
+        return _RuntimeBindPlan(
+            runtime_port=runtime_port,
+            api_port=api_port,
+            persist_runtime_bind=_should_persist_runtime_bind_defaults(
+                runtime_config=runtime_config,
+                runtime_port_override=runtime_port_override,
+                api_port_override=api_port_override,
+            ),
+        )
+
+    stack_probe = probe_runtime_stack(
+        host=host,
+        runtime_port=runtime_port,
+        api_port=api_port,
+    )
+    if stack_probe.running:
+        raise_usage_error(
+            "AFKBOT daemon is already running on the configured local ports. "
+            f"Host={host}, runtime_port={runtime_port}, api_port={api_port}. "
+            "Stop it first or change the saved port."
+        )
+    if runtime_port_override is not None or api_port_override is not None:
+        raise_usage_error(
+            "Runtime failed to bind a local port. "
+            f"Host={host}, runtime_port={runtime_port}, api_port={api_port}. "
+            "Choose free ports or stop the conflicting listener."
+        )
+
+    repaired_port = find_available_runtime_port(host=host, preferred_port=runtime_port)
+    if repaired_port != runtime_port and is_runtime_port_pair_available(
+        host=host,
+        runtime_port=repaired_port,
+    ):
+        return _RuntimeBindPlan(
+            runtime_port=repaired_port,
+            api_port=repaired_port + _DEFAULT_API_PORT_OFFSET,
+            persist_runtime_bind=True,
+            repaired_from_port=runtime_port,
+        )
+    raise_usage_error(
+        "Runtime failed to bind a local port. "
+        f"Host={host}, runtime_port={runtime_port}, api_port={api_port}. "
+        "Choose free ports or stop the conflicting listener."
+    )
 
 
 def _should_persist_runtime_bind_defaults(

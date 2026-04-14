@@ -8,6 +8,7 @@ import typer
 
 from afkbot.cli.command_errors import raise_usage_error
 from afkbot.cli.presentation.uninstall_prompts import prompt_uninstall_confirmation
+from afkbot.services.managed_runtime_service import remove_managed_runtime_service
 from afkbot.services.setup.project_cleanup import clear_local_sqlite_db, clear_profiles_workspace
 from afkbot.services.setup.runtime_store import clear_runtime_store
 from afkbot.services.setup.state import clear_setup_state
@@ -30,6 +31,8 @@ def register(app: typer.Typer) -> None:
         settings = get_settings()
         _confirm_uninstall(yes=yes)
         try:
+            service_result = remove_managed_runtime_service()
+            _handle_uninstall_service_result(service_result)
             clear_profiles_workspace(settings)
             clear_local_sqlite_db(settings)
             clear_setup_state(settings)
@@ -61,3 +64,12 @@ def _format_uninstall_success(
     lines.append("Install state: cleared")
     lines.append("Next step: run `afk setup` to configure the default profile again.")
     return "\n".join(lines)
+
+
+def _handle_uninstall_service_result(result: object) -> None:
+    status = str(getattr(result, "status", "unknown"))
+    reason = str(getattr(result, "reason", "") or "").strip()
+    if status == "failed":
+        raise_usage_error(reason or "failed to remove the managed AFKBOT service")
+    if status == "manual_restart_required" and reason:
+        typer.echo(f"WARNING {reason}", err=True)

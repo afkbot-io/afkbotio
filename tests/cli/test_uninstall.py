@@ -88,3 +88,31 @@ def test_uninstall_requires_confirmation_in_non_interactive_mode(tmp_path: Path,
     # Assert
     assert result.exit_code == 2
     assert "confirmation required" in result.output
+
+
+def test_uninstall_warns_when_legacy_system_service_was_left_untouched(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Uninstall should surface a warning when it cannot remove a legacy system service."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "afkbot.cli.commands.uninstall.remove_managed_runtime_service",
+        lambda: type(
+            "Result",
+            (),
+            {
+                "status": "manual_restart_required",
+                "reason": "System-level AFKBOT service was left untouched.",
+            },
+        )(),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["uninstall", "--yes"])
+
+    assert result.exit_code == 0
+    assert "WARNING System-level AFKBOT service was left untouched." in result.stderr

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.13] - 2026-04-14
+
+### Added
+
+- Managed service lifecycle commands under `afk service ...` for install, start, stop, restart, status, and persisted runtime port updates.
+- Cross-platform daemon diagnostics in `afk doctor` and `afk service status`, including live AFKBOT health checks instead of service-manager-only signals.
+- Regression coverage for Linux systemd system-level installs, user-level fallback behavior, service uninstall cleanup, and environment-isolated `afk start` CLI flows.
+
+### Changed
+
+- Linux managed runtime installs now prefer a system-level `systemd` unit when that path is available, while falling back to an enabled user unit with explicit `loginctl enable-linger` guidance when root-level installation is unavailable.
+- Managed `systemd` and `launchd` service actions now wait for real AFKBOT health before reporting success, and managed service definitions no longer autostart from bootstrap-only state unless setup is fully completed.
+- `install.sh`, `afk update`, and managed runtime reload flows now refresh the installed service definition instead of assuming a previously provisioned daemon can be reused unchanged.
+
+### Fixed
+
+- Repeated install/update flows now re-evaluate managed daemon startup instead of leaving stale Linux/macOS service definitions behind.
+- Persisted runtime port changes roll back cleanly when a managed reload cannot come back healthy.
+- Linux uninstall now removes managed system-level AFKBOT units instead of leaving reboot autostart artifacts behind.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.0.13`.
+
 ## [1.0.12] - 2026-04-11
 
 ### Added

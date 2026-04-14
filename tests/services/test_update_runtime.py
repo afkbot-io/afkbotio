@@ -131,7 +131,7 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
     assert result.source_updated is True
     assert result.runtime_restarted is True
     assert afk_calls == [
-        ("doctor", "--no-integrations", "--no-upgrades"),
+        ("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
         ("upgrade", "apply", "--quiet"),
     ]
     assert [
@@ -247,7 +247,7 @@ def test_run_update_resets_checkout_after_history_rewrite(
     assert result.source_updated is True
     assert result.runtime_restarted is True
     assert "Git source reset to origin/main after history rewrite" in result.details
-    assert ("doctor", "--no-integrations", "--no-upgrades") in afk_calls
+    assert ("doctor", "--no-integrations", "--no-upgrades", "--no-daemon") in afk_calls
     assert ("upgrade", "apply", "--quiet") in afk_calls
     assert ["git", "-C", str(tmp_path), "reset", "--hard", "FETCH_HEAD"] in commands
     assert ["git", "-C", str(tmp_path), "merge", "--ff-only", "FETCH_HEAD"] not in commands
@@ -384,7 +384,7 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
         str(next_app_dir),
     ] in commands
     assert afk_calls == [
-        ("doctor", "--no-integrations", "--no-upgrades"),
+        ("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
         ("upgrade", "apply", "--quiet"),
     ]
     launcher_name = "afk.cmd" if os.name == "nt" else "afk"
@@ -648,7 +648,13 @@ def test_run_update_upgrades_uv_tool_install(
     assert bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"] == "afkbotio"
     assert bootstrap_env["AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET"] == "1.2.3"
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
-    assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] in commands
+    assert [
+        str(afk_executable),
+        "doctor",
+        "--no-integrations",
+        "--no-upgrades",
+        "--no-daemon",
+    ] in commands
 
 
 def test_run_update_prefers_saved_installer_source_over_git_checkout(
@@ -839,7 +845,7 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.12",
+        lambda install_source: "1.0.13",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
@@ -850,7 +856,13 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
 
     assert result.install_mode == "uv-tool"
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
-    assert [str(afk_executable), "doctor", "--no-integrations", "--no-upgrades"] not in commands
+    assert [
+        str(afk_executable),
+        "doctor",
+        "--no-integrations",
+        "--no-upgrades",
+        "--no-daemon",
+    ] not in commands
     assert "Doctor: skipped until `afk setup` completes" in result.details
     assert len(bootstrap_calls) == 1
     assert [str(uv_executable), "tool", "update-shell"] in shell_commands
@@ -1013,7 +1025,7 @@ def test_inspect_available_update_uses_package_source_without_metadata(
     settings = _prepare_settings(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.12",
+        lambda install_source: "1.0.13",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.load_cli_version_info",
@@ -1036,8 +1048,8 @@ def test_inspect_available_update_uses_package_source_without_metadata(
 
     assert availability is not None
     assert availability.install_mode == "uv-tool"
-    assert availability.target_id == "package:afkbotio:1.0.12"
-    assert availability.target_label == "afkbotio 1.0.12"
+    assert availability.target_id == "package:afkbotio:1.0.13"
+    assert availability.target_label == "afkbotio 1.0.13"
 
 
 def test_inspect_available_update_ignores_uv_tool_http_404(

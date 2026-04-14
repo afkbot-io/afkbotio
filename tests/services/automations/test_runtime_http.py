@@ -81,7 +81,7 @@ async def test_runtime_daemon_webhook_endpoints(tmp_path: Path) -> None:
             path="/healthz",
         )
         assert status == 200
-        assert payload == {"ok": True}
+        assert payload == {"ok": True, "service": "afkbot-runtime"}
 
         status, payload = await request_json(
             host=settings.runtime_host,

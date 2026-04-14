@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -10,6 +11,7 @@ import typer
 
 from afkbot.cli.command_errors import raise_usage_error
 from afkbot.cli.presentation.prompt_i18n import detect_system_prompt_language
+from afkbot.services.managed_runtime_service import describe_managed_runtime_service
 from afkbot.services.health import (
     DoctorChannelsReport,
     DoctorDeliveryReport,
@@ -29,7 +31,11 @@ from afkbot.services.health import (
 )
 from afkbot.services.channel_routing import ChannelRoutingTransportDiagnostics
 from afkbot.services.channels.contracts import ChannelDeliveryTransportDiagnostics
-from afkbot.services.runtime_ports import resolve_default_runtime_port
+from afkbot.services.runtime_ports import (
+    is_runtime_port_pair_available,
+    probe_runtime_stack,
+    resolve_default_runtime_port,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
@@ -78,6 +84,11 @@ def register(app: typer.Typer) -> None:
             "--upgrades/--no-upgrades",
             help="Check whether persisted-state upgrades are still pending for this runtime root.",
         ),
+        daemon: bool = typer.Option(
+            True,
+            "--daemon/--no-daemon",
+            help="Check whether the managed `afk start` daemon is reachable on the saved bind ports.",
+        ),
         credential_profile: str = typer.Option(
             "default",
             "--credential-profile",
@@ -101,6 +112,7 @@ def register(app: typer.Typer) -> None:
                     delivery=delivery,
                     channels=channels,
                     upgrades=upgrades,
+                    daemon=daemon,
                     credential_profile_key=credential_profile,
                 )
             )
@@ -122,6 +134,7 @@ async def _run_doctor(
     delivery: bool = False,
     channels: bool = False,
     upgrades: bool = True,
+    daemon: bool = True,
     credential_profile_key: str = "default",
 ) -> bool:
     """Execute doctor checks and print short report."""
@@ -136,6 +149,12 @@ async def _run_doctor(
     typer.echo("db: ok" if report.db_ok else "db: failed")
     typer.echo(_format_runtime_summary(settings))
     ok = report.ok
+
+    if daemon:
+        daemon_report = _inspect_runtime_daemon(settings)
+        typer.echo(_format_runtime_daemon_report(daemon_report))
+        if daemon_report.required and not daemon_report.ok:
+            ok = False
 
     if upgrades and report.db_ok:
         upgrade_report = await _inspect_upgrades(settings)
@@ -228,6 +247,57 @@ def _resolve_prompt_language(runtime_config: Mapping[str, object]) -> str:
     if normalized in {"en", "ru"}:
         return normalized
     return detect_system_prompt_language().value
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeDaemonReport:
+    ok: bool
+    required: bool
+    service_kind: str | None
+    runtime_url: str
+    runtime_ok: bool
+    api_url: str
+    api_ok: bool
+    conflict: bool
+
+
+def _inspect_runtime_daemon(settings: Settings) -> _RuntimeDaemonReport:
+    runtime_config = read_runtime_config(settings)
+    runtime_host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
+    runtime_port = resolve_default_runtime_port(
+        settings=settings,
+        host=runtime_host,
+        runtime_config=runtime_config,
+    )
+    service_status = describe_managed_runtime_service()
+    stack_probe = probe_runtime_stack(host=runtime_host, runtime_port=runtime_port)
+    ports_busy = not is_runtime_port_pair_available(host=runtime_host, runtime_port=runtime_port)
+    conflict = ports_busy and not stack_probe.running
+    required = service_status.installed or stack_probe.running or conflict
+    return _RuntimeDaemonReport(
+        ok=stack_probe.running,
+        required=required,
+        service_kind=service_status.kind,
+        runtime_url=stack_probe.runtime.url,
+        runtime_ok=stack_probe.runtime.ok,
+        api_url=stack_probe.api.url,
+        api_ok=stack_probe.api.ok,
+        conflict=conflict,
+    )
+
+
+def _format_runtime_daemon_report(report: _RuntimeDaemonReport) -> str:
+    service_label = report.service_kind or "none"
+    state = "running" if report.ok else "not running"
+    parts = [
+        f"daemon: {state}",
+        f"service={service_label}",
+        f"runtime_health={'ok' if report.runtime_ok else 'down'}",
+        f"api_health={'ok' if report.api_ok else 'down'}",
+    ]
+    if report.conflict:
+        parts.append("configured ports are busy but AFKBOT health probes failed")
+    return ", ".join(parts)
 
 
 def _format_upgrade_report(report: UpgradeApplyReport) -> str:

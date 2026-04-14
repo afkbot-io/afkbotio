@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from pytest import CaptureFixture, MonkeyPatch
+from pytest import CaptureFixture, MonkeyPatch, fixture
 from typer.testing import CliRunner
 
 from afkbot.cli.commands.doctor import _run_doctor, get_missing_bootstrap
@@ -23,6 +24,29 @@ from afkbot.services.channels.contracts import ChannelDeliveryDiagnostics
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeStepReport
 from afkbot.settings import Settings
 from tests.cli._rendering import invoke_plain_help
+
+
+@fixture(autouse=True)
+def _stub_managed_daemon_state(monkeypatch: MonkeyPatch) -> None:
+    """Keep doctor tests isolated from the operator's real local daemon/service state."""
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.describe_managed_runtime_service",
+        lambda: SimpleNamespace(installed=False, kind=None, path=None),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: SimpleNamespace(
+            running=False,
+            conflict=False,
+            runtime=SimpleNamespace(ok=False, url=f"http://{host}:{runtime_port}/healthz"),
+            api=SimpleNamespace(ok=False, url=f"http://{host}:{runtime_port + 1}/healthz"),
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
 
 
 async def test_doctor_success(tmp_path: Path) -> None:
@@ -137,6 +161,79 @@ async def test_doctor_reports_runtime_bind_summary(
     assert "runtime: host=127.0.0.1, runtime_port=46341, api_port=46342, prompt_language=ru" in out
 
 
+async def test_doctor_reports_running_daemon_health(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """Doctor should report a healthy managed daemon when both AFKBOT probes pass."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.describe_managed_runtime_service",
+        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: SimpleNamespace(
+            running=True,
+            conflict=False,
+            runtime=SimpleNamespace(ok=True, url="http://127.0.0.1:46341/healthz"),
+            api=SimpleNamespace(ok=True, url="http://127.0.0.1:46342/healthz"),
+        ),
+    )
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_daemon.db'}", root_dir=tmp_path)
+
+    assert await _run_doctor(settings, integrations=False, upgrades=False) is True
+    out = capsys.readouterr().out
+    assert "daemon: running" in out
+    assert "systemd-user" in out
+
+
+async def test_doctor_fails_when_managed_service_is_installed_but_daemon_is_down(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """Doctor should fail when the managed service exists but AFKBOT is unreachable on saved ports."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.describe_managed_runtime_service",
+        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.probe_runtime_stack",
+        lambda *, host, runtime_port, api_port=None, timeout_sec=1.0: SimpleNamespace(
+            running=False,
+            conflict=True,
+            runtime=SimpleNamespace(ok=False, url="http://127.0.0.1:46341/healthz"),
+            api=SimpleNamespace(ok=False, url="http://127.0.0.1:46342/healthz"),
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.doctor.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: False,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_daemon_down.db'}",
+        root_dir=tmp_path,
+    )
+
+    assert await _run_doctor(settings, integrations=False, upgrades=False) is False
+    out = capsys.readouterr().out
+    assert "daemon: not running" in out
+    assert "configured ports are busy" in out
+
+
 async def test_doctor_reports_pending_upgrades(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -223,6 +320,7 @@ def test_doctor_cli_enables_integrations_by_default(monkeypatch: MonkeyPatch) ->
         delivery: bool = False,
         channels: bool = False,
         upgrades: bool = True,
+        daemon: bool = True,
         credential_profile_key: str = "default",
     ) -> bool:
         _ = settings
@@ -233,6 +331,7 @@ def test_doctor_cli_enables_integrations_by_default(monkeypatch: MonkeyPatch) ->
         captured["delivery"] = delivery
         captured["channels"] = channels
         captured["upgrades"] = upgrades
+        captured["daemon"] = daemon
         captured["credential_profile_key"] = credential_profile_key
         return True
 
@@ -249,6 +348,7 @@ def test_doctor_cli_enables_integrations_by_default(monkeypatch: MonkeyPatch) ->
         "delivery": False,
         "channels": False,
         "upgrades": True,
+        "daemon": True,
         "credential_profile_key": "default",
     }
 
