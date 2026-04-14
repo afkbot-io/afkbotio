@@ -20,10 +20,10 @@ from afkbot.services.tools.registry import ToolRegistry
 from tests.services.agent_loop._loop_harness import create_test_db
 
 
-async def test_explicit_skill_guard_does_not_retry_on_llm_error_response(
+async def test_explicit_skill_guard_still_surfaces_provider_error_after_transient_retries(
     tmp_path: Path,
 ) -> None:
-    """Explicit skill requests should not override provider error final responses."""
+    """Explicit skill requests should still surface provider errors after transient retries exhaust."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_skill_error_no_retry.db")
     skill_dir = tmp_path / "afkbot/skills/subagent-manager"
@@ -34,7 +34,15 @@ async def test_explicit_skill_guard_does_not_retry_on_llm_error_response(
             LLMResponse.final(
                 "LLM provider is temporarily unavailable. Please try again shortly.",
                 error_code="llm_provider_network_error",
-            )
+            ),
+            LLMResponse.final(
+                "LLM provider is temporarily unavailable. Please try again shortly.",
+                error_code="llm_provider_network_error",
+            ),
+            LLMResponse.final(
+                "LLM provider is temporarily unavailable. Please try again shortly.",
+                error_code="llm_provider_network_error",
+            ),
         ]
     )
 
@@ -56,7 +64,7 @@ async def test_explicit_skill_guard_does_not_retry_on_llm_error_response(
 
         assert result.envelope.action == "finalize"
         assert result.envelope.message == "LLM provider is temporarily unavailable. Please try again shortly."
-        assert len(scripted.requests) == 1
+        assert len(scripted.requests) == 3
 
     await engine.dispose()
 

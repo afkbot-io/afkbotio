@@ -661,6 +661,9 @@ class TaskFlowRuntimeService:
                     reason = str(payload.get("reason") or "").strip() or (
                         f"Task run completed with LLM error code: {error_code}"
                     )
+                    error_detail = str(payload.get("error_detail") or "").strip()
+                    if error_detail and error_detail not in reason:
+                        reason = f"{reason} Detail: {error_detail}"
                     return TaskExecutionOutcome(
                         status="failed",
                         error_code=error_code,
