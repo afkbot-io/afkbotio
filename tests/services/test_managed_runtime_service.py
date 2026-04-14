@@ -374,7 +374,7 @@ def test_restart_managed_runtime_service_fails_when_health_never_recovers(
     monkeypatch.setattr("afkbot.services.managed_runtime_service.time.sleep", lambda seconds: None)
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.time.monotonic",
-        iter([0.0, 0.0, 31.0]).__next__,
+        iter([0.0, 0.0, 61.0]).__next__,
     )
 
     def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -390,6 +390,23 @@ def test_restart_managed_runtime_service_fails_when_health_never_recovers(
     assert calls == [
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "restart", "afkbot.service"],
+        [
+            "systemctl",
+            "--user",
+            "show",
+            "afkbot.service",
+            "--property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts",
+        ],
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "afkbot.service",
+            "-n",
+            "5",
+            "--no-pager",
+            "--output=cat",
+        ],
     ]
 
 
@@ -430,7 +447,7 @@ def test_restart_managed_runtime_service_requires_active_manager_state(
     monkeypatch.setattr("afkbot.services.managed_runtime_service.time.sleep", lambda seconds: None)
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.time.monotonic",
-        iter([0.0, 0.0, 31.0]).__next__,
+        iter([0.0, 0.0, 61.0]).__next__,
     )
 
     def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

@@ -31,7 +31,7 @@ _SYSTEMD_SYSTEM_SERVICE_BASENAME = "afkbot"
 _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
 _LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
 _LAUNCHD_SERVICE_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
-_START_WAIT_TIMEOUT_SEC = 30.0
+_START_WAIT_TIMEOUT_SEC = 60.0
 _STOP_WAIT_TIMEOUT_SEC = 15.0
 _POLL_INTERVAL_SEC = 1.0
 
@@ -957,13 +957,15 @@ def _finalize_start_result(
     if _inspection_matches_started_service(inspection):
         return _annotate_started_service_result(result, inspection=inspection)
     manager_state = inspection.manager_state or "unknown"
+    diagnostics = _startup_failure_diagnostics(kind=result.kind, path=result.path)
+    diagnostic_suffix = f" diagnostics={diagnostics}" if diagnostics else ""
     return ManagedRuntimeServiceResult(
         status="failed",
         reason=(
             f"AFKBOT service manager accepted the {action}, but the daemon did not become healthy. "
             f"manager_state={manager_state}, "
             f"runtime_health={'ok' if inspection.runtime_ok else 'down'}, "
-            f"api_health={'ok' if inspection.api_ok else 'down'}."
+            f"api_health={'ok' if inspection.api_ok else 'down'}.{diagnostic_suffix}"
         ),
         kind=result.kind,
         path=result.path,
@@ -1028,6 +1030,105 @@ def _probe_runtime_stack(settings: Settings) -> RuntimeStackProbe:
         runtime_config=runtime_config,
     )
     return probe_runtime_stack(host=host, runtime_port=runtime_port)
+
+
+def _startup_failure_diagnostics(*, kind: str | None, path: Path | None) -> str | None:
+    if kind == "systemd-user":
+        return _systemd_failure_diagnostics(user=True, service_name=_SYSTEMD_SERVICE_NAME)
+    if kind == "systemd-system" and path is not None:
+        return _systemd_failure_diagnostics(
+            user=False,
+            service_name=_systemd_service_name_for_path(path),
+        )
+    if kind == "launchd":
+        return _launchd_failure_diagnostics()
+    return None
+
+
+def _systemd_failure_diagnostics(*, user: bool, service_name: str) -> str | None:
+    prefix = ["systemctl"]
+    if user:
+        prefix.append("--user")
+    show_command = [
+        *prefix,
+        "show",
+        service_name,
+        "--property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts",
+    ]
+    if user:
+        show_result = _run_command(show_command, allow_failure=True)
+        journal_result = _run_command(
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                service_name,
+                "-n",
+                "5",
+                "--no-pager",
+                "--output=cat",
+            ],
+            allow_failure=True,
+        )
+    else:
+        show_result = _run_root_command(show_command)
+        journal_result = _run_root_command(
+            [
+                "journalctl",
+                "-u",
+                service_name,
+                "-n",
+                "5",
+                "--no-pager",
+                "--output=cat",
+            ]
+        )
+    show_summary = _summarize_systemd_show(show_result)
+    journal_summary = _summarize_recent_log_output(journal_result)
+    parts = [part for part in (show_summary, journal_summary) if part]
+    if not parts:
+        return None
+    return " ".join(parts)
+
+
+def _launchd_failure_diagnostics() -> str | None:
+    uid_value = str(os.getuid())
+    for domain in (f"gui/{uid_value}", f"user/{uid_value}"):
+        result = _run_command(
+            ["launchctl", "print", f"{domain}/{_LAUNCHD_SERVICE_NAME}"],
+            allow_failure=True,
+        )
+        summary = _summarize_recent_log_output(result)
+        if summary:
+            return summary
+    return None
+
+
+def _summarize_systemd_show(result: subprocess.CompletedProcess[str]) -> str | None:
+    if result.returncode != 0:
+        return None
+    fields: list[str] = []
+    for raw_line in (result.stdout or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.endswith("="):
+            continue
+        fields.append(line)
+    if not fields:
+        return None
+    return "systemd_show=" + ";".join(fields)
+
+
+def _summarize_recent_log_output(result: subprocess.CompletedProcess[str]) -> str | None:
+    output = (result.stdout or result.stderr or "").strip()
+    if not output:
+        return None
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return None
+    excerpt = " | ".join(lines[-3:])
+    if len(excerpt) > 400:
+        excerpt = excerpt[-400:]
+    return f"recent_log={excerpt}"
 
 
 def _inspection_matches_started_service(inspection: ManagedRuntimeServiceInspection) -> bool:
