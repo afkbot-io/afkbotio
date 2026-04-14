@@ -15,7 +15,11 @@ import tempfile
 import time
 
 from afkbot.services.managed_install import resolve_managed_install_context
-from afkbot.services.runtime_ports import probe_runtime_stack, resolve_default_runtime_port
+from afkbot.services.runtime_ports import (
+    RuntimeStackProbe,
+    probe_runtime_stack,
+    resolve_default_runtime_port,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.services.setup.state import setup_is_complete
 from afkbot.settings import Settings, get_settings
@@ -1015,7 +1019,7 @@ def _wait_for_runtime_stop(settings: Settings) -> ManagedRuntimeServiceInspectio
     return inspection
 
 
-def _probe_runtime_stack(settings: Settings):
+def _probe_runtime_stack(settings: Settings) -> RuntimeStackProbe:
     runtime_config = read_runtime_config(settings)
     host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
     runtime_port = resolve_default_runtime_port(
@@ -1210,9 +1214,13 @@ def _current_linux_user_name() -> str:
 
 def _render_service_start_guard() -> str:
     return (
-        'if [ -f "$AFKBOT_SETUP_STATE_PATH" ] '
-        '&& grep -Eq "\\"completed\\"[[:space:]]*:[[:space:]]*true" "$AFKBOT_SETUP_STATE_PATH"; '
-        'then exec "$AFKBOT_LAUNCHER" start; fi'
+        'if [ ! -f "$AFKBOT_SETUP_STATE_PATH" ]; '
+        'then echo "AFKBOT setup state not found: $AFKBOT_SETUP_STATE_PATH" >&2; exit 1; '
+        'fi; '
+        'if ! grep -Eq "\\"completed\\"[[:space:]]*:[[:space:]]*true" "$AFKBOT_SETUP_STATE_PATH"; '
+        'then echo "AFKBOT setup is incomplete; rerun afk setup." >&2; exit 1; '
+        'fi; '
+        'exec "$AFKBOT_LAUNCHER" start'
     )
 
 

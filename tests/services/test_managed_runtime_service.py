@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from pytest import MonkeyPatch
 
 from afkbot.services.managed_runtime_service import (
+    _render_service_start_guard,
     ensure_managed_runtime_service,
     remove_managed_runtime_service,
     restart_managed_runtime_service,
@@ -100,6 +101,17 @@ def test_ensure_managed_runtime_service_prefers_linux_system_unit_when_available
         ["systemctl", "is-active", "afkbot-tester.service"],
         ["systemctl", "is-enabled", "afkbot-tester.service"],
     ]
+
+
+def test_render_service_start_guard_fails_closed_when_setup_is_missing() -> None:
+    """Service startup guard should not exit successfully before AFKBOT actually starts."""
+
+    command = _render_service_start_guard()
+
+    assert "AFKBOT setup state not found" in command
+    assert "AFKBOT setup is incomplete" in command
+    assert "exit 1" in command
+    assert 'exec "$AFKBOT_LAUNCHER" start' in command
 
 
 def test_ensure_managed_runtime_service_falls_back_to_linux_user_unit_when_system_service_is_unavailable(

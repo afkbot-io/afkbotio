@@ -166,6 +166,8 @@ def register(app: typer.Typer) -> None:
                     api_port=resolved_api_port,
                 )
             )
+        except RuntimeError as exc:
+            raise_usage_error(f"Runtime startup failed: {exc}")
         except KeyboardInterrupt:
             typer.echo("\nShutting down...")
 
@@ -241,7 +243,9 @@ async def _run_full_stack(
             error = api_task.exception()
             if error is not None:
                 raise error
-            return
+            if stop_event.is_set():
+                return
+            raise RuntimeError("Chat API server exited before shutdown was requested.")
         server.should_exit = True
         await api_task
     finally:

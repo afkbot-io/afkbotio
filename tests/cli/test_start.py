@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeStepReport
@@ -140,6 +141,10 @@ def test_start_uses_auto_selected_exotic_port_when_runtime_port_is_unconfigured(
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     monkeypatch.setattr("afkbot.cli.commands.start.read_runtime_config", lambda settings: {})
     monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
+    monkeypatch.setattr(
         "afkbot.cli.commands.start.resolve_default_runtime_port",
         lambda *, settings, host, runtime_config: 46341,
     )
@@ -182,6 +187,10 @@ def test_start_persists_first_successful_auto_selected_runtime_port(monkeypatch,
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
     monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     monkeypatch.setattr("afkbot.cli.commands.start.read_runtime_config", lambda settings: {})
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.start.resolve_default_runtime_port",
         lambda *, settings, host, runtime_config: 46341,
@@ -503,6 +512,26 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     """Internal launcher should manage both automation and Task Flow runtimes."""
 
     lifecycle: list[str] = []
+    real_event_cls = asyncio.Event
+
+    class _AutoStopEvent:
+        def __init__(self) -> None:
+            self._event = real_event_cls()
+            loop = asyncio.get_running_loop()
+            loop.call_soon(self._event.set)
+
+        def set(self) -> None:
+            self._event.set()
+
+        def clear(self) -> None:
+            self._event.clear()
+
+        def is_set(self) -> bool:
+            return self._event.is_set()
+
+        async def wait(self) -> bool:
+            await self._event.wait()
+            return True
 
     class _FakeAutomationDaemon:
         def __init__(self, *, host: str, port: int) -> None:
@@ -544,7 +573,10 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
 
         async def serve(self) -> None:
             lifecycle.append("api:serve")
+            while not self.should_exit:
+                await asyncio.sleep(0)
 
+    monkeypatch.setattr("afkbot.cli.commands.start.asyncio.Event", _AutoStopEvent)
     monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
     monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
     monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
@@ -573,3 +605,78 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     assert "taskflow:start" in lifecycle
     assert "api:serve" in lifecycle
     assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]
+
+
+async def test_run_full_stack_fails_when_api_server_exits_unexpectedly(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A clean API task exit before shutdown should fail the overall runtime start."""
+
+    class _FakeAutomationDaemon:
+        def __init__(self, *, host: str, port: int) -> None:
+            del host, port
+
+        def begin_shutdown(self) -> None:
+            return
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeTaskFlowDaemon:
+        def __init__(self, *, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        def begin_shutdown(self) -> None:
+            return
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeChannelManager:
+        def __init__(self, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeServer:
+        def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
+            del config
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            return
+
+    monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
+    monkeypatch.setattr("afkbot.cli.commands.start._ManagedUvicornServer", _FakeServer)
+    monkeypatch.setattr("afkbot.cli.commands.start.create_app", lambda: object())
+
+    from afkbot.cli.commands.start import _run_full_stack
+    from afkbot.settings import Settings
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'start_runtime.db'}",
+    )
+
+    try:
+        await _run_full_stack(
+            host="127.0.0.1",
+            runtime_port=18080,
+            api_port=18081,
+            start_channels=False,
+            channel_ids=(),
+            strict_channels=False,
+            persist_runtime_bind=False,
+            settings=settings,
+        )
+    except RuntimeError as exc:
+        assert "exited before shutdown was requested" in str(exc)
+    else:  # pragma: no cover - defensive guard
+        raise AssertionError("expected runtime start to fail on unexpected API exit")

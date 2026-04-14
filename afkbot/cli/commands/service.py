@@ -248,7 +248,16 @@ def _resolve_current_runtime_port(
     fallback_port: int,
 ) -> int:
     raw_value = runtime_config.get("runtime_port")
-    try:
-        return int(raw_value) if raw_value not in {None, ""} else fallback_port
-    except (TypeError, ValueError):
+    if raw_value in {None, ""} or isinstance(raw_value, bool):
         return fallback_port
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip()
+        if not normalized:
+            return fallback_port
+        try:
+            return int(normalized)
+        except ValueError:
+            return fallback_port
+    return fallback_port
