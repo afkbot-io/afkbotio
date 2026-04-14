@@ -317,6 +317,7 @@ def register_update(profile_app: typer.Typer) -> None:
             effective_runtime_secrets.update(mutation_inputs.runtime_secrets_update)
             verify_profile_provider_token(
                 provider_id=mutation_inputs.runtime_core.provider_id,
+                model=mutation_inputs.runtime_core.llm_model,
                 base_url=mutation_inputs.runtime_core.llm_base_url,
                 proxy_type=mutation_inputs.runtime_core.llm_proxy_type,
                 proxy_url=mutation_inputs.runtime_core.llm_proxy_url,

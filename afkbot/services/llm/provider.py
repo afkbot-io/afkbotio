@@ -603,6 +603,15 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_detail=provider_detail,
             )
         if status_code in {401, 403}:
+            if self._provider_id == LLMProviderId.OPENAI_CODEX:
+                return self._fallback_response(
+                    request,
+                    error_code="llm_provider_auth_error",
+                    message=(
+                        "OpenAI Codex rejected the configured ChatGPT OAuth token. "
+                        "Run `codex login` again or update the profile with a fresh access token."
+                    ),
+                )
             return self._fallback_response(
                 request,
                 error_code="llm_provider_auth_error",

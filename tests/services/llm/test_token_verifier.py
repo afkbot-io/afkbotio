@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import httpx
+import json
 
 from afkbot.services.llm.provider_catalog import LLMProviderId
-from afkbot.services.llm.token_verifier import verify_provider_token
+from afkbot.services.llm.token_verifier import token_expired_or_expiring_soon, verify_provider_token
 
 
 def test_verify_provider_token_success(monkeypatch) -> None:
@@ -148,22 +150,53 @@ def test_verify_provider_token_reports_network_error(monkeypatch) -> None:
     assert result.error_code == "llm_token_verify_network_error"
 
 
-def test_verify_provider_token_skips_http_probe_for_openai_codex(monkeypatch) -> None:
-    """OpenAI Codex OAuth verification should skip HTTP verify-path probing."""
+def test_verify_provider_token_posts_probe_for_openai_codex(monkeypatch) -> None:
+    """OpenAI Codex verification should probe the Responses API with the selected model."""
 
-    def _fail_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
-        del request, proxy_url, timeout_sec
-        raise AssertionError("HTTP verifier must be skipped for openai-codex")
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        assert request.get_method() == "POST"
+        assert request.full_url == "https://chatgpt.com/backend-api/codex/responses"
+        assert proxy_url is None
+        assert timeout_sec == 10.0
+        payload = json.loads(request.data.decode("utf-8"))
+        assert payload["model"] == "gpt-5.4"
+        assert payload["store"] is False
+        assert payload["stream"] is True
+        return 200, '{"id":"resp_123"}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fail_execute_request)
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI_CODEX,
         api_key="oauth-token",
-        base_url="",
+        base_url="https://chatgpt.com/backend-api/codex",
+        model="gpt-5.4",
     )
 
     assert result.ok is True
     assert result.error_code is None
+    assert result.status_code == 200
+
+
+def test_verify_provider_token_reports_invalid_openai_codex_token(monkeypatch) -> None:
+    """OpenAI Codex verification should surface a provider-specific re-login hint."""
+
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        _ = request, proxy_url, timeout_sec
+        return 401, '{"error":{"message":"unauthorized"}}'
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        api_key="oauth-token",
+        base_url="https://chatgpt.com/backend-api/codex",
+        model="gpt-5.3-codex",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "llm_token_invalid"
+    assert result.status_code == 401
+    assert result.reason is not None
+    assert "codex login" in result.reason.lower()
 
 
 def test_verify_provider_token_uses_github_copilot_exchange(monkeypatch) -> None:
@@ -188,3 +221,18 @@ def test_verify_provider_token_uses_github_copilot_exchange(monkeypatch) -> None
     assert result.ok is True
     assert result.error_code is None
     assert result.status_code == 200
+
+
+def test_token_expired_or_expiring_soon_returns_true_for_expired_jwt() -> None:
+    """JWT helper should treat stale access tokens as expired."""
+
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": 95}).encode("utf-8")).decode("ascii").rstrip("=")
+    token = f"header.{payload}.signature"
+
+    assert token_expired_or_expiring_soon(token=token, now_epoch=100) is True
+
+
+def test_token_expired_or_expiring_soon_returns_false_for_non_jwt_token() -> None:
+    """Opaque access tokens should not be rejected by the expiry helper."""
+
+    assert token_expired_or_expiring_soon(token="opaque-token") is False

@@ -255,6 +255,7 @@ def collect_setup_config(
             provider_id=provider_id,
             api_key=api_key,
             base_url=base_url,
+            model=model,
             proxy_url=proxy_url if proxy_type != "none" else None,
         )
         if not verification.ok:

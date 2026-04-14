@@ -280,6 +280,8 @@ def provider_token_verify_mode(provider: LLMProviderId) -> str:
 
     if provider == LLMProviderId.GITHUB_COPILOT:
         return "github_copilot_exchange"
-    if provider in {LLMProviderId.OPENAI_CODEX, LLMProviderId.MINIMAX_PORTAL}:
+    if provider == LLMProviderId.OPENAI_CODEX:
+        return "openai_codex_responses_post"
+    if provider == LLMProviderId.MINIMAX_PORTAL:
         return "skip"
     return "http_get"

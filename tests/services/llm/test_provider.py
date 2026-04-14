@@ -717,6 +717,22 @@ def test_openai_http_status_401_maps_to_auth_error() -> None:
     assert "credentials" in (response.final_message or "").lower()
 
 
+def test_openai_codex_http_status_401_maps_to_relogin_hint() -> None:
+    """Codex auth failures should point operators at ChatGPT OAuth refresh, not generic API keys."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(401))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_auth_error"
+    assert "codex login" in (response.final_message or "").lower()
+
+
 def test_openai_http_status_404_maps_to_model_not_found() -> None:
     provider = OpenAICompatibleChatProvider(
         provider_id=LLMProviderId.OPENAI,
