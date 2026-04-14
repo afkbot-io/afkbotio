@@ -11,6 +11,7 @@ import logging
 import secrets
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap import create_schema
@@ -181,6 +182,7 @@ class TaskFlowRuntimeService:
                 )
                 released_count += 1
         if released_count:
+            await self._refresh_schema_invariants()
             _LOGGER.info(
                 "taskflow_runtime_swept_expired_claims worker_id=%s count=%s",
                 worker_id,
@@ -203,62 +205,89 @@ class TaskFlowRuntimeService:
             self._managed_engine = engine
             self._session_factory = create_session_factory(engine)
 
+    async def _refresh_schema_invariants(self) -> None:
+        """Re-run lightweight schema upkeep so recovered backlogs can reinstall runtime guards."""
+
+        engine = self._engine
+        owned_engine = False
+        if engine is None:
+            engine = create_engine(self._settings)
+            owned_engine = True
+        try:
+            await create_schema(engine)
+        finally:
+            if owned_engine:
+                await engine.dispose()
+
     async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
         session_factory = self._require_session_factory()
-        now_utc = datetime.now(timezone.utc)
         claim_ttl = _claim_ttl(self._settings)
-        claim_token = secrets.token_hex(16)
-        async with session_scope(session_factory) as session:
-            repo = TaskFlowRepository(session)
-            row = await repo.claim_next_runnable_task(
-                now_utc=now_utc,
-                lease_until=now_utc + claim_ttl,
-                claim_token=claim_token,
-                claimed_by=worker_id,
-            )
-            if row is None:
-                return None
-            session_id = task_session_id(task_id=row.id)
-            next_attempt = row.current_attempt + 1
-            task_run = await repo.create_task_run(
-                task_id=row.id,
-                attempt=next_attempt,
-                owner_type=row.owner_type,
-                owner_ref=row.owner_ref,
-                execution_mode="detached",
-                status="claimed",
-                session_id=session_id,
-                run_id=None,
-                worker_id=worker_id,
-                started_at=now_utc,
-            )
-            attached = await repo.attach_task_run(
-                task_id=row.id,
-                claim_token=claim_token,
-                task_run_id=task_run.id,
-                session_id=session_id,
-            )
-            if not attached:
-                raise RuntimeError("Failed to attach claimed task run metadata")
-            return ClaimedTaskExecution(
-                task_id=row.id,
-                task_profile_id=row.profile_id,
-                execution_profile_id=_resolve_execution_profile_id(row),
-                flow_id=row.flow_id,
-                prompt=row.prompt,
-                owner_type=row.owner_type,
-                owner_ref=row.owner_ref,
-                source_type=row.source_type,
-                source_ref=row.source_ref,
-                priority=row.priority,
-                attempt=next_attempt,
-                requires_review=bool(row.requires_review),
-                labels=tuple(_decode_labels(row.labels_json)),
-                claim_token=claim_token,
-                task_run_id=task_run.id,
-                session_id=session_id,
-                worker_id=worker_id,
-            )
+        for _attempt in range(3):
+            now_utc = datetime.now(timezone.utc)
+            claim_token = secrets.token_hex(16)
+            try:
+                async with session_scope(session_factory) as session:
+                    repo = TaskFlowRepository(session)
+                    row = await repo.claim_next_runnable_task(
+                        now_utc=now_utc,
+                        lease_until=now_utc + claim_ttl,
+                        claim_token=claim_token,
+                        claimed_by=worker_id,
+                    )
+                    if row is None:
+                        return None
+                    session_id = task_session_id(task_id=row.id)
+                    next_attempt = row.current_attempt + 1
+                    execution_profile_id = _resolve_execution_profile_id(row)
+                    task_run = await repo.create_task_run(
+                        task_id=row.id,
+                        attempt=next_attempt,
+                        owner_type=row.owner_type,
+                        owner_ref=row.owner_ref,
+                        execution_mode="detached",
+                        status="claimed",
+                        session_id=session_id,
+                        run_id=None,
+                        worker_id=worker_id,
+                        started_at=now_utc,
+                    )
+                    attached = await repo.attach_task_run(
+                        task_id=row.id,
+                        claim_token=claim_token,
+                        task_run_id=task_run.id,
+                        session_id=session_id,
+                        session_profile_id=execution_profile_id,
+                    )
+                    if not attached:
+                        raise RuntimeError("Failed to attach claimed task run metadata")
+                    return ClaimedTaskExecution(
+                        task_id=row.id,
+                        task_profile_id=row.profile_id,
+                        execution_profile_id=execution_profile_id,
+                        flow_id=row.flow_id,
+                        prompt=row.prompt,
+                        owner_type=row.owner_type,
+                        owner_ref=row.owner_ref,
+                        source_type=row.source_type,
+                        source_ref=row.source_ref,
+                        priority=row.priority,
+                        attempt=next_attempt,
+                        requires_review=bool(row.requires_review),
+                        labels=tuple(_decode_labels(row.labels_json)),
+                        claim_token=claim_token,
+                        task_run_id=task_run.id,
+                        session_id=session_id,
+                        worker_id=worker_id,
+                    )
+            except IntegrityError as exc:
+                if not _is_active_ai_owner_integrity_error(exc):
+                    raise
+                _LOGGER.info(
+                    "taskflow_runtime_claim_retry worker_id=%s reason=active_owner_conflict",
+                    worker_id,
+                )
+                continue
+        return None
 
     async def _execute_claimed_task(self, claimed: ClaimedTaskExecution) -> None:
         started = await self._mark_started(claimed=claimed)
@@ -366,11 +395,22 @@ class TaskFlowRuntimeService:
         reconcile_completed = False
         async with session_scope(session_factory) as session:
             repo = TaskFlowRepository(session)
+            blocked_ready_at = (
+                _blocked_revisit_ready_at(
+                    settings=self._settings,
+                    reference=finished_at,
+                    attempt=claimed.attempt,
+                )
+                if outcome.status == "blocked"
+                and _should_schedule_blocked_revisit(outcome.blocked_reason_code)
+                else None
+            )
             finalized = await repo.finalize_task_claim(
                 task_id=claimed.task_id,
                 claim_token=claimed.claim_token,
                 status=outcome.status,
                 finished_at=finished_at,
+                ready_at=blocked_ready_at if outcome.status == "blocked" else None,
                 last_run_id=claimed.task_run_id,
                 last_error_code=outcome.error_code if outcome.status == "failed" else None,
                 last_error_text=outcome.error_text if outcome.status == "failed" else None,
@@ -532,6 +572,22 @@ class TaskFlowRuntimeService:
             return False
 
         persisted_status = str(current.status or "").strip().lower()
+        if (
+            persisted_status == "blocked"
+            and getattr(current, "ready_at", None) is None
+            and _should_schedule_blocked_revisit(getattr(current, "blocked_reason_code", None))
+        ):
+            scheduled = await repo.update_task(
+                profile_id=claimed.task_profile_id,
+                task_id=claimed.task_id,
+                ready_at=_blocked_revisit_ready_at(
+                    settings=self._settings,
+                    reference=finished_at,
+                    attempt=claimed.attempt,
+                ),
+            )
+            if scheduled is not None:
+                current = scheduled
         if persisted_status in {"claimed", "running"}:
             await repo.update_task_run(
                 task_run_id=claimed.task_run_id,
@@ -713,6 +769,28 @@ def _claim_ttl(settings: Settings) -> timedelta:
     return timedelta(seconds=max(1, int(settings.taskflow_runtime_claim_ttl_sec)))
 
 
+def _should_schedule_blocked_revisit(blocked_reason_code: str | None) -> bool:
+    normalized = str(blocked_reason_code or "").strip().lower()
+    return normalized in {
+        "external_poll",
+        "external_state_poll",
+        "external_status_poll",
+    }
+
+
+def _blocked_revisit_ready_at(
+    *,
+    settings: Settings,
+    reference: datetime,
+    attempt: int,
+) -> datetime:
+    normalized_attempt = max(1, int(attempt))
+    initial_sec = max(60, int(settings.taskflow_blocked_revisit_initial_sec))
+    max_sec = max(initial_sec, int(settings.taskflow_blocked_revisit_max_sec))
+    delay_sec = min(max_sec, initial_sec * (2 ** max(0, normalized_attempt - 1)))
+    return reference + timedelta(seconds=delay_sec)
+
+
 def _load_payload(payload_json: str) -> dict[str, object]:
     try:
         raw = json.loads(payload_json)
@@ -821,6 +899,24 @@ def _task_event_details_for_outcome(outcome: TaskExecutionOutcome) -> dict[str, 
     if outcome.blocked_reason_code is not None:
         details["blocked_reason_code"] = outcome.blocked_reason_code
     return details
+
+
+def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
+    """Return whether one database error comes from the active AI owner uniqueness guard."""
+
+    message = " ".join(
+        str(part).strip()
+        for part in (
+            getattr(exc, "statement", None),
+            getattr(exc, "orig", None),
+            exc,
+        )
+        if part is not None
+    ).lower()
+    return "ux_task_active_ai_owner" in message or (
+        ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
+        and "owner_ref" in message
+    )
 
 
 async def _ensure_runtime_summary_comment(

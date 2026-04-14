@@ -442,12 +442,7 @@ class SessionOrchestrator:
         return next_cursor, emitted
 
     def _stale_queue_cutoff(self) -> datetime:
-        ttl_sec = max(
-            300.0,
-            float(self._settings.tool_timeout_max_sec * 3),
-            float(self._settings.llm_request_timeout_sec * 2),
-        )
-        return datetime.now(UTC) - timedelta(seconds=ttl_sec)
+        return session_turn_queue_stale_cutoff(settings=self._settings)
 
     def _build_agent_loop_runner(self, session: AsyncSession, profile_id: str) -> _AgentLoopRunner:
         from afkbot.services.agent_loop.runtime_factory import build_profile_agent_loop
@@ -482,3 +477,19 @@ async def _resolve_session_resources(
 async def _dispose_owned_engine(resources: _SessionResources) -> None:
     if resources.owned_engine is not None:
         await resources.owned_engine.dispose()
+
+
+def session_turn_queue_stale_cutoff(
+    *,
+    settings: Settings,
+    now: datetime | None = None,
+) -> datetime:
+    """Return the cutoff after which queue markers are considered stale."""
+
+    reference = now or datetime.now(UTC)
+    ttl_sec = max(
+        300.0,
+        float(settings.tool_timeout_max_sec * 3),
+        float(settings.llm_request_timeout_sec * 2),
+    )
+    return reference - timedelta(seconds=ttl_sec)

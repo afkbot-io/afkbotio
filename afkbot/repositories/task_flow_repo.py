@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 
-from sqlalchemy import Delete, Select, and_, delete, false, func, or_, select, true, update
+from sqlalchemy import Delete, Select, and_, delete, false, func, literal, not_, or_, select, true, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from afkbot.models.task import Task
@@ -19,6 +20,7 @@ from afkbot.models.task_notification_cursor import TaskNotificationCursor
 from afkbot.models.task_run import TaskRun
 
 _UNSET = object()
+_NO_FLOW_BUCKET = "__taskflow_no_flow__"
 
 
 class TaskFlowRepository:
@@ -223,6 +225,24 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def has_active_ai_task(
+        self,
+        *,
+        owner_ref: str,
+        exclude_task_id: str | None = None,
+    ) -> bool:
+        """Return whether the selected AI owner already has another active task."""
+
+        conditions = [
+            Task.owner_type == "ai_profile",
+            Task.owner_ref == owner_ref,
+            Task.status.in_(("claimed", "running")),
+        ]
+        if exclude_task_id is not None:
+            conditions.append(Task.id != exclude_task_id)
+        statement: Select[tuple[str]] = select(Task.id).where(*conditions).limit(1)
+        return (await self._session.execute(statement)).scalar_one_or_none() is not None
+
     async def update_task(
         self,
         *,
@@ -233,12 +253,15 @@ class TaskFlowRepository:
         status: str | None = None,
         priority: int | None = None,
         due_at: datetime | None = None,
+        ready_at: datetime | None | object = _UNSET,
         owner_type: str | None = None,
         owner_ref: str | None = None,
         reviewer_type: str | None = None,
         reviewer_ref: str | None = None,
         requires_review: bool | None = None,
         labels_json: str | None = None,
+        last_session_id: str | None | object = _UNSET,
+        last_session_profile_id: str | None | object = _UNSET,
         blocked_reason_code: str | None | object = _UNSET,
         blocked_reason_text: str | None | object = _UNSET,
     ) -> Task | None:
@@ -257,6 +280,8 @@ class TaskFlowRepository:
             row.priority = priority
         if due_at is not None:
             row.due_at = due_at
+        if ready_at is not _UNSET:
+            row.ready_at = cast(datetime | None, ready_at)
         if owner_type is not None:
             row.owner_type = owner_type
         if owner_ref is not None:
@@ -269,6 +294,10 @@ class TaskFlowRepository:
             row.requires_review = requires_review
         if labels_json is not None:
             row.labels_json = labels_json
+        if last_session_id is not _UNSET:
+            row.last_session_id = cast(str | None, last_session_id)
+        if last_session_profile_id is not _UNSET:
+            row.last_session_profile_id = cast(str | None, last_session_profile_id)
         should_update_blocked_reason = (
             blocked_reason_code is not _UNSET
             or blocked_reason_text is not _UNSET
@@ -287,12 +316,18 @@ class TaskFlowRepository:
             row.claim_token = None
             row.claimed_by = None
             row.lease_until = None
-        if status == "todo" and row.ready_at is None:
-            row.ready_at = (
-                datetime.now(row.created_at.tzinfo)
-                if row.created_at.tzinfo is not None
-                else datetime.now(timezone.utc)
-            )
+        if status == "todo":
+            if row.ready_at is None:
+                row.ready_at = (
+                    datetime.now(row.created_at.tzinfo)
+                    if row.created_at.tzinfo is not None
+                    else datetime.now(timezone.utc)
+                )
+        elif status == "blocked":
+            if ready_at is _UNSET:
+                row.ready_at = None
+        elif status is not None and ready_at is _UNSET:
+            row.ready_at = None
         if status is not None and status not in {"completed", "failed", "cancelled"}:
             row.finished_at = None
         if status in {"completed", "failed", "cancelled"} and row.finished_at is None:
@@ -558,6 +593,25 @@ class TaskFlowRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def list_dependencies_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+    ) -> list[TaskDependency]:
+        """Return dependencies for many tasks in one query."""
+
+        normalized_task_ids = tuple(
+            dict.fromkeys(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        )
+        if not normalized_task_ids:
+            return []
+        statement: Select[tuple[TaskDependency]] = (
+            select(TaskDependency)
+            .where(TaskDependency.task_id.in_(normalized_task_ids))
+            .order_by(TaskDependency.task_id.asc(), TaskDependency.depends_on_task_id.asc())
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def get_dependency(
         self,
         *,
@@ -672,48 +726,136 @@ class TaskFlowRepository:
     ) -> Task | None:
         """Atomically claim one runnable AI-owned task."""
 
-        eligible_subquery = (
+        active_task = aliased(Task)
+        active_owner_exists = (
+            select(active_task.id)
+            .where(
+                active_task.owner_type == "ai_profile",
+                active_task.owner_ref == Task.owner_ref,
+                active_task.status.in_(("claimed", "running")),
+            )
+            .exists()
+        )
+        runnable_candidates = (
             select(Task.id)
+            .add_columns(
+                Task.profile_id.label("profile_id"),
+                Task.flow_id.label("flow_id"),
+                func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)).label("flow_bucket"),
+                Task.priority.label("priority"),
+                Task.due_at.label("due_at"),
+                Task.ready_at.label("ready_at"),
+                Task.created_at.label("created_at"),
+                func.row_number().over(
+                    partition_by=Task.owner_ref,
+                    order_by=_task_claim_base_ordering(Task),
+                ).label("owner_rank"),
+            )
             .where(
                 Task.owner_type == "ai_profile",
-                Task.status == "todo",
-                or_(Task.ready_at.is_(None), Task.ready_at <= now_utc),
+                or_(
+                    and_(
+                        Task.status == "todo",
+                        or_(Task.ready_at.is_(None), Task.ready_at <= now_utc),
+                    ),
+                    and_(
+                        Task.status == "blocked",
+                        Task.ready_at.is_not(None),
+                        Task.ready_at <= now_utc,
+                        or_(
+                            Task.blocked_reason_code.is_(None),
+                            Task.blocked_reason_code != "dependency_wait",
+                        ),
+                    ),
+                ),
+                not_(active_owner_exists),
             )
+            .cte("task_claim_candidates")
+        )
+        active_flow_load = (
+            select(
+                Task.profile_id.label("profile_id"),
+                func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)).label("flow_bucket"),
+                func.count(Task.id).label("active_flow_task_count"),
+            )
+            .where(
+                Task.owner_type == "ai_profile",
+                Task.status.in_(("claimed", "running")),
+            )
+            .group_by(Task.profile_id, func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)))
+            .cte("task_claim_active_flow_load")
+        )
+        eligible_statement = (
+            select(runnable_candidates.c.id)
+            .select_from(
+                runnable_candidates.outerjoin(
+                    active_flow_load,
+                    and_(
+                        active_flow_load.c.profile_id == runnable_candidates.c.profile_id,
+                        active_flow_load.c.flow_bucket == runnable_candidates.c.flow_bucket,
+                    ),
+                )
+            )
+            .where(runnable_candidates.c.owner_rank == 1)
             .order_by(
-                Task.priority.desc(),
-                Task.due_at.is_(None),
-                Task.due_at.asc(),
-                Task.ready_at.is_(None),
-                Task.ready_at.asc(),
-                Task.created_at.asc(),
+                runnable_candidates.c.priority.desc(),
+                runnable_candidates.c.due_at.is_(None),
+                runnable_candidates.c.due_at.asc(),
+                func.coalesce(active_flow_load.c.active_flow_task_count, 0).asc(),
+                runnable_candidates.c.ready_at.is_(None),
+                runnable_candidates.c.ready_at.asc(),
+                runnable_candidates.c.created_at.asc(),
+                runnable_candidates.c.id.asc(),
             )
             .limit(1)
-            .scalar_subquery()
         )
-        statement = (
-            update(Task)
-            .where(Task.id == eligible_subquery)
-            .values(
-                status="claimed",
-                claim_token=claim_token,
-                claimed_by=claimed_by,
-                lease_until=lease_until,
-                last_run_id=None,
-                last_error_code=None,
-                last_error_text=None,
-                blocked_reason_code=None,
-                blocked_reason_text=None,
-                started_at=None,
-                finished_at=None,
+        for _attempt in range(3):
+            candidate_task_id = (await self._session.execute(eligible_statement)).scalar_one_or_none()
+            if candidate_task_id is None:
+                return None
+            statement = (
+                update(Task)
+                .where(
+                    Task.id == candidate_task_id,
+                    or_(
+                        and_(
+                            Task.status == "todo",
+                            or_(Task.ready_at.is_(None), Task.ready_at <= now_utc),
+                        ),
+                        and_(
+                            Task.status == "blocked",
+                            Task.ready_at.is_not(None),
+                            Task.ready_at <= now_utc,
+                            or_(
+                                Task.blocked_reason_code.is_(None),
+                                Task.blocked_reason_code != "dependency_wait",
+                            ),
+                        ),
+                    ),
+                )
+                .values(
+                    status="claimed",
+                    claim_token=claim_token,
+                    claimed_by=claimed_by,
+                    lease_until=lease_until,
+                    ready_at=None,
+                    blocked_reason_code=None,
+                    blocked_reason_text=None,
+                    last_run_id=None,
+                    last_error_code=None,
+                    last_error_text=None,
+                    started_at=None,
+                    finished_at=None,
+                )
+                .execution_options(synchronize_session=False)
             )
-            .execution_options(synchronize_session=False)
-        )
-        result = await self._session.execute(statement)
-        await self._session.flush()
-        if not _result_succeeded(result):
-            return None
-        statement_select: Select[tuple[Task]] = select(Task).where(Task.claim_token == claim_token)
-        return (await self._session.execute(statement_select)).scalar_one_or_none()
+            result = await self._session.execute(statement)
+            await self._session.flush()
+            if not _result_succeeded(result):
+                continue
+            statement_select: Select[tuple[Task]] = select(Task).where(Task.claim_token == claim_token)
+            return (await self._session.execute(statement_select)).scalar_one_or_none()
+        return None
 
     async def list_expired_claimed_tasks(
         self,
@@ -755,12 +897,15 @@ class TaskFlowRepository:
         claim_token: str,
         task_run_id: int,
         session_id: str | None = None,
+        session_profile_id: str | None = None,
     ) -> bool:
         """Persist the latest run pointer for one claimed task."""
 
         values: dict[str, object] = {"last_run_id": task_run_id}
         if session_id is not None:
             values["last_session_id"] = session_id
+        if session_profile_id is not None:
+            values["last_session_profile_id"] = session_profile_id
         statement = (
             update(Task)
             .where(
@@ -871,6 +1016,7 @@ class TaskFlowRepository:
         claim_token: str,
         status: str,
         finished_at: datetime,
+        ready_at: datetime | None | object = _UNSET,
         last_run_id: int | None = None,
         last_error_code: str | None = None,
         last_error_text: str | None = None,
@@ -892,6 +1038,12 @@ class TaskFlowRepository:
         }
         if last_run_id is not None:
             values["last_run_id"] = last_run_id
+        if ready_at is not _UNSET:
+            values["ready_at"] = ready_at
+        elif status == "blocked":
+            values["ready_at"] = None
+        else:
+            values["ready_at"] = None
         statement = (
             update(Task)
             .where(
@@ -1018,6 +1170,20 @@ class TaskFlowRepository:
 def _result_succeeded(result: object) -> bool:
     rowcount = int(getattr(result, "rowcount", 0) or 0)
     return rowcount > 0
+
+
+def _task_claim_base_ordering(task_ref: Any) -> tuple[ColumnElement[object], ...]:
+    """Return the canonical scheduling order used for one runnable task candidate."""
+
+    return (
+        cast(ColumnElement[object], task_ref.priority.desc()),
+        cast(ColumnElement[object], task_ref.due_at.is_(None)),
+        cast(ColumnElement[object], task_ref.due_at.asc()),
+        cast(ColumnElement[object], task_ref.ready_at.is_(None)),
+        cast(ColumnElement[object], task_ref.ready_at.asc()),
+        cast(ColumnElement[object], task_ref.created_at.asc()),
+        cast(ColumnElement[object], task_ref.id.asc()),
+    )
 
 
 def _task_event_visibility_predicate(

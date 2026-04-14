@@ -64,6 +64,7 @@ class TaskCreateTool(ToolBase):
                 prompt=payload.prompt,
                 created_by_type="ai_profile",
                 created_by_ref=ctx.profile_id,
+                actor_session_id=ctx.session_id,
                 flow_id=payload.flow_id,
                 priority=payload.priority,
                 due_at=payload.due_at,

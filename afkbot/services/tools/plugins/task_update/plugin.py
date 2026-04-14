@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from pydantic import Field
 
@@ -25,12 +25,16 @@ class TaskUpdateParams(ToolParameters):
     status: str | None = Field(default=None, max_length=32)
     priority: int | None = Field(default=None, ge=0)
     due_at: datetime | None = None
+    ready_at: datetime | None = None
+    retry_after_sec: int | None = Field(default=None, ge=1)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
     reviewer_type: str | None = Field(default=None, max_length=32)
     reviewer_ref: str | None = Field(default=None, max_length=255)
     requires_review: bool | None = None
     labels: tuple[str, ...] | None = None
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    session_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
     blocked_reason_code: str | None = Field(default=None, max_length=64)
     blocked_reason_text: str | None = None
 
@@ -58,25 +62,65 @@ class TaskUpdateTool(ToolBase):
 
         try:
             service = get_task_flow_service(self._settings)
-            item = await service.update_task(
-                profile_id=target_profile_id,
-                task_id=payload.task_id,
-                title=payload.title,
-                prompt=payload.prompt,
-                status=payload.status,
-                priority=payload.priority,
-                due_at=payload.due_at,
-                owner_type=payload.owner_type,
-                owner_ref=payload.owner_ref,
-                reviewer_type=payload.reviewer_type,
-                reviewer_ref=payload.reviewer_ref,
-                requires_review=payload.requires_review,
-                labels=payload.labels,
-                blocked_reason_code=payload.blocked_reason_code,
-                blocked_reason_text=payload.blocked_reason_text,
-                actor_type="ai_profile",
-                actor_ref=ctx.profile_id,
+            explicit_fields = set(getattr(payload, "model_fields_set", set()))
+            session_id_explicit = "session_id" in explicit_fields
+            session_profile_id_explicit = "session_profile_id" in explicit_fields
+            effective_session_id = payload.session_id if session_id_explicit else None
+            effective_session_profile_id = (
+                payload.session_profile_id if session_profile_id_explicit else None
             )
+            ready_at_explicit = "ready_at" in explicit_fields
+            retry_after_explicit = "retry_after_sec" in explicit_fields
+            if ready_at_explicit and retry_after_explicit:
+                return ToolResult.error(
+                    error_code="task_ready_at_conflict",
+                    reason="ready_at and retry_after_sec cannot be used together",
+                )
+            effective_ready_at = payload.ready_at if ready_at_explicit else None
+            if retry_after_explicit:
+                if payload.status != "blocked":
+                    return ToolResult.error(
+                        error_code="task_retry_after_requires_blocked_status",
+                        reason="retry_after_sec requires status=blocked",
+                    )
+                effective_ready_at = datetime.now(timezone.utc) + timedelta(seconds=payload.retry_after_sec or 0)
+            if effective_session_id is None and payload.status in {"claimed", "running"}:
+                effective_session_id = ctx.session_id
+                if not session_profile_id_explicit:
+                    effective_session_profile_id = ctx.profile_id
+            elif (
+                effective_session_id == ctx.session_id
+                and effective_session_profile_id is None
+                and not session_profile_id_explicit
+            ):
+                effective_session_profile_id = ctx.profile_id
+            update_kwargs: dict[str, object] = {
+                "profile_id": target_profile_id,
+                "task_id": payload.task_id,
+                "title": payload.title,
+                "prompt": payload.prompt,
+                "status": payload.status,
+                "priority": payload.priority,
+                "due_at": payload.due_at,
+                "owner_type": payload.owner_type,
+                "owner_ref": payload.owner_ref,
+                "reviewer_type": payload.reviewer_type,
+                "reviewer_ref": payload.reviewer_ref,
+                "requires_review": payload.requires_review,
+                "labels": payload.labels,
+                "blocked_reason_code": payload.blocked_reason_code,
+                "blocked_reason_text": payload.blocked_reason_text,
+                "actor_session_id": ctx.session_id,
+                "actor_type": "ai_profile",
+                "actor_ref": ctx.profile_id,
+            }
+            if ready_at_explicit or retry_after_explicit:
+                update_kwargs["ready_at"] = effective_ready_at
+            if effective_session_id is not None:
+                update_kwargs["session_id"] = effective_session_id
+                if session_profile_id_explicit or effective_session_profile_id is not None:
+                    update_kwargs["session_profile_id"] = effective_session_profile_id
+            item = await service.update_task(**update_kwargs)
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)

@@ -52,6 +52,7 @@ class Task(Base, TimestampMixin):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)
     last_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_session_profile_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_text: Mapped[str | None] = mapped_column(Text, nullable=True)

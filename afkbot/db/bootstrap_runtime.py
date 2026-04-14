@@ -42,10 +42,73 @@ async def ping(engine: AsyncEngine) -> bool:
 def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
+    _ensure_task_runtime_columns(conn)
+    _ensure_task_runtime_indexes(conn)
     _ensure_automation_delivery_columns(conn)
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
     _backfill_webhook_token_hashes(conn)
+
+
+def _ensure_task_runtime_columns(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure newer Task Flow runtime columns exist for legacy SQLite installs."""
+
+    columns = _table_columns(conn, "task")
+    if not columns:
+        return
+    missing_columns = {
+        "last_session_profile_id": "ALTER TABLE task ADD COLUMN last_session_profile_id VARCHAR(120)",
+    }
+    for column_name, ddl in missing_columns.items():
+        if column_name not in columns:
+            conn.execute(text(ddl))
+
+
+def _ensure_task_runtime_indexes(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure Task Flow runtime indexes exist for legacy SQLite installs."""
+
+    columns = _table_columns(conn, "task")
+    if not columns:
+        return
+    duplicate_owner_refs = _list_duplicate_active_ai_owner_refs(conn)
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
+    predicate = "owner_type = 'ai_profile' AND status IN ('claimed', 'running')"
+    if duplicate_owner_refs:
+        excluded_owner_refs = ", ".join(
+            _quote_sqlite_text_literal(owner_ref) for owner_ref in duplicate_owner_refs
+        )
+        predicate = f"{predicate} AND owner_ref NOT IN ({excluded_owner_refs})"
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
+            "ON task (owner_ref) "
+            f"WHERE {predicate}"
+        )
+    )
+
+
+def _list_duplicate_active_ai_owner_refs(conn) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
+    """Return active AI owners that still violate the one-active-task invariant."""
+
+    if not _table_columns(conn, "task"):
+        return ()
+    rows = conn.execute(
+        text(
+            "SELECT owner_ref "
+            "FROM task "
+            "WHERE owner_type = 'ai_profile' AND status IN ('claimed', 'running') "
+            "GROUP BY owner_ref "
+            "HAVING COUNT(*) > 1 "
+            "ORDER BY owner_ref ASC"
+        )
+    ).fetchall()
+    return tuple(str(owner_ref) for (owner_ref,) in rows if str(owner_ref).strip())
+
+
+def _quote_sqlite_text_literal(value: str) -> str:
+    """Return one SQL-safe SQLite string literal."""
+
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untyped-def]

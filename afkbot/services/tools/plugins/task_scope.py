@@ -44,12 +44,29 @@ def ensure_task_target_scope(
     return ToolResult.error(error_code="profile_not_found", reason="Profile not found")
 
 
+def runtime_task_id(*, ctx: ToolContext) -> str | None:
+    """Return current runtime task id when the tool runs inside Task Flow execution."""
+
+    taskflow_payload = _runtime_taskflow_payload(ctx=ctx)
+    if taskflow_payload is None:
+        return None
+    value = str(taskflow_payload.get("task_id") or "").strip()
+    return value or None
+
+
 def _runtime_task_profile_id(*, ctx: ToolContext) -> str | None:
+    taskflow_payload = _runtime_taskflow_payload(ctx=ctx)
+    if taskflow_payload is None:
+        return None
+    value = str(taskflow_payload.get("task_profile_id") or "").strip()
+    return value or None
+
+
+def _runtime_taskflow_payload(*, ctx: ToolContext) -> dict[str, object] | None:
     runtime_metadata = ctx.runtime_metadata
     if not isinstance(runtime_metadata, dict):
         return None
     taskflow_payload = runtime_metadata.get("taskflow")
     if not isinstance(taskflow_payload, dict):
         return None
-    value = str(taskflow_payload.get("task_profile_id") or "").strip()
-    return value or None
+    return taskflow_payload

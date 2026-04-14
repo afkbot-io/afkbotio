@@ -102,9 +102,11 @@ class Settings(BaseSettings):
         "automation_update",
         "automation_delete",
         "task_board",
+        "task_block",
         "task_comment_add",
         "task_comment_list",
         "task_create",
+        "task_delegate",
         "task_dependency_add",
         "task_dependency_list",
         "task_dependency_remove",
@@ -237,6 +239,8 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_blocked_revisit_initial_sec: int = 7200
+    taskflow_blocked_revisit_max_sec: int = 86400
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND
     browser_cdp_url: str | None = None
     browser_lightpanda_binary_path: str | None = None
@@ -438,6 +442,8 @@ class Settings(BaseSettings):
         "runtime_max_body_bytes",
         "taskflow_runtime_maintenance_batch_size",
         "taskflow_runtime_claim_ttl_sec",
+        "taskflow_blocked_revisit_initial_sec",
+        "taskflow_blocked_revisit_max_sec",
         "browser_session_idle_ttl_sec",
         "diffs_artifact_ttl_sec",
         "secure_flow_max_steps",

@@ -362,7 +362,7 @@ def register(app: typer.Typer) -> None:
                 title=title,
                 prompt=prompt,
                 created_by_type="human",
-                created_by_ref="cli",
+                created_by_ref=resolve_local_human_ref(get_settings()),
                 flow_id=flow_id,
                 priority=priority,
                 due_at=due_at,
@@ -484,6 +484,8 @@ def register(app: typer.Typer) -> None:
                 task_id=task_id,
                 depends_on_task_id=depends_on_task_id,
                 satisfied_on_status=satisfied_on_status,
+                actor_type="human",
+                actor_ref=resolve_local_human_ref(get_settings()),
             )
         )
         typer.echo(payload)
@@ -503,6 +505,8 @@ def register(app: typer.Typer) -> None:
                 profile_id=_resolve_profile(ctx, profile),
                 task_id=task_id,
                 depends_on_task_id=depends_on_task_id,
+                actor_type="human",
+                actor_ref=resolve_local_human_ref(get_settings()),
             )
         )
         typer.echo(payload)

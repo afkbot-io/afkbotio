@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import reset_task_flow_services
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
@@ -36,8 +38,49 @@ async def _prepare(
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
+        sessions = ChatSessionRepository(session)
+        for session_id in (
+            "s-task",
+            "session-live-42",
+            "task-seed",
+            "s-maint",
+            "s-task-maint",
+            "s-review",
+        ):
+            await sessions.create(session_id=session_id, profile_id="default")
+        await ProfileRepository(session).get_or_create_default("analyst")
+        for session_id in ("taskflow:task_demo", "taskflow:analyst-demo"):
+            await sessions.create(session_id=session_id, profile_id="analyst")
 
     return settings, engine, ToolRegistry.from_settings(settings)
+
+
+def _write_team_runtime_config(
+    *,
+    settings: Settings,
+    profile_id: str,
+    team_profile_ids: tuple[str, ...],
+) -> None:
+    get_profile_runtime_config_service(settings).write(
+        profile_id,
+        ProfileRuntimeConfig(
+            llm_provider=settings.llm_provider,
+            llm_model=settings.llm_model,
+            taskflow_team_profile_ids=team_profile_ids,
+        ),
+    )
+
+
+async def _create_chat_session(
+    engine: AsyncEngine,
+    *,
+    profile_id: str,
+    session_id: str,
+) -> None:
+    factory = create_session_factory(engine)
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default(profile_id)
+        await ChatSessionRepository(session).create(session_id=session_id, profile_id=profile_id)
 
 
 async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -452,6 +495,325 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         await engine.dispose()
 
 
+async def test_task_update_plugin_binds_current_session_for_running_status(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.update` should bind the current tool session when a task is marked running."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Bind session",
+                    "prompt": "Attach the current session when work starts.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "status": "running",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert update_result.ok is True
+        updated = update_result.payload["task"]
+        assert isinstance(updated, dict)
+        assert updated["status"] == "running"
+        assert updated["last_session_id"] == "session-live-42"
+        assert updated["last_session_profile_id"] == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.update` should allow blocked tasks to opt into a delayed revisit."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Poll vendor status",
+                    "prompt": "Recheck the external vendor later.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        before_update = datetime.now(timezone.utc)
+        update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "status": "blocked",
+                    "blocked_reason_code": "vendor_pending",
+                    "blocked_reason_text": "The external vendor has not replied yet.",
+                    "retry_after_sec": 7200,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert update_result.ok is True
+        updated = update_result.payload["task"]
+        assert isinstance(updated, dict)
+        assert updated["status"] == "blocked"
+        assert updated["ready_at"] is not None
+        ready_at = datetime.fromisoformat(str(updated["ready_at"]))
+        if ready_at.tzinfo is None:
+            ready_at = ready_at.replace(tzinfo=timezone.utc)
+        assert ready_at >= before_update + timedelta(minutes=119)
+    finally:
+        await engine.dispose()
+
+
+async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """AI actors should not bind a task to some other live session id."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    factory = create_session_factory(engine)
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
+
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Bind delegated session",
+                    "prompt": "Attach a delegated execution session.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "status": "running",
+                    "session_id": "papercliper-main",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert update_result.ok is False
+        assert update_result.error_code == "task_session_binding_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.block` should default to the runtime task and expose scheduled retry metadata."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        create_tool = registry.get("task.create")
+        block_tool = registry.get("task.block")
+        get_tool = registry.get("task.get")
+        assert create_tool is not None
+        assert block_tool is not None
+        assert get_tool is not None
+
+        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=13)
+        create_result = await create_tool.execute(
+            operator_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Recheck vendor reply",
+                    "prompt": "Work this task until the vendor answers.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+        await _create_chat_session(
+            engine,
+            profile_id="default",
+            session_id=f"taskflow:{task_id}",
+        )
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id=f"taskflow:{task_id}",
+            run_id=14,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": task_id,
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+            },
+        )
+
+        before_block = datetime.now(timezone.utc)
+        block_result = await block_tool.execute(
+            ctx,
+            block_tool.parse_params(
+                {
+                    "reason_code": "vendor_pending",
+                    "reason_text": "The external vendor has not replied yet.",
+                    "retry_after_sec": 7200,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert block_result.ok is True
+        blocked_task = block_result.payload["task"]
+        assert isinstance(blocked_task, dict)
+        assert blocked_task["id"] == task_id
+        assert blocked_task["status"] == "blocked"
+        assert blocked_task["block_state"]["kind"] == "scheduled_retry"
+        assert blocked_task["block_state"]["retry_scheduled"] is True
+        ready_at = datetime.fromisoformat(str(blocked_task["ready_at"]))
+        if ready_at.tzinfo is None:
+            ready_at = ready_at.replace(tzinfo=timezone.utc)
+        assert ready_at >= before_block + timedelta(minutes=119)
+
+        fetched_result = await get_tool.execute(
+            operator_ctx,
+            get_tool.parse_params(
+                {"profile_key": "default", "task_id": task_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert fetched_result.ok is True
+        assert fetched_result.payload["task"]["block_state"]["kind"] == "scheduled_retry"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_block_plugin_rejects_timed_dependency_wait(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.block` should reject dependency_wait blockers with a timer."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=15)
+
+        create_tool = registry.get("task.create")
+        block_tool = registry.get("task.block")
+        assert create_tool is not None
+        assert block_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Wait for teammate result",
+                    "prompt": "Pause until the delegated teammate finishes.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        block_result = await block_tool.execute(
+            ctx,
+            block_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "reason_code": "dependency_wait",
+                    "reason_text": "Waiting for the delegated task to finish.",
+                    "retry_after_sec": 3600,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert block_result.ok is False
+        assert block_result.error_code == "task_dependency_wait_ready_at_conflict"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_maintenance_sweep_plugin_repairs_stale_claims(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -558,6 +920,11 @@ async def test_task_plugins_allow_taskflow_runtime_to_manage_backlog_profile(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -634,6 +1001,233 @@ async def test_task_plugins_allow_taskflow_runtime_to_manage_backlog_profile(
         listed = list_result.payload["tasks"]
         assert isinstance(listed, list)
         assert listed[0]["id"] == task_id
+    finally:
+        await engine.dispose()
+
+
+async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Runtime-scoped agents should be able to create backlog tasks owned by another AI profile."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst", "papercliper"),
+        )
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:task_demo",
+            run_id=8,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Papercliper follow-up",
+                    "prompt": "Take over the research-heavy follow-up work.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task = create_result.payload["task"]
+        assert isinstance(task, dict)
+        assert task["profile_id"] == "default"
+        assert task["owner_type"] == "ai_profile"
+        assert task["owner_ref"] == "papercliper"
+        assert task["created_by_type"] == "ai_profile"
+        assert task["created_by_ref"] == "analyst"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.delegate` should default to the current runtime task when task_id is omitted."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst", "papercliper"),
+        )
+
+        create_tool = registry.get("task.create")
+        delegate_tool = registry.get("task.delegate")
+        get_tool = registry.get("task.get")
+        assert create_tool is not None
+        assert delegate_tool is not None
+        assert get_tool is not None
+
+        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=11)
+        parent_result = await create_tool.execute(
+            operator_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Own launch brief",
+                    "prompt": "Prepare the launch brief and delegate research.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert parent_result.ok is True
+        parent_task = parent_result.payload["task"]
+        parent_task_id = str(parent_task["id"])
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:task_demo",
+            run_id=12,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": parent_task_id,
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        delegate_result = await delegate_tool.execute(
+            ctx,
+            delegate_tool.parse_params(
+                {
+                    "prompt": "Research competitor pricing and summarize the deltas.",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert delegate_result.ok is True
+        delegation = delegate_result.payload["delegation"]
+        assert delegation["source_task"]["id"] == parent_task_id
+        assert delegation["source_task"]["status"] == "blocked"
+        assert delegation["delegated_task"]["owner_ref"] == "papercliper"
+        assert delegation["delegated_task"]["source_type"] == "task_delegation"
+        assert delegation["dependency"]["task_id"] == parent_task_id
+
+        refreshed_parent = await get_tool.execute(
+            operator_ctx,
+            get_tool.parse_params(
+                {"profile_key": "default", "task_id": parent_task_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert refreshed_parent.ok is True
+        task_payload = refreshed_parent.payload["task"]
+        assert task_payload["status"] == "blocked"
+        assert task_payload["blocked_reason_code"] == "dependency_wait"
+        assert task_payload["depends_on_task_ids"] == [delegation["delegated_task"]["id"]]
+    finally:
+        await engine.dispose()
+
+
+async def test_task_update_plugin_rejects_coworker_task_mutation(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """One runtime worker should not mutate another worker's backlog task."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst", "papercliper"),
+        )
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=21)
+        create_result = await create_tool.execute(
+            operator_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Papercliper owned task",
+                    "prompt": "This task belongs to Papercliper.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        analyst_ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:analyst-demo",
+            run_id=22,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        update_result = await update_tool.execute(
+            analyst_ctx,
+            update_tool.parse_params(
+                {
+                    "task_id": task_id,
+                    "status": "running",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert update_result.ok is False
+        assert update_result.error_code == "task_actor_forbidden"
     finally:
         await engine.dispose()
 
@@ -801,8 +1395,8 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                     "prompt": "Review the AI-produced answer.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
-                    "reviewer_type": "human",
-                    "reviewer_ref": "cli_user:alice",
+                    "reviewer_type": "ai_profile",
+                    "reviewer_ref": "default",
                     "labels": ["review"],
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -851,8 +1445,8 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
             review_list_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "actor_type": "human",
-                    "actor_ref": "cli_user:alice",
+                    "actor_type": "ai_profile",
+                    "actor_ref": "default",
                     "labels": ["review"],
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -870,8 +1464,6 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "task_id": review_task_id,
-                    "actor_type": "human",
-                    "actor_ref": "cli_user:alice",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -904,6 +1496,8 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                     "prompt": "Send this task back with review feedback.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
+                    "reviewer_type": "ai_profile",
+                    "reviewer_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -934,8 +1528,6 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "task_id": change_task_id,
-                    "actor_type": "human",
-                    "actor_ref": "cli_user:alice",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                     "reason_text": "Add citations before approval.",
@@ -951,5 +1543,40 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         assert changed_task["owner_type"] == "ai_profile"
         assert changed_task["owner_ref"] == "default"
         assert changed_task["blocked_reason_code"] == "review_changes_requested"
+
+        spoofed_approve_result = await review_approve_tool.execute(
+            ctx,
+            review_approve_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": review_task_id,
+                    "actor_type": "human",
+                    "actor_ref": "cli_user:alice",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert spoofed_approve_result.ok is False
+        assert spoofed_approve_result.error_code == "task_review_actor_forbidden"
+
+        spoofed_change_result = await review_request_changes_tool.execute(
+            ctx,
+            review_request_changes_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": change_task_id,
+                    "actor_type": "human",
+                    "actor_ref": "cli_user:alice",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                    "reason_text": "This spoofed actor should be rejected.",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert spoofed_change_result.ok is False
+        assert spoofed_change_result.error_code == "task_review_actor_forbidden"
     finally:
         await engine.dispose()

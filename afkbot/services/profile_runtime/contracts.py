@@ -34,6 +34,7 @@ class ProfileRuntimeConfig(BaseModel):
     llm_history_turns: int | None = None
     chat_planning_mode: Literal["off", "auto", "on"] | None = None
     enabled_tool_plugins: tuple[str, ...] | None = None
+    taskflow_team_profile_ids: tuple[str, ...] | None = None
     memory_auto_search_enabled: bool | None = None
     memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None = None
     memory_auto_search_limit: int | None = None
@@ -63,7 +64,7 @@ class ProfileRuntimeConfig(BaseModel):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("enabled_tool_plugins", mode="before")
+    @field_validator("enabled_tool_plugins", "taskflow_team_profile_ids", mode="before")
     @classmethod
     def _normalize_enabled_tool_plugins(
         cls,
