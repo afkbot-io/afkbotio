@@ -389,7 +389,7 @@ async def test_integration_matrix_uses_profile_effective_runtime(
     by_name = {item.integration: item for item in report.checks}
 
     assert by_name["llm"].status == "ok"
-    assert by_name["llm"].reason == "ready (openai/gpt-4o-mini)"
+    assert by_name["llm"].reason == "configured (openai/gpt-4o-mini; use --probe to verify auth)"
     assert by_name["http"].status == "ok"
     assert by_name["web.search"].status == "fail"
     assert by_name["web.search"].error_code == "tool_not_registered"

@@ -26,11 +26,16 @@ from afkbot.settings import Settings, get_settings
 
 _HOST_SERVICE_MARKER = "afkbot-managed-runtime-service"
 _SYSTEMD_SERVICE_NAME = "afkbot.service"
-_SYSTEMD_USER_SERVICE_PATH = Path.home() / ".config" / "systemd" / "user" / _SYSTEMD_SERVICE_NAME
+_IMPORT_TIME_HOME_PATH = Path.home()
+_SYSTEMD_USER_SERVICE_PATH_DEFAULT = _IMPORT_TIME_HOME_PATH / ".config" / "systemd" / "user" / _SYSTEMD_SERVICE_NAME
+_SYSTEMD_USER_SERVICE_PATH = _SYSTEMD_USER_SERVICE_PATH_DEFAULT
 _SYSTEMD_SYSTEM_SERVICE_BASENAME = "afkbot"
 _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
 _LAUNCHD_SERVICE_NAME = "io.afkbot.afkbot"
-_LAUNCHD_SERVICE_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
+_LAUNCHD_SERVICE_PATH_DEFAULT = (
+    _IMPORT_TIME_HOME_PATH / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
+)
+_LAUNCHD_SERVICE_PATH = _LAUNCHD_SERVICE_PATH_DEFAULT
 _START_WAIT_TIMEOUT_SEC = 60.0
 _STOP_WAIT_TIMEOUT_SEC = 15.0
 _POLL_INTERVAL_SEC = 1.0
@@ -95,19 +100,21 @@ def describe_managed_runtime_service() -> ManagedRuntimeServiceStatus:
                 kind="systemd-system",
                 path=_SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH,
             )
-        if _managed_service_file_present(_SYSTEMD_USER_SERVICE_PATH):
+        user_path = _systemd_user_service_path()
+        if _managed_service_file_present(user_path):
             return ManagedRuntimeServiceStatus(
                 installed=True,
                 kind="systemd-user",
-                path=_SYSTEMD_USER_SERVICE_PATH,
+                path=user_path,
             )
         return ManagedRuntimeServiceStatus(installed=False)
     if system_name == "darwin":
-        if _managed_service_file_present(_LAUNCHD_SERVICE_PATH):
+        launchd_path = _launchd_service_path()
+        if _managed_service_file_present(launchd_path):
             return ManagedRuntimeServiceStatus(
                 installed=True,
                 kind="launchd",
-                path=_LAUNCHD_SERVICE_PATH,
+                path=launchd_path,
             )
         return ManagedRuntimeServiceStatus(installed=False)
     return ManagedRuntimeServiceStatus(installed=False)
@@ -120,6 +127,26 @@ def ensure_managed_runtime_service(
 ) -> ManagedRuntimeServiceResult:
     """Create or refresh the local managed-service definition for AFKBOT."""
 
+    setup_complete = setup_is_complete(settings)
+    if not setup_complete and not start:
+        existing = describe_managed_runtime_service()
+        cleanup_note = ""
+        if existing.installed:
+            cleanup_result = remove_managed_runtime_service()
+            if cleanup_result.status == "removed":
+                cleanup_note = " Removed the existing managed service until `afk setup` is completed."
+            elif cleanup_result.reason:
+                cleanup_note = f" {cleanup_result.reason}"
+        return ManagedRuntimeServiceResult(
+            status="manual_restart_required",
+            reason=(
+                "Managed AFKBOT service install is deferred until `afk setup` completes."
+                f"{cleanup_note}"
+            ),
+            kind=existing.kind,
+            path=existing.path,
+        )
+
     system_name = platform.system().lower()
     if system_name == "linux":
         if shutil.which("systemctl") is None:
@@ -131,7 +158,7 @@ def ensure_managed_runtime_service(
         finalized = _finalize_start_result(
             result,
             settings=settings,
-            should_be_running=start and setup_is_complete(settings),
+            should_be_running=start and setup_complete,
             action="start",
         )
         if finalized.status in {"installed", "restarted"} and finalized.kind == "systemd-system":
@@ -144,7 +171,7 @@ def ensure_managed_runtime_service(
         return _finalize_start_result(
             _ensure_launchd_service(settings=settings, start=start),
             settings=settings,
-            should_be_running=start and setup_is_complete(settings),
+            should_be_running=start and setup_complete,
             action="start",
         )
     return ManagedRuntimeServiceResult(
@@ -261,8 +288,9 @@ def remove_managed_runtime_service() -> ManagedRuntimeServiceResult:
         legacy_path = _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH
         if legacy_path != system_path and _legacy_systemd_system_service_belongs_to_current_user():
             results.append(_remove_systemd_system_service(legacy_path))
-        if _managed_service_file_present(_SYSTEMD_USER_SERVICE_PATH):
-            results.append(_remove_systemd_user_service(_SYSTEMD_USER_SERVICE_PATH))
+        user_path = _systemd_user_service_path()
+        if _managed_service_file_present(user_path):
+            results.append(_remove_systemd_user_service(user_path))
         if not results:
             return ManagedRuntimeServiceResult(status="not_installed")
         for result in results:
@@ -324,30 +352,31 @@ def _ensure_systemd_user_service(
     settings: Settings,
     start: bool,
 ) -> ManagedRuntimeServiceResult:
+    service_path = _systemd_user_service_path()
     launcher_path = _resolve_current_afk_launcher_path()
     if launcher_path is None:
         return ManagedRuntimeServiceResult(
             status="failed",
             reason="Failed to resolve the current AFKBOT launcher path.",
         )
-    if _service_definition_is_unmanaged(_SYSTEMD_USER_SERVICE_PATH):
+    if _service_definition_is_unmanaged(service_path):
         return ManagedRuntimeServiceResult(
             status="manual_restart_required",
             reason=(
-                f"Refusing to replace unmanaged systemd user unit at {_SYSTEMD_USER_SERVICE_PATH}. "
+                f"Refusing to replace unmanaged systemd user unit at {service_path}. "
                 "Move that unit aside or manage the AFKBOT daemon manually on this host."
             ),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=service_path,
         )
     rendered = _render_systemd_user_unit(settings=settings, launcher_path=launcher_path)
-    _write_service_definition(_SYSTEMD_USER_SERVICE_PATH, rendered, mode=0o644)
-    _ensure_systemd_user_enable_link(_SYSTEMD_USER_SERVICE_PATH)
+    _write_service_definition(service_path, rendered, mode=0o644)
+    _ensure_systemd_user_enable_link(service_path)
     if not start:
         return ManagedRuntimeServiceResult(
             status="installed",
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=service_path,
         )
     daemon_reload = _run_command(["systemctl", "--user", "daemon-reload"], allow_failure=True)
     if daemon_reload.returncode != 0:
@@ -355,7 +384,7 @@ def _ensure_systemd_user_service(
             status="manual_restart_required",
             reason=_systemd_user_failure_reason(daemon_reload),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=service_path,
         )
     service_result = _run_command(
         ["systemctl", "--user", "restart", _SYSTEMD_SERVICE_NAME],
@@ -366,12 +395,12 @@ def _ensure_systemd_user_service(
             status="manual_restart_required",
             reason=_systemd_user_failure_reason(service_result),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=service_path,
         )
     return ManagedRuntimeServiceResult(
         status="installed",
         kind="systemd-user",
-        path=_SYSTEMD_USER_SERVICE_PATH,
+        path=service_path,
     )
 
 
@@ -380,6 +409,7 @@ def _ensure_systemd_system_service(
     settings: Settings,
     start: bool,
 ) -> ManagedRuntimeServiceResult:
+    service_path = _launchd_service_path()
     launcher_path = _resolve_current_afk_launcher_path()
     if launcher_path is None:
         return ManagedRuntimeServiceResult(
@@ -471,6 +501,7 @@ def _ensure_launchd_service(
     settings: Settings,
     start: bool,
 ) -> ManagedRuntimeServiceResult:
+    service_path = _launchd_service_path()
     launcher_path = _resolve_current_afk_launcher_path()
     if launcher_path is None:
         return ManagedRuntimeServiceResult(
@@ -478,18 +509,18 @@ def _ensure_launchd_service(
             reason="Failed to resolve the current AFKBOT launcher path.",
         )
     rendered = _render_launchd_plist(settings=settings, launcher_path=launcher_path)
-    _write_service_definition(_LAUNCHD_SERVICE_PATH, rendered, mode=0o644)
+    _write_service_definition(service_path, rendered, mode=0o644)
     if not start:
         return ManagedRuntimeServiceResult(
             status="installed",
             kind="launchd",
-            path=_LAUNCHD_SERVICE_PATH,
+            path=service_path,
         )
     uid_value = str(os.getuid())
     last_error = "launchctl could not load the AFKBOT agent automatically."
     for domain in (f"gui/{uid_value}", f"user/{uid_value}"):
-        _run_command(["launchctl", "bootout", domain, str(_LAUNCHD_SERVICE_PATH)], allow_failure=True)
-        bootstrap = _run_command(["launchctl", "bootstrap", domain, str(_LAUNCHD_SERVICE_PATH)])
+        _run_command(["launchctl", "bootout", domain, str(service_path)], allow_failure=True)
+        bootstrap = _run_command(["launchctl", "bootstrap", domain, str(service_path)])
         if bootstrap.returncode != 0:
             last_error = (
                 f"launchctl bootstrap failed for domain {domain}: "
@@ -503,7 +534,7 @@ def _ensure_launchd_service(
         return ManagedRuntimeServiceResult(
             status="installed",
             kind="launchd",
-            path=_LAUNCHD_SERVICE_PATH,
+            path=service_path,
         )
     return ManagedRuntimeServiceResult(
         status="manual_restart_required",
@@ -512,19 +543,18 @@ def _ensure_launchd_service(
             "from the target macOS user session or use `afk start` manually."
         ),
         kind="launchd",
-        path=_LAUNCHD_SERVICE_PATH,
+        path=service_path,
     )
 
 
 def _restart_systemd_user_service(path: Path) -> ManagedRuntimeServiceResult:
-    _ = path
     daemon_reload = _run_command(["systemctl", "--user", "daemon-reload"])
     if daemon_reload.returncode != 0:
         return ManagedRuntimeServiceResult(
             status="failed",
             reason=_completed_process_error(daemon_reload),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=path,
         )
     restart = _run_command(["systemctl", "--user", "restart", _SYSTEMD_SERVICE_NAME])
     if restart.returncode != 0:
@@ -532,12 +562,12 @@ def _restart_systemd_user_service(path: Path) -> ManagedRuntimeServiceResult:
             status="failed",
             reason=_completed_process_error(restart),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=path,
         )
     return ManagedRuntimeServiceResult(
         status="restarted",
         kind="systemd-user",
-        path=_SYSTEMD_USER_SERVICE_PATH,
+        path=path,
     )
 
 
@@ -565,19 +595,18 @@ def _restart_systemd_system_service(path: Path) -> ManagedRuntimeServiceResult:
 
 
 def _stop_systemd_user_service(path: Path) -> ManagedRuntimeServiceResult:
-    _ = path
     stop = _run_command(["systemctl", "--user", "stop", _SYSTEMD_SERVICE_NAME])
     if stop.returncode != 0:
         return ManagedRuntimeServiceResult(
             status="failed",
             reason=_completed_process_error(stop),
             kind="systemd-user",
-            path=_SYSTEMD_USER_SERVICE_PATH,
+            path=path,
         )
     return ManagedRuntimeServiceResult(
         status="stopped",
         kind="systemd-user",
-        path=_SYSTEMD_USER_SERVICE_PATH,
+        path=path,
     )
 
 
@@ -927,6 +956,18 @@ def _describe_launchd_manager_state() -> str:
                 return normalized.removeprefix("state = ").strip()
         return "loaded"
     return "not_loaded"
+
+
+def _systemd_user_service_path() -> Path:
+    if _SYSTEMD_USER_SERVICE_PATH != _SYSTEMD_USER_SERVICE_PATH_DEFAULT:
+        return _SYSTEMD_USER_SERVICE_PATH
+    return _resolve_target_home_path() / ".config" / "systemd" / "user" / _SYSTEMD_SERVICE_NAME
+
+
+def _launchd_service_path() -> Path:
+    if _LAUNCHD_SERVICE_PATH != _LAUNCHD_SERVICE_PATH_DEFAULT:
+        return _LAUNCHD_SERVICE_PATH
+    return _resolve_target_home_path() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
 
 
 def _read_command_state(result: subprocess.CompletedProcess[str], *, fallback: str) -> str:
@@ -1303,6 +1344,19 @@ def _resolve_linux_service_account() -> _LinuxServiceAccount | None:
     )
 
 
+def _resolve_target_home_path() -> Path:
+    sudo_user = str(os.getenv("SUDO_USER") or "").strip()
+    if sudo_user:
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:
+        return Path.home()
+
+
 def _current_linux_user_name() -> str:
     account = _resolve_linux_service_account()
     if account is not None and account.user_name.strip():
@@ -1361,8 +1415,9 @@ def _cleanup_linux_secondary_services(active_system_path: Path | None) -> str | 
     if active_system_path is None:
         return None
     notices: list[str] = []
-    if _managed_service_file_present(_SYSTEMD_USER_SERVICE_PATH):
-        result = _remove_systemd_user_service(_SYSTEMD_USER_SERVICE_PATH, allow_failure=True)
+    user_path = _systemd_user_service_path()
+    if _managed_service_file_present(user_path):
+        result = _remove_systemd_user_service(user_path, allow_failure=True)
         if result.status != "removed":
             notices.append("previous user-level systemd unit was left in place")
     if (

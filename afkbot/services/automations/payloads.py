@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import re
 import secrets
 from collections.abc import Mapping
 from hashlib import sha256
 
-_TOKEN_LIKE_RE = re.compile(r"\b[A-Za-z0-9_\-]{16,}\b")
-_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization", "value")
+from afkbot.services.agent_loop.security_guard import SecurityGuard
+
+_SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization")
+_SENSITIVE_VALUE_HINT_FIELDS = frozenset({"name", "field", "key", "slug", "credential_name", "credential_slug"})
+_SECURITY_GUARD = SecurityGuard()
 
 
 def resolve_webhook_event_hash(payload: Mapping[str, object]) -> str:
@@ -68,14 +70,19 @@ def sanitize_payload_value(value: object, *, field_name: str | None = None) -> o
     if field_name is not None and is_sensitive_field_name(field_name):
         return "[REDACTED]"
     if isinstance(value, str):
-        return _TOKEN_LIKE_RE.sub("[REDACTED]", value)
+        return _SECURITY_GUARD.redact_text(value)
     if value is None:
         return None
     if isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, dict):
+        redact_value_field = _mapping_has_sensitive_value_hint(value)
         return {
-            str(key): sanitize_payload_value(item, field_name=str(key))
+            str(key): (
+                "[REDACTED]"
+                if str(key).lower() == "value" and redact_value_field and item is not None
+                else sanitize_payload_value(item, field_name=str(key))
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -90,3 +97,12 @@ def is_sensitive_field_name(field_name: str) -> bool:
 
     normalized = field_name.lower()
     return any(part in normalized for part in _SENSITIVE_FIELD_PARTS)
+
+
+def _mapping_has_sensitive_value_hint(value: dict[object, object]) -> bool:
+    for key, item in value.items():
+        if str(key).lower() not in _SENSITIVE_VALUE_HINT_FIELDS:
+            continue
+        if isinstance(item, str) and is_sensitive_field_name(item):
+            return True
+    return False

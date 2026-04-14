@@ -19,6 +19,16 @@ AsyncLogEvent = Callable[..., Awaitable[None]]
 AsyncCancelCheck = Callable[..., Awaitable[None]]
 
 _LLM_PROGRESS_TICK_SEC = 3.0
+_TRANSIENT_LLM_RETRY_DELAYS_SEC = (1.0, 3.0)
+_TRANSIENT_LLM_ERROR_CODES = frozenset(
+    {
+        "llm_provider_unavailable",
+        "llm_provider_network_error",
+        "llm_provider_rate_limited",
+        "llm_provider_error",
+        "llm_provider_response_invalid",
+    }
+)
 
 
 class LLMRequestRuntime:
@@ -94,89 +104,173 @@ class LLMRequestRuntime:
                 },
             )
 
-            task = asyncio.create_task(self._llm_provider.complete(request))
-            try:
-                while True:
-                    elapsed_sec = time.monotonic() - started_at
-                    if elapsed_sec >= timeout_sec:
-                        task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await task
-                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                        await self._log_event(
-                            run_id=run_id,
-                            session_id=session_id,
-                            event_type="llm.call.timeout",
-                            payload={
-                                "iteration": iteration,
-                                "elapsed_ms": elapsed_ms,
-                                "timeout_ms": timeout_ms,
-                                "queue_wait_ms": queue_wait_ms,
-                                "error_code": "llm_timeout",
-                            },
-                        )
-                        return LLMResponse.final(
-                            "LLM request timed out before planning could complete.",
-                            error_code="llm_timeout",
-                        )
+            attempt = 1
+            max_attempts = len(_TRANSIENT_LLM_RETRY_DELAYS_SEC) + 1
+            while True:
+                task = asyncio.create_task(self._llm_provider.complete(request))
+                try:
+                    while True:
+                        elapsed_sec = time.monotonic() - started_at
+                        if elapsed_sec >= timeout_sec:
+                            task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await task
+                            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                            await self._log_event(
+                                run_id=run_id,
+                                session_id=session_id,
+                                event_type="llm.call.timeout",
+                                payload={
+                                    "iteration": iteration,
+                                    "attempt": attempt,
+                                    "elapsed_ms": elapsed_ms,
+                                    "timeout_ms": timeout_ms,
+                                    "queue_wait_ms": queue_wait_ms,
+                                    "error_code": "llm_timeout",
+                                },
+                            )
+                            return LLMResponse.final(
+                                "LLM request timed out before planning could complete.",
+                                error_code="llm_timeout",
+                            )
 
-                    wait_sec = min(_LLM_PROGRESS_TICK_SEC, timeout_sec - elapsed_sec)
-                    done, _ = await asyncio.wait({task}, timeout=wait_sec)
-                    if done:
-                        response = task.result()
-                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                        await self._log_event(
-                            run_id=run_id,
-                            session_id=session_id,
-                            event_type="llm.call.done",
-                            payload={
+                        wait_sec = min(_LLM_PROGRESS_TICK_SEC, timeout_sec - elapsed_sec)
+                        done, _ = await asyncio.wait({task}, timeout=wait_sec)
+                        if done:
+                            response = task.result()
+                            if await self._retry_transient_response_if_needed(
+                                run_id=run_id,
+                                session_id=session_id,
+                                iteration=iteration,
+                                attempt=attempt,
+                                started_at=started_at,
+                                timeout_sec=timeout_sec,
+                                queue_wait_ms=queue_wait_ms,
+                                response=response,
+                            ):
+                                attempt += 1
+                                break
+                            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                            payload: dict[str, object] = {
                                 "iteration": iteration,
+                                "attempt": attempt,
                                 "elapsed_ms": elapsed_ms,
                                 "timeout_ms": timeout_ms,
                                 "queue_wait_ms": queue_wait_ms,
                                 "response_kind": response.kind,
                                 "error_code": response.error_code,
                                 "tool_calls_count": len(response.tool_calls),
+                            }
+                            if response.error_code is not None:
+                                payload["reason"] = response.final_message
+                                payload["error_detail"] = response.error_detail
+                            await self._log_event(
+                                run_id=run_id,
+                                session_id=session_id,
+                                event_type="llm.call.done",
+                                payload=payload,
+                            )
+                            return response
+
+                        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                        await self._log_event(
+                            run_id=run_id,
+                            session_id=session_id,
+                            event_type="llm.call.tick",
+                            payload={
+                                "iteration": iteration,
+                                "attempt": attempt,
+                                "elapsed_ms": elapsed_ms,
+                                "timeout_ms": timeout_ms,
+                                "queue_wait_ms": queue_wait_ms,
                             },
                         )
-                        return response
-
+                        await self._raise_if_cancel_requested(run_id=run_id)
+                except asyncio.CancelledError:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                    raise
+                except Exception as exc:  # pragma: no cover - defensive fallback
+                    task.cancel()
+                    with suppress(BaseException):
+                        await task
+                    error_response = LLMResponse.final(
+                        "LLM provider failed before planning could complete.",
+                        error_code="llm_provider_error",
+                        error_detail=f"{exc.__class__.__name__}: {exc}",
+                    )
+                    if await self._retry_transient_response_if_needed(
+                        run_id=run_id,
+                        session_id=session_id,
+                        iteration=iteration,
+                        attempt=attempt,
+                        started_at=started_at,
+                        timeout_sec=timeout_sec,
+                        queue_wait_ms=queue_wait_ms,
+                        response=error_response,
+                    ) and attempt < max_attempts:
+                        attempt += 1
+                        continue
                     elapsed_ms = int((time.monotonic() - started_at) * 1000)
                     await self._log_event(
                         run_id=run_id,
                         session_id=session_id,
-                        event_type="llm.call.tick",
+                        event_type="llm.call.error",
                         payload={
                             "iteration": iteration,
+                            "attempt": attempt,
                             "elapsed_ms": elapsed_ms,
-                            "timeout_ms": timeout_ms,
                             "queue_wait_ms": queue_wait_ms,
+                            "error_code": "llm_provider_error",
+                            "reason": f"{exc.__class__.__name__}: {exc}",
                         },
                     )
-                    await self._raise_if_cancel_requested(run_id=run_id)
-            except asyncio.CancelledError:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
-                raise
-            except Exception as exc:  # pragma: no cover - defensive fallback
-                task.cancel()
-                with suppress(BaseException):
-                    await task
-                elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                await self._log_event(
-                    run_id=run_id,
-                    session_id=session_id,
-                    event_type="llm.call.error",
-                    payload={
-                        "iteration": iteration,
-                        "elapsed_ms": elapsed_ms,
-                        "queue_wait_ms": queue_wait_ms,
-                        "error_code": "llm_provider_error",
-                        "reason": f"{exc.__class__.__name__}: {exc}",
-                    },
-                )
-                return LLMResponse.final(
-                    "LLM provider failed before planning could complete.",
-                    error_code="llm_provider_error",
-                )
+                    return LLMResponse.final(
+                        "LLM provider failed before planning could complete.",
+                        error_code="llm_provider_error",
+                    )
+
+    async def _retry_transient_response_if_needed(
+        self,
+        *,
+        run_id: int,
+        session_id: str,
+        iteration: int,
+        attempt: int,
+        started_at: float,
+        timeout_sec: float,
+        queue_wait_ms: int,
+        response: LLMResponse,
+    ) -> bool:
+        """Return whether the caller should retry one transient upstream failure."""
+
+        if response.error_code not in _TRANSIENT_LLM_ERROR_CODES:
+            return False
+        if attempt > len(_TRANSIENT_LLM_RETRY_DELAYS_SEC):
+            return False
+        delay_sec = _TRANSIENT_LLM_RETRY_DELAYS_SEC[attempt - 1]
+        remaining_sec = timeout_sec - (time.monotonic() - started_at)
+        effective_delay_sec = min(delay_sec, max(0.0, remaining_sec - 0.01))
+        if effective_delay_sec <= 0:
+            return False
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        await self._log_event(
+            run_id=run_id,
+            session_id=session_id,
+            event_type="llm.call.retry",
+            payload={
+                "iteration": iteration,
+                "attempt": attempt + 1,
+                "elapsed_ms": elapsed_ms,
+                "queue_wait_ms": queue_wait_ms,
+                "error_code": response.error_code,
+                "reason": response.final_message,
+                "error_detail": response.error_detail,
+                "delay_ms": int(effective_delay_sec * 1000),
+            },
+        )
+        await self._raise_if_cancel_requested(run_id=run_id)
+        await asyncio.sleep(effective_delay_sec)
+        await self._raise_if_cancel_requested(run_id=run_id)
+        return True

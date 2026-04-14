@@ -350,7 +350,7 @@ async def test_run_turn_propagates_cancellation_from_tool(tmp_path: Path) -> Non
 
 
 def test_sanitize_value_keeps_non_secret_task_id() -> None:
-    """Internal task identifiers should not be redacted as token-like secrets."""
+    """Internal task identifiers and opaque refs should not be redacted by default."""
 
     task_id = "abc123" * 6
     payload = AgentLoop._sanitize_value(  # noqa: SLF001
@@ -358,4 +358,4 @@ def test_sanitize_value_keeps_non_secret_task_id() -> None:
     )
     assert isinstance(payload, dict)
     assert payload["task_id"] == task_id
-    assert payload["opaque"] == "[REDACTED]"
+    assert payload["opaque"] == task_id

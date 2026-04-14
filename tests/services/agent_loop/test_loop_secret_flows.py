@@ -87,8 +87,8 @@ async def test_app_tool_reads_skill_and_requests_secure_field(tmp_path: Path) ->
     await engine.dispose()
 
 
-async def test_run_turn_blocks_secret_input_in_chat_flow(tmp_path: Path) -> None:
-    """Secret-like user text in chat flow must short-circuit with block envelope."""
+async def test_run_turn_allows_secret_input_in_chat_flow_by_default(tmp_path: Path) -> None:
+    """Secret-like user text should pass through chat when the guard is disabled."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_secret_block.db")
 
@@ -97,6 +97,37 @@ async def test_run_turn_blocks_secret_input_in_chat_flow(tmp_path: Path) -> None
         result = await loop.run_turn(
             profile_id="default",
             session_id="s-secret-input",
+            message="my token=abc123",
+        )
+
+        assert result.envelope.action == "finalize"
+        assert result.envelope.blocked_reason is None
+
+        turns = (await session.execute(select(ChatTurn))).scalars().all()
+        assert len(turns) == 1
+        assert turns[0].user_message == "my token=abc123"
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        assert "turn.block" not in [event.event_type for event in events]
+
+    await engine.dispose()
+
+
+async def test_run_turn_blocks_secret_input_when_chat_guard_enabled(tmp_path: Path) -> None:
+    """Secret-like user text must short-circuit once the chat guard is enabled."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_secret_block_enabled.db")
+    settings.chat_secret_guard_enabled = True
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(session, ContextBuilder(settings, SkillLoader(settings)))
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-secret-input-enabled",
             message="my token=abc123",
         )
 
@@ -121,10 +152,11 @@ async def test_run_turn_blocks_secret_input_in_chat_flow(tmp_path: Path) -> None
     await engine.dispose()
 
 
-async def test_run_turn_blocks_secret_input_with_redacted_prefix(tmp_path: Path) -> None:
+async def test_run_turn_blocks_secret_input_with_redacted_prefix_when_enabled(tmp_path: Path) -> None:
     """Guard must block secret input even if message already contains [REDACTED]."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_secret_block_redacted.db")
+    settings.chat_secret_guard_enabled = True
 
     async with session_scope(factory) as session:
         loop = AgentLoop(session, ContextBuilder(settings, SkillLoader(settings)))

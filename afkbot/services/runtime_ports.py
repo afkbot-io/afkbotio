@@ -27,6 +27,7 @@ class RuntimeEndpointProbe:
     ok: bool
     url: str
     reason: str | None = None
+    payload: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,17 +108,64 @@ def probe_runtime_stack(
     probe_host = _normalize_probe_host(host)
     runtime = _probe_json_health_endpoint(
         url=f"http://{probe_host}:{runtime_port}/healthz",
-        validator=lambda payload: payload.get("ok") is True
-        and str(payload.get("service") or "").strip() == "afkbot-runtime",
+        validator=_is_runtime_health_payload_shape,
         timeout_sec=timeout_sec,
     )
     api = _probe_json_health_endpoint(
         url=f"http://{probe_host}:{resolved_api_port}/healthz",
-        validator=lambda payload: str(payload.get("status") or "").strip().lower() == "ok"
-        and str(payload.get("service") or "").strip() == "afkbot-api",
+        validator=_is_api_health_payload_shape,
         timeout_sec=timeout_sec,
     )
+    if runtime.ok and api.ok:
+        runtime_payload = runtime.payload or {}
+        api_payload = api.payload or {}
+        if _health_payload_has_expected_service(runtime_payload, expected="afkbot-runtime") and _health_payload_has_expected_service(
+            api_payload,
+            expected="afkbot-api",
+        ):
+            return RuntimeStackProbe(runtime=runtime, api=api)
+        runtime_ready = _probe_json_health_endpoint(
+            url=f"http://{probe_host}:{runtime_port}/readyz",
+            validator=lambda payload: payload.get("ok") is True,
+            timeout_sec=timeout_sec,
+        )
+        api_ready = _probe_json_health_endpoint(
+            url=f"http://{probe_host}:{resolved_api_port}/readyz",
+            validator=lambda payload: str(payload.get("status") or "").strip().lower() == "ready",
+            timeout_sec=timeout_sec,
+        )
+        if runtime_ready.ok and api_ready.ok:
+            return RuntimeStackProbe(runtime=runtime, api=api)
+        runtime_reason = runtime_ready.reason or runtime.reason or "unexpected health payload"
+        api_reason = api_ready.reason or api.reason or "unexpected health payload"
+        return RuntimeStackProbe(
+            runtime=RuntimeEndpointProbe(
+                ok=False,
+                url=runtime.url,
+                reason=runtime_reason,
+                payload=runtime.payload,
+            ),
+            api=RuntimeEndpointProbe(
+                ok=False,
+                url=api.url,
+                reason=api_reason,
+                payload=api.payload,
+            ),
+        )
     return RuntimeStackProbe(runtime=runtime, api=api)
+
+
+def _is_runtime_health_payload_shape(payload: dict[str, object]) -> bool:
+    return payload.get("ok") is True
+
+
+def _is_api_health_payload_shape(payload: dict[str, object]) -> bool:
+    return str(payload.get("status") or "").strip().lower() == "ok"
+
+
+def _health_payload_has_expected_service(payload: dict[str, object], *, expected: str) -> bool:
+    service = str(payload.get("service") or "").strip()
+    return service == expected
 
 
 def _coerce_port(value: object) -> int | None:
@@ -164,7 +212,7 @@ def _probe_json_health_endpoint(
         return RuntimeEndpointProbe(ok=False, url=url, reason="invalid json payload")
     if not validator(payload):
         return RuntimeEndpointProbe(ok=False, url=url, reason="unexpected health payload")
-    return RuntimeEndpointProbe(ok=True, url=url)
+    return RuntimeEndpointProbe(ok=True, url=url, payload=payload)
 
 
 def _normalize_probe_host(host: str) -> str:

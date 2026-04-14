@@ -60,6 +60,7 @@ class TurnExecutionRuntime:
         llm_execution_budget_high_sec: float,
         llm_execution_budget_very_high_sec: float,
         turn_finalizer: TurnFinalizer,
+        chat_secret_guard_enabled: bool,
         sanitize: Callable[[str], str],
         sanitize_value: Callable[[object], object],
     ) -> None:
@@ -84,6 +85,7 @@ class TurnExecutionRuntime:
         self._llm_execution_budget_high_sec = llm_execution_budget_high_sec
         self._llm_execution_budget_very_high_sec = llm_execution_budget_very_high_sec
         self._turn_finalizer = turn_finalizer
+        self._chat_secret_guard_enabled = chat_secret_guard_enabled
         self._sanitize = sanitize
         self._sanitize_value = sanitize_value
 
@@ -103,8 +105,12 @@ class TurnExecutionRuntime:
         session_key: str | None = None
         final_spec_patch: dict[str, object] | None = None
         raw_user_message = message.strip()
-        user_guard = self._security_guard.check_user_message(text=raw_user_message)
-        user_message = self._sanitize(user_guard.redacted_text)
+        user_guard = (
+            self._security_guard.check_user_message(text=raw_user_message)
+            if self._chat_secret_guard_enabled
+            else None
+        )
+        user_message = self._sanitize(user_guard.redacted_text) if user_guard is not None else raw_user_message
         normalized_planned_tool_calls = planned_tool_calls if planned_tool_calls else None
 
         try:
@@ -142,7 +148,7 @@ class TurnExecutionRuntime:
             effective_overrides = resolved_context.effective_overrides
             persist_turn = effective_overrides.persist_turn is not False
 
-            if not user_guard.allow:
+            if user_guard is not None and not user_guard.allow:
                 blocked_message = (
                     "Secret-like input is blocked in chat flow. "
                     "Use request_secure_field and credentials tools instead."
@@ -408,6 +414,9 @@ class TurnExecutionRuntime:
         session_id: str,
         user_message: str,
     ) -> tuple[str | None, Literal["block", "finalize"], str]:
+        if not self._chat_secret_guard_enabled:
+            return None, "finalize", assistant_message
+
         assistant_guard = self._security_guard.check_assistant_message(text=assistant_message)
         blocked_reason = assistant_guard.error_code
         if assistant_guard.allow:

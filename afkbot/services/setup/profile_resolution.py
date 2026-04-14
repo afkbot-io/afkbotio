@@ -201,6 +201,7 @@ def build_profile_runtime_config(
     base_runtime: ProfileRuntimeConfig | None,
     runtime_core: ResolvedProfileRuntimeCore,
     llm_history_turns: int | None,
+    chat_secret_guard_enabled: bool | None,
     tool_plugins: tuple[str, ...],
     memory_auto_search_enabled: bool | None,
     memory_auto_search_scope_mode: str | None,
@@ -236,6 +237,11 @@ def build_profile_runtime_config(
             llm_history_turns if llm_history_turns is not None else (current.llm_history_turns if current else None)
         ),
         chat_planning_mode=runtime_core.chat_planning_mode,
+        chat_secret_guard_enabled=(
+            chat_secret_guard_enabled
+            if chat_secret_guard_enabled is not None
+            else (current.chat_secret_guard_enabled if current else None)
+        ),
         enabled_tool_plugins=tool_plugins if tool_plugins else (current.enabled_tool_plugins if current else None),
         memory_auto_search_enabled=(
             memory_auto_search_enabled

@@ -976,8 +976,8 @@ async def test_llm_history_uses_compacted_session_summary(tmp_path: Path) -> Non
     await engine.dispose()
 
 
-async def test_llm_secret_output_is_blocked_and_redacted(tmp_path: Path) -> None:
-    """Secret-like assistant output should produce block envelope and redacted persistence."""
+async def test_llm_secret_output_is_allowed_by_default(tmp_path: Path) -> None:
+    """Secret-like assistant output should pass through chat when the guard is disabled."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_secret_output.db")
     scripted = MockLLMProvider([LLMResponse.final("your password is qwerty")])
@@ -993,6 +993,43 @@ async def test_llm_secret_output_is_blocked_and_redacted(tmp_path: Path) -> None
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         result = await loop.run_turn(profile_id="default", session_id="s-llm-secret", message="hello")
+
+        assert result.envelope.action == "finalize"
+        assert result.envelope.blocked_reason is None
+        assert result.envelope.message == "your password is qwerty"
+
+        turns = (await session.execute(select(ChatTurn))).scalars().all()
+        assert len(turns) == 1
+        assert turns[0].assistant_message == "your password is qwerty"
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        assert "turn.block" not in [event.event_type for event in events]
+
+    await engine.dispose()
+
+
+async def test_llm_secret_output_is_blocked_when_chat_guard_enabled(tmp_path: Path) -> None:
+    """Secret-like assistant output should be blocked when the chat guard is enabled."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_secret_output_guard.db")
+    settings.chat_secret_guard_enabled = True
+    scripted = MockLLMProvider([LLMResponse.final("your password is qwerty")])
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=scripted,
+            llm_max_iterations=2,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        result = await loop.run_turn(profile_id="default", session_id="s-llm-secret-guard", message="hello")
 
         assert result.envelope.action == "block"
         assert result.envelope.blocked_reason == "security_secret_output_blocked"

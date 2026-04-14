@@ -231,7 +231,7 @@ async def _llm_runtime_check(
                 integration=spec.integration,
                 status="ok",
                 mode=mode,
-                reason=f"ready ({provider_label})",
+                reason=f"configured ({provider_label}; use --probe to verify auth)",
             )
         try:
             await probe_integration(

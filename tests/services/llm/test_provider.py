@@ -717,6 +717,22 @@ def test_openai_http_status_401_maps_to_auth_error() -> None:
     assert "credentials" in (response.final_message or "").lower()
 
 
+def test_openai_codex_http_status_401_maps_to_relogin_hint() -> None:
+    """Codex auth failures should point operators at ChatGPT OAuth refresh, not generic API keys."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI_CODEX,
+        model="gpt-5.4",
+        api_key="token",
+        base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(401))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_auth_error"
+    assert "codex login" in (response.final_message or "").lower()
+
+
 def test_openai_http_status_404_maps_to_model_not_found() -> None:
     provider = OpenAICompatibleChatProvider(
         provider_id=LLMProviderId.OPENAI,
@@ -826,6 +842,22 @@ def test_openai_http_status_400_maps_to_invalid_request() -> None:
 
     assert response.error_code == "llm_provider_invalid_request"
     assert "rejected by the provider" in (response.final_message or "").lower()
+
+
+def test_openai_http_status_503_preserves_status_detail() -> None:
+    """Upstream 5xx responses should preserve HTTP status detail for later diagnostics."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.OPENAI,
+        model="gpt-5.1",
+        api_key="token",
+        base_url="https://api.openai.com/v1",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(503))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_unavailable"
+    assert response.error_detail == "HTTP 503"
 
 
 def test_openai_http_status_400_includes_provider_detail() -> None:

@@ -27,6 +27,7 @@ from afkbot.services.llm.provider_catalog import (
     provider_supports_device_code_flow,
     provider_uses_oauth_token,
 )
+from afkbot.services.llm.token_verifier import token_expired_or_expiring_soon
 from afkbot.services.llm.minimax_portal_oauth import (
     MINIMAX_PORTAL_OAUTH_CLIENT_ID,
     MINIMAX_PORTAL_REGION_CHOICES,
@@ -461,10 +462,10 @@ def _load_local_codex_access_token() -> str:
         tokens = payload.get("tokens")
         if isinstance(tokens, dict):
             access = str(tokens.get("access_token") or "").strip()
-            if access:
+            if access and not token_expired_or_expiring_soon(token=access):
                 return access
         access = str(payload.get("access_token") or payload.get("OPENAI_API_KEY") or "").strip()
-        if access:
+        if access and not token_expired_or_expiring_soon(token=access):
             return access
     return ""
 

@@ -24,6 +24,7 @@ def test_profile_runtime_config_roundtrip(tmp_path: Path) -> None:
         llm_thinking_level="high",
         llm_history_turns=16,
         chat_planning_mode="on",
+        chat_secret_guard_enabled=True,
         enabled_tool_plugins=("debug_echo", "file_read"),
         memory_auto_search_enabled=True,
         memory_auto_search_limit=4,
@@ -67,6 +68,7 @@ def test_profile_runtime_config_builds_effective_settings(tmp_path: Path) -> Non
             llm_thinking_level="very_high",
             llm_history_turns=18,
             chat_planning_mode="on",
+            chat_secret_guard_enabled=True,
             enabled_tool_plugins=("debug_echo", "file_read"),
             memory_auto_search_enabled=True,
             memory_auto_search_limit=4,
@@ -85,6 +87,7 @@ def test_profile_runtime_config_builds_effective_settings(tmp_path: Path) -> Non
     assert resolved.llm_thinking_level == "very_high"
     assert resolved.llm_history_turns == 18
     assert resolved.chat_planning_mode == "on"
+    assert resolved.chat_secret_guard_enabled is True
     assert resolved.enabled_tool_plugins == ("debug_echo", "file_read")
     assert resolved.memory_auto_search_enabled is True
     assert resolved.memory_auto_search_limit == 4

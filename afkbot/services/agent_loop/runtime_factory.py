@@ -109,6 +109,7 @@ def build_agent_loop_from_settings(
         llm_execution_budget_high_sec=effective_settings.llm_execution_budget_high_sec,
         llm_execution_budget_very_high_sec=effective_settings.llm_execution_budget_very_high_sec,
         llm_history_turns=effective_settings.llm_history_turns,
+        chat_secret_guard_enabled=effective_settings.chat_secret_guard_enabled,
         tool_timeout_default_sec=effective_settings.tool_timeout_default_sec,
         tool_timeout_max_sec=effective_settings.tool_timeout_max_sec,
         secure_request_ttl_sec=effective_settings.secure_request_ttl_sec,
