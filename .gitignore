@@ -44,7 +44,6 @@ bin/
 target/
 plans/
 docs_web/
-docs/
 # Local-only release helper retained outside the public repo surface.
 scripts/release.sh
 profiles/
