@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-04-15
+
+### Added
+
+- Parallel planning strategy guidance for chat/runtime operator flows, making multi-tool execution planning more explicit.
+- Profile-aware AI employee Task Flow execution guards, plus scheduler fairness documentation and regression coverage for the new guarded runtime paths.
+
+### Changed
+
+- Task Flow runtime session binding, principal propagation, ownership handoff, and profile-scope resolution are now aligned across `task.create` and detached runtime execution flows.
+- Plugin CLI/operator output and companion docs are clearer around installed plugin surfaces and day-to-day operator usage.
+
+### Fixed
+
+- Cron automations now honor configured IANA timezones when calculating `next_run_at`, and legacy invalid timezone rows fail only their own job instead of aborting the whole cron tick.
+- Managed runtime startup now fails closed with stronger diagnostics and consistently routes managed services through the Python entrypoint.
+- Setup/runtime hardening now verifies OpenAI Codex auth earlier, safely rejects Codex verification rate-limit failures, retries transient LLM provider errors, and keeps the chat secret guard opt-in.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.0`.
+
 ## [1.0.13] - 2026-04-14
 
 ### Added
