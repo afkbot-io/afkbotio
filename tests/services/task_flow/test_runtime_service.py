@@ -1193,6 +1193,84 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
         await engine.dispose()
 
 
+async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucket(
+    tmp_path: Path,
+) -> None:
+    """Equal-priority no-flow work should not bypass flow spreading once it already has active load."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_no_flow_bucket.db",
+        profile_ids=("default", "analyst", "researcher", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Flow bucket",
+            description="Track fairness against no-flow backlog.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        no_flow_first = await service.create_task(
+            profile_id="default",
+            title="No-flow analyst",
+            prompt="Take the first no-flow task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        no_flow_second = await service.create_task(
+            profile_id="default",
+            title="No-flow researcher",
+            prompt="This should wait behind the idle flow bucket.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="researcher",
+            priority=90,
+        )
+        flow_task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Flow papercliper",
+            prompt="Idle flow work should be preferred on the second claim.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            priority=90,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-no-flow-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-flow-after-no-flow",
+                claimed_by="taskflow-runtime:1",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == no_flow_first.id
+        assert second_claim is not None
+        assert second_claim.id == flow_task.id
+
+        waiting = await service.get_task(profile_id="default", task_id=no_flow_second.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

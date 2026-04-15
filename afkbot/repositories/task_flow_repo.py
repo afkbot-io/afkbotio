@@ -792,6 +792,11 @@ class TaskFlowRepository:
             .group_by(Task.profile_id, func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)))
             .cte("task_claim_active_flow_load")
         )
+        # Scheduler semantics:
+        # 1. shortlist at most one runnable task per idle `(profile_id, owner_ref)` employee,
+        # 2. prefer the highest-priority/due candidate,
+        # 3. spread equal-priority work toward flows (including the synthetic no-flow bucket)
+        #    that currently have fewer active claimed/running tasks.
         eligible_statement = (
             select(
                 runnable_candidates.c.id,
