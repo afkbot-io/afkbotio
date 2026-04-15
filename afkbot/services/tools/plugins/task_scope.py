@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Set
 
 from afkbot.services.tools.base import ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+
+_RUNTIME_PROFILE_OVERRIDE_ENV = "AFKBOT_TASKFLOW_ALLOW_RUNTIME_PROFILE_OVERRIDE"
+_TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def resolve_task_target_profile(
@@ -21,11 +25,13 @@ def resolve_task_target_profile(
     requested_profile_id = payload.effective_profile_id
     if runtime_task_profile_id is None:
         return requested_profile_id
-    if explicit_profile:
+    if (
+        explicit_profile
+        and requested_profile_id != runtime_task_profile_id
+        and _runtime_profile_override_allowed()
+    ):
         return requested_profile_id
-    if requested_profile_id == "default" and ctx.profile_id != "default":
-        return runtime_task_profile_id
-    return requested_profile_id
+    return runtime_task_profile_id
 
 
 def ensure_task_target_scope(
@@ -60,6 +66,11 @@ def _runtime_task_profile_id(*, ctx: ToolContext) -> str | None:
         return None
     value = str(taskflow_payload.get("task_profile_id") or "").strip()
     return value or None
+
+
+def _runtime_profile_override_allowed() -> bool:
+    raw_value = str(os.getenv(_RUNTIME_PROFILE_OVERRIDE_ENV) or "").strip().lower()
+    return raw_value in _TRUTHY_ENV_VALUES
 
 
 def _runtime_taskflow_payload(*, ctx: ToolContext) -> dict[str, object] | None:

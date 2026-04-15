@@ -1051,6 +1051,109 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
         await engine.dispose()
 
 
+async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_target_by_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Runtime task_profile_id should stay authoritative when explicit profile target differs."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        explicit_targets = ({"profile_id": "analyst"}, {"profile_key": "analyst"})
+        for index, explicit_target in enumerate(explicit_targets, start=1):
+            create_result = await create_tool.execute(
+                ctx,
+                create_tool.parse_params(
+                    {
+                        **explicit_target,
+                        "title": f"Runtime backlog note #{index}",
+                        "prompt": "Keep backlog changes in manager profile.",
+                        "owner_type": "human",
+                        "owner_ref": "cli_user:alice",
+                    },
+                    default_timeout_sec=settings.tool_timeout_default_sec,
+                    max_timeout_sec=settings.tool_timeout_max_sec,
+                ),
+            )
+            assert create_result.ok is True
+            task_payload = create_result.payload["task"]
+            assert isinstance(task_payload, dict)
+            assert task_payload["profile_id"] == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target_with_flag(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Explicit profile override should require an opt-in feature flag in runtime scope."""
+
+    monkeypatch.setenv("AFKBOT_TASKFLOW_ALLOW_RUNTIME_PROFILE_OVERRIDE", "1")
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_id": "analyst",
+                    "title": "Runtime override note",
+                    "prompt": "Allow explicit profile target via guarded override.",
+                    "owner_type": "human",
+                    "owner_ref": "cli_user:alice",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_payload = create_result.payload["task"]
+        assert isinstance(task_payload, dict)
+        assert task_payload["profile_id"] == "analyst"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
