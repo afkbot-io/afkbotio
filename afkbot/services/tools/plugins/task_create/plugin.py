@@ -33,6 +33,8 @@ class TaskCreateParams(ToolParameters):
     labels: tuple[str, ...] = ()
     requires_review: bool = False
     depends_on_task_ids: tuple[str, ...] = ()
+    session_id: str | None = Field(default=None, min_length=1, max_length=255)
+    session_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class TaskCreateTool(ToolBase):
@@ -58,13 +60,35 @@ class TaskCreateTool(ToolBase):
 
         try:
             service = get_task_flow_service(self._settings)
+            explicit_fields = set(getattr(payload, "model_fields_set", set()))
+            session_id_explicit = "session_id" in explicit_fields
+            session_profile_id_explicit = "session_profile_id" in explicit_fields
+            effective_session_id = payload.session_id if session_id_explicit else None
+            effective_session_profile_id = (
+                payload.session_profile_id if session_profile_id_explicit else None
+            )
+            if effective_session_id is None and not session_id_explicit:
+                effective_session_id = ctx.session_id
+            if (
+                effective_session_profile_id is None
+                and effective_session_id is not None
+                and effective_session_id.startswith("taskflow:")
+                and not session_profile_id_explicit
+            ):
+                runtime_taskflow = ctx.runtime_metadata.get("taskflow") if isinstance(ctx.runtime_metadata, dict) else None
+                if isinstance(runtime_taskflow, dict):
+                    runtime_profile_id = runtime_taskflow.get("task_profile_id")
+                    if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
+                        effective_session_profile_id = runtime_profile_id.strip()
+            if effective_session_profile_id is None and not session_profile_id_explicit:
+                effective_session_profile_id = ctx.profile_id
             item = await service.create_task(
                 profile_id=target_profile_id,
                 title=payload.title,
                 prompt=payload.prompt,
                 created_by_type="ai_profile",
                 created_by_ref=ctx.profile_id,
-                actor_session_id=ctx.session_id,
+                actor_session_id=effective_session_id,
                 flow_id=payload.flow_id,
                 priority=payload.priority,
                 due_at=payload.due_at,

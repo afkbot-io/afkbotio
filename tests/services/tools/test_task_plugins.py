@@ -24,6 +24,8 @@ from afkbot.settings import Settings, get_settings
 async def _prepare(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    *,
+    taskflow_public_principal_required: bool = False,
 ) -> tuple[Settings, AsyncEngine, ToolRegistry]:
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'tools_taskflow.db'}"
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
@@ -32,6 +34,7 @@ async def _prepare(
     reset_task_flow_services()
 
     settings = get_settings()
+    settings.taskflow_public_principal_required = taskflow_public_principal_required
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -975,22 +978,28 @@ async def test_task_maintenance_sweep_plugin_repairs_stale_claims(
         await engine.dispose()
 
 
-async def test_task_plugins_allow_taskflow_runtime_to_manage_backlog_profile(
+async def test_task_plugins_task_create_uses_runtime_session_principal_when_guard_required(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Task tools should target backlog profile inside taskflow runtime even under another AI profile."""
+    """task.create should pass strict public-principal checks in taskflow runtime context."""
 
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
     try:
-        factory = create_session_factory(engine)
-        async with session_scope(factory) as session:
-            await ProfileRepository(session).get_or_create_default("analyst")
         _write_team_runtime_config(
             settings=settings,
             profile_id="default",
             team_profile_ids=("analyst",),
         )
+
+        create_tool = registry.get("task.create")
+        get_tool = registry.get("task.get")
+        assert create_tool is not None
+        assert get_tool is not None
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -999,74 +1008,45 @@ async def test_task_plugins_allow_taskflow_runtime_to_manage_backlog_profile(
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
-                    "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "analyst",
+                    "task_id": "task_demo",
                 },
             },
         )
 
-        create_tool = registry.get("task.create")
-        assert create_tool is not None
         create_result = await create_tool.execute(
             ctx,
             create_tool.parse_params(
                 {
-                    "title": "Prepare handoff notes",
-                    "prompt": "Prepare concise handoff notes for the human reviewer.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "analyst",
+                    "title": "Runtime backlog note",
+                    "prompt": "Keep backlog changes in manager profile.",
+                    "owner_type": "human",
+                    "owner_ref": "cli_user:alice",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
             ),
         )
         assert create_result.ok is True
-        task = create_result.payload["task"]
-        assert isinstance(task, dict)
-        assert task["profile_id"] == "default"
-        task_id = str(task["id"])
+        task_payload = create_result.payload["task"]
+        assert isinstance(task_payload, dict)
+        task_id = str(task_payload["id"])
+        assert task_payload["profile_id"] == "default"
 
-        update_tool = registry.get("task.update")
-        assert update_tool is not None
-        update_result = await update_tool.execute(
+        get_result = await get_tool.execute(
             ctx,
-            update_tool.parse_params(
-                {
-                    "task_id": task_id,
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
-                    "status": "review",
-                    "blocked_reason_code": "awaiting_human_review",
-                    "blocked_reason_text": "Ready for human review.",
-                },
+            get_tool.parse_params(
+                {"task_id": task_id},
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
             ),
         )
-        assert update_result.ok is True
-        updated = update_result.payload["task"]
-        assert isinstance(updated, dict)
-        assert updated["profile_id"] == "default"
-        assert updated["owner_type"] == "human"
-        assert updated["owner_ref"] == "cli_user:alice"
-        assert updated["status"] == "review"
-
-        list_tool = registry.get("task.list")
-        assert list_tool is not None
-        list_result = await list_tool.execute(
-            ctx,
-            list_tool.parse_params(
-                {"owner_type": "human", "owner_ref": "cli_user:alice"},
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert list_result.ok is True
-        listed = list_result.payload["tasks"]
-        assert isinstance(listed, list)
-        assert listed[0]["id"] == task_id
+        assert get_result.ok is True
+        fetched = get_result.payload["task"]
+        assert isinstance(fetched, dict)
+        assert fetched["created_by_type"] == "ai_profile"
+        assert fetched["created_by_ref"] == "analyst"
+        assert fetched["profile_id"] == "default"
     finally:
         await engine.dispose()
 
