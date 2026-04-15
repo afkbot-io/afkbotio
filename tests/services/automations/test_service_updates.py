@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from afkbot.services.automations.webhook_tokens import (
 )
 from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
+import afkbot.services.automations.update_runtime as update_runtime_module
 
 
 def _runtime_base_url(service: object) -> str:
@@ -29,6 +31,17 @@ def _runtime_base_url(service: object) -> str:
 async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
     """Update should modify allowed fields and rotate webhook token when requested."""
 
+    fixed_now = datetime.fromisoformat("2026-03-12T15:59:59+00:00")
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz: timezone | None = None) -> datetime:
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(update_runtime_module, "datetime", _FixedDateTime)
     engine, factory, service = await prepare_service(tmp_path)
     try:
         created_cron = await service.create_cron(
@@ -44,16 +57,16 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             name="cron-new",
             prompt="cron new prompt",
             status="paused",
-            cron_expr="0 * * * *",
+            cron_expr="0 9 * * *",
             timezone_name="Europe/Berlin",
         )
         assert updated_cron.name == "cron-new"
         assert updated_cron.prompt == "cron new prompt"
         assert updated_cron.status == "paused"
         assert updated_cron.cron is not None
-        assert updated_cron.cron.cron_expr == "0 * * * *"
+        assert updated_cron.cron.cron_expr == "0 9 * * *"
         assert updated_cron.cron.timezone == "Europe/Berlin"
-        assert updated_cron.cron.next_run_at is not None
+        assert updated_cron.cron.next_run_at == datetime.fromisoformat("2026-03-13T08:00:00")
 
         created_webhook = await service.create_webhook(
             profile_id="default",
@@ -131,6 +144,7 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         )
         assert new_token_result.deduplicated is False
     finally:
+        monkeypatch.undo()
         await engine.dispose()
 
 
@@ -182,6 +196,14 @@ async def test_service_update_validation_errors(tmp_path: Path) -> None:
                 cron_expr="* * * * *",
             )
         assert cron_webhook_exc.value.error_code == "invalid_update_payload"
+
+        with pytest.raises(AutomationsServiceError) as invalid_timezone_exc:
+            await service.update(
+                profile_id="default",
+                automation_id=created_cron.id,
+                timezone_name="Mars/OlympusMons",
+            )
+        assert invalid_timezone_exc.value.error_code == "invalid_timezone"
 
         await service.delete(profile_id="default", automation_id=created_cron.id)
         with pytest.raises(AutomationsServiceError) as deleted_exc:
@@ -329,5 +351,23 @@ async def test_service_create_webhook_retries_token_conflict(
             "default",
             created.webhook.webhook_token,
         )
+    finally:
+        await engine.dispose()
+
+
+async def test_service_create_cron_rejects_invalid_timezone(tmp_path: Path) -> None:
+    """Cron creation should reject invalid timezone names before persisting metadata."""
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.create_cron(
+                profile_id="default",
+                name="invalid tz",
+                prompt="do not persist",
+                cron_expr="* * * * *",
+                timezone_name="Mars/OlympusMons",
+            )
+        assert exc_info.value.error_code == "invalid_timezone"
     finally:
         await engine.dispose()

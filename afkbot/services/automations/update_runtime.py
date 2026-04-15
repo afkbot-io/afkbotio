@@ -29,7 +29,7 @@ async def apply_automation_update(
     normalized_timezone: str | None,
     issued_webhook_token: str | None,
     to_metadata: Callable[..., AutomationMetadata],
-    compute_next_run_at: Callable[[str, datetime], datetime],
+    compute_next_run_at: Callable[[str, datetime, str], datetime],
     hash_webhook_token: Callable[[str], str],
 ) -> AutomationMetadata:
     """Apply one validated automation update inside repository scope."""
@@ -101,9 +101,11 @@ async def apply_automation_update(
                     reason="Cron trigger metadata is missing",
                 )
             effective_cron_expr = normalized_cron or cron.cron_expr
+            effective_timezone = normalized_timezone or cron.timezone
             next_run_at = compute_next_run_at(
                 effective_cron_expr,
                 datetime.now(timezone.utc),
+                effective_timezone,
             )
             updated_cron = await repo.update_cron_trigger(
                 automation_id=automation_id,

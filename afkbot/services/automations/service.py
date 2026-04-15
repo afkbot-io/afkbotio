@@ -86,7 +86,7 @@ class AutomationsService:
         normalized_timezone = normalize_timezone_name(timezone_name)
         normalized_prompt = normalize_automation_prompt(prompt)
         now_utc = datetime.now(timezone.utc)
-        next_run_at = compute_next_run_at(normalized_cron, now_utc)
+        next_run_at = compute_next_run_at(normalized_cron, now_utc, normalized_timezone)
 
         async def _op(repo: AutomationRepository) -> AutomationMetadata:
             await ensure_profile_exists(repo, profile_id)
