@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from afkbot.services.automations.errors import AutomationsServiceError
 
@@ -55,36 +56,46 @@ def normalize_cron_expr(cron_expr: str) -> str:
 def normalize_timezone_name(timezone_name: str) -> str:
     """Normalize one timezone name for persisted cron metadata."""
 
-    return timezone_name.strip() or "UTC"
+    normalized = timezone_name.strip() or "UTC"
+    try:
+        ZoneInfo(normalized)
+    except ZoneInfoNotFoundError as exc:
+        raise AutomationsServiceError(
+            error_code="invalid_timezone",
+            reason=f"Unsupported timezone: {normalized}",
+        ) from exc
+    return normalized
 
 
-def compute_next_run_at(cron_expr: str, now_utc: datetime) -> datetime:
+def compute_next_run_at(cron_expr: str, now_utc: datetime, timezone_name: str) -> datetime:
     """Return the next UTC execution time for one normalized 5-field cron expression."""
 
     if now_utc.tzinfo is None:
         raise ValueError("now_utc must be timezone-aware")
     normalized_now = now_utc.astimezone(timezone.utc)
+    schedule_timezone = ZoneInfo(normalize_timezone_name(timezone_name))
     minute_values, hour_values, day_values, month_values, weekday_values = _parse_cron_fields(
         cron_expr.strip()
     )
-    candidate = normalized_now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    candidate_utc = normalized_now.replace(second=0, microsecond=0) + timedelta(minutes=1)
     for _ in range(366 * 24 * 60):
+        candidate = candidate_utc.astimezone(schedule_timezone)
         if candidate.month not in month_values:
-            candidate += timedelta(minutes=1)
+            candidate_utc += timedelta(minutes=1)
             continue
         if not _matches_day(
             candidate=candidate,
             day_values=day_values,
             weekday_values=weekday_values,
         ):
-            candidate += timedelta(minutes=1)
+            candidate_utc += timedelta(minutes=1)
             continue
         if candidate.hour not in hour_values:
-            candidate += timedelta(minutes=1)
+            candidate_utc += timedelta(minutes=1)
             continue
         if candidate.minute in minute_values:
-            return candidate
-        candidate += timedelta(minutes=1)
+            return candidate_utc
+        candidate_utc += timedelta(minutes=1)
     raise AutomationsServiceError(
         error_code="invalid_cron_expr",
         reason="Cron expression produced no execution time within one year",

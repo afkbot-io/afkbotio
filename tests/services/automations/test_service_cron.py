@@ -107,6 +107,89 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
         await engine.dispose()
 
 
+async def test_service_tick_cron_respects_timezone_for_next_run(tmp_path: Path) -> None:
+    """Cron tick should recalculate next_run_at in the trigger's local timezone."""
+
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        now = datetime.fromisoformat("2026-03-12T15:59:59+00:00")
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            due, _ = await repo.create_cron_automation(
+                profile_id="default",
+                name="berlin-daily",
+                prompt="run berlin morning",
+                cron_expr="0 9 * * *",
+                timezone="Europe/Berlin",
+                next_run_at=now - timedelta(seconds=1),
+            )
+
+        fake_loop = FakeLoop()
+
+        def factory_fn(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return fake_loop
+
+        tick_result = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
+        assert tick_result.triggered_ids == [due.id]
+        assert tick_result.failed_ids == []
+
+        async with session_scope(factory) as session:
+            cron = await session.get(AutomationTriggerCron, due.id)
+            assert cron is not None
+            assert cron.next_run_at == datetime.fromisoformat("2026-03-13T08:00:00")
+    finally:
+        await engine.dispose()
+
+
+async def test_service_tick_cron_isolates_legacy_invalid_timezone_rows(tmp_path: Path) -> None:
+    """One legacy bad timezone should fail its own job without aborting the whole tick."""
+
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        now = datetime.fromisoformat("2026-03-12T15:59:59+00:00")
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            invalid_due, _ = await repo.create_cron_automation(
+                profile_id="default",
+                name="invalid-timezone",
+                prompt="legacy bad timezone",
+                cron_expr="0 9 * * *",
+                timezone="Mars/OlympusMons",
+                next_run_at=now - timedelta(seconds=1),
+            )
+            valid_due, _ = await repo.create_cron_automation(
+                profile_id="default",
+                name="valid-berlin",
+                prompt="valid timezone",
+                cron_expr="0 9 * * *",
+                timezone="Europe/Berlin",
+                next_run_at=now - timedelta(seconds=1),
+            )
+
+        fake_loop = FakeLoop()
+
+        def factory_fn(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return fake_loop
+
+        tick_result = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
+        assert tick_result.triggered_ids == [valid_due.id]
+        assert tick_result.failed_ids == [invalid_due.id]
+
+        async with session_scope(factory) as session:
+            invalid_cron = await session.get(AutomationTriggerCron, invalid_due.id)
+            valid_cron = await session.get(AutomationTriggerCron, valid_due.id)
+            assert invalid_cron is not None
+            assert invalid_cron.claim_token is None
+            assert invalid_cron.claimed_until is None
+            assert invalid_cron.last_run_at is None
+            assert valid_cron is not None
+            assert valid_cron.next_run_at == datetime.fromisoformat("2026-03-13T08:00:00")
+    finally:
+        await engine.dispose()
+
+
 async def test_cron_concurrency_claims_once_across_service_instances(tmp_path: Path) -> None:
     """Parallel cron ticks from two service instances should run one due job once."""
 
