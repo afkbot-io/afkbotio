@@ -41,7 +41,7 @@ def create_app() -> FastAPI:
             finally:
                 await shutdown_api_runtime()
 
-    app = FastAPI(title="AFKBOT API", version="1.1.0", lifespan=_lifespan)
+    app = FastAPI(title="AFKBOT API", version="1.1.1", lifespan=_lifespan)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

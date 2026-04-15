@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-04-15
+
+### Added
+
+- `afk service host <host>` now lets operators persist the managed runtime bind host without coupling that change to a port rewrite.
+
+### Changed
+
+- Managed runtime bind persistence now routes host-only and port changes through the same reload and rollback path.
+
+### Fixed
+
+- Switching the managed AFKBOT service from `127.0.0.1` to `0.0.0.0` on the same runtime port pair no longer requires a manual stop before reload.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.1`.
+
 ## [1.1.0] - 2026-04-15
 
 ### Added
