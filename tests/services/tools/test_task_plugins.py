@@ -1051,6 +1051,161 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
         await engine.dispose()
 
 
+async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_by_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Runtime-scoped task.create should persist session profile binding to task profile."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(settings=settings, profile_id="default", team_profile_ids=("analyst",))
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:task_demo",
+            run_id=7,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        create_tool = registry.get("task.create")
+        get_tool = registry.get("task.get")
+        assert create_tool is not None
+        assert get_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Runtime scoped create",
+                    "prompt": "Follow the runtime principal guard",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert create_result.ok is True
+        task_payload = create_result.payload["task"]
+        task_id = str(task_payload["id"])
+        assert task_payload["last_session_id"] == "taskflow:task_demo"
+        assert task_payload["last_session_profile_id"] == "default"
+
+        get_result = await get_tool.execute(
+            ctx,
+            get_tool.parse_params(
+                {"task_id": task_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert get_result.ok is True
+        fetched = get_result.payload["task"]
+        assert fetched["last_session_id"] == "taskflow:task_demo"
+        assert fetched["last_session_profile_id"] == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Runtime-scoped task.create should reject explicit cross-profile session binding."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(settings=settings, profile_id="default", team_profile_ids=("analyst",))
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:task_demo",
+            run_id=7,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+        create_tool = registry.get("task.create")
+        flow_tool = registry.get("task.flow.create")
+        list_tool = registry.get("task.list")
+        assert create_tool is not None
+        assert flow_tool is not None
+        assert list_tool is not None
+
+        flow_result = await flow_tool.execute(
+            ctx,
+            flow_tool.parse_params(
+                {
+                    "title": "Cross profile reject flow",
+                    "default_owner_type": "ai_profile",
+                    "default_owner_ref": "analyst",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert flow_result.ok is True
+        flow_id = str(flow_result.payload["task_flow"]["id"])
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "flow_id": flow_id,
+                    "title": "Cross profile create attempt",
+                    "prompt": "should fail because explicit session_profile_id mismatches runtime profile",
+                    "session_profile_id": "analyst",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert create_result.ok is False
+        assert create_result.error_code == "task_session_binding_forbidden"
+
+        list_result = await list_tool.execute(
+            ctx,
+            list_tool.parse_params(
+                {
+                    "flow_id": flow_id,
+                    "statuses": [],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert list_result.ok is True
+        tasks = list_result.payload["tasks"]
+        assert isinstance(tasks, list)
+        assert tasks == []
+    finally:
+        await engine.dispose()
+
+
 async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_target_by_default(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

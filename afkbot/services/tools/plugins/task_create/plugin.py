@@ -81,13 +81,15 @@ class TaskCreateTool(ToolBase):
                     if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
                         effective_session_profile_id = runtime_profile_id.strip()
             if effective_session_profile_id is None and not session_profile_id_explicit:
-                effective_session_profile_id = ctx.profile_id
+                effective_session_profile_id = target_profile_id
             item = await service.create_task(
                 profile_id=target_profile_id,
                 title=payload.title,
                 prompt=payload.prompt,
                 created_by_type="ai_profile",
                 created_by_ref=ctx.profile_id,
+                session_id=effective_session_id,
+                session_profile_id=effective_session_profile_id,
                 actor_session_id=effective_session_id,
                 flow_id=payload.flow_id,
                 priority=payload.priority,
