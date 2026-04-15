@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
@@ -160,6 +163,32 @@ class _FakeLoop:
                 session_id=session_id,
                 profile_id=profile_id,
                 envelope=ActionEnvelope(action="finalize", message="Handoff completed"),
+            )
+        if self._behavior == "dependency_wait":
+            assert isinstance(taskflow_payload, dict)
+            updated = await TaskFlowRepository(self._session).update_task(
+                profile_id=str(taskflow_payload.get("task_profile_id") or ""),
+                task_id=str(taskflow_payload.get("task_id") or ""),
+                status="blocked",
+                blocked_reason_code="dependency_wait",
+                blocked_reason_text="Waiting for delegated task completion.",
+            )
+            assert updated is not None
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "Delegated follow-up created",
+                    "blocked_reason": None,
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(action="finalize", message="Delegated follow-up created"),
             )
         if self._behavior == "llm_timeout":
             await runlog.create_event(
@@ -353,12 +382,23 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         assert updated.status == "blocked"
         assert updated.blocked_reason_code == "task_action_ask_question"
         assert updated.blocked_reason_text == "Need human approval"
+        assert updated.ready_at is None
         listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
         blocked_event = next(item for item in listed_events if item.event_type == "execution_blocked")
         assert blocked_event.message == "Need human approval"
         assert blocked_event.details["blocked_reason_code"] == "task_action_ask_question"
         fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
         assert fallback_comment.message == "Blocked: Need human approval"
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed_revisit = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                lease_until=datetime.now(timezone.utc) + timedelta(days=1, minutes=15),
+                claim_token="blocked-revisit-ready",
+                claimed_by="worker-b-ready",
+            )
+            assert claimed_revisit is None
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -757,6 +797,603 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
         await engine.dispose()
 
 
+async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplicates_clear(
+    tmp_path: Path,
+) -> None:
+    """Maintenance sweep should recreate the active-owner index once duplicate stale claims are repaired."""
+
+    db_name = "taskflow_runtime_reinstall_index.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        first = await service.create_task(
+            profile_id="default",
+            title="First stale duplicate",
+            prompt="Leave this duplicate stale until maintenance repairs it.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        second = await service.create_task(
+            profile_id="default",
+            title="Second stale duplicate",
+            prompt="Also leave this duplicate stale until maintenance repairs it.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP INDEX ux_task_active_ai_owner"))
+            await conn.execute(
+                text(
+                    "UPDATE task "
+                    "SET status = 'claimed', "
+                    "    claim_token = 'dup-1', "
+                    "    claimed_by = 'taskflow-runtime:dup-1', "
+                    "    lease_until = :lease_until "
+                    "WHERE id = :task_id"
+                ),
+                {
+                    "task_id": first.id,
+                    "lease_until": datetime.now(timezone.utc) - timedelta(minutes=5),
+                },
+            )
+            await conn.execute(
+                text(
+                    "UPDATE task "
+                    "SET status = 'claimed', "
+                    "    claim_token = 'dup-2', "
+                    "    claimed_by = 'taskflow-runtime:dup-2', "
+                    "    lease_until = :lease_until "
+                    "WHERE id = :task_id"
+                ),
+                {
+                    "task_id": second.id,
+                    "lease_until": datetime.now(timezone.utc) - timedelta(minutes=5),
+                },
+            )
+
+        released_count = await runtime.sweep_expired_claims(
+            worker_id="taskflow-maintenance",
+            limit=10,
+        )
+
+        assert released_count == 2
+        async with engine.connect() as conn:
+            rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
+        index_names = {str(row[1]) for row in rows}
+        assert "ux_task_active_ai_owner" in index_names
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
+    tmp_path: Path,
+) -> None:
+    """Detached scheduling should never hand one agent multiple active tasks at once."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_per_agent_limit.db",
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        analyst_first = await service.create_task(
+            profile_id="default",
+            title="Analyst high priority",
+            prompt="Take the highest-priority analyst task first.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        analyst_second = await service.create_task(
+            profile_id="default",
+            title="Analyst second task",
+            prompt="This should wait until analyst is free again.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=80,
+        )
+        papercliper_task = await service.create_task(
+            profile_id="default",
+            title="Papercliper task",
+            prompt="Take this once the analyst already has active work.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            priority=70,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-analyst-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-papercliper-1",
+                claimed_by="taskflow-runtime:1",
+            )
+            third_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-none-left",
+                claimed_by="taskflow-runtime:2",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == analyst_first.id
+        assert second_claim is not None
+        assert second_claim.id == papercliper_task.id
+        assert third_claim is None
+
+        waiting = await service.get_task(profile_id="default", task_id=analyst_second.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
+    tmp_path: Path,
+) -> None:
+    """Claim guard should stay profile-scoped for shared AI owner refs."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_cross_profile_owner_ref.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default analyst claim",
+            prompt="Claim analyst work in default profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        researcher_task = await service.create_task(
+            profile_id="researcher",
+            title="Researcher analyst claim",
+            prompt="Claim analyst work in researcher profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=85,
+        )
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="cross-profile-claim-default",
+                claimed_by="taskflow-runtime:worker-default",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="cross-profile-claim-researcher",
+                claimed_by="taskflow-runtime:worker-researcher",
+            )
+
+        assert first_claim is not None
+        assert second_claim is not None
+        assert {first_claim.id, second_claim.id} == {default_task.id, researcher_task.id}
+        assert first_claim.profile_id != second_claim.profile_id
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
+    tmp_path: Path,
+) -> None:
+    """Equal-priority claims should prefer an idle flow over piling onto one already-active flow."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_flow_spread.db",
+        profile_ids=("default", "analyst", "researcher", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow_a = await service.create_flow(
+            profile_id="default",
+            title="Flow A",
+            description="First launch stream.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        flow_b = await service.create_flow(
+            profile_id="default",
+            title="Flow B",
+            description="Second launch stream.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        flow_a_first = await service.create_task(
+            profile_id="default",
+            flow_id=flow_a.id,
+            title="Flow A analyst",
+            prompt="Take the first Flow A task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        flow_a_second = await service.create_task(
+            profile_id="default",
+            flow_id=flow_a.id,
+            title="Flow A researcher",
+            prompt="Take the second Flow A task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="researcher",
+            priority=90,
+        )
+        flow_b_first = await service.create_task(
+            profile_id="default",
+            flow_id=flow_b.id,
+            title="Flow B papercliper",
+            prompt="Take the first Flow B task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            priority=90,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-flow-a-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-flow-b-1",
+                claimed_by="taskflow-runtime:1",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == flow_a_first.id
+        assert second_claim is not None
+        assert second_claim.id == flow_b_first.id
+        waiting = await service.get_task(profile_id="default", task_id=flow_a_second.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
+    tmp_path: Path,
+) -> None:
+    """Higher-priority work should still win even when another flow is currently idle."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_flow_priority.db",
+        profile_ids=("default", "analyst", "researcher", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow_a = await service.create_flow(
+            profile_id="default",
+            title="Priority Flow A",
+            description="Higher-priority stream.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        flow_b = await service.create_flow(
+            profile_id="default",
+            title="Priority Flow B",
+            description="Lower-priority stream.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        flow_a_first = await service.create_task(
+            profile_id="default",
+            flow_id=flow_a.id,
+            title="Flow A first",
+            prompt="Take the highest-priority task first.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=95,
+        )
+        flow_a_second = await service.create_task(
+            profile_id="default",
+            flow_id=flow_a.id,
+            title="Flow A second",
+            prompt="This is still higher priority than Flow B.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="researcher",
+            priority=94,
+        )
+        flow_b_first = await service.create_task(
+            profile_id="default",
+            flow_id=flow_b.id,
+            title="Flow B first",
+            prompt="This should wait behind the higher-priority Flow A task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            priority=90,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-priority-a-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-priority-a-2",
+                claimed_by="taskflow-runtime:1",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == flow_a_first.id
+        assert second_claim is not None
+        assert second_claim.id == flow_a_second.id
+        waiting = await service.get_task(profile_id="default", task_id=flow_b_first.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucket(
+    tmp_path: Path,
+) -> None:
+    """Equal-priority no-flow work should not bypass flow spreading once it already has active load."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_no_flow_bucket.db",
+        profile_ids=("default", "analyst", "researcher", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Flow bucket",
+            description="Track fairness against no-flow backlog.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        no_flow_first = await service.create_task(
+            profile_id="default",
+            title="No-flow analyst",
+            prompt="Take the first no-flow task.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        no_flow_second = await service.create_task(
+            profile_id="default",
+            title="No-flow researcher",
+            prompt="This should wait behind the idle flow bucket.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="researcher",
+            priority=90,
+        )
+        flow_task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Flow papercliper",
+            prompt="Idle flow work should be preferred on the second claim.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            priority=90,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-no-flow-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-flow-after-no-flow",
+                claimed_by="taskflow-runtime:1",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == no_flow_first.id
+        assert second_claim is not None
+        assert second_claim.id == flow_task.id
+
+        waiting = await service.get_task(profile_id="default", task_id=no_flow_second.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detached runtime should retry when a transient active-owner uniqueness conflict happens."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_claim_retry.db",
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        settings=Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_claim_retry.db'}",
+        ),
+        session_factory=factory,
+        engine=engine,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    original_claim_next = TaskFlowRepository.claim_next_runnable_task
+    claim_attempts = 0
+
+    async def _flaky_claim_next(self, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal claim_attempts
+        claim_attempts += 1
+        if claim_attempts == 1:
+            raise IntegrityError(
+                statement="UPDATE task SET status='claimed' /* ux_task_active_ai_owner */",
+                params=None,
+                orig=Exception("UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_ai_owner)"),
+            )
+        return await original_claim_next(self, **kwargs)
+
+    monkeypatch.setattr(TaskFlowRepository, "claim_next_runnable_task", _flaky_claim_next)
+    try:
+        await service.create_task(
+            profile_id="default",
+            title="Retry transient claim conflict",
+            prompt="Claim this after retrying a transient uniqueness conflict.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-retry-claim")
+
+        assert processed is True
+        assert claim_attempts >= 2
+        task = (await service.list_tasks(profile_id="default"))[0]
+        assert task.owner_ref == "analyst"
+        assert task.status == "completed"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries(
+    tmp_path: Path,
+) -> None:
+    """Dependency-wait blockers should wake only from dependency reconciliation, not timed retries."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_dependency_wait.db",
+        profile_ids=("default", "analyst"),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_dependency_wait.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="dependency_wait",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Wait for delegated work",
+            prompt="Delegate a prerequisite and wait on dependency completion.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-dependency")
+
+        assert processed is True
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "dependency_wait"
+        assert updated.ready_at is None
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                lease_until=datetime.now(timezone.utc) + timedelta(days=1, minutes=15),
+                claim_token="dependency-wait-late-claim",
+                claimed_by="taskflow-runtime:late",
+            )
+
+        assert claimed is None
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
 def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     """Task Flow prompt overlay should teach decomposition and human handoff rules."""
 
@@ -779,7 +1416,15 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert isinstance(taskflow_payload, dict)
     assert taskflow_payload["task_id"] == "task_demo"
     assert taskflow_payload["task_profile_id"] == "default"
+    assert overrides.execution_planning_mode == "on"
     assert overrides.prompt_overlay is not None
     assert "This runtime is non-interactive." in overrides.prompt_overlay
     assert "task.update" in overrides.prompt_overlay
+    assert "task.block" in overrides.prompt_overlay
     assert "task.flow.create" in overrides.prompt_overlay
+    assert "task.comment.add" in overrides.prompt_overlay
+    assert "task.delegate" in overrides.prompt_overlay
+    assert "execution plan" in overrides.prompt_overlay
+    assert "another ai_profile agent" in overrides.prompt_overlay
+    assert "task.dependency.add" in overrides.prompt_overlay
+    assert "retry_after_sec" in overrides.prompt_overlay

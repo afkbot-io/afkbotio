@@ -51,6 +51,7 @@ class TaskCommentAddTool(ToolBase):
                 message=payload.message,
                 actor_type="ai_profile",
                 actor_ref=ctx.profile_id,
+                actor_session_id=ctx.session_id,
                 comment_type=payload.comment_type,
                 task_run_id=payload.task_run_id,
             )

@@ -606,6 +606,8 @@ async def add_dependency_payload(
     task_id: str,
     depends_on_task_id: str,
     satisfied_on_status: str = "completed",
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
 ) -> str:
     """Add one dependency edge."""
 
@@ -621,6 +623,8 @@ async def add_dependency_payload(
             task_id=task_id,
             depends_on_task_id=depends_on_task_id,
             satisfied_on_status=satisfied_on_status,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
         )
         return json.dumps({"dependency": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
@@ -634,6 +638,8 @@ async def remove_dependency_payload(
     profile_id: str,
     task_id: str,
     depends_on_task_id: str,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
 ) -> str:
     """Remove one dependency edge."""
 
@@ -648,6 +654,8 @@ async def remove_dependency_payload(
             profile_id=profile_id,
             task_id=task_id,
             depends_on_task_id=depends_on_task_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
         )
         return json.dumps(
             {"deleted": deleted, "task_id": task_id, "depends_on_task_id": depends_on_task_id},

@@ -66,10 +66,12 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "subagent.result",
         "subagent.run",
         "subagent.wait",
+        "task.block",
         "task.board",
         "task.comment.add",
         "task.comment.list",
         "task.create",
+        "task.delegate",
         "task.dependency.add",
         "task.dependency.list",
         "task.dependency.remove",
@@ -105,8 +107,10 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("browser.control") is not None
     assert registry.get("mcp.profile.upsert") is not None
     assert registry.get("task.board") is not None
+    assert registry.get("task.block") is not None
     assert registry.get("task.comment.add") is not None
     assert registry.get("task.comment.list") is not None
+    assert registry.get("task.delegate") is not None
     assert registry.get("task.event.list") is not None
     assert registry.get("task.review.list") is not None
     assert registry.get("task.review.approve") is not None

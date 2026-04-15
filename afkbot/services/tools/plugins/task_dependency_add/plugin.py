@@ -53,6 +53,9 @@ class TaskDependencyAddTool(ToolBase):
                 task_id=payload.task_id,
                 depends_on_task_id=payload.depends_on_task_id,
                 satisfied_on_status=payload.satisfied_on_status,
+                actor_type="ai_profile",
+                actor_ref=ctx.profile_id,
+                actor_session_id=ctx.session_id,
             )
             return ToolResult(ok=True, payload={"dependency": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:

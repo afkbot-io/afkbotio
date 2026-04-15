@@ -27,6 +27,32 @@ class TaskFlowMetadata(BaseModel):
     updated_at: datetime
 
 
+class TaskSessionActivityMetadata(BaseModel):
+    """Live session/dialog state attached to one task when work is in progress."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    session_profile_id: str
+    dialog_active: bool = False
+    queued_turn_count: int = Field(default=0, ge=0)
+    running_turn_count: int = Field(default=0, ge=0)
+    latest_activity_at: datetime | None = None
+
+
+class TaskBlockStateMetadata(BaseModel):
+    """Derived blocker state for operator/UI/runtime convenience."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    waiting_for_human: bool = False
+    waiting_for_dependency: bool = False
+    retry_scheduled: bool = False
+    ready_at: datetime | None = None
+    depends_on_task_ids: tuple[str, ...] = ()
+
+
 class TaskMetadata(BaseModel):
     """Public metadata for one task item."""
 
@@ -54,8 +80,11 @@ class TaskMetadata(BaseModel):
     requires_review: bool = False
     blocked_reason_code: str | None = None
     blocked_reason_text: str | None = None
+    block_state: TaskBlockStateMetadata | None = None
     current_attempt: int
     last_session_id: str | None = None
+    last_session_profile_id: str | None = None
+    active_session: TaskSessionActivityMetadata | None = None
     last_run_id: int | None = None
     last_error_code: str | None = None
     last_error_text: str | None = None
@@ -173,6 +202,16 @@ class TaskDependencyMetadata(BaseModel):
     depends_on_task_id: str
     satisfied_on_status: str
     created_at: datetime
+
+
+class TaskDelegationMetadata(BaseModel):
+    """Structured result for delegating one task to another AI owner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_task: TaskMetadata
+    delegated_task: TaskMetadata
+    dependency: TaskDependencyMetadata | None = None
 
 
 class TaskBoardColumnMetadata(BaseModel):

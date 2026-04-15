@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from afkbot.models.base import Base, TimestampMixin
@@ -20,6 +20,13 @@ class Task(Base, TimestampMixin):
         Index("ix_task_profile_flow", "profile_id", "flow_id"),
         Index("ix_task_due_at", "due_at"),
         Index("ix_task_lease_until", "lease_until"),
+        Index(
+            "ux_task_active_ai_owner",
+            "profile_id",
+            "owner_ref",
+            unique=True,
+            postgresql_where=text("owner_type = 'ai_profile' AND status IN ('claimed', 'running')"),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -52,6 +59,7 @@ class Task(Base, TimestampMixin):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)
     last_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_session_profile_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_error_text: Mapped[str | None] = mapped_column(Text, nullable=True)

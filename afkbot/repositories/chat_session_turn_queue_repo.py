@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import Select, delete, select, update
+from sqlalchemy import Select, and_, case, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.models.chat_session_turn_queue import ChatSessionTurnQueueItem
+
+_SESSION_ACTIVITY_BATCH_SIZE = 200
+
+
+@dataclass(frozen=True, slots=True)
+class ChatSessionTurnQueueActivity:
+    """Aggregated live queue activity for one `(profile_id, session_id)` pair."""
+
+    profile_id: str
+    session_id: str
+    queued_turn_count: int
+    running_turn_count: int
+    latest_activity_at: datetime | None
 
 
 class ChatSessionTurnQueueRepository:
@@ -155,3 +170,68 @@ class ChatSessionTurnQueueRepository:
             ),
         )
         return int(result.rowcount or 0)
+
+    async def list_session_activity(
+        self,
+        *,
+        session_keys: Sequence[tuple[str, str]],
+        older_than: datetime,
+    ) -> list[ChatSessionTurnQueueActivity]:
+        """Return non-stale queue activity grouped by profile/session key."""
+
+        normalized_keys = tuple(
+            dict.fromkeys(
+                (
+                    str(profile_id).strip(),
+                    str(session_id).strip(),
+                )
+                for profile_id, session_id in session_keys
+                if str(profile_id).strip() and str(session_id).strip()
+            )
+        )
+        if not normalized_keys:
+            return []
+
+        activities: list[ChatSessionTurnQueueActivity] = []
+        for start in range(0, len(normalized_keys), _SESSION_ACTIVITY_BATCH_SIZE):
+            batch = normalized_keys[start : start + _SESSION_ACTIVITY_BATCH_SIZE]
+            filters = [
+                and_(
+                    ChatSessionTurnQueueItem.profile_id == profile_id,
+                    ChatSessionTurnQueueItem.session_id == session_id,
+                )
+                for profile_id, session_id in batch
+            ]
+            statement = (
+                select(
+                    ChatSessionTurnQueueItem.profile_id,
+                    ChatSessionTurnQueueItem.session_id,
+                    func.sum(
+                        case((ChatSessionTurnQueueItem.status == "queued", 1), else_=0)
+                    ).label("queued_turn_count"),
+                    func.sum(
+                        case((ChatSessionTurnQueueItem.status == "running", 1), else_=0)
+                    ).label("running_turn_count"),
+                    func.max(ChatSessionTurnQueueItem.updated_at).label("latest_activity_at"),
+                )
+                .where(
+                    or_(*filters),
+                    ChatSessionTurnQueueItem.updated_at > older_than,
+                )
+                .group_by(
+                    ChatSessionTurnQueueItem.profile_id,
+                    ChatSessionTurnQueueItem.session_id,
+                )
+            )
+            rows = (await self._session.execute(statement)).all()
+            activities.extend(
+                ChatSessionTurnQueueActivity(
+                    profile_id=str(profile_id),
+                    session_id=str(session_id),
+                    queued_turn_count=int(queued_turn_count or 0),
+                    running_turn_count=int(running_turn_count or 0),
+                    latest_activity_at=latest_activity_at,
+                )
+                for profile_id, session_id, queued_turn_count, running_turn_count, latest_activity_at in rows
+            )
+        return activities

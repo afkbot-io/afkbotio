@@ -9,11 +9,67 @@ from pathlib import Path
 import pytest
 
 from afkbot.db.session import session_scope
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
-from tests.repositories._harness import build_repository_factory
-
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import TaskFlowServiceError
 from afkbot.services.task_flow.service import TaskFlowService
+from afkbot.settings import Settings
+from tests.repositories._harness import build_repository_factory
+
+
+def _taskflow_test_settings(
+    *,
+    tmp_path: Path,
+    db_name: str,
+    taskflow_public_principal_required: bool = False,
+    taskflow_strict_team_profile_ids: bool = False,
+) -> Settings:
+    return Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        chat_human_owner_ref="cli",
+        taskflow_public_principal_required=taskflow_public_principal_required,
+        taskflow_strict_team_profile_ids=taskflow_strict_team_profile_ids,
+    )
+
+
+def _write_team_runtime_config(
+    *,
+    settings: Settings,
+    profile_id: str,
+    team_profile_ids: tuple[str, ...],
+) -> None:
+    get_profile_runtime_config_service(settings).write(
+        profile_id,
+        ProfileRuntimeConfig(
+            llm_provider=settings.llm_provider,
+            llm_model=settings.llm_model,
+            taskflow_team_profile_ids=team_profile_ids,
+        ),
+    )
+
+
+async def _create_chat_session(
+    factory,
+    *,
+    profile_id: str,
+    session_id: str,
+    active: bool = True,
+) -> None:
+    async with session_scope(factory) as session:
+        sessions = ChatSessionRepository(session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        if active:
+            await ChatSessionTurnQueueRepository(session).enqueue(
+                profile_id=profile_id,
+                session_id=session_id,
+                owner_token=f"pytest:{profile_id}:{session_id}",
+                source="pytest",
+                client_msg_id=None,
+            )
 
 
 async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
@@ -484,6 +540,70 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         await engine.dispose()
 
 
+async def test_task_flow_service_request_review_changes_respects_team_roster(
+    tmp_path: Path,
+) -> None:
+    """AI reviewers should not be able to bounce reviewed work to arbitrary AI profiles."""
+
+    db_name = "task_flow_review_assignment_guard.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "papercliper", "outsider"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_strict_team_profile_ids=True,
+    )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("papercliper",),
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="papercliper",
+        session_id="taskflow:papercliper-review",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        review_task = await service.create_task(
+            profile_id="default",
+            title="AI reviewed task",
+            prompt="Review and send back if changes are needed.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_profile",
+            reviewer_ref="papercliper",
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=review_task.id,
+            status="review",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.request_review_changes(
+                profile_id="default",
+                task_id=review_task.id,
+                actor_type="ai_profile",
+                actor_ref="papercliper",
+                actor_session_id="taskflow:papercliper-review",
+                owner_type="ai_profile",
+                owner_ref="outsider",
+                reason_text="Reassigning outside the configured team should be blocked.",
+            )
+
+        assert exc_info.value.error_code == "task_owner_forbidden"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_manages_dependency_edges_and_rejects_cycles(
     tmp_path: Path,
 ) -> None:
@@ -554,6 +674,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name="task_flow_board.db",
+        profile_ids=("default", "papercliper"),
     )
     service = TaskFlowService(factory)
     now_utc = datetime.now(timezone.utc)
@@ -654,7 +775,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
-            owner_ref="default",
+            owner_ref="papercliper",
             priority=55,
             labels=("release",),
         )
@@ -704,6 +825,964 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         assert columns["failed"].count == 1
         assert columns["cancelled"].count == 1
         assert columns["todo"].tasks[0].id == todo_task.id
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_reports_live_task_session_activity(tmp_path: Path) -> None:
+    """Running tasks should expose the bound live session and aggregate queued webhook turns."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_session_activity.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Process webhook batch",
+            prompt="Handle the inbound webhook payloads in order.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="taskflow:manual-session",
+        )
+        assert updated.last_session_id == "taskflow:manual-session"
+
+        touched_at = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            queue_repo = ChatSessionTurnQueueRepository(session)
+            running_marker = await queue_repo.enqueue(
+                profile_id="default",
+                session_id="taskflow:manual-session",
+                owner_token="queue-owner-1",
+                source="taskflow",
+                client_msg_id="msg-1",
+            )
+            started = await queue_repo.try_mark_running(
+                queue_item_id=running_marker.id,
+                profile_id="default",
+                session_id="taskflow:manual-session",
+                owner_token="queue-owner-1",
+                touched_at=touched_at,
+            )
+            assert started is True
+            await queue_repo.enqueue(
+                profile_id="default",
+                session_id="taskflow:manual-session",
+                owner_token="queue-owner-2",
+                source="webhook",
+                client_msg_id="msg-2",
+            )
+
+        refreshed = await service.get_task(profile_id="default", task_id=task.id)
+        assert refreshed.active_session is not None
+        assert refreshed.active_session.session_id == "taskflow:manual-session"
+        assert refreshed.active_session.session_profile_id == "default"
+        assert refreshed.active_session.dialog_active is True
+        assert refreshed.active_session.running_turn_count == 1
+        assert refreshed.active_session.queued_turn_count == 1
+
+        activity = await service.list_task_session_activity(
+            profile_id="default",
+            task_ids=(task.id,),
+        )
+        assert activity[task.id].running_turn_count == 1
+        assert activity[task.id].queued_turn_count == 1
+
+        board = await service.build_board(profile_id="default")
+        running_column = next(column for column in board.columns if column.id == "running")
+        board_task = next(item for item in running_column.tasks if item.id == task.id)
+        assert board_task.active_session is not None
+        assert board_task.active_session.session_id == "taskflow:manual-session"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_uses_persisted_session_profile_for_activity_lookup(
+    tmp_path: Path,
+) -> None:
+    """Live session binding should stay exact even when execution profile differs from task owner."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_session_profile_activity.db",
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Run in delegated session",
+            prompt="Track a session owned by another execution profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="main",
+            session_profile_id="papercliper",
+        )
+        assert updated.last_session_id == "main"
+        assert updated.last_session_profile_id == "papercliper"
+
+        touched_at = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            queue_repo = ChatSessionTurnQueueRepository(session)
+            running_marker = await queue_repo.enqueue(
+                profile_id="papercliper",
+                session_id="main",
+                owner_token="delegate-owner-1",
+                source="taskflow",
+                client_msg_id="delegate-msg-1",
+            )
+            started = await queue_repo.try_mark_running(
+                queue_item_id=running_marker.id,
+                profile_id="papercliper",
+                session_id="main",
+                owner_token="delegate-owner-1",
+                touched_at=touched_at,
+            )
+            assert started is True
+
+        refreshed = await service.get_task(profile_id="default", task_id=task.id)
+        assert refreshed.active_session is not None
+        assert refreshed.active_session.session_id == "main"
+        assert refreshed.active_session.session_profile_id == "papercliper"
+        assert refreshed.active_session.running_turn_count == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rebinding_session_reinfers_profile_from_owner(
+    tmp_path: Path,
+) -> None:
+    """Explicitly rebinding a session should not stay pinned to an old execution profile."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_session_profile_rebind.db",
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Rebind live session",
+            prompt="Move the task onto a new session binding.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        delegated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="main",
+            session_profile_id="papercliper",
+        )
+        assert delegated.last_session_profile_id == "papercliper"
+
+        rebound = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="main-2",
+        )
+        assert rebound.last_session_id == "main-2"
+        assert rebound.last_session_profile_id == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
+    tmp_path: Path,
+) -> None:
+    """Delegation should create a child AI task and block the source task on it when requested."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_delegate_task.db",
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name="task_flow_delegate_task.db")
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst", "papercliper"),
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="analyst",
+        session_id="taskflow:analyst-delegate",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        source_task = await service.create_task(
+            profile_id="default",
+            title="Prepare launch brief",
+            prompt="Own the main launch brief and delegate research when needed.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            flow_id=None,
+            labels=("launch", "brief"),
+        )
+
+        delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=source_task.id,
+            delegated_owner_ref="papercliper",
+            prompt="Research competitor messaging and deliver a concise summary.",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="taskflow:analyst-delegate",
+            wait_for_delegated_task=True,
+        )
+
+        assert delegation.source_task.id == source_task.id
+        assert delegation.source_task.status == "blocked"
+        assert delegation.source_task.blocked_reason_code == "dependency_wait"
+        assert delegation.delegated_task.owner_type == "ai_profile"
+        assert delegation.delegated_task.owner_ref == "papercliper"
+        assert delegation.delegated_task.source_type == "task_delegation"
+        assert delegation.delegated_task.source_ref == source_task.id
+        assert delegation.delegated_task.created_by_type == "ai_profile"
+        assert delegation.delegated_task.created_by_ref == "analyst"
+        assert delegation.dependency is not None
+        assert delegation.dependency.task_id == source_task.id
+        assert delegation.dependency.depends_on_task_id == delegation.delegated_task.id
+
+        comments = await service.list_task_comments(profile_id="default", task_id=source_task.id)
+        assert comments[0].comment_type == "delegation"
+        assert delegation.delegated_task.id in comments[0].message
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path: Path) -> None:
+    """Task metadata should expose normalized block-state hints for UI/runtime consumers."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_block_state.db",
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        scheduled_task = await service.create_task(
+            profile_id="default",
+            title="Check vendor status",
+            prompt="Wait for the external vendor and revisit later.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        scheduled_ready_at = datetime.now(timezone.utc) + timedelta(hours=2)
+        scheduled_task = await service.block_task(
+            profile_id="default",
+            task_id=scheduled_task.id,
+            reason_code="vendor_pending",
+            reason_text="The external vendor has not replied yet.",
+            actor_type="ai_profile",
+            actor_ref="default",
+            ready_at=scheduled_ready_at,
+        )
+        assert scheduled_task.block_state is not None
+        assert scheduled_task.block_state.kind == "scheduled_retry"
+        assert scheduled_task.block_state.retry_scheduled is True
+        assert scheduled_task.block_state.ready_at == scheduled_task.ready_at
+
+        human_wait_task = await service.create_task(
+            profile_id="default",
+            title="Need human approval",
+            prompt="Wait for a human decision before continuing.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        human_wait_task = await service.block_task(
+            profile_id="default",
+            task_id=human_wait_task.id,
+            reason_code="awaiting_human_input",
+            reason_text="Need approval from Alice.",
+            actor_type="ai_profile",
+            actor_ref="default",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+        )
+        assert human_wait_task.block_state is not None
+        assert human_wait_task.block_state.kind == "human_wait"
+        assert human_wait_task.block_state.waiting_for_human is True
+
+        review_task = await service.create_task(
+            profile_id="default",
+            title="Prepare human review",
+            prompt="Route the final answer to the reviewer.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="human",
+            reviewer_ref="cli_user:alice",
+        )
+        review_task = await service.update_task(
+            profile_id="default",
+            task_id=review_task.id,
+            status="review",
+            blocked_reason_code="awaiting_human_review",
+            blocked_reason_text="Ready for Alice to review.",
+        )
+        assert review_task.block_state is not None
+        assert review_task.block_state.kind == "review"
+        assert review_task.block_state.waiting_for_human is True
+
+        ai_review_task = await service.create_task(
+            profile_id="default",
+            title="Prepare AI review",
+            prompt="Route the draft to another AI reviewer.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="papercliper",
+        )
+        ai_review_task = await service.update_task(
+            profile_id="default",
+            task_id=ai_review_task.id,
+            status="review",
+            blocked_reason_code="awaiting_ai_review",
+            blocked_reason_text="Ready for Papercliper review.",
+        )
+        assert ai_review_task.block_state is not None
+        assert ai_review_task.block_state.kind == "review"
+        assert ai_review_task.block_state.waiting_for_human is False
+
+        prerequisite_task = await service.create_task(
+            profile_id="default",
+            title="Complete prerequisite",
+            prompt="Finish the prerequisite work first.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        dependent_task = await service.create_task(
+            profile_id="default",
+            title="Wait on prerequisite",
+            prompt="Continue only after the prerequisite is done.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            depends_on_task_ids=(prerequisite_task.id,),
+        )
+        assert dependent_task.block_state is not None
+        assert dependent_task.block_state.kind == "dependency_wait"
+        assert dependent_task.block_state.waiting_for_dependency is True
+        assert dependent_task.block_state.depends_on_task_ids == (prerequisite_task.id,)
+
+        await service.update_task(
+            profile_id="default",
+            task_id=prerequisite_task.id,
+            status="completed",
+        )
+        vendor_blocked_task = await service.block_task(
+            profile_id="default",
+            task_id=dependent_task.id,
+            reason_code="vendor_pending",
+            reason_text="Still waiting on the external vendor.",
+            actor_type="ai_profile",
+            actor_ref="default",
+        )
+        assert vendor_blocked_task.block_state is not None
+        assert vendor_blocked_task.block_state.kind == "blocked"
+        assert vendor_blocked_task.block_state.waiting_for_dependency is False
+        assert vendor_blocked_task.block_state.depends_on_task_ids == (prerequisite_task.id,)
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_legacy_backlog_allows_cross_profile_ai_without_team_config(
+    tmp_path: Path,
+) -> None:
+    """Legacy mode should preserve cross-profile AI assignment when team roster is not configured."""
+
+    db_name = "task_flow_legacy_backlog_team_unset.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        created = await service.create_task(
+            profile_id="default",
+            title="Cross-profile analyst task",
+            prompt="Allow analyst profile to own this task in legacy mode.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        assert created.owner_type == "ai_profile"
+        assert created.owner_ref == "analyst"
+
+        reassigned = await service.update_task(
+            profile_id="default",
+            task_id=created.id,
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert reassigned.owner_type == "ai_profile"
+        assert reassigned.owner_ref == "papercliper"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) -> None:
+    """Strict roster mode should reject cross-profile AI assignment without team config."""
+
+    db_name = "task_flow_team_permissions.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    await _create_chat_session(
+        factory,
+        profile_id="analyst",
+        session_id="taskflow:analyst-create",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        created = await service.create_task(
+            profile_id="default",
+            title="Cross-profile assignment",
+            prompt="Try to assign work to a teammate without team membership.",
+            created_by_type="ai_profile",
+            created_by_ref="analyst",
+            actor_session_id="taskflow:analyst-create",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+        )
+        assert created.owner_type == "ai_profile"
+        assert created.owner_ref == "papercliper"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_ai_creator_outside_backlog_roster(tmp_path: Path) -> None:
+    """AI actors outside the configured roster should not admit work into another backlog."""
+
+    db_name = "task_flow_creator_permissions.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_strict_team_profile_ids=True,
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="analyst",
+        session_id="taskflow:analyst-create",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Injected backlog task",
+                prompt="Try to inject work into another backlog's manager queue.",
+                created_by_type="ai_profile",
+                created_by_ref="analyst",
+                actor_session_id="taskflow:analyst-create",
+                owner_type="ai_profile",
+                owner_ref="default",
+            )
+
+        assert exc_info.value.error_code == "task_creator_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_manager_assignment_outside_team_roster(tmp_path: Path) -> None:
+    """Backlog manager AI should still be constrained to its configured teammate roster."""
+
+    db_name = "task_flow_manager_assignment.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "papercliper", "outsider"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("papercliper",),
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="default",
+        session_id="taskflow:default-manager",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Manager assigns outsider",
+                prompt="Attempt to assign work to a profile outside the roster.",
+                created_by_type="ai_profile",
+                created_by_ref="default",
+                actor_session_id="taskflow:default-manager",
+                owner_type="ai_profile",
+                owner_ref="outsider",
+            )
+
+        assert exc_info.value.error_code == "task_owner_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_path: Path) -> None:
+    """AI workers should only mutate their own tasks unless they are the backlog manager."""
+
+    db_name = "task_flow_actor_permissions.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst", "papercliper"),
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="analyst",
+        session_id="taskflow:analyst-demo",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        coworker_task = await service.create_task(
+            profile_id="default",
+            title="Papercliper owned task",
+            prompt="Own this task as Papercliper.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=coworker_task.id,
+                status="running",
+                actor_type="ai_profile",
+                actor_ref="analyst",
+                actor_session_id="taskflow:analyst-demo",
+                session_id="taskflow:analyst-demo",
+            )
+
+        assert exc_info.value.error_code == "task_actor_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
+    tmp_path: Path,
+) -> None:
+    """Enabled public principal guard should reject mutating calls without actor identity."""
+
+    db_name = "task_flow_public_principal_flag_enabled.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Public owner baseline",
+            prompt="Create a task for public-principal enforcement checks.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli",
+        )
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="human",
+                actor_ref="someone_else",
+            )
+        assert update_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp_path: Path) -> None:
+    """Public service instances should reject anonymous task and review mutations."""
+
+    db_name = "task_flow_public_actor_required.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "papercliper"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Public mutation target",
+            prompt="Require an explicit actor for public mutations.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="papercliper",
+        )
+        dependency_root = await service.create_task(
+            profile_id="default",
+            title="Dependency root",
+            prompt="Use this to test dependency mutation authorization.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                session_id="papercliper-main",
+            )
+        assert update_exc.value.error_code == "task_actor_required"
+
+        await _create_chat_session(
+            factory,
+            profile_id="papercliper",
+            session_id="papercliper-main",
+        )
+        with pytest.raises(TaskFlowServiceError) as ai_update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="ai_profile",
+                actor_ref="default",
+                actor_session_id="papercliper-main",
+                session_id="papercliper-main",
+            )
+        assert ai_update_exc.value.error_code == "task_actor_required"
+
+        await _create_chat_session(
+            factory,
+            profile_id="default",
+            session_id="taskflow:default-public",
+            active=False,
+        )
+        with pytest.raises(TaskFlowServiceError) as dormant_update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="ai_profile",
+                actor_ref="default",
+                actor_session_id="taskflow:default-public",
+                session_id="taskflow:default-public",
+            )
+        assert dormant_update_exc.value.error_code == "task_actor_required"
+
+        await _create_chat_session(
+            factory,
+            profile_id="default",
+            session_id="taskflow:default-public",
+        )
+        claimed = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            actor_type="ai_profile",
+            actor_ref="default",
+            actor_session_id="taskflow:default-public",
+            session_id="taskflow:default-public",
+        )
+        assert claimed.status == "running"
+        assert claimed.last_session_id == "taskflow:default-public"
+        assert claimed.last_session_profile_id == "default"
+
+        reviewed = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert reviewed.status == "review"
+
+        with pytest.raises(TaskFlowServiceError) as approve_exc:
+            await service.approve_review_task(
+                profile_id="default",
+                task_id=task.id,
+            )
+        assert approve_exc.value.error_code == "task_review_actor_required"
+
+        with pytest.raises(TaskFlowServiceError) as changes_exc:
+            await service.request_review_changes(
+                profile_id="default",
+                task_id=task.id,
+                reason_text="Anonymous review change request must be rejected.",
+            )
+        assert changes_exc.value.error_code == "task_review_actor_required"
+
+        with pytest.raises(TaskFlowServiceError) as add_dep_exc:
+            await service.add_dependency(
+                profile_id="default",
+                task_id=task.id,
+                depends_on_task_id=dependency_root.id,
+            )
+        assert add_dep_exc.value.error_code == "task_actor_required"
+
+        dependency = await service.add_dependency(
+            profile_id="default",
+            task_id=task.id,
+            depends_on_task_id=dependency_root.id,
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert dependency.task_id == task.id
+
+        with pytest.raises(TaskFlowServiceError) as remove_dep_exc:
+            await service.remove_dependency(
+                profile_id="default",
+                task_id=task.id,
+                depends_on_task_id=dependency_root.id,
+            )
+        assert remove_dep_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_path: Path) -> None:
+    """Owner handoff should drop stale session bindings until the new owner binds a fresh session."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_reassign_session_reset.db",
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Reassign with session reset",
+            prompt="Ensure stale session bindings do not survive owner handoff.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        running = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="taskflow:default-active",
+        )
+        assert running.last_session_id == "taskflow:default-active"
+        assert running.last_session_profile_id == "default"
+
+        reassigned = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+        )
+        assert reassigned.owner_ref == "papercliper"
+        assert reassigned.status == "todo"
+        assert reassigned.last_session_id is None
+        assert reassigned.last_session_profile_id is None
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+            )
+        assert exc_info.value.error_code == "task_session_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_preserves_block_reason_on_unrelated_updates(tmp_path: Path) -> None:
+    """Updating metadata on blocked tasks should not silently clear the blocker semantics."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_block_reason_preserve.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Blocked task",
+            prompt="Preserve blocker details across unrelated updates.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        blocked = await service.block_task(
+            profile_id="default",
+            task_id=task.id,
+            reason_code="awaiting_human_review",
+            reason_text="Waiting for operator review.",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert blocked.blocked_reason_code == "awaiting_human_review"
+
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            priority=10,
+            labels=("ops",),
+        )
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "awaiting_human_review"
+        assert updated.blocked_reason_text == "Waiting for operator review."
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_keeps_live_session_activity_after_status_handoff(
+    tmp_path: Path,
+) -> None:
+    """Live session indicators should survive mid-dialog status changes like review handoff."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_live_activity_handoff.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Mid-dialog review handoff",
+            prompt="Keep showing session activity while the turn is still alive.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="taskflow:live-review",
+        )
+
+        touched_at = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            queue_repo = ChatSessionTurnQueueRepository(session)
+            marker = await queue_repo.enqueue(
+                profile_id="default",
+                session_id="taskflow:live-review",
+                owner_token="pytest:live-review",
+                source="taskflow",
+                client_msg_id="pytest-live-review",
+            )
+            started = await queue_repo.try_mark_running(
+                queue_item_id=marker.id,
+                profile_id="default",
+                session_id="taskflow:live-review",
+                owner_token="pytest:live-review",
+                touched_at=touched_at,
+            )
+            assert started is True
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+        )
+        refreshed = await service.get_task(profile_id="default", task_id=task.id)
+        assert refreshed.active_session is not None
+        assert refreshed.active_session.session_id == "taskflow:live-review"
+        assert refreshed.active_session.running_turn_count == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_dependency_wait_ready_at_conflict(tmp_path: Path) -> None:
+    """dependency_wait blockers should never be combined with a timed revisit."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_dependency_wait_conflict.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Wait for teammate",
+            prompt="Block until a delegated teammate task completes.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="blocked",
+                blocked_reason_code="dependency_wait",
+                blocked_reason_text="Waiting for delegated task completion.",
+                ready_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            )
+
+        assert exc_info.value.error_code == "task_dependency_wait_ready_at_conflict"
     finally:
         await engine.dispose()
 
@@ -833,6 +1912,116 @@ async def test_task_flow_service_reassignment_releases_running_claim(tmp_path: P
             assert refreshed.claim_token is None
             assert refreshed.claimed_by is None
             assert refreshed.lease_until is None
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
+    tmp_path: Path,
+) -> None:
+    """Manual status updates should preserve the one-active-task-per-agent invariant."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_manual_active_limit.db",
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        first = await service.create_task(
+            profile_id="default",
+            title="Analyst active work",
+            prompt="Hold the only active slot for analyst.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        second = await service.create_task(
+            profile_id="default",
+            title="Analyst queued work",
+            prompt="This should stay queued until analyst is free.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        active = await service.update_task(
+            profile_id="default",
+            task_id=first.id,
+            status="running",
+            session_id="taskflow:first",
+        )
+        assert active.status == "running"
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=second.id,
+                status="running",
+                session_id="taskflow:second",
+            )
+
+        assert exc_info.value.error_code == "task_owner_active_conflict"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
+    tmp_path: Path,
+) -> None:
+    """Manual active-task guard should be scoped per profile for AI owners."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_manual_active_limit_cross_profile.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default analyst active work",
+            prompt="Keep analyst occupied in default profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        researcher_task = await service.create_task(
+            profile_id="researcher",
+            title="Researcher analyst active work",
+            prompt="Same owner ref, isolated by profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        default_active = await service.update_task(
+            profile_id="default",
+            task_id=default_task.id,
+            status="running",
+            session_id="session-default-analyst",
+            session_profile_id="analyst",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="session-default-analyst",
+        )
+        assert default_active.status == "running"
+
+        researcher_active = await service.update_task(
+            profile_id="researcher",
+            task_id=researcher_task.id,
+            status="running",
+            session_id="session-researcher-analyst",
+            session_profile_id="analyst",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="session-researcher-analyst",
+        )
+        assert researcher_active.status == "running"
     finally:
         await engine.dispose()
 

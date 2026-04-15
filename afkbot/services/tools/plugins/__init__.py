@@ -86,6 +86,7 @@ from afkbot.services.tools.plugins.subagent_result import create_tool as create_
 from afkbot.services.tools.plugins.subagent_run import create_tool as create_subagent_run_tool
 from afkbot.services.tools.plugins.subagent_wait import create_tool as create_subagent_wait_tool
 from afkbot.services.tools.plugins.task_board import create_tool as create_task_board_tool
+from afkbot.services.tools.plugins.task_block import create_tool as create_task_block_tool
 from afkbot.services.tools.plugins.task_comment_add import (
     create_tool as create_task_comment_add_tool,
 )
@@ -93,6 +94,7 @@ from afkbot.services.tools.plugins.task_comment_list import (
     create_tool as create_task_comment_list_tool,
 )
 from afkbot.services.tools.plugins.task_create import create_tool as create_task_create_tool
+from afkbot.services.tools.plugins.task_delegate import create_tool as create_task_delegate_tool
 from afkbot.services.tools.plugins.task_dependency_add import (
     create_tool as create_task_dependency_add_tool,
 )
@@ -225,9 +227,11 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "subagent_wait": create_subagent_wait_tool,
     "subagent_result": create_subagent_result_tool,
     "task_board": create_task_board_tool,
+    "task_block": create_task_block_tool,
     "task_comment_add": create_task_comment_add_tool,
     "task_comment_list": create_task_comment_list_tool,
     "task_create": create_task_create_tool,
+    "task_delegate": create_task_delegate_tool,
     "task_dependency_add": create_task_dependency_add_tool,
     "task_dependency_list": create_task_dependency_list_tool,
     "task_dependency_remove": create_task_dependency_remove_tool,

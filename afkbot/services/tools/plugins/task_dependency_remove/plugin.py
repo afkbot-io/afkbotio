@@ -51,6 +51,9 @@ class TaskDependencyRemoveTool(ToolBase):
                 profile_id=target_profile_id,
                 task_id=payload.task_id,
                 depends_on_task_id=payload.depends_on_task_id,
+                actor_type="ai_profile",
+                actor_ref=ctx.profile_id,
+                actor_session_id=ctx.session_id,
             )
             return ToolResult(
                 ok=True,
