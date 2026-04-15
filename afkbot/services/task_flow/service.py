@@ -1593,6 +1593,7 @@ class TaskFlowService:
                 effective_owner_type == "ai_profile"
                 and effective_status in {"claimed", "running"}
                 and await repo.has_active_ai_task(
+                    profile_id=profile_id,
                     owner_ref=effective_owner_ref,
                     exclude_task_id=current_row.id,
                 )
@@ -2532,6 +2533,7 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
     return "ux_task_active_ai_owner" in message or (
         ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
         and "owner_ref" in message
+        and "profile_id" in message
     )
 
 

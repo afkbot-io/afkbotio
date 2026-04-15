@@ -916,6 +916,7 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
     return "ux_task_active_ai_owner" in message or (
         ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
         and "owner_ref" in message
+        and "profile_id" in message
     )
 
 

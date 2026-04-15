@@ -1791,6 +1791,64 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
         await engine.dispose()
 
 
+async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
+    tmp_path: Path,
+) -> None:
+    """Manual active-task guard should be scoped per profile for AI owners."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_manual_active_limit_cross_profile.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default analyst active work",
+            prompt="Keep analyst occupied in default profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        researcher_task = await service.create_task(
+            profile_id="researcher",
+            title="Researcher analyst active work",
+            prompt="Same owner ref, isolated by profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        default_active = await service.update_task(
+            profile_id="default",
+            task_id=default_task.id,
+            status="running",
+            session_id="session-default-analyst",
+            session_profile_id="analyst",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="session-default-analyst",
+        )
+        assert default_active.status == "running"
+
+        researcher_active = await service.update_task(
+            profile_id="researcher",
+            task_id=researcher_task.id,
+            status="running",
+            session_id="session-researcher-analyst",
+            session_profile_id="analyst",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="session-researcher-analyst",
+        )
+        assert researcher_active.status == "running"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_records_append_only_task_events(tmp_path: Path) -> None:
     """Task events should capture user-visible state transitions and dependency reconciliation."""
 

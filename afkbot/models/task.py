@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from afkbot.models.base import Base, TimestampMixin
@@ -20,6 +20,13 @@ class Task(Base, TimestampMixin):
         Index("ix_task_profile_flow", "profile_id", "flow_id"),
         Index("ix_task_due_at", "due_at"),
         Index("ix_task_lease_until", "lease_until"),
+        Index(
+            "ux_task_active_ai_owner",
+            "profile_id",
+            "owner_ref",
+            unique=True,
+            postgresql_where=text("owner_type = 'ai_profile' AND status IN ('claimed', 'running')"),
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

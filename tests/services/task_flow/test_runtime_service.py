@@ -965,6 +965,62 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         await engine.dispose()
 
 
+async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
+    tmp_path: Path,
+) -> None:
+    """Claim guard should stay profile-scoped for shared AI owner refs."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_cross_profile_owner_ref.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        default_task = await service.create_task(
+            profile_id="default",
+            title="Default analyst claim",
+            prompt="Claim analyst work in default profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=90,
+        )
+        researcher_task = await service.create_task(
+            profile_id="researcher",
+            title="Researcher analyst claim",
+            prompt="Claim analyst work in researcher profile.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            priority=85,
+        )
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="cross-profile-claim-default",
+                claimed_by="taskflow-runtime:worker-default",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="cross-profile-claim-researcher",
+                claimed_by="taskflow-runtime:worker-researcher",
+            )
+
+        assert first_claim is not None
+        assert second_claim is not None
+        assert {first_claim.id, second_claim.id} == {default_task.id, researcher_task.id}
+        assert first_claim.profile_id != second_claim.profile_id
+    finally:
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
     tmp_path: Path,
 ) -> None:
@@ -1173,7 +1229,7 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
             raise IntegrityError(
                 statement="UPDATE task SET status='claimed' /* ux_task_active_ai_owner */",
                 params=None,
-                orig=Exception("UNIQUE constraint failed: ux_task_active_ai_owner"),
+                orig=Exception("UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_ai_owner)"),
             )
         return await original_claim_next(self, **kwargs)
 

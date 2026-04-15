@@ -228,12 +228,14 @@ class TaskFlowRepository:
     async def has_active_ai_task(
         self,
         *,
+        profile_id: str,
         owner_ref: str,
         exclude_task_id: str | None = None,
     ) -> bool:
         """Return whether the selected AI owner already has another active task."""
 
         conditions = [
+            Task.profile_id == profile_id,
             Task.owner_type == "ai_profile",
             Task.owner_ref == owner_ref,
             Task.status.in_(("claimed", "running")),
@@ -730,6 +732,7 @@ class TaskFlowRepository:
         active_owner_exists = (
             select(active_task.id)
             .where(
+                active_task.profile_id == Task.profile_id,
                 active_task.owner_type == "ai_profile",
                 active_task.owner_ref == Task.owner_ref,
                 active_task.status.in_(("claimed", "running")),
@@ -747,7 +750,7 @@ class TaskFlowRepository:
                 Task.ready_at.label("ready_at"),
                 Task.created_at.label("created_at"),
                 func.row_number().over(
-                    partition_by=Task.owner_ref,
+                    partition_by=(Task.profile_id, Task.owner_ref),
                     order_by=_task_claim_base_ordering(Task),
                 ).label("owner_rank"),
             )

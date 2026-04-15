@@ -70,39 +70,50 @@ def _ensure_task_runtime_indexes(conn) -> None:  # type: ignore[no-untyped-def]
     columns = _table_columns(conn, "task")
     if not columns:
         return
-    duplicate_owner_refs = _list_duplicate_active_ai_owner_refs(conn)
+    duplicate_owner_scopes = _list_duplicate_active_ai_owner_scopes(conn)
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
     predicate = "owner_type = 'ai_profile' AND status IN ('claimed', 'running')"
-    if duplicate_owner_refs:
-        excluded_owner_refs = ", ".join(
-            _quote_sqlite_text_literal(owner_ref) for owner_ref in duplicate_owner_refs
+    if duplicate_owner_scopes:
+        excluded_owner_scopes = " AND ".join(
+            "NOT (profile_id = "
+            + _quote_sqlite_text_literal(profile_id)
+            + " AND owner_ref = "
+            + _quote_sqlite_text_literal(owner_ref)
+            + ")"
+            for profile_id, owner_ref in duplicate_owner_scopes
         )
-        predicate = f"{predicate} AND owner_ref NOT IN ({excluded_owner_refs})"
+        predicate = f"{predicate} AND {excluded_owner_scopes}"
     conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
-            "ON task (owner_ref) "
+            "ON task (profile_id, owner_ref) "
             f"WHERE {predicate}"
         )
     )
 
 
-def _list_duplicate_active_ai_owner_refs(conn) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
-    """Return active AI owners that still violate the one-active-task invariant."""
+def _list_duplicate_active_ai_owner_scopes(conn) -> tuple[tuple[str, str], ...]:  # type: ignore[no-untyped-def]
+    """Return active AI owner profile scopes violating the one-active-task invariant."""
 
     if not _table_columns(conn, "task"):
         return ()
     rows = conn.execute(
         text(
-            "SELECT owner_ref "
+            "SELECT profile_id, owner_ref "
             "FROM task "
             "WHERE owner_type = 'ai_profile' AND status IN ('claimed', 'running') "
-            "GROUP BY owner_ref "
+            "GROUP BY profile_id, owner_ref "
             "HAVING COUNT(*) > 1 "
-            "ORDER BY owner_ref ASC"
+            "ORDER BY profile_id ASC, owner_ref ASC"
         )
     ).fetchall()
-    return tuple(str(owner_ref) for (owner_ref,) in rows if str(owner_ref).strip())
+    scopes: list[tuple[str, str]] = []
+    for profile_id, owner_ref in rows:
+        profile_text = str(profile_id or "").strip()
+        owner_text = str(owner_ref or "").strip()
+        if profile_text and owner_text:
+            scopes.append((profile_text, owner_text))
+    return tuple(scopes)
 
 
 def _quote_sqlite_text_literal(value: str) -> str:
