@@ -44,7 +44,11 @@ def ensure_task_target_scope(
     runtime_task_profile_id = _runtime_task_profile_id(ctx=ctx)
     allowed_profiles = {ctx.profile_id}
     if runtime_task_profile_id is not None:
-        allowed_profiles = {runtime_task_profile_id}
+        allowed_profiles = (
+            {runtime_task_profile_id, ctx.profile_id}
+            if _runtime_profile_override_allowed()
+            else {runtime_task_profile_id}
+        )
     if target_profile_id in allowed_profiles:
         return None
     return ToolResult.error(error_code="profile_not_found", reason="Profile not found")

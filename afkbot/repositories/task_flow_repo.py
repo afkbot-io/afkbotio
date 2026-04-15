@@ -115,6 +115,8 @@ class TaskFlowRepository:
         requires_review: bool,
         blocked_reason_code: str | None,
         blocked_reason_text: str | None,
+        last_session_id: str | None = None,
+        last_session_profile_id: str | None = None,
     ) -> Task:
         """Create one task row."""
 
@@ -140,6 +142,8 @@ class TaskFlowRepository:
             requires_review=requires_review,
             blocked_reason_code=blocked_reason_code,
             blocked_reason_text=blocked_reason_text,
+            last_session_id=last_session_id,
+            last_session_profile_id=last_session_profile_id,
         )
         self._session.add(row)
         await self._session.flush()

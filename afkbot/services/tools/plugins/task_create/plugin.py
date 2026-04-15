@@ -82,6 +82,15 @@ class TaskCreateTool(ToolBase):
                         effective_session_profile_id = runtime_profile_id.strip()
             if effective_session_profile_id is None and not session_profile_id_explicit:
                 effective_session_profile_id = target_profile_id
+            if (
+                session_profile_id_explicit
+                and effective_session_profile_id is not None
+                and effective_session_profile_id != target_profile_id
+            ):
+                return ToolResult.error(
+                    error_code="task_session_binding_forbidden",
+                    reason="AI actor cannot bind its current session to another profile",
+                )
             item = await service.create_task(
                 profile_id=target_profile_id,
                 title=payload.title,

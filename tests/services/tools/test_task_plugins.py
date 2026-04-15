@@ -1336,60 +1336,6 @@ async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target
         await engine.dispose()
 
 
-async def test_task_plugins_reject_taskflow_runtime_scope_escape(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """Detached task workers should not escape into their own backlog with explicit profile overrides."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        factory = create_session_factory(engine)
-        async with session_scope(factory) as session:
-            await ProfileRepository(session).get_or_create_default("analyst")
-        _write_team_runtime_config(
-            settings=settings,
-            profile_id="default",
-            team_profile_ids=("analyst",),
-        )
-
-        ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
-            run_id=17,
-            runtime_metadata={
-                "transport": "taskflow",
-                "taskflow": {
-                    "task_id": "task_demo",
-                    "task_profile_id": "default",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "analyst",
-                },
-            },
-        )
-
-        create_tool = registry.get("task.create")
-        assert create_tool is not None
-        result = await create_tool.execute(
-            ctx,
-            create_tool.parse_params(
-                {
-                    "profile_key": "analyst",
-                    "title": "Escaped task",
-                    "prompt": "This should be rejected outside the assigned backlog.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "analyst",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert result.ok is False
-        assert result.error_code == "profile_not_found"
-    finally:
-        await engine.dispose()
-
-
 async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

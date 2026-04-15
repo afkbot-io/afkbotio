@@ -279,6 +279,8 @@ class TaskFlowService:
         created_by_type: str,
         created_by_ref: str,
         actor_session_id: str | None = None,
+        session_id: str | None = None,
+        session_profile_id: str | None = None,
         flow_id: str | None = None,
         priority: int = 50,
         due_at: datetime | None = None,
@@ -303,11 +305,18 @@ class TaskFlowService:
         normalized_created_by_type = _normalize_required_text(created_by_type, field_name="created_by_type")
         normalized_created_by_ref = _normalize_required_text(created_by_ref, field_name="created_by_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        normalized_session_id = _normalize_optional_text(session_id)
+        normalized_session_profile_id = _normalize_optional_text(session_profile_id)
         _validate_owner_pair(
             owner_type=normalized_created_by_type,
             owner_ref=normalized_created_by_ref,
             allow_missing=False,
         )
+        if normalized_session_profile_id is not None and normalized_session_id is None:
+            raise TaskFlowServiceError(
+                error_code="task_session_profile_requires_session_id",
+                reason="session_profile_id requires session_id",
+            )
 
         async def _op(repo: TaskFlowRepository) -> TaskMetadata:
             await _ensure_profile_exists(repo, profile_id)
@@ -381,6 +390,25 @@ class TaskFlowService:
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
             )
+            resolved_session_profile_id = normalized_session_profile_id
+            if normalized_session_id is not None:
+                if resolved_session_profile_id is None:
+                    resolved_session_profile_id = _resolve_task_session_profile_id_values(
+                        profile_id=profile_id,
+                        owner_type=resolved_owner_type,
+                        owner_ref=resolved_owner_ref,
+                    )
+                if resolved_session_profile_id is not None:
+                    await _ensure_profile_exists(repo, resolved_session_profile_id)
+                if (
+                    normalized_created_by_type == "ai_profile"
+                    and normalized_actor_session_id is not None
+                    and normalized_session_id != normalized_actor_session_id
+                ):
+                    raise TaskFlowServiceError(
+                        error_code="task_session_binding_forbidden",
+                        reason="AI actor can bind only its current session",
+                    )
 
             status = "blocked" if normalized_depends_on else "todo"
             blocked_reason_code = "dependency_wait" if normalized_depends_on else None
@@ -410,6 +438,8 @@ class TaskFlowService:
                 requires_review=bool(requires_review),
                 blocked_reason_code=blocked_reason_code,
                 blocked_reason_text=blocked_reason_text,
+                last_session_id=normalized_session_id,
+                last_session_profile_id=resolved_session_profile_id,
             )
             for dependency_task_id in normalized_depends_on:
                 await _create_dependency_edge(
