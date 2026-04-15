@@ -789,9 +789,12 @@ class TaskFlowRepository:
             .cte("task_claim_active_flow_load")
         )
         eligible_statement = (
-            select(runnable_candidates.c.id)
+            select(
+                runnable_candidates.c.id,
+                Task.owner_ref.label("owner_ref"),
+            )
             .select_from(
-                runnable_candidates.outerjoin(
+                runnable_candidates.join(Task, Task.id == runnable_candidates.c.id).outerjoin(
                     active_flow_load,
                     and_(
                         active_flow_load.c.profile_id == runnable_candidates.c.profile_id,
@@ -813,13 +816,17 @@ class TaskFlowRepository:
             .limit(1)
         )
         for _attempt in range(3):
-            candidate_task_id = (await self._session.execute(eligible_statement)).scalar_one_or_none()
-            if candidate_task_id is None:
+            candidate_row = (await self._session.execute(eligible_statement)).first()
+            if candidate_row is None:
                 return None
+            candidate_task_id = str(candidate_row.id)
+            candidate_owner_ref = str(candidate_row.owner_ref)
             statement = (
                 update(Task)
                 .where(
                     Task.id == candidate_task_id,
+                    Task.owner_type == "ai_profile",
+                    Task.owner_ref == candidate_owner_ref,
                     or_(
                         and_(
                             Task.status == "todo",

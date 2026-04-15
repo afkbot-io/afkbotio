@@ -20,6 +20,7 @@ from afkbot.services.task_flow.contracts import (
 )
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.service import (
+    TASK_FLOW_FIELD_UNSET,
     TaskFlowService,
     get_task_flow_service,
     reset_task_flow_services,
@@ -43,6 +44,7 @@ __all__ = [
     "TaskMetadata",
     "TaskRunMetadata",
     "TaskSessionActivityMetadata",
+    "TASK_FLOW_FIELD_UNSET",
     "TaskFlowService",
     "TaskFlowServiceError",
     "get_task_flow_service",

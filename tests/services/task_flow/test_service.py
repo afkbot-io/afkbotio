@@ -56,9 +56,20 @@ async def _create_chat_session(
     *,
     profile_id: str,
     session_id: str,
+    active: bool = True,
 ) -> None:
     async with session_scope(factory) as session:
-        await ChatSessionRepository(session).create(session_id=session_id, profile_id=profile_id)
+        sessions = ChatSessionRepository(session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        if active:
+            await ChatSessionTurnQueueRepository(session).enqueue(
+                profile_id=profile_id,
+                session_id=session_id,
+                owner_token=f"pytest:{profile_id}:{session_id}",
+                source="pytest",
+                client_msg_id=None,
+            )
 
 
 async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
@@ -1510,6 +1521,24 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp
             factory,
             profile_id="default",
             session_id="taskflow:default-public",
+            active=False,
+        )
+        with pytest.raises(TaskFlowServiceError) as dormant_update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="ai_profile",
+                actor_ref="default",
+                actor_session_id="taskflow:default-public",
+                session_id="taskflow:default-public",
+            )
+        assert dormant_update_exc.value.error_code == "task_actor_required"
+
+        await _create_chat_session(
+            factory,
+            profile_id="default",
+            session_id="taskflow:default-public",
         )
         claimed = await service.update_task(
             profile_id="default",
@@ -1572,6 +1601,154 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp
                 depends_on_task_id=dependency_root.id,
             )
         assert remove_dep_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_path: Path) -> None:
+    """Owner handoff should drop stale session bindings until the new owner binds a fresh session."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_reassign_session_reset.db",
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Reassign with session reset",
+            prompt="Ensure stale session bindings do not survive owner handoff.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        running = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="taskflow:default-active",
+        )
+        assert running.last_session_id == "taskflow:default-active"
+        assert running.last_session_profile_id == "default"
+
+        reassigned = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            owner_type="ai_profile",
+            owner_ref="papercliper",
+        )
+        assert reassigned.owner_ref == "papercliper"
+        assert reassigned.status == "todo"
+        assert reassigned.last_session_id is None
+        assert reassigned.last_session_profile_id is None
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+            )
+        assert exc_info.value.error_code == "task_session_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_preserves_block_reason_on_unrelated_updates(tmp_path: Path) -> None:
+    """Updating metadata on blocked tasks should not silently clear the blocker semantics."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_block_reason_preserve.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Blocked task",
+            prompt="Preserve blocker details across unrelated updates.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        blocked = await service.block_task(
+            profile_id="default",
+            task_id=task.id,
+            reason_code="awaiting_human_review",
+            reason_text="Waiting for operator review.",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        assert blocked.blocked_reason_code == "awaiting_human_review"
+
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            priority=10,
+            labels=("ops",),
+        )
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "awaiting_human_review"
+        assert updated.blocked_reason_text == "Waiting for operator review."
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_keeps_live_session_activity_after_status_handoff(
+    tmp_path: Path,
+) -> None:
+    """Live session indicators should survive mid-dialog status changes like review handoff."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_live_activity_handoff.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Mid-dialog review handoff",
+            prompt="Keep showing session activity while the turn is still alive.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="running",
+            session_id="taskflow:live-review",
+        )
+
+        touched_at = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            queue_repo = ChatSessionTurnQueueRepository(session)
+            marker = await queue_repo.enqueue(
+                profile_id="default",
+                session_id="taskflow:live-review",
+                owner_token="pytest:live-review",
+                source="taskflow",
+                client_msg_id="pytest-live-review",
+            )
+            started = await queue_repo.try_mark_running(
+                queue_item_id=marker.id,
+                profile_id="default",
+                session_id="taskflow:live-review",
+                owner_token="pytest:live-review",
+                touched_at=touched_at,
+            )
+            assert started is True
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+        )
+        refreshed = await service.get_task(profile_id="default", task_id=task.id)
+        assert refreshed.active_session is not None
+        assert refreshed.active_session.session_id == "taskflow:live-review"
+        assert refreshed.active_session.running_turn_count == 1
     finally:
         await engine.dispose()
 

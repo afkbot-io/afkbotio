@@ -57,6 +57,7 @@ class TaskFlowCreateTool(ToolBase):
                 description=payload.description,
                 created_by_type="ai_profile",
                 created_by_ref=ctx.profile_id,
+                actor_session_id=ctx.session_id,
                 default_owner_type=payload.default_owner_type,
                 default_owner_ref=payload.default_owner_ref,
                 labels=payload.labels,

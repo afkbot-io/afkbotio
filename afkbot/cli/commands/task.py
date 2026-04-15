@@ -672,7 +672,7 @@ def register(app: typer.Typer) -> None:
                 title=title,
                 description=description,
                 created_by_type="human",
-                created_by_ref="cli",
+                created_by_ref=resolve_local_human_ref(get_settings()),
                 default_owner_type=default_owner_type,
                 default_owner_ref=default_owner_ref,
                 labels=tuple(label),

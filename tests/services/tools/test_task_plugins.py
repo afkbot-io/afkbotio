@@ -12,6 +12,7 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
@@ -42,6 +43,7 @@ async def _prepare(
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
         sessions = ChatSessionRepository(session)
+        queue_repo = ChatSessionTurnQueueRepository(session)
         for session_id in (
             "s-task",
             "session-live-42",
@@ -51,9 +53,23 @@ async def _prepare(
             "s-review",
         ):
             await sessions.create(session_id=session_id, profile_id="default")
+            await queue_repo.enqueue(
+                profile_id="default",
+                session_id=session_id,
+                owner_token=f"pytest:default:{session_id}",
+                source="pytest",
+                client_msg_id=None,
+            )
         await ProfileRepository(session).get_or_create_default("analyst")
         for session_id in ("taskflow:task_demo", "taskflow:analyst-demo"):
             await sessions.create(session_id=session_id, profile_id="analyst")
+            await queue_repo.enqueue(
+                profile_id="analyst",
+                session_id=session_id,
+                owner_token=f"pytest:analyst:{session_id}",
+                source="pytest",
+                client_msg_id=None,
+            )
 
     return settings, engine, ToolRegistry.from_settings(settings)
 
@@ -79,11 +95,22 @@ async def _create_chat_session(
     *,
     profile_id: str,
     session_id: str,
+    active: bool = True,
 ) -> None:
     factory = create_session_factory(engine)
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default(profile_id)
-        await ChatSessionRepository(session).create(session_id=session_id, profile_id=profile_id)
+        sessions = ChatSessionRepository(session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        if active:
+            await ChatSessionTurnQueueRepository(session).enqueue(
+                profile_id=profile_id,
+                session_id=session_id,
+                owner_token=f"pytest:{profile_id}:{session_id}",
+                source="pytest",
+                client_msg_id=None,
+            )
 
 
 async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1305,6 +1332,60 @@ async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target
         task_payload = create_result.payload["task"]
         assert isinstance(task_payload, dict)
         assert task_payload["profile_id"] == "analyst"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_plugins_reject_taskflow_runtime_scope_escape(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Detached task workers should not escape into their own backlog with explicit profile overrides."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
+
+        ctx = ToolContext(
+            profile_id="analyst",
+            session_id="taskflow:task_demo",
+            run_id=17,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+            },
+        )
+
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+        result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "analyst",
+                    "title": "Escaped task",
+                    "prompt": "This should be rejected outside the assigned backlog.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "analyst",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert result.ok is False
+        assert result.error_code == "profile_not_found"
     finally:
         await engine.dispose()
 

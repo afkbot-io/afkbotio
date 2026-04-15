@@ -73,24 +73,35 @@ class TaskBlockTool(ToolBase):
             )
         try:
             service = get_task_flow_service(self._settings)
-            block_kwargs: dict[str, object] = {
-                "profile_id": target_profile_id,
-                "task_id": task_id,
-                "reason_code": payload.reason_code,
-                "reason_text": payload.reason_text,
-                "actor_type": "ai_profile",
-                "actor_ref": ctx.profile_id,
-                "actor_session_id": ctx.session_id,
-                "owner_type": payload.owner_type,
-                "owner_ref": payload.owner_ref,
-                "reviewer_type": payload.reviewer_type,
-                "reviewer_ref": payload.reviewer_ref,
-            }
             if ready_at_explicit or retry_after_explicit:
-                block_kwargs["ready_at"] = effective_ready_at
-            item = await service.block_task(
-                **block_kwargs,
-            )
+                item = await service.block_task(
+                    profile_id=target_profile_id,
+                    task_id=task_id,
+                    reason_code=payload.reason_code,
+                    reason_text=payload.reason_text,
+                    actor_type="ai_profile",
+                    actor_ref=ctx.profile_id,
+                    actor_session_id=ctx.session_id,
+                    ready_at=effective_ready_at,
+                    owner_type=payload.owner_type,
+                    owner_ref=payload.owner_ref,
+                    reviewer_type=payload.reviewer_type,
+                    reviewer_ref=payload.reviewer_ref,
+                )
+            else:
+                item = await service.block_task(
+                    profile_id=target_profile_id,
+                    task_id=task_id,
+                    reason_code=payload.reason_code,
+                    reason_text=payload.reason_text,
+                    actor_type="ai_profile",
+                    actor_ref=ctx.profile_id,
+                    actor_session_id=ctx.session_id,
+                    owner_type=payload.owner_type,
+                    owner_ref=payload.owner_ref,
+                    reviewer_type=payload.reviewer_type,
+                    reviewer_ref=payload.reviewer_ref,
+                )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)

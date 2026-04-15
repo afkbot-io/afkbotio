@@ -393,6 +393,7 @@ class TaskFlowRuntimeService:
         session_factory = self._require_session_factory()
         finished_at = datetime.now(timezone.utc)
         reconcile_completed = False
+        finalized = False
         async with session_scope(session_factory) as session:
             repo = TaskFlowRepository(session)
             blocked_ready_at = (
@@ -452,6 +453,8 @@ class TaskFlowRuntimeService:
                     outcome=outcome,
                     finished_at=finished_at,
                 )
+        if finalized:
+            await self._refresh_schema_invariants()
         if reconcile_completed:
             from afkbot.services.task_flow.service import TaskFlowService
 
