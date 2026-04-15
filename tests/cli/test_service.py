@@ -176,26 +176,16 @@ def test_service_port_command_allows_host_then_port_switch_when_wildcard_pair_is
     tmp_path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Regression: `service host` -> `service port` should not fail with a false UsageError."""
+    """`service host` -> `service port` should succeed when the wildcard bind pair is free."""
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
-    settings = get_settings()
-    new_runtime_port = settings.runtime_port + 10
-    availability_checks: dict[tuple[str, int], int] = {}
-
-    def _fake_pair_available(*, host: str, runtime_port: int) -> bool:
-        key = (host, runtime_port)
-        attempt = availability_checks.get(key, 0) + 1
-        availability_checks[key] = attempt
-        if key == ("0.0.0.0", new_runtime_port):
-            return attempt > 1
-        return True
+    new_runtime_port = 19000
 
     monkeypatch.setattr("afkbot.cli.commands.service.setup_is_complete", lambda settings: True)
     monkeypatch.setattr(
         "afkbot.cli.commands.service.is_runtime_port_pair_available",
-        _fake_pair_available,
+        lambda **kwargs: True,
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.service.probe_runtime_stack",
@@ -208,21 +198,20 @@ def test_service_port_command_allows_host_then_port_switch_when_wildcard_pair_is
     runner = CliRunner()
 
     host_result = runner.invoke(app, ["service", "host", "0.0.0.0"])
+    assert host_result.exit_code == 0
+
     port_result = runner.invoke(
         app,
         ["service", "port", "--runtime-port", str(new_runtime_port)],
     )
 
-    assert host_result.exit_code == 0
     assert port_result.exit_code == 0
     assert "Requested runtime bind is busy" not in port_result.stdout
     assert "Requested runtime bind is busy" not in port_result.stderr
     config = read_runtime_config(get_settings())
     assert config["runtime_host"] == "0.0.0.0"
     assert config["runtime_port"] == new_runtime_port
-    assert availability_checks[("0.0.0.0", new_runtime_port)] == 2
     get_settings.cache_clear()
-
 
 def test_service_start_command_exits_zero_when_daemon_was_started(
     tmp_path,

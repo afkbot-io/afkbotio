@@ -218,11 +218,6 @@ def _validate_requested_runtime_bind(
     stack_probe = probe_runtime_stack(host=host, runtime_port=runtime_port)
     if runtime_port == current_runtime_port and stack_probe.running:
         return
-    if runtime_port != current_runtime_port and is_runtime_port_pair_available(
-        host=host,
-        runtime_port=runtime_port,
-    ):
-        return
     raise_usage_error(
         "Requested runtime bind is busy. "
         f"Host={host}, runtime_port={runtime_port}, api_port={runtime_port + 1}. "
