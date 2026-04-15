@@ -845,7 +845,7 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.13",
+        lambda install_source: "1.1.0",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
@@ -1025,7 +1025,7 @@ def test_inspect_available_update_uses_package_source_without_metadata(
     settings = _prepare_settings(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.0.13",
+        lambda install_source: "1.1.0",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.load_cli_version_info",
@@ -1048,8 +1048,8 @@ def test_inspect_available_update_uses_package_source_without_metadata(
 
     assert availability is not None
     assert availability.install_mode == "uv-tool"
-    assert availability.target_id == "package:afkbotio:1.0.13"
-    assert availability.target_label == "afkbotio 1.0.13"
+    assert availability.target_id == "package:afkbotio:1.1.0"
+    assert availability.target_label == "afkbotio 1.1.0"
 
 
 def test_inspect_available_update_ignores_uv_tool_http_404(
