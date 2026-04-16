@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from sqlalchemy import MetaData, text
+from typing import cast
+
+from sqlalchemy import MetaData, Table, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from afkbot.models import load_all_models
@@ -40,7 +43,7 @@ async def ping(engine: AsyncEngine) -> bool:
         return int(result.scalar_one()) == 1
 
 
-def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
+def _upgrade_schema(conn: Connection) -> None:
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
     _ensure_task_description_column(conn)
@@ -52,7 +55,7 @@ def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     _backfill_webhook_token_hashes(conn)
 
 
-def _ensure_task_description_column(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_task_description_column(conn: Connection) -> None:
     """Ensure legacy task tables gain the description column backed by prompt text."""
 
     columns = _table_columns(conn, "task")
@@ -66,10 +69,10 @@ def _ensure_task_description_column(conn) -> None:  # type: ignore[no-untyped-de
 
 
 def _rebuild_legacy_task_table(
-    conn,
+    conn: Connection,
     *,
     legacy_columns: set[str],
-) -> None:  # type: ignore[no-untyped-def]
+) -> None:
     """Rebuild the legacy task table so inserts no longer depend on prompt."""
 
     temp_table_name = "task__rebuilt_description"
@@ -77,19 +80,20 @@ def _rebuild_legacy_task_table(
     try:
         conn.execute(text(f"DROP TABLE IF EXISTS {temp_table_name}"))
         rebuilt_metadata = MetaData()
+        task_table = cast(Table, Task.__table__)
         for table_name in ("profile", "task_flow"):
             table = Base.metadata.tables.get(table_name)
             if table is not None:
                 table.to_metadata(rebuilt_metadata)
-        rebuilt_task = Task.__table__.to_metadata(rebuilt_metadata, name=temp_table_name)
+        rebuilt_task = task_table.to_metadata(rebuilt_metadata, name=temp_table_name)
         for index in tuple(rebuilt_task.indexes):
             rebuilt_task.indexes.discard(index)
         rebuilt_task.create(bind=conn)
 
-        insert_columns = [_quote_sqlite_identifier(column.name) for column in Task.__table__.columns]
+        insert_columns = [_quote_sqlite_identifier(column.name) for column in task_table.columns]
         select_columns = [
             _legacy_task_select_expression(column_name=column.name, legacy_columns=legacy_columns)
-            for column in Task.__table__.columns
+            for column in task_table.columns
         ]
         conn.execute(
             text(
@@ -99,7 +103,7 @@ def _rebuild_legacy_task_table(
         )
         conn.execute(text("DROP TABLE task"))
         conn.execute(text(f"ALTER TABLE {temp_table_name} RENAME TO task"))
-        for index in Task.__table__.indexes:
+        for index in task_table.indexes:
             index.create(bind=conn, checkfirst=True)
     finally:
         conn.execute(text("PRAGMA foreign_keys=ON"))
@@ -135,7 +139,7 @@ def _legacy_task_select_expression(*, column_name: str, legacy_columns: set[str]
     return default_by_column.get(column_name, "NULL")
 
 
-def _ensure_task_runtime_columns(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_task_runtime_columns(conn: Connection) -> None:
     """Ensure newer Task Flow runtime columns exist for legacy SQLite installs."""
 
     columns = _table_columns(conn, "task")
@@ -149,7 +153,7 @@ def _ensure_task_runtime_columns(conn) -> None:  # type: ignore[no-untyped-def]
             conn.execute(text(ddl))
 
 
-def _ensure_task_runtime_indexes(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_task_runtime_indexes(conn: Connection) -> None:
     """Ensure Task Flow runtime indexes exist for legacy SQLite installs."""
 
     columns = _table_columns(conn, "task")
@@ -177,7 +181,7 @@ def _ensure_task_runtime_indexes(conn) -> None:  # type: ignore[no-untyped-def]
     )
 
 
-def _list_duplicate_active_ai_owner_scopes(conn) -> tuple[tuple[str, str], ...]:  # type: ignore[no-untyped-def]
+def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str], ...]:
     """Return active AI owner profile scopes violating the one-active-task invariant."""
 
     if not _table_columns(conn, "task"):
@@ -213,7 +217,7 @@ def _quote_sqlite_identifier(value: str) -> str:
     return '"' + str(value).replace('"', '""') + '"'
 
 
-def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_automation_delivery_columns(conn: Connection) -> None:
     """Ensure newer automation delivery columns exist for legacy SQLite installs."""
 
     columns = _table_columns(conn, "automation")
@@ -237,7 +241,7 @@ def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untype
     )
 
 
-def _ensure_webhook_token_columns(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_webhook_token_columns(conn: Connection) -> None:
     """Ensure webhook token hash/ref columns and indexes exist for older installations."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
@@ -267,7 +271,7 @@ def _ensure_webhook_token_columns(conn) -> None:  # type: ignore[no-untyped-def]
     )
 
 
-def _ensure_webhook_execution_columns(conn) -> None:  # type: ignore[no-untyped-def]
+def _ensure_webhook_execution_columns(conn: Connection) -> None:
     """Ensure webhook execution status columns exist for older installations."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
@@ -285,7 +289,7 @@ def _ensure_webhook_execution_columns(conn) -> None:  # type: ignore[no-untyped-
             conn.execute(text(ddl))
 
 
-def _backfill_webhook_token_hashes(conn) -> None:  # type: ignore[no-untyped-def]
+def _backfill_webhook_token_hashes(conn: Connection) -> None:
     """Hash legacy plaintext webhook tokens and replace them with non-bearer refs."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
@@ -349,7 +353,7 @@ def _issue_unique_webhook_token_hash(*, existing_hashes: set[str]) -> str:
             return token_hash
 
 
-def _table_columns(conn, table_name: str) -> set[str]:  # type: ignore[no-untyped-def]
+def _table_columns(conn: Connection, table_name: str) -> set[str]:
     """Return current column names for one SQLite table."""
 
     rows = conn.execute(text(f"PRAGMA table_info('{table_name}')")).fetchall()

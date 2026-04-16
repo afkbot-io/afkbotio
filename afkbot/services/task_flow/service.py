@@ -9,7 +9,7 @@ import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TypeVar, cast
+from typing import Literal, TypeVar, cast, overload
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -2404,6 +2404,18 @@ def _normalize_required_text(value: str | None, *, field_name: str) -> str:
     if normalized:
         return normalized
     raise TaskFlowServiceError(error_code=f"invalid_{field_name}", reason=f"{field_name} is required")
+
+
+@overload
+def _normalize_task_description(*, description: str | None, required: Literal[True]) -> str: ...
+
+
+@overload
+def _normalize_task_description(
+    *,
+    description: str | None,
+    required: Literal[False] = False,
+) -> str | None: ...
 
 
 def _normalize_task_description(*, description: str | None, required: bool = False) -> str | None:
