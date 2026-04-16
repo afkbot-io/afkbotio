@@ -2460,3 +2460,39 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
         assert content.content_bytes == b"migrate to description"
     finally:
         await engine.dispose()
+
+
+async def test_task_flow_service_rejects_oversized_attachment_base64_before_decode(tmp_path: Path) -> None:
+    """Oversized encoded payloads should be rejected before base64 decode work."""
+
+    db_name = "task_flow_attachment_base64_guard.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    service = TaskFlowService(factory)
+    try:
+        encoded_limit = ((10 * 1024 * 1024 + 2) // 3) * 4
+        oversized_payload = "A" * (encoded_limit + 4)
+        assert len(oversized_payload) > encoded_limit
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Reject oversized encoded attachment",
+                description="Encoded payload should trip pre-decode guard",
+                created_by_type="human",
+                created_by_ref="cli_user:tester",
+                attachments=(
+                    {
+                        "name": "oversized.bin",
+                        "content_base64": oversized_payload,
+                    },
+                ),
+            )
+
+        assert exc_info.value.error_code == "task_attachment_too_large"
+        assert "maximum encoded size" in exc_info.value.reason
+    finally:
+        await engine.dispose()

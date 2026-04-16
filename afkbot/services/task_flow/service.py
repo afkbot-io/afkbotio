@@ -91,6 +91,7 @@ _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("cancelled", "Cancelled", ("cancelled",)),
 )
 _MAX_TASK_ATTACHMENT_BYTES = 10 * 1024 * 1024
+_MAX_TASK_ATTACHMENT_BASE64_BYTES = ((_MAX_TASK_ATTACHMENT_BYTES + 2) // 3) * 4
 TValue = TypeVar("TValue")
 _TASK_FIELD_UNSET = object()
 TASK_FLOW_FIELD_UNSET = _TASK_FIELD_UNSET
@@ -2488,6 +2489,15 @@ def _normalize_task_attachment_input(
         if isinstance(attachment, TaskAttachmentCreate)
         else TaskAttachmentCreate.model_validate(attachment)
     )
+    if len(payload.content_base64) > _MAX_TASK_ATTACHMENT_BASE64_BYTES:
+        raise TaskFlowServiceError(
+            error_code="task_attachment_too_large",
+            reason=(
+                f"Attachment {payload.name!r} exceeds the maximum encoded size of "
+                f"{_MAX_TASK_ATTACHMENT_BASE64_BYTES} bytes"
+            ),
+        )
+
     try:
         content_bytes = base64.b64decode(payload.content_base64, validate=True)
     except (binascii.Error, ValueError) as exc:

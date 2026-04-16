@@ -34,6 +34,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Switching the managed AFKBOT service from `127.0.0.1` to `0.0.0.0` on the same runtime port pair no longer requires a manual stop before reload.
+- `afk task create` keeps backward compatibility by accepting legacy `--prompt` as a deprecated alias for `--description`, with deterministic precedence (`--description` wins when both are present) and default status preserved as `todo`.
+- Task attachment ingestion now enforces a pre-decode base64 payload size guard before `base64.b64decode(..., validate=True)` and still keeps the post-decode byte-size limit as a second safety layer.
 - Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.1`.
 
 ## [1.1.0] - 2026-04-15
