@@ -22,7 +22,7 @@ class TaskDelegateParams(ToolParameters):
 
     task_id: str | None = Field(default=None, min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = Field(default=None, min_length=1)
+    description: str = Field(min_length=1)
     owner_ref: str = Field(min_length=1, max_length=255)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int | None = Field(default=None, ge=0)

@@ -24,7 +24,7 @@ class TaskCreateParams(ToolParameters):
     """Parameters for task.create tool."""
 
     title: str = Field(min_length=1, max_length=255)
-    description: str | None = Field(default=None, min_length=1)
+    description: str = Field(min_length=1)
     status: str | None = Field(default=None, max_length=32)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int = Field(default=50, ge=0)

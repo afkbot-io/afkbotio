@@ -733,13 +733,17 @@ def _resolve_review_actor_ref(*, actor_type: str, actor_ref: str | None) -> str:
     return resolve_local_human_ref(get_settings())
 
 
-def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str | None:
-    """Resolve task-create description across current and legacy flags.
+def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:
+    """Resolve required task description across current and legacy flags.
 
     During the transition period, `--prompt` is accepted as a backward-compatible alias.
     When both are provided, `--description` wins deterministically.
     """
 
-    if description is not None:
-        return description
-    return prompt
+    resolved = description if description is not None else prompt
+    if resolved is None or not resolved.strip():
+        raise typer.BadParameter(
+            "task description is required; provide --description (or legacy --prompt)",
+            param_hint="--description",
+        )
+    return resolved

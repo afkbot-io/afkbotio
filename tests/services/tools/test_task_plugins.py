@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from pytest import MonkeyPatch
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -521,6 +523,52 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         listed_flows = flow_list_result.payload["task_flows"]
         assert isinstance(listed_flows, list)
         assert listed_flows[0]["id"] == flow_id
+    finally:
+        await engine.dispose()
+
+
+async def test_task_create_plugin_requires_description_param(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.create` params schema should require description to match service contract."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        create_tool = registry.get("task.create")
+
+        with pytest.raises(ValidationError, match="description"):
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Missing description",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_task_delegate_plugin_requires_description_param(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.delegate` params schema should require description to match service contract."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        delegate_tool = registry.get("task.delegate")
+
+        with pytest.raises(ValidationError, match="description"):
+            delegate_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            )
     finally:
         await engine.dispose()
 

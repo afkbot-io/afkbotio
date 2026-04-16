@@ -89,3 +89,18 @@ def test_task_create_help_mentions_prompt_alias(monkeypatch) -> None:  # type: i
 
     get_settings.cache_clear()
 
+
+def test_task_create_requires_description_or_prompt(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """CLI should fail fast when both --description and legacy --prompt are missing."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["task", "create", "--title", "Missing description"])
+
+    assert result.exit_code == 2
+    assert "task description is required" in result.output
+
+    get_settings.cache_clear()
+
