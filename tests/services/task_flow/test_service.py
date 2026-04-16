@@ -1006,6 +1006,50 @@ async def test_task_flow_service_rebinding_session_reinfers_profile_from_owner(
         await engine.dispose()
 
 
+
+async def test_task_flow_service_create_task_rejects_missing_description(tmp_path: Path) -> None:
+    """create_task should fail fast when description is omitted."""
+
+    engine, factory = await build_repository_factory(tmp_path, db_name="task_flow_create_requires_description.db")
+    service = TaskFlowService(factory)
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Missing description",
+                description=None,
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+
+        assert exc_info.value.error_code == "invalid_description"
+        assert exc_info.value.reason == "description is required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_delegate_task_rejects_missing_description(tmp_path: Path) -> None:
+    """delegate_task should fail fast when description is omitted."""
+
+    engine, factory = await build_repository_factory(tmp_path, db_name="task_flow_delegate_requires_description.db")
+    service = TaskFlowService(factory)
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.delegate_task(
+                profile_id="default",
+                source_task_id="task_source",
+                delegated_owner_ref="reviewer",
+                description=None,
+                actor_type="ai_profile",
+                actor_ref="default",
+            )
+
+        assert exc_info.value.error_code == "invalid_description"
+        assert exc_info.value.reason == "description is required"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
     tmp_path: Path,
 ) -> None:
