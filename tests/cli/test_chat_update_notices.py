@@ -25,8 +25,8 @@ def test_handle_chat_update_notice_persists_skip_choice(tmp_path, monkeypatch) -
     availability = UpdateAvailability(
         install_mode="uv-tool",
         current_version="afk 1.0.0",
-        target_id="package:afkbotio:1.1.1",
-        target_label="afkbotio 1.1.1",
+        target_id="package:afkbotio:1.2.0",
+        target_label="afkbotio 1.2.0",
         details=(),
     )
 
@@ -59,8 +59,8 @@ def test_handle_chat_update_notice_persists_remind_week_choice(tmp_path, monkeyp
     availability = UpdateAvailability(
         install_mode="uv-tool",
         current_version="afk 1.0.0",
-        target_id="package:afkbotio:1.1.1",
-        target_label="afkbotio 1.1.1",
+        target_id="package:afkbotio:1.2.0",
+        target_label="afkbotio 1.2.0",
         details=(),
     )
 
@@ -209,15 +209,15 @@ def test_should_prompt_for_update_ignores_legacy_target_only_state() -> None:
 
     assert _should_prompt_for_update(
         runtime_config={
-            "update_notice_remind_target": "package:afkbotio:1.1.1",
-            "update_notice_skip_target": "package:afkbotio:1.1.1",
+            "update_notice_remind_target": "package:afkbotio:1.2.0",
+            "update_notice_skip_target": "package:afkbotio:1.2.0",
             "update_notice_remind_until": future.isoformat(),
         },
     ) is False
     assert _should_prompt_for_update(
         runtime_config={
-            "update_notice_remind_target": "package:afkbotio:1.1.1",
-            "update_notice_skip_target": "package:afkbotio:1.1.1",
+            "update_notice_remind_target": "package:afkbotio:1.2.0",
+            "update_notice_skip_target": "package:afkbotio:1.2.0",
         },
     ) is True
 
