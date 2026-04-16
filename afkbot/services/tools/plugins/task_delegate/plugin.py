@@ -22,7 +22,7 @@ class TaskDelegateParams(ToolParameters):
 
     task_id: str | None = Field(default=None, min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    prompt: str = Field(min_length=1)
+    description: str | None = Field(default=None, min_length=1)
     owner_ref: str = Field(min_length=1, max_length=255)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int | None = Field(default=None, ge=0)
@@ -65,7 +65,7 @@ class TaskDelegateTool(ToolBase):
                 profile_id=target_profile_id,
                 source_task_id=source_task_id,
                 delegated_owner_ref=payload.owner_ref,
-                prompt=payload.prompt,
+                description=payload.description,
                 actor_type="ai_profile",
                 actor_ref=ctx.profile_id,
                 actor_session_id=ctx.session_id,

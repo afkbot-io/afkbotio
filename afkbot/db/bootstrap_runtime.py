@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from afkbot.models import load_all_models
 from afkbot.models.base import Base
+from afkbot.models.task import Task
 from afkbot.services.automations.webhook_tokens import (
     hash_webhook_token,
     issue_webhook_token,
@@ -42,12 +43,96 @@ async def ping(engine: AsyncEngine) -> bool:
 def _upgrade_schema(conn) -> None:  # type: ignore[no-untyped-def]
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
+    _ensure_task_description_column(conn)
     _ensure_task_runtime_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_automation_delivery_columns(conn)
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
     _backfill_webhook_token_hashes(conn)
+
+
+def _ensure_task_description_column(conn) -> None:  # type: ignore[no-untyped-def]
+    """Ensure legacy task tables gain the description column backed by prompt text."""
+
+    columns = _table_columns(conn, "task")
+    if not columns:
+        return
+    if "prompt" in columns:
+        _rebuild_legacy_task_table(conn, legacy_columns=columns)
+        return
+    if "description" not in columns:
+        conn.execute(text("ALTER TABLE task ADD COLUMN description TEXT"))
+
+
+def _rebuild_legacy_task_table(
+    conn,
+    *,
+    legacy_columns: set[str],
+) -> None:  # type: ignore[no-untyped-def]
+    """Rebuild the legacy task table so inserts no longer depend on prompt."""
+
+    temp_table_name = "task__rebuilt_description"
+    conn.execute(text("PRAGMA foreign_keys=OFF"))
+    try:
+        conn.execute(text(f"DROP TABLE IF EXISTS {temp_table_name}"))
+        rebuilt_metadata = MetaData()
+        for table_name in ("profile", "task_flow"):
+            table = Base.metadata.tables.get(table_name)
+            if table is not None:
+                table.to_metadata(rebuilt_metadata)
+        rebuilt_task = Task.__table__.to_metadata(rebuilt_metadata, name=temp_table_name)
+        for index in tuple(rebuilt_task.indexes):
+            rebuilt_task.indexes.discard(index)
+        rebuilt_task.create(bind=conn)
+
+        insert_columns = [_quote_sqlite_identifier(column.name) for column in Task.__table__.columns]
+        select_columns = [
+            _legacy_task_select_expression(column_name=column.name, legacy_columns=legacy_columns)
+            for column in Task.__table__.columns
+        ]
+        conn.execute(
+            text(
+                f"INSERT INTO {temp_table_name} ({', '.join(insert_columns)}) "
+                f"SELECT {', '.join(select_columns)} FROM task"
+            )
+        )
+        conn.execute(text("DROP TABLE task"))
+        conn.execute(text(f"ALTER TABLE {temp_table_name} RENAME TO task"))
+        for index in Task.__table__.indexes:
+            index.create(bind=conn, checkfirst=True)
+    finally:
+        conn.execute(text("PRAGMA foreign_keys=ON"))
+
+
+def _legacy_task_select_expression(*, column_name: str, legacy_columns: set[str]) -> str:
+    """Build one SELECT expression for copying rows out of a legacy task table."""
+
+    if column_name == "description":
+        if "description" in legacy_columns and "prompt" in legacy_columns:
+            return "COALESCE(NULLIF(description, ''), prompt)"
+        if "description" in legacy_columns:
+            return "description"
+        if "prompt" in legacy_columns:
+            return "prompt"
+        return "''"
+    if column_name in legacy_columns:
+        return _quote_sqlite_identifier(column_name)
+    default_by_column = {
+        "status": "'todo'",
+        "priority": "50",
+        "owner_type": "'human'",
+        "owner_ref": "''",
+        "source_type": "'manual'",
+        "created_by_type": "'human'",
+        "created_by_ref": "''",
+        "labels_json": "'[]'",
+        "requires_review": "0",
+        "current_attempt": "0",
+        "created_at": "CURRENT_TIMESTAMP",
+        "updated_at": "CURRENT_TIMESTAMP",
+    }
+    return default_by_column.get(column_name, "NULL")
 
 
 def _ensure_task_runtime_columns(conn) -> None:  # type: ignore[no-untyped-def]
@@ -120,6 +205,12 @@ def _quote_sqlite_text_literal(value: str) -> str:
     """Return one SQL-safe SQLite string literal."""
 
     return "'" + str(value).replace("'", "''") + "'"
+
+
+def _quote_sqlite_identifier(value: str) -> str:
+    """Return one SQL-safe SQLite identifier."""
+
+    return '"' + str(value).replace('"', '""') + '"'
 
 
 def _ensure_automation_delivery_columns(conn) -> None:  # type: ignore[no-untyped-def]

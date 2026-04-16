@@ -6,7 +6,11 @@ from datetime import datetime
 
 from pydantic import Field
 
-from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
+from afkbot.services.task_flow import (
+    TaskAttachmentCreate,
+    TaskFlowServiceError,
+    get_task_flow_service,
+)
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_scope import (
@@ -20,7 +24,8 @@ class TaskCreateParams(ToolParameters):
     """Parameters for task.create tool."""
 
     title: str = Field(min_length=1, max_length=255)
-    prompt: str = Field(min_length=1)
+    description: str | None = Field(default=None, min_length=1)
+    status: str | None = Field(default=None, max_length=32)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int = Field(default=50, ge=0)
     due_at: datetime | None = None
@@ -33,6 +38,7 @@ class TaskCreateParams(ToolParameters):
     labels: tuple[str, ...] = ()
     requires_review: bool = False
     depends_on_task_ids: tuple[str, ...] = ()
+    attachments: tuple[TaskAttachmentCreate, ...] = ()
     session_id: str | None = Field(default=None, min_length=1, max_length=255)
     session_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
 
@@ -94,7 +100,8 @@ class TaskCreateTool(ToolBase):
             item = await service.create_task(
                 profile_id=target_profile_id,
                 title=payload.title,
-                prompt=payload.prompt,
+                description=payload.description,
+                status=payload.status,
                 created_by_type="ai_profile",
                 created_by_ref=ctx.profile_id,
                 session_id=effective_session_id,
@@ -112,6 +119,7 @@ class TaskCreateTool(ToolBase):
                 labels=payload.labels,
                 requires_review=payload.requires_review,
                 depends_on_task_ids=payload.depends_on_task_ids,
+                attachments=payload.attachments,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:

@@ -21,7 +21,11 @@ from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
-from afkbot.services.task_flow.message_factory import compose_task_message, task_session_id
+from afkbot.services.task_flow.message_factory import (
+    TaskMessageAttachment,
+    compose_task_message,
+    task_session_id,
+)
 from afkbot.services.task_flow.runtime_target import build_task_flow_runtime_target
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
@@ -43,7 +47,8 @@ class ClaimedTaskExecution:
     task_profile_id: str
     execution_profile_id: str
     flow_id: str | None
-    prompt: str
+    description: str
+    attachments: tuple[TaskMessageAttachment, ...]
     owner_type: str
     owner_ref: str
     source_type: str
@@ -260,12 +265,25 @@ class TaskFlowRuntimeService:
                     )
                     if not attached:
                         raise RuntimeError("Failed to attach claimed task run metadata")
+                    attachments = await repo.list_task_attachments(task_id=row.id)
                     return ClaimedTaskExecution(
                         task_id=row.id,
                         task_profile_id=row.profile_id,
                         execution_profile_id=execution_profile_id,
                         flow_id=row.flow_id,
-                        prompt=row.prompt,
+                        description=row.description,
+                        attachments=tuple(
+                            TaskMessageAttachment(
+                                id=attachment.id,
+                                name=attachment.name,
+                                content_type=attachment.content_type,
+                                kind=attachment.kind,
+                                byte_size=attachment.byte_size,
+                                sha256=attachment.sha256,
+                                content_bytes=bytes(attachment.content or b""),
+                            )
+                            for attachment in attachments
+                        ),
                         owner_type=row.owner_type,
                         owner_ref=row.owner_ref,
                         source_type=row.source_type,
@@ -313,7 +331,10 @@ class TaskFlowRuntimeService:
             requires_review=claimed.requires_review,
             labels=claimed.labels,
         )
-        message = compose_task_message(claimed.prompt)
+        message = compose_task_message(
+            claimed.description,
+            attachments=claimed.attachments,
+        )
         claim_ttl = _claim_ttl(self._settings)
 
         async def _run() -> TurnResult:

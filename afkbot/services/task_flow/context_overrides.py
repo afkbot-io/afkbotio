@@ -69,7 +69,7 @@ def _build_task_flow_prompt_overlay(
         f"- owner: {owner_type}:{owner_ref}",
         f"- attempt: {attempt}",
         f"- requires_review: {str(requires_review).lower()}",
-        "Treat the incoming user message as the detached task prompt.",
+        "Treat the incoming user message as the detached task description.",
         "This runtime is non-interactive. Do not ask the user follow-up questions inside this run.",
         "Use task.* tools to manage backlog items in task_profile_id. When you need to touch the backlog, prefer passing profile_id=task_profile_id explicitly.",
         "Durable Task Flow state changes must be persisted through task.* tools. Do not rely on the final assistant message alone to reassign, block, or review a task.",
@@ -83,7 +83,7 @@ def _build_task_flow_prompt_overlay(
         "- set status=review when work is ready for human review",
         "- set status=blocked when the task cannot continue without human input or approval",
         "- set status=todo when you are reassigning the work without blocking context",
-        "If the work should be decomposed, create a flow with task.flow.create when needed, then create child tasks with self-contained prompts and explicit dependencies.",
+        "If the work should be decomposed, create a flow with task.flow.create when needed, then create child tasks with self-contained descriptions and explicit dependencies.",
         "When you create multiple tasks, prefer a small coherent set of backlog items over one huge vague task.",
         "If you cannot proceed without a human answer or approval, clearly explain the blocker and update the task state accordingly.",
     ]

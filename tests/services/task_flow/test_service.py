@@ -100,7 +100,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             profile_id="default",
             flow_id=flow.id,
             title="Draft release notes",
-            prompt="Prepare release notes from the current changelog.",
+            description="Prepare release notes from the current changelog.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -113,7 +113,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             profile_id="default",
             flow_id=flow.id,
             title="Publish release post",
-            prompt="Post the release announcement after notes are ready.",
+            description="Post the release announcement after notes are ready.",
             created_by_type="human",
             created_by_ref="cli",
             depends_on_task_ids=(first_task.id,),
@@ -157,7 +157,7 @@ async def test_task_flow_service_summarizes_human_owned_tasks(tmp_path: Path) ->
         review_task = await service.create_task(
             profile_id="default",
             title="Review landing page",
-            prompt="Review final copy and approve publishing.",
+            description="Review final copy and approve publishing.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -173,7 +173,7 @@ async def test_task_flow_service_summarizes_human_owned_tasks(tmp_path: Path) ->
         blocked_task = await service.create_task(
             profile_id="default",
             title="Wait for assets",
-            prompt="Collect final media files.",
+            description="Collect final media files.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -183,7 +183,7 @@ async def test_task_flow_service_summarizes_human_owned_tasks(tmp_path: Path) ->
         todo_task = await service.create_task(
             profile_id="default",
             title="Send newsletter",
-            prompt="Send the launch newsletter.",
+            description="Send the launch newsletter.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -223,7 +223,7 @@ async def test_task_flow_service_summarizes_human_review_inbox_items(tmp_path: P
         review_task = await service.create_task(
             profile_id="default",
             title="Review AI analysis",
-            prompt="Review the AI draft and approve or request changes.",
+            description="Review the AI draft and approve or request changes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -239,7 +239,7 @@ async def test_task_flow_service_summarizes_human_review_inbox_items(tmp_path: P
         todo_task = await service.create_task(
             profile_id="default",
             title="Follow up with user",
-            prompt="Send the final follow-up after review.",
+            description="Send the final follow-up after review.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -274,7 +274,7 @@ async def test_task_flow_service_builds_notification_ready_human_inbox(tmp_path:
         task = await service.create_task(
             profile_id="default",
             title="Review AI draft",
-            prompt="Review the AI-produced answer.",
+            description="Review the AI-produced answer.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -342,7 +342,7 @@ async def test_task_flow_service_lists_stale_task_claims(tmp_path: Path) -> None
         task = await service.create_task(
             profile_id="default",
             title="Recover stale AI task",
-            prompt="Recover the stale AI task after lease expiry.",
+            description="Recover the stale AI task after lease expiry.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -409,7 +409,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         explicit_reviewer = await service.create_task(
             profile_id="default",
             title="Review AI draft",
-            prompt="Review the AI draft response.",
+            description="Review the AI draft response.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -423,7 +423,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         owner_fallback = await service.create_task(
             profile_id="default",
             title="Owner fallback review",
-            prompt="Review directly as the human owner.",
+            description="Review directly as the human owner.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -435,7 +435,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         other_reviewer = await service.create_task(
             profile_id="default",
             title="Other reviewer task",
-            prompt="Should not appear in Alice inbox.",
+            description="Should not appear in Alice inbox.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -472,7 +472,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         review_task = await service.create_task(
             profile_id="default",
             title="Review release draft",
-            prompt="Review and approve the release draft.",
+            description="Review and approve the release draft.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -485,7 +485,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         dependent = await service.create_task(
             profile_id="default",
             title="Publish after approval",
-            prompt="Publish only after review completes.",
+            description="Publish only after review completes.",
             created_by_type="human",
             created_by_ref="cli",
             depends_on_task_ids=(review_task.id,),
@@ -514,7 +514,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         second_review = await service.create_task(
             profile_id="default",
             title="Review revision request",
-            prompt="Return this task for changes.",
+            description="Return this task for changes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -571,7 +571,7 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
         review_task = await service.create_task(
             profile_id="default",
             title="AI reviewed task",
-            prompt="Review and send back if changes are needed.",
+            description="Review and send back if changes are needed.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -618,14 +618,14 @@ async def test_task_flow_service_manages_dependency_edges_and_rejects_cycles(
         root = await service.create_task(
             profile_id="default",
             title="Root task",
-            prompt="Finish the upstream prerequisite.",
+            description="Finish the upstream prerequisite.",
             created_by_type="human",
             created_by_ref="cli",
         )
         leaf = await service.create_task(
             profile_id="default",
             title="Leaf task",
-            prompt="Run after the root task.",
+            description="Run after the root task.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -682,7 +682,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         prereq = await service.create_task(
             profile_id="default",
             title="Prerequisite",
-            prompt="Complete prerequisite work first.",
+            description="Complete prerequisite work first.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -691,7 +691,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         todo_task = await service.create_task(
             profile_id="default",
             title="Todo overdue",
-            prompt="Finish the overdue item.",
+            description="Finish the overdue item.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -703,7 +703,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         await service.create_task(
             profile_id="default",
             title="Blocked downstream",
-            prompt="Wait for prerequisite completion.",
+            description="Wait for prerequisite completion.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -714,7 +714,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         review_task = await service.create_task(
             profile_id="default",
             title="Needs human review",
-            prompt="Wait for review before completion.",
+            description="Wait for review before completion.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -727,7 +727,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         completed_task = await service.create_task(
             profile_id="default",
             title="Completed item",
-            prompt="Already completed.",
+            description="Already completed.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -738,7 +738,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         failed_task = await service.create_task(
             profile_id="default",
             title="Failed item",
-            prompt="Already failed.",
+            description="Already failed.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -749,7 +749,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         cancelled_task = await service.create_task(
             profile_id="default",
             title="Cancelled item",
-            prompt="Already cancelled.",
+            description="Already cancelled.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -760,7 +760,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         await service.create_task(
             profile_id="default",
             title="Claimed item",
-            prompt="Claimed by background worker.",
+            description="Claimed by background worker.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -771,7 +771,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
         running_task = await service.create_task(
             profile_id="default",
             title="Running item",
-            prompt="Running in background.",
+            description="Running in background.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -841,7 +841,7 @@ async def test_task_flow_service_reports_live_task_session_activity(tmp_path: Pa
         task = await service.create_task(
             profile_id="default",
             title="Process webhook batch",
-            prompt="Handle the inbound webhook payloads in order.",
+            description="Handle the inbound webhook payloads in order.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -920,7 +920,7 @@ async def test_task_flow_service_uses_persisted_session_profile_for_activity_loo
         task = await service.create_task(
             profile_id="default",
             title="Run in delegated session",
-            prompt="Track a session owned by another execution profile.",
+            description="Track a session owned by another execution profile.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -979,7 +979,7 @@ async def test_task_flow_service_rebinding_session_reinfers_profile_from_owner(
         task = await service.create_task(
             profile_id="default",
             title="Rebind live session",
-            prompt="Move the task onto a new session binding.",
+            description="Move the task onto a new session binding.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1032,7 +1032,7 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
         source_task = await service.create_task(
             profile_id="default",
             title="Prepare launch brief",
-            prompt="Own the main launch brief and delegate research when needed.",
+            description="Own the main launch brief and delegate research when needed.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1045,7 +1045,7 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
             profile_id="default",
             source_task_id=source_task.id,
             delegated_owner_ref="papercliper",
-            prompt="Research competitor messaging and deliver a concise summary.",
+            description="Research competitor messaging and deliver a concise summary.",
             actor_type="ai_profile",
             actor_ref="analyst",
             actor_session_id="taskflow:analyst-delegate",
@@ -1085,7 +1085,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         scheduled_task = await service.create_task(
             profile_id="default",
             title="Check vendor status",
-            prompt="Wait for the external vendor and revisit later.",
+            description="Wait for the external vendor and revisit later.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1109,7 +1109,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         human_wait_task = await service.create_task(
             profile_id="default",
             title="Need human approval",
-            prompt="Wait for a human decision before continuing.",
+            description="Wait for a human decision before continuing.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1132,7 +1132,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         review_task = await service.create_task(
             profile_id="default",
             title="Prepare human review",
-            prompt="Route the final answer to the reviewer.",
+            description="Route the final answer to the reviewer.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1154,7 +1154,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         ai_review_task = await service.create_task(
             profile_id="default",
             title="Prepare AI review",
-            prompt="Route the draft to another AI reviewer.",
+            description="Route the draft to another AI reviewer.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1176,7 +1176,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         prerequisite_task = await service.create_task(
             profile_id="default",
             title="Complete prerequisite",
-            prompt="Finish the prerequisite work first.",
+            description="Finish the prerequisite work first.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1185,7 +1185,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         dependent_task = await service.create_task(
             profile_id="default",
             title="Wait on prerequisite",
-            prompt="Continue only after the prerequisite is done.",
+            description="Continue only after the prerequisite is done.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1235,7 +1235,7 @@ async def test_task_flow_service_legacy_backlog_allows_cross_profile_ai_without_
         created = await service.create_task(
             profile_id="default",
             title="Cross-profile analyst task",
-            prompt="Allow analyst profile to own this task in legacy mode.",
+            description="Allow analyst profile to own this task in legacy mode.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1278,7 +1278,7 @@ async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) 
         created = await service.create_task(
             profile_id="default",
             title="Cross-profile assignment",
-            prompt="Try to assign work to a teammate without team membership.",
+            description="Try to assign work to a teammate without team membership.",
             created_by_type="ai_profile",
             created_by_ref="analyst",
             actor_session_id="taskflow:analyst-create",
@@ -1316,7 +1316,7 @@ async def test_task_flow_service_rejects_ai_creator_outside_backlog_roster(tmp_p
             await service.create_task(
                 profile_id="default",
                 title="Injected backlog task",
-                prompt="Try to inject work into another backlog's manager queue.",
+                description="Try to inject work into another backlog's manager queue.",
                 created_by_type="ai_profile",
                 created_by_ref="analyst",
                 actor_session_id="taskflow:analyst-create",
@@ -1355,7 +1355,7 @@ async def test_task_flow_service_rejects_manager_assignment_outside_team_roster(
             await service.create_task(
                 profile_id="default",
                 title="Manager assigns outsider",
-                prompt="Attempt to assign work to a profile outside the roster.",
+                description="Attempt to assign work to a profile outside the roster.",
                 created_by_type="ai_profile",
                 created_by_ref="default",
                 actor_session_id="taskflow:default-manager",
@@ -1393,7 +1393,7 @@ async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_pat
         coworker_task = await service.create_task(
             profile_id="default",
             title="Papercliper owned task",
-            prompt="Own this task as Papercliper.",
+            description="Own this task as Papercliper.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1437,7 +1437,7 @@ async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
         task = await service.create_task(
             profile_id="default",
             title="Public owner baseline",
-            prompt="Create a task for public-principal enforcement checks.",
+            description="Create a task for public-principal enforcement checks.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -1475,7 +1475,7 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp
         task = await service.create_task(
             profile_id="default",
             title="Public mutation target",
-            prompt="Require an explicit actor for public mutations.",
+            description="Require an explicit actor for public mutations.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1486,7 +1486,7 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp
         dependency_root = await service.create_task(
             profile_id="default",
             title="Dependency root",
-            prompt="Use this to test dependency mutation authorization.",
+            description="Use this to test dependency mutation authorization.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1618,7 +1618,7 @@ async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_p
         task = await service.create_task(
             profile_id="default",
             title="Reassign with session reset",
-            prompt="Ensure stale session bindings do not survive owner handoff.",
+            description="Ensure stale session bindings do not survive owner handoff.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1667,7 +1667,7 @@ async def test_task_flow_service_preserves_block_reason_on_unrelated_updates(tmp
         task = await service.create_task(
             profile_id="default",
             title="Blocked task",
-            prompt="Preserve blocker details across unrelated updates.",
+            description="Preserve blocker details across unrelated updates.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1708,7 +1708,7 @@ async def test_task_flow_service_keeps_live_session_activity_after_status_handof
         task = await service.create_task(
             profile_id="default",
             title="Mid-dialog review handoff",
-            prompt="Keep showing session activity while the turn is still alive.",
+            description="Keep showing session activity while the turn is still alive.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1765,7 +1765,7 @@ async def test_task_flow_service_rejects_dependency_wait_ready_at_conflict(tmp_p
         task = await service.create_task(
             profile_id="default",
             title="Wait for teammate",
-            prompt="Block until a delegated teammate task completes.",
+            description="Block until a delegated teammate task completes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1799,7 +1799,7 @@ async def test_task_flow_service_lists_task_runs_for_task_and_profile(tmp_path: 
         task = await service.create_task(
             profile_id="default",
             title="Trace execution history",
-            prompt="Collect execution history for operator review.",
+            description="Collect execution history for operator review.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1870,7 +1870,7 @@ async def test_task_flow_service_reassignment_releases_running_claim(tmp_path: P
         task = await service.create_task(
             profile_id="default",
             title="Running AI task",
-            prompt="Work on a detached background task.",
+            description="Work on a detached background task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1931,7 +1931,7 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
         first = await service.create_task(
             profile_id="default",
             title="Analyst active work",
-            prompt="Hold the only active slot for analyst.",
+            description="Hold the only active slot for analyst.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1940,7 +1940,7 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
         second = await service.create_task(
             profile_id="default",
             title="Analyst queued work",
-            prompt="This should stay queued until analyst is free.",
+            description="This should stay queued until analyst is free.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1983,7 +1983,7 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
         default_task = await service.create_task(
             profile_id="default",
             title="Default analyst active work",
-            prompt="Keep analyst occupied in default profile.",
+            description="Keep analyst occupied in default profile.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1992,7 +1992,7 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
         researcher_task = await service.create_task(
             profile_id="researcher",
             title="Researcher analyst active work",
-            prompt="Same owner ref, isolated by profile.",
+            description="Same owner ref, isolated by profile.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -2038,7 +2038,7 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
         task = await service.create_task(
             profile_id="default",
             title="Prepare launch brief",
-            prompt="Draft the launch brief for operator review.",
+            description="Draft the launch brief for operator review.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -2067,14 +2067,14 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
         prereq = await service.create_task(
             profile_id="default",
             title="Collect metrics",
-            prompt="Collect the input metrics first.",
+            description="Collect the input metrics first.",
             created_by_type="human",
             created_by_ref="cli",
         )
         dependent = await service.create_task(
             profile_id="default",
             title="Publish metrics memo",
-            prompt="Publish the memo after metrics are collected.",
+            description="Publish the memo after metrics are collected.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -2121,7 +2121,7 @@ async def test_task_flow_service_builds_human_inbox_and_dedupes_channel_notifica
         task = await service.create_task(
             profile_id="default",
             title="Check release copy",
-            prompt="Review the release copy before publishing.",
+            description="Review the release copy before publishing.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -2191,7 +2191,7 @@ async def test_task_flow_service_human_inbox_counts_all_relevant_events_beyond_p
         task = await service.create_task(
             profile_id="default",
             title="Review noisy task",
-            prompt="Review the task after the runtime finishes unrelated work.",
+            description="Review the task after the runtime finishes unrelated work.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -2251,7 +2251,7 @@ async def test_task_flow_service_human_inbox_avoids_materializing_full_unseen_ev
         task = await service.create_task(
             profile_id="default",
             title="Review optimized inbox",
-            prompt="Make sure inbox queries stay bounded.",
+            description="Make sure inbox queries stay bounded.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -2304,7 +2304,7 @@ async def test_task_flow_service_human_inbox_mark_seen_is_concurrency_safe(tmp_p
         await service.create_task(
             profile_id="default",
             title="Concurrent inbox task",
-            prompt="Make sure concurrent inbox reads do not explode.",
+            description="Make sure concurrent inbox reads do not explode.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -2349,7 +2349,7 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
         task = await service.create_task(
             profile_id="default",
             title="Review final answer",
-            prompt="Review the drafted answer and leave precise notes.",
+            description="Review the drafted answer and leave precise notes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -2402,5 +2402,61 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
         assert fresh_inbox.unseen_event_count == 1
         assert fresh_inbox.recent_events[0].event_type == "comment_added"
         assert fresh_inbox.recent_events[0].message == "Human reviewer note."
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_uses_description_plan_and_task_attachments(
+    tmp_path: Path,
+) -> None:
+    """Tasks should expose description, support PLAN state, and persist attachments."""
+
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name="task_flow_description_plan_attachments.db",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_description_plan_attachments.db",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Prepare implementation draft",
+            description="Collect requirements, attach source files, and keep the task in plan.",
+            status="plan",
+            created_by_type="human",
+            created_by_ref="cli",
+            attachments=(
+                {
+                    "name": "requirements.txt",
+                    "content_type": "text/plain",
+                    "content_base64": "bWlncmF0ZSB0byBkZXNjcmlwdGlvbg==",
+                },
+            ),
+        )
+
+        assert task.description == "Collect requirements, attach source files, and keep the task in plan."
+        assert task.status == "plan"
+        assert task.attachment_count == 1
+
+        board = await service.build_board(profile_id="default")
+        assert board.columns[0].id == "plan"
+        assert board.columns[0].tasks[0].id == task.id
+        assert board.ready_count == 0
+
+        attachments = await service.list_task_attachments(profile_id="default", task_id=task.id)
+        assert len(attachments) == 1
+        assert attachments[0].name == "requirements.txt"
+        assert attachments[0].content_type == "text/plain"
+        assert attachments[0].byte_size == 22
+
+        content = await service.get_task_attachment_content(
+            profile_id="default",
+            task_id=task.id,
+            attachment_id=attachments[0].id,
+        )
+        assert content.content_bytes == b"migrate to description"
     finally:
         await engine.dispose()
