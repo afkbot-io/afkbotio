@@ -90,6 +90,8 @@ _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("failed", "Failed", ("failed",)),
     ("cancelled", "Cancelled", ("cancelled",)),
 )
+_PLAN_AI_OWNER_ERROR_CODE = "task_plan_requires_human_owner"
+_PLAN_AI_OWNER_REASON = "PLAN status is human-only; assign a human owner or move task to Todo"
 _MAX_TASK_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _MAX_TASK_ATTACHMENT_BASE64_BYTES = ((_MAX_TASK_ATTACHMENT_BYTES + 2) // 3) * 4
 TValue = TypeVar("TValue")
@@ -439,6 +441,10 @@ class TaskFlowService:
                 resolved_status = "blocked" if normalized_depends_on else "todo"
             else:
                 resolved_status = normalized_requested_status
+            _ensure_plan_status_owner_is_human(
+                status=resolved_status,
+                owner_type=resolved_owner_type,
+            )
             blocked_reason_code = (
                 "dependency_wait"
                 if normalized_depends_on and resolved_status == "blocked"
@@ -1908,6 +1914,10 @@ class TaskFlowService:
                 owner_ref=effective_owner_ref,
             )
             effective_status_after_update = effective_status or current_row.status
+            _ensure_plan_status_owner_is_human(
+                status=effective_status_after_update,
+                owner_type=effective_owner_type,
+            )
             effective_session_id = (
                 requested_session_id
                 if requested_session_id is not _TASK_FIELD_UNSET
@@ -2476,6 +2486,19 @@ def _normalize_create_task_status(status: str | None) -> str | None:
     raise TaskFlowServiceError(
         error_code="invalid_status",
         reason="New tasks may start only in PLAN or Todo",
+    )
+
+
+def _ensure_plan_status_owner_is_human(*, status: str | None, owner_type: str) -> None:
+    """Reject PLAN assignments for AI-owned tasks so work cannot silently stall."""
+
+    if status != "plan":
+        return
+    if owner_type == "human":
+        return
+    raise TaskFlowServiceError(
+        error_code=_PLAN_AI_OWNER_ERROR_CODE,
+        reason=_PLAN_AI_OWNER_REASON,
     )
 
 

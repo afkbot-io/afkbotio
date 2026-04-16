@@ -1398,7 +1398,7 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
 async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime must not claim tasks that are still in the PLAN column."""
+    """Detached runtime should auto-block misassigned PLAN tasks and continue with runnable work."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -1423,9 +1423,18 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             status="plan",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
-            owner_ref="analyst",
+            owner_type="human",
+            owner_ref="operator",
         )
+        async with session_scope(factory) as session:
+            await session.execute(
+                text(
+                    "UPDATE task SET status = 'plan', owner_type = 'ai_profile', owner_ref = 'default' "
+                    "WHERE profile_id = :profile_id AND id = :task_id"
+                ),
+                {"profile_id": "default", "task_id": planned.id},
+            )
+            await session.commit()
         runnable = await service.create_task(
             profile_id="default",
             title="Run once planning is complete",
@@ -1441,9 +1450,19 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         assert processed is True
         planned_after = await service.get_task(profile_id="default", task_id=planned.id)
         runnable_after = await service.get_task(profile_id="default", task_id=runnable.id)
-        assert planned_after.status == "plan"
+        assert planned_after.status == "blocked"
+        assert planned_after.blocked_reason_code == "invalid_plan_status"
+        assert planned_after.blocked_reason_text is not None
+        assert "PLAN" in planned_after.blocked_reason_text
+        assert planned_after.last_error_code is None
+        assert planned_after.last_error_text is None
         assert runnable_after.status == "completed"
         assert observed_calls[0].task_id == runnable.id
+
+        events = await service.list_task_events(profile_id="default", task_id=planned.id)
+        event_types = [event.event_type for event in events]
+        assert event_types[0] == "runtime_claim_rejected"
+        assert "blocked" in event_types
     finally:
         await runtime.shutdown()
         await engine.dispose()

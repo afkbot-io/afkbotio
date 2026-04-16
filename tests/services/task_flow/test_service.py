@@ -2470,6 +2470,8 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
             title="Prepare implementation draft",
             description="Collect requirements, attach source files, and keep the task in plan.",
             status="plan",
+            owner_type="human",
+            owner_ref="operator",
             created_by_type="human",
             created_by_ref="cli",
             attachments=(
@@ -2502,6 +2504,99 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
             attachment_id=attachments[0].id,
         )
         assert content.content_bytes == b"migrate to description"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: Path) -> None:
+    """AI-owned PLAN tasks must be rejected to prevent silent runtime starvation."""
+
+    db_name = "task_flow_plan_ai_owner_create_rejected.db"
+    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    service = TaskFlowService(factory)
+
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Runtime ticket",
+                description="This should fail because AI owner in PLAN can stall forever.",
+                status="plan",
+                owner_type="ai_profile",
+                owner_ref="default",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+
+        assert exc_info.value.error_code == "task_plan_requires_human_owner"
+        assert "human-only" in exc_info.value.reason
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path: Path) -> None:
+    """Status updates should block transitions to AI-owned PLAN."""
+
+    db_name = "task_flow_plan_ai_owner_update_rejected.db"
+    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    service = TaskFlowService(factory)
+
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Runtime ticket",
+            description="Initially runnable.",
+            status="todo",
+            owner_type="ai_profile",
+            owner_ref="default",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="plan",
+                actor_type="ai_profile",
+                actor_ref="default",
+            )
+
+        assert exc_info.value.error_code == "task_plan_requires_human_owner"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(tmp_path: Path) -> None:
+    """Owner reassignment must not move PLAN tasks under AI ownership."""
+
+    db_name = "task_flow_plan_ai_owner_reassign_rejected.db"
+    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    service = TaskFlowService(factory)
+
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manual triage",
+            description="Human-owned plan task.",
+            status="plan",
+            owner_type="human",
+            owner_ref="operator",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                owner_type="ai_profile",
+                owner_ref="default",
+                actor_type="ai_profile",
+                actor_ref="default",
+            )
+
+        assert exc_info.value.error_code == "task_plan_requires_human_owner"
     finally:
         await engine.dispose()
 

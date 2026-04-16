@@ -37,6 +37,10 @@ _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
 _LEASE_EXPIRED_ERROR_CODE = "task_lease_expired"
 _LEASE_EXPIRED_ERROR_TEXT = "Task claim lease expired before execution completed."
+_PLAN_AI_OWNER_BLOCKED_REASON_CODE = "invalid_plan_status"
+_PLAN_AI_OWNER_BLOCKED_REASON_TEXT = (
+    "Task assigned to AI was left in PLAN; moved to Blocked so it is visible and can be fixed"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,15 +228,85 @@ class TaskFlowRuntimeService:
             if owned_engine:
                 await engine.dispose()
 
+    async def _guard_ai_owned_plan_tasks(
+        self,
+        *,
+        session: AsyncSession,
+        repo: TaskFlowRepository,
+        worker_id: str,
+        profile_id: str,
+        owner_ref: str,
+        limit: int,
+    ) -> int:
+        """Move AI-owned PLAN tasks to blocked so they are visible to operators."""
+
+        moved_count = 0
+        rows = await repo.list_tasks(
+                profile_id=profile_id,
+                statuses=("plan",),
+                owner_type="ai_profile",
+                owner_ref=owner_ref,
+                limit=max(1, limit),
+            )
+        for row in rows:
+                updated = await repo.update_task(
+                    profile_id=profile_id,
+                    task_id=row.id,
+                    status="blocked",
+                    blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                    blocked_reason_text=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                    ready_at=None,
+                )
+                if updated is None:
+                    continue
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    event_type="blocked",
+                    actor_type="runtime",
+                    actor_ref=worker_id,
+                    message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                    from_status="plan",
+                    to_status="blocked",
+                    details={
+                        "reason_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                    },
+                )
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    event_type="runtime_claim_rejected",
+                    actor_type="runtime",
+                    actor_ref=worker_id,
+                    message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                    from_status="plan",
+                    to_status="blocked",
+                    details={
+                        "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                    },
+                )
+                moved_count += 1
+        return moved_count
+
     async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
         session_factory = self._require_session_factory()
         claim_ttl = _claim_ttl(self._settings)
+        profile_id = _runtime_profile_id(self._settings)
+        owner_ref = _runtime_owner_ref(self._settings)
         for _attempt in range(3):
             now_utc = datetime.now(timezone.utc)
             claim_token = secrets.token_hex(16)
             try:
                 async with session_scope(session_factory) as session:
                     repo = TaskFlowRepository(session)
+                    await self._guard_ai_owned_plan_tasks(
+                        session=session,
+                        repo=repo,
+                        worker_id=worker_id,
+                        profile_id=profile_id,
+                        owner_ref=owner_ref,
+                        limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
+                    )
                     row = await repo.claim_next_runnable_task(
                         now_utc=now_utc,
                         lease_until=now_utc + claim_ttl,
@@ -971,6 +1045,13 @@ async def _ensure_runtime_summary_comment(
         details={"comment_type": _runtime_fallback_comment_type(outcome.status)},
     )
 
+
+def _runtime_profile_id(settings: Settings) -> str:
+    return str(getattr(settings, "taskflow_runtime_profile_id", None) or "default")
+
+
+def _runtime_owner_ref(settings: Settings) -> str:
+    return str(getattr(settings, "taskflow_runtime_owner_ref", None) or "default")
 
 def _runtime_fallback_comment_type(status: str) -> str:
     if status == "review":
