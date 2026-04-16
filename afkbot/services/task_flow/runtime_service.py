@@ -235,7 +235,7 @@ class TaskFlowRuntimeService:
         repo: TaskFlowRepository,
         worker_id: str,
         profile_id: str,
-        owner_ref: str,
+        owner_ref: str | None,
         limit: int,
     ) -> int:
         """Move AI-owned PLAN tasks to blocked so they are visible to operators."""
@@ -312,6 +312,7 @@ class TaskFlowRuntimeService:
                         lease_until=now_utc + claim_ttl,
                         claim_token=claim_token,
                         claimed_by=worker_id,
+                        owner_ref=owner_ref,
                     )
                     if row is None:
                         return None
@@ -1050,8 +1051,8 @@ def _runtime_profile_id(settings: Settings) -> str:
     return str(getattr(settings, "taskflow_runtime_profile_id", None) or "default")
 
 
-def _runtime_owner_ref(settings: Settings) -> str:
-    return str(getattr(settings, "taskflow_runtime_owner_ref", None) or "default")
+def _runtime_owner_ref(settings: Settings) -> str | None:
+    return settings.taskflow_runtime_owner_ref
 
 def _runtime_fallback_comment_type(status: str) -> str:
     if status == "review":

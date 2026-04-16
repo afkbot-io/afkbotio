@@ -889,6 +889,82 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
         await engine.dispose()
 
 
+async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Path) -> None:
+    """Detached runtime owner_ref filter should only apply when explicitly configured."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_owner_ref_filter.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        observed_calls: list[_ObservedCall] = []
+        filtered_runtime = TaskFlowRuntimeService(
+            session_factory=factory,
+            session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+                session,
+                behavior="complete",
+                observed_calls=observed_calls,
+            ),
+            settings=Settings(taskflow_runtime_owner_ref="researcher", llm_max_iterations=10),
+        )
+        try:
+            allowed = await service.create_task(
+                profile_id="default",
+                title="Allowed owner",
+                description="Please handle researcher queue.",
+                owner_type="ai_profile",
+                owner_ref="researcher",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+            skipped = await service.create_task(
+                profile_id="default",
+                title="Skipped owner",
+                description="Please handle analyst queue.",
+                owner_type="ai_profile",
+                owner_ref="analyst",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+
+            processed = await filtered_runtime.execute_next_claimable_task(
+                worker_id="taskflow-runtime:owner-filtered"
+            )
+
+            assert processed is True
+            allowed_after = await service.get_task(profile_id="default", task_id=allowed.id)
+            skipped_after = await service.get_task(profile_id="default", task_id=skipped.id)
+            assert observed_calls[0].task_id == allowed.id
+            assert allowed_after.status == "completed"
+            assert skipped_after.status == "todo"
+        finally:
+            await filtered_runtime.shutdown()
+
+        unfiltered_runtime = TaskFlowRuntimeService(
+            session_factory=factory,
+            session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+                session,
+                behavior="complete",
+                observed_calls=observed_calls,
+            ),
+            settings=Settings(llm_max_iterations=10),
+        )
+        try:
+            processed = await unfiltered_runtime.execute_next_claimable_task(
+                worker_id="taskflow-runtime:owner-unfiltered"
+            )
+            assert processed is True
+            skipped_after_unfiltered = await service.get_task(profile_id="default", task_id=skipped.id)
+            assert observed_calls[1].task_id == skipped.id
+            assert skipped_after_unfiltered.status == "completed"
+        finally:
+            await unfiltered_runtime.shutdown()
+    finally:
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
     tmp_path: Path,
 ) -> None:
@@ -1403,7 +1479,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name="taskflow_runtime_plan_skip.db",
-        profile_ids=("default", "analyst"),
+        profile_ids=("default", "researcher", "analyst"),
     )
     observed_calls: list[_ObservedCall] = []
     service = TaskFlowService(factory)
@@ -1414,6 +1490,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             behavior="complete",
             observed_calls=observed_calls,
         ),
+        settings=Settings(taskflow_runtime_owner_ref="researcher"),
     )
     try:
         planned = await service.create_task(
@@ -1429,7 +1506,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         async with session_scope(factory) as session:
             await session.execute(
                 text(
-                    "UPDATE task SET status = 'plan', owner_type = 'ai_profile', owner_ref = 'default' "
+                    "UPDATE task SET status = 'plan', owner_type = 'ai_profile', owner_ref = 'researcher' "
                     "WHERE profile_id = :profile_id AND id = :task_id"
                 ),
                 {"profile_id": "default", "task_id": planned.id},
@@ -1442,7 +1519,17 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
-            owner_ref="default",
+            owner_ref="researcher",
+        )
+
+        untouched = await service.create_task(
+            profile_id="default",
+            title="Other owner remains queued",
+            description="Wait for another runtime worker",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            created_by_type="human",
+            created_by_ref="cli",
         )
 
         processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:plan-skip")
@@ -1450,6 +1537,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         assert processed is True
         planned_after = await service.get_task(profile_id="default", task_id=planned.id)
         runnable_after = await service.get_task(profile_id="default", task_id=runnable.id)
+        untouched_after = await service.get_task(profile_id="default", task_id=untouched.id)
         assert planned_after.status == "blocked"
         assert planned_after.blocked_reason_code == "invalid_plan_status"
         assert planned_after.blocked_reason_text is not None
@@ -1457,6 +1545,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         assert planned_after.last_error_code is None
         assert planned_after.last_error_text is None
         assert runnable_after.status == "completed"
+        assert untouched_after.status == "todo"
         assert observed_calls[0].task_id == runnable.id
 
         events = await service.list_task_events(profile_id="default", task_id=planned.id)

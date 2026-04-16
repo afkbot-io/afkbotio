@@ -831,6 +831,7 @@ class TaskFlowRepository:
         lease_until: datetime,
         claim_token: str,
         claimed_by: str,
+        owner_ref: str | None = None,
     ) -> Task | None:
         """Atomically claim one runnable AI-owned task."""
 
@@ -862,6 +863,7 @@ class TaskFlowRepository:
             )
             .where(
                 Task.owner_type == "ai_profile",
+                Task.owner_ref == owner_ref if owner_ref is not None else true(),
                 or_(
                     and_(
                         Task.status == "todo",
