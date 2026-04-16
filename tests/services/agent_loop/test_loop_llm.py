@@ -465,6 +465,55 @@ async def test_plan_only_turn_exposes_read_only_tools_and_reasoning_budget(tmp_p
     await engine.dispose()
 
 
+async def test_plan_only_turn_is_not_artificially_capped_to_two_iterations(tmp_path: Path) -> None:
+    """Plan-only turns should be able to use the normal runtime iteration budget."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "loop_llm_plan_only_iteration_limit.db",
+    )
+    provider = MockLLMProvider(
+        [
+            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "1"})]),
+            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "2"})]),
+            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "3"})]),
+            LLMResponse.final("done after 3 tool calls"),
+        ]
+    )
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            llm_provider=provider,
+            llm_max_iterations=50,
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-plan-only-iterations",
+            message="Inspect first, then produce a detailed execution plan.",
+            context_overrides=TurnContextOverrides(
+                planning_mode="plan_only",
+                thinking_level="high",
+            ),
+        )
+
+        assert result.envelope.action == "finalize"
+        assert result.envelope.message == "done after 3 tool calls"
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        tool_calls_count = sum(1 for event in events if event.event_type == "tool.call")
+        assert tool_calls_count == 3
+
+    await engine.dispose()
+
+
 async def test_plan_only_turn_context_mentions_execution_tools_hidden_from_direct_execution(
     tmp_path: Path,
 ) -> None:
