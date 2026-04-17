@@ -132,7 +132,7 @@ Common installer flags:
 curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
 
 # install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.1.1
+curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.2.0
 
 # install from a local checkout
 bash scripts/install.sh --repo-url "file://$PWD"

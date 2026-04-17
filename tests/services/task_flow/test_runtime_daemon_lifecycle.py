@@ -224,7 +224,7 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
         task = await service.create_task(
             profile_id="default",
             title="Background analyze inbox",
-            prompt="Analyze the backlog in the background and persist the result.",
+            description="Analyze the backlog in the background and persist the result.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",

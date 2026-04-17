@@ -239,6 +239,7 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = False
     taskflow_strict_team_profile_ids: bool = False
     taskflow_blocked_revisit_initial_sec: int = 7200
@@ -428,6 +429,20 @@ class Settings(BaseSettings):
             normalized = value.strip()
             return normalized or None
         return value
+
+    @field_validator("taskflow_runtime_owner_ref", mode="before")
+    @classmethod
+    def _normalize_taskflow_runtime_owner_ref(cls, value: object) -> str | None:
+        """Normalize optional detached runtime owner filter."""
+
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) > 255:
+            raise ValueError("taskflow_runtime_owner_ref must be <= 255 characters")
+        return text
 
     @field_validator(
         "runtime_queue_max_size",

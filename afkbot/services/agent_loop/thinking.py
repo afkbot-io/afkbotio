@@ -130,7 +130,6 @@ def resolve_turn_thinking_config(
     prompt_overlay: str | None = None
 
     if planning_mode == "plan_only":
-        max_iterations = min(max_iterations, 2)
         request_timeout_sec = clamp_llm_request_timeout_sec(max(request_timeout_sec, 45.0))
         wall_clock_budget_sec = max(
             wall_clock_budget_sec,

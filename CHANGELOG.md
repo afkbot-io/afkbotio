@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-16
+
+### Added
+
+- Task Flow now supports persisted task attachments end-to-end, including runtime delivery of attached context to AI-owned executions.
+- Task Flow boards and APIs now expose a leading human-only `PLAN` lane so operators can stage work before it becomes claimable by AI workers.
+- Release validation now includes stricter migration and runtime coverage for the Task Flow `description`/attachments rollout.
+
+### Changed
+
+- Task Flow has migrated from `prompt` to `description` as the canonical task body across the service, CLI, tools, and release smoke coverage.
+- Plan-only chat turns keep the normal runtime iteration budget instead of being artificially clamped to two iterations, while still remaining read-only.
+
+### Fixed
+
+- Legacy SQLite Task Flow installs are rebuilt safely so old `task.prompt` data lands in `description` and fresh inserts no longer fail after upgrade.
+- Task Flow runtime and operator surfaces now stay aligned when attachments, plan-stage tasks, and detached execution handoffs are involved.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.2.0`.
+
 ## [1.1.1] - 2026-04-15
 
 ### Added
@@ -15,6 +34,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Switching the managed AFKBOT service from `127.0.0.1` to `0.0.0.0` on the same runtime port pair no longer requires a manual stop before reload.
+- `afk task create` keeps backward compatibility by accepting legacy `--prompt` as a deprecated alias for `--description`, with deterministic precedence (`--description` wins when both are present) and default status preserved as `todo`.
+- Task attachment ingestion now enforces a pre-decode base64 payload size guard before `base64.b64decode(..., validate=True)` and still keeps the post-decode byte-size limit as a second safety layer.
 - Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.1`.
 
 ## [1.1.0] - 2026-04-15
