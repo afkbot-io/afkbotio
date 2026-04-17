@@ -1959,3 +1959,113 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         assert spoofed_change_result.error_code == "task_review_actor_forbidden"
     finally:
         await engine.dispose()
+
+
+async def test_task_update_plugin_attachment_semantics(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.update` should preserve, clear, or replace attachments deterministically."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    factory = create_session_factory(engine)
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("default", "papercliper"),
+        )
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        service = get_task_flow_service(settings)
+        ctx = ToolContext(profile_id="default", session_id="taskflow:task_demo", run_id=31)
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Attachment semantics",
+                    "description": "Validate task.update attachment behavior.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "papercliper",
+                    "attachments": [
+                        {
+                            "name": "initial.txt",
+                            "content_type": "text/plain",
+                            "content_base64": "aW5pdGlhbA==",
+                        }
+                    ],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        before = await service.list_task_attachments(profile_id="default", task_id=task_id)
+        assert [attachment.name for attachment in before] == ["initial.txt"]
+
+        preserve_params = update_tool.parse_params(
+            {
+                "profile_key": "default",
+                "task_id": task_id,
+                "title": "Attachment semantics (unchanged)",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        assert "attachments" not in preserve_params.model_fields_set
+        preserve_result = await update_tool.execute(ctx, preserve_params)
+        assert preserve_result.ok is True
+
+        preserved = await service.list_task_attachments(profile_id="default", task_id=task_id)
+        assert [attachment.name for attachment in preserved] == ["initial.txt"]
+
+        clear_params = update_tool.parse_params(
+            {
+                "profile_key": "default",
+                "task_id": task_id,
+                "attachments": [],
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        assert "attachments" in clear_params.model_fields_set
+        clear_result = await update_tool.execute(ctx, clear_params)
+        assert clear_result.ok is True
+
+        cleared = await service.list_task_attachments(profile_id="default", task_id=task_id)
+        assert cleared == []
+
+        replace_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "attachments": [
+                        {
+                            "name": "replacement.txt",
+                            "content_type": "text/plain",
+                            "content_base64": "cmVwbGFjZW1lbnQ=",
+                        }
+                    ],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert replace_result.ok is True
+
+        replaced = await service.list_task_attachments(profile_id="default", task_id=task_id)
+        assert [attachment.name for attachment in replaced] == ["replacement.txt"]
+    finally:
+        await engine.dispose()

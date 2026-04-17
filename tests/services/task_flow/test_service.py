@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2507,7 +2508,66 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
     finally:
         await engine.dispose()
 
-async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: Path) -> None:
+async def test_task_flow_service_update_task_attachment_semantics(tmp_path: Path) -> None:
+    """Update task should preserve, clear, or replace attachments based on explicit payload."""
+
+    db_name = "task_flow_update_task_attachment_semantics.db"
+    engine, factory = await build_repository_factory(tmp_path, db_name=db_name)
+    service = TaskFlowService(factory)
+
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Attachment semantics",
+            description="Ensure update semantics are deterministic.",
+            status="todo",
+            source_type="manual",
+            source_ref="issue:attachments",
+            created_by_type="human",
+            created_by_ref="cli",
+            attachments=(
+                {
+                    "name": "initial.txt",
+                    "content_type": "text/plain",
+                    "content_base64": base64.b64encode(b"initial payload").decode("ascii"),
+                },
+            ),
+        )
+
+        original_attachments = await service.list_task_attachments(profile_id="default", task_id=task.id)
+        assert [attachment.name for attachment in original_attachments] == ["initial.txt"]
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            title="Attachment semantics - unchanged",
+        )
+        unchanged_attachments = await service.list_task_attachments(profile_id="default", task_id=task.id)
+        assert [attachment.name for attachment in unchanged_attachments] == ["initial.txt"]
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            attachments=(),
+        )
+        cleared_attachments = await service.list_task_attachments(profile_id="default", task_id=task.id)
+        assert cleared_attachments == []
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            attachments=(
+                {
+                    "name": "replacement.txt",
+                    "content_type": "text/plain",
+                    "content_base64": base64.b64encode(b"replacement payload").decode("ascii"),
+                },
+            ),
+        )
+        replaced_attachments = await service.list_task_attachments(profile_id="default", task_id=task.id)
+        assert [attachment.name for attachment in replaced_attachments] == ["replacement.txt"]
+    finally:
+        await engine.dispose()
     """AI-owned PLAN tasks must be rejected to prevent silent runtime starvation."""
 
     db_name = "task_flow_plan_ai_owner_create_rejected.db"

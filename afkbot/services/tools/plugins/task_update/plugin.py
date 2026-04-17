@@ -77,12 +77,14 @@ class TaskUpdateTool(ToolBase):
             )
             blocked_reason_code_explicit = "blocked_reason_code" in explicit_fields
             blocked_reason_text_explicit = "blocked_reason_text" in explicit_fields
+            attachments_explicit = "attachments" in explicit_fields
             blocked_reason_code_arg = (
                 payload.blocked_reason_code if blocked_reason_code_explicit else TASK_FLOW_FIELD_UNSET
             )
             blocked_reason_text_arg = (
                 payload.blocked_reason_text if blocked_reason_text_explicit else TASK_FLOW_FIELD_UNSET
             )
+            attachments_arg = payload.attachments if attachments_explicit else TASK_FLOW_FIELD_UNSET
             ready_at_explicit = "ready_at" in explicit_fields
             retry_after_explicit = "retry_after_sec" in explicit_fields
             if ready_at_explicit and retry_after_explicit:
@@ -136,7 +138,7 @@ class TaskUpdateTool(ToolBase):
                         actor_session_id=ctx.session_id,
                         actor_type="ai_profile",
                         actor_ref=ctx.profile_id,
-                        attachments=payload.attachments,
+                        attachments=attachments_arg,
                     )
                 else:
                     item = await service.update_task(
@@ -159,7 +161,7 @@ class TaskUpdateTool(ToolBase):
                         actor_session_id=ctx.session_id,
                         actor_type="ai_profile",
                         actor_ref=ctx.profile_id,
-                        attachments=payload.attachments,
+                        attachments=attachments_arg,
                     )
             elif effective_session_id is not None:
                 item = await service.update_task(
@@ -187,7 +189,7 @@ class TaskUpdateTool(ToolBase):
                     actor_session_id=ctx.session_id,
                     actor_type="ai_profile",
                     actor_ref=ctx.profile_id,
-                    attachments=payload.attachments,
+                    attachments=attachments_arg,
                 )
             else:
                 item = await service.update_task(
@@ -209,7 +211,7 @@ class TaskUpdateTool(ToolBase):
                     actor_session_id=ctx.session_id,
                     actor_type="ai_profile",
                     actor_ref=ctx.profile_id,
-                    attachments=payload.attachments,
+                    attachments=attachments_arg,
                 )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:

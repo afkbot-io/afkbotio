@@ -1769,7 +1769,7 @@ class TaskFlowService:
         blocked_reason_text: str | None | object = _TASK_FIELD_UNSET,
         actor_type: str | None = None,
         actor_ref: str | None = None,
-        attachments: Sequence[TaskAttachmentCreate | dict[str, object]] = (),
+        attachments: Sequence[TaskAttachmentCreate | dict[str, object]] | object = _TASK_FIELD_UNSET,
     ) -> TaskMetadata:
         """Update mutable task fields."""
 
@@ -1782,7 +1782,14 @@ class TaskFlowService:
             if description is not None
             else None
         )
-        normalized_attachments = _normalize_task_attachment_inputs(attachments)
+        attachments_explicit = attachments is not _TASK_FIELD_UNSET
+        normalized_attachments = (
+            _normalize_task_attachment_inputs(
+                cast(Sequence[TaskAttachmentCreate | dict[str, object]] | None, attachments)
+            )
+            if attachments_explicit
+            else ()
+        )
         normalized_blocked_reason_code: str | None | object = _TASK_FIELD_UNSET
         if blocked_reason_code is not _TASK_FIELD_UNSET:
             normalized_blocked_reason_code = _normalize_optional_text(
@@ -2028,21 +2035,23 @@ class TaskFlowService:
                     repo=repo,
                     task=row,
                 )
-            for attachment_payload in normalized_attachments:
-                await _create_task_attachment(
-                    repo=repo,
-                    task=row,
-                    attachment=attachment_payload,
-                    actor_type=normalized_actor_type or row.created_by_type,
-                    actor_ref=normalized_actor_ref or row.created_by_ref,
-                )
+            if attachments_explicit:
+                await repo.delete_task_attachments(task_id=row.id)
+                for attachment_payload in normalized_attachments:
+                    await _create_task_attachment(
+                        repo=repo,
+                        task=row,
+                        attachment=attachment_payload,
+                        actor_type=normalized_actor_type or row.created_by_type,
+                        actor_ref=normalized_actor_ref or row.created_by_ref,
+                    )
             update_details = _build_task_update_event_details(
                 before=before,
                 after=row,
                 labels=labels,
             )
-            if normalized_attachments:
-                update_details["attachments_added"] = len(normalized_attachments)
+            if attachments_explicit:
+                update_details["attachments_replaced"] = len(normalized_attachments)
             if update_details:
                 await record_task_event(
                     repo=repo,
