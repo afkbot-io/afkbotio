@@ -105,4 +105,19 @@ def _attachment_is_text_like(*, attachment: TaskMessageAttachment) -> bool:
         "application/javascript",
     }:
         return True
-    return b"\x00" not in bytes(attachment.content_bytes or b"")
+    return _looks_like_text_payload(bytes(attachment.content_bytes or b""))
+
+
+def _looks_like_text_payload(content_bytes: bytes) -> bool:
+    """Conservatively classify unknown payloads to avoid dumping binary blobs as text."""
+
+    if not content_bytes:
+        return True
+    try:
+        decoded = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    printable_or_whitespace = sum(
+        1 for char in decoded if char.isprintable() or char in {"\n", "\r", "\t"}
+    )
+    return (printable_or_whitespace / len(decoded)) >= 0.95

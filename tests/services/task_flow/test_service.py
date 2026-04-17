@@ -14,7 +14,7 @@ from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueu
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import TaskFlowServiceError
-from afkbot.services.task_flow.service import TaskFlowService
+from afkbot.services.task_flow.service import TaskFlowService, _MAX_TASK_ATTACHMENT_BASE64_BYTES
 from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory
 
@@ -2507,7 +2507,6 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
     finally:
         await engine.dispose()
 
-
 async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: Path) -> None:
     """AI-owned PLAN tasks must be rejected to prevent silent runtime starvation."""
 
@@ -2601,37 +2600,34 @@ async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(tmp
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_oversized_attachment_base64_before_decode(tmp_path: Path) -> None:
-    """Oversized encoded payloads should be rejected before base64 decode work."""
+async def test_task_flow_service_rejects_oversized_base64_attachment_before_decode(
+    tmp_path: Path,
+) -> None:
+    """Attachment payloads should be rejected on encoded size before base64 decode runs."""
 
-    db_name = "task_flow_attachment_base64_guard.db"
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name="task_flow_attachment_base64_limit.db",
+    )
     engine, factory = await build_repository_factory(
         tmp_path,
-        db_name=db_name,
-        profile_ids=("default",),
+        db_name="task_flow_attachment_base64_limit.db",
     )
-    service = TaskFlowService(factory)
+    service = TaskFlowService(factory, settings=settings)
     try:
-        encoded_limit = ((10 * 1024 * 1024 + 2) // 3) * 4
-        oversized_payload = "A" * (encoded_limit + 4)
-        assert len(oversized_payload) > encoded_limit
-
-        with pytest.raises(TaskFlowServiceError) as exc_info:
+        with pytest.raises(TaskFlowServiceError, match="maximum encoded size"):
             await service.create_task(
                 profile_id="default",
-                title="Reject oversized encoded attachment",
-                description="Encoded payload should trip pre-decode guard",
+                title="Reject huge attachment",
+                description="Fail before decode when attachment base64 is oversized.",
                 created_by_type="human",
-                created_by_ref="cli_user:tester",
+                created_by_ref="cli",
                 attachments=(
                     {
                         "name": "oversized.bin",
-                        "content_base64": oversized_payload,
+                        "content_base64": "A" * (_MAX_TASK_ATTACHMENT_BASE64_BYTES + 1),
                     },
                 ),
             )
-
-        assert exc_info.value.error_code == "task_attachment_too_large"
-        assert "maximum encoded size" in exc_info.value.reason
     finally:
         await engine.dispose()

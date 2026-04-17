@@ -2517,10 +2517,9 @@ def _normalize_task_attachment_input(
             error_code="task_attachment_too_large",
             reason=(
                 f"Attachment {payload.name!r} exceeds the maximum encoded size of "
-                f"{_MAX_TASK_ATTACHMENT_BASE64_BYTES} bytes"
+                f"{_MAX_TASK_ATTACHMENT_BASE64_BYTES} base64 characters"
             ),
         )
-
     try:
         content_bytes = base64.b64decode(payload.content_base64, validate=True)
     except (binascii.Error, ValueError) as exc:

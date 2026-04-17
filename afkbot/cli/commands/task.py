@@ -329,7 +329,7 @@ def register(app: typer.Typer) -> None:
         description: str | None = typer.Option(
             None,
             "--description",
-            help="Task description or work instruction.",
+            help="Task description or work instruction. Preferred over --prompt.",
         ),
         prompt: str | None = typer.Option(
             None,
@@ -740,10 +740,11 @@ def _resolve_task_create_description(*, description: str | None, prompt: str | N
     When both are provided, `--description` wins deterministically.
     """
 
-    resolved = description if description is not None else prompt
-    if resolved is None or not resolved.strip():
-        raise typer.BadParameter(
-            "task description is required; provide --description (or legacy --prompt)",
-            param_hint="--description",
-        )
-    return resolved
+    if description is not None and description.strip():
+        return description
+    if prompt is not None and prompt.strip():
+        return prompt
+    raise typer.BadParameter(
+        "task description is required; provide --description (preferred) or legacy --prompt",
+        param_hint="--description",
+    )
