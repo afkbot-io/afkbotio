@@ -326,7 +326,21 @@ def register(app: typer.Typer) -> None:
         ctx: typer.Context,
         profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         title: str = typer.Option(..., "--title", help="Task title."),
-        prompt: str = typer.Option(..., "--prompt", help="Task prompt or work instruction."),
+        description: str | None = typer.Option(
+            None,
+            "--description",
+            help="Task description or work instruction. Preferred over --prompt.",
+        ),
+        prompt: str | None = typer.Option(
+            None,
+            "--prompt",
+            help="Deprecated alias for --description (kept for backward compatibility).",
+        ),
+        status: str = typer.Option(
+            "todo",
+            "--status",
+            help="Initial task status. Defaults to todo for backward compatibility; use plan for manual prep.",
+        ),
         flow_id: str | None = typer.Option(None, "--flow-id", help="Optional task flow id."),
         priority: int = typer.Option(50, "--priority", min=0, help="Task priority."),
         due_at: datetime | None = typer.Option(None, "--due-at", help="Optional ISO due time."),
@@ -356,11 +370,16 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Create one task under the selected profile."""
 
+        resolved_description = _resolve_task_create_description(
+            description=description,
+            prompt=prompt,
+        )
         payload = asyncio.run(
             create_task_payload(
                 profile_id=_resolve_profile(ctx, profile),
                 title=title,
-                prompt=prompt,
+                description=resolved_description,
+                status=status,
                 created_by_type="human",
                 created_by_ref=resolve_local_human_ref(get_settings()),
                 flow_id=flow_id,
@@ -384,7 +403,11 @@ def register(app: typer.Typer) -> None:
         task_id: str = typer.Argument(..., help="Task id."),
         profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
         title: str | None = typer.Option(None, "--title", help="Updated task title."),
-        prompt: str | None = typer.Option(None, "--prompt", help="Updated task prompt."),
+        description: str | None = typer.Option(
+            None,
+            "--description",
+            help="Updated task description.",
+        ),
         status: str | None = typer.Option(None, "--status", help="Updated task status."),
         priority: int | None = typer.Option(None, "--priority", min=0, help="Updated priority."),
         due_at: datetime | None = typer.Option(None, "--due-at", help="Updated ISO due time."),
@@ -428,7 +451,7 @@ def register(app: typer.Typer) -> None:
                 profile_id=_resolve_profile(ctx, profile),
                 task_id=task_id,
                 title=title,
-                prompt=prompt,
+                description=description,
                 status=status,
                 priority=priority,
                 due_at=due_at,
@@ -708,3 +731,20 @@ def _resolve_review_actor_ref(*, actor_type: str, actor_ref: str | None) -> str:
     if actor_type != "human":
         raise typer.BadParameter("--actor-ref is required unless --actor-type=human")
     return resolve_local_human_ref(get_settings())
+
+
+def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:
+    """Resolve required task description across current and legacy flags.
+
+    During the transition period, `--prompt` is accepted as a backward-compatible alias.
+    When both are provided, `--description` wins deterministically.
+    """
+
+    if description is not None and description.strip():
+        return description
+    if prompt is not None and prompt.strip():
+        return prompt
+    raise typer.BadParameter(
+        "task description is required; provide --description (preferred) or legacy --prompt",
+        param_hint="--description",
+    )

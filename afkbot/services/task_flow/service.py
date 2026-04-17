@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TypeVar, cast
+from typing import Literal, TypeVar, cast, overload
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +19,7 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.task import Task
+from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
@@ -31,6 +35,9 @@ from afkbot.services.task_flow.contracts import (
     HumanTaskInboxMetadata,
     HumanTaskStartupSummary,
     StaleTaskClaimMetadata,
+    TaskAttachmentContent,
+    TaskAttachmentCreate,
+    TaskAttachmentMetadata,
     TaskBlockStateMetadata,
     TaskCommentMetadata,
     TaskBoardColumnMetadata,
@@ -51,6 +58,7 @@ from afkbot.settings import Settings, get_settings
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
 _VALID_OWNER_TYPES = {"ai_profile", "human"}
 _VALID_TASK_STATUSES = {
+    "plan",
     "todo",
     "claimed",
     "running",
@@ -73,6 +81,7 @@ _HUMAN_INBOX_NOTIFICATION_EVENT_TYPES = {
 }
 _TASK_COMMENT_EVENT_TYPE = "comment_added"
 _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("plan", "PLAN", ("plan",)),
     ("todo", "Todo", ("todo",)),
     ("blocked", "Blocked", ("blocked",)),
     ("running", "Running", ("claimed", "running")),
@@ -81,6 +90,10 @@ _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("failed", "Failed", ("failed",)),
     ("cancelled", "Cancelled", ("cancelled",)),
 )
+_PLAN_AI_OWNER_ERROR_CODE = "task_plan_requires_human_owner"
+_PLAN_AI_OWNER_REASON = "PLAN status is human-only; assign a human owner or move task to Todo"
+_MAX_TASK_ATTACHMENT_BYTES = 10 * 1024 * 1024
+_MAX_TASK_ATTACHMENT_BASE64_BYTES = ((_MAX_TASK_ATTACHMENT_BYTES + 2) // 3) * 4
 TValue = TypeVar("TValue")
 _TASK_FIELD_UNSET = object()
 TASK_FLOW_FIELD_UNSET = _TASK_FIELD_UNSET
@@ -89,7 +102,7 @@ TASK_FLOW_FIELD_UNSET = _TASK_FIELD_UNSET
 @dataclass(frozen=True, slots=True)
 class _TaskSnapshot:
     title: str
-    prompt: str
+    description: str
     priority: int
     due_at: datetime | None
     ready_at: datetime | None
@@ -104,6 +117,16 @@ class _TaskSnapshot:
     last_session_profile_id: str | None
     blocked_reason_code: str | None
     blocked_reason_text: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedTaskAttachment:
+    name: str
+    content_type: str | None
+    kind: str
+    content_bytes: bytes
+    byte_size: int
+    sha256: str
 
 
 class TaskFlowService:
@@ -275,7 +298,8 @@ class TaskFlowService:
         *,
         profile_id: str,
         title: str,
-        prompt: str,
+        description: str | None = None,
+        status: str | None = None,
         created_by_type: str,
         created_by_ref: str,
         actor_session_id: str | None = None,
@@ -293,14 +317,17 @@ class TaskFlowService:
         labels: Sequence[str] = (),
         requires_review: bool = False,
         depends_on_task_ids: Sequence[str] = (),
+        attachments: Sequence[TaskAttachmentCreate | dict[str, object]] = (),
     ) -> TaskMetadata:
         """Create one task and optional dependency edges."""
 
         normalized_title = _normalize_required_text(title, field_name="title")
-        normalized_prompt = _normalize_required_text(prompt, field_name="prompt")
+        normalized_description = _normalize_task_description(description=description, required=True)
+        normalized_requested_status = _normalize_create_task_status(status)
         normalized_flow_id = _normalize_optional_text(flow_id)
         normalized_labels = _normalize_labels(labels)
         normalized_depends_on = _normalize_identifier_list(depends_on_task_ids)
+        normalized_attachments = _normalize_task_attachment_inputs(attachments)
         normalized_source_type = _normalize_required_text(source_type, field_name="source_type")
         normalized_created_by_type = _normalize_required_text(created_by_type, field_name="created_by_type")
         normalized_created_by_ref = _normalize_required_text(created_by_ref, field_name="created_by_ref")
@@ -410,10 +437,23 @@ class TaskFlowService:
                         reason="AI actor can bind only its current session",
                     )
 
-            status = "blocked" if normalized_depends_on else "todo"
-            blocked_reason_code = "dependency_wait" if normalized_depends_on else None
+            if normalized_requested_status is None:
+                resolved_status = "blocked" if normalized_depends_on else "todo"
+            else:
+                resolved_status = normalized_requested_status
+            _ensure_plan_status_owner_is_human(
+                status=resolved_status,
+                owner_type=resolved_owner_type,
+            )
+            blocked_reason_code = (
+                "dependency_wait"
+                if normalized_depends_on and resolved_status == "blocked"
+                else None
+            )
             blocked_reason_text = (
-                "Waiting for dependent tasks to complete." if normalized_depends_on else None
+                "Waiting for dependent tasks to complete."
+                if normalized_depends_on and resolved_status == "blocked"
+                else None
             )
             now_utc = datetime.now(timezone.utc)
             row = await repo.create_task(
@@ -421,11 +461,15 @@ class TaskFlowService:
                 profile_id=profile_id,
                 flow_id=normalized_flow_id,
                 title=normalized_title,
-                prompt=normalized_prompt,
-                status=status,
+                description=normalized_description,
+                status=resolved_status,
                 priority=priority,
                 due_at=due_at,
-                ready_at=None if normalized_depends_on else now_utc,
+                ready_at=(
+                    None
+                    if normalized_depends_on or resolved_status != "todo"
+                    else now_utc
+                ),
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
                 reviewer_type=_normalize_optional_text(reviewer_type),
@@ -451,6 +495,14 @@ class TaskFlowService:
                 )
             if normalized_depends_on:
                 row = await _reconcile_task_readiness(repo=repo, task=row)
+            for attachment_payload in normalized_attachments:
+                await _create_task_attachment(
+                    repo=repo,
+                    task=row,
+                    attachment=attachment_payload,
+                    actor_type=normalized_created_by_type,
+                    actor_ref=normalized_created_by_ref,
+                )
             await record_task_event(
                 repo=repo,
                 task_id=row.id,
@@ -459,6 +511,7 @@ class TaskFlowService:
                 actor_ref=normalized_created_by_ref,
                 to_status=row.status,
                 details={
+                    "description_changed": True,
                     "flow_id": normalized_flow_id,
                     "owner_type": resolved_owner_type,
                     "owner_ref": resolved_owner_ref,
@@ -468,6 +521,7 @@ class TaskFlowService:
                     "labels": list(normalized_labels),
                     "depends_on_task_ids": list(normalized_depends_on),
                     "requires_review": bool(requires_review),
+                    "attachment_count": len(normalized_attachments),
                 },
             )
             return await _build_task_metadata(repo, row, settings=self._settings)
@@ -483,6 +537,181 @@ class TaskFlowService:
             if row is None:
                 raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
             return await _build_task_metadata(repo, row, settings=self._settings)
+
+        return await self._with_repo(_op)
+
+    async def list_task_attachments(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+    ) -> list[TaskAttachmentMetadata]:
+        """List persisted attachments for one task."""
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskAttachmentMetadata]:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            rows = await repo.list_task_attachments(task_id=task.id)
+            return [_to_task_attachment_metadata(row) for row in rows]
+
+        return await self._with_repo(_op)
+
+    async def get_task_attachment_content(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        attachment_id: str,
+    ) -> TaskAttachmentContent:
+        """Return one attachment binary payload for API download paths."""
+
+        async def _op(repo: TaskFlowRepository) -> TaskAttachmentContent:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            row = await repo.get_task_attachment(task_id=task.id, attachment_id=attachment_id)
+            if row is None:
+                raise TaskFlowServiceError(
+                    error_code="task_attachment_not_found",
+                    reason="Task attachment not found",
+                )
+            return TaskAttachmentContent(
+                attachment=_to_task_attachment_metadata(row),
+                content_bytes=bytes(row.content or b""),
+            )
+
+        return await self._with_repo(_op)
+
+    async def add_task_attachment(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        actor_type: str,
+        actor_ref: str,
+        attachment: TaskAttachmentCreate | dict[str, object],
+        actor_session_id: str | None = None,
+    ) -> TaskAttachmentMetadata:
+        """Append one binary attachment to the selected task."""
+
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        normalized_attachment = _normalize_task_attachment_input(attachment)
+        _validate_owner_pair(
+            owner_type=normalized_actor_type,
+            owner_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_actor_required",
+            reason="Adding a task attachment requires an explicit actor identity",
+        )
+
+        async def _op(repo: TaskFlowRepository) -> TaskAttachmentMetadata:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_actor_required",
+                reason="Adding a task attachment requires an explicit actor identity",
+            )
+            _ensure_task_actor_can_manage(
+                row=task,
+                task_profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            row = await _create_task_attachment(
+                repo=repo,
+                task=task,
+                attachment=normalized_attachment,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            return _to_task_attachment_metadata(row)
+
+        return await self._with_repo(_op)
+
+    async def remove_task_attachment(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        attachment_id: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None = None,
+    ) -> bool:
+        """Delete one task attachment."""
+
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        _validate_owner_pair(
+            owner_type=normalized_actor_type,
+            owner_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_actor_required",
+            reason="Removing a task attachment requires an explicit actor identity",
+        )
+
+        async def _op(repo: TaskFlowRepository) -> bool:
+            task = await _require_task(repo, profile_id=profile_id, task_id=task_id)
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_actor_required",
+                reason="Removing a task attachment requires an explicit actor identity",
+            )
+            _ensure_task_actor_can_manage(
+                row=task,
+                task_profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            attachment = await repo.get_task_attachment(task_id=task.id, attachment_id=attachment_id)
+            if attachment is None:
+                raise TaskFlowServiceError(
+                    error_code="task_attachment_not_found",
+                    reason="Task attachment not found",
+                )
+            deleted = await repo.delete_task_attachment(task_id=task.id, attachment_id=attachment.id)
+            if not deleted:
+                raise TaskFlowServiceError(
+                    error_code="task_attachment_not_found",
+                    reason="Task attachment not found",
+                )
+            await record_task_event(
+                repo=repo,
+                task_id=task.id,
+                event_type="attachment_removed",
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                message=attachment.name,
+                details={
+                    "attachment_id": attachment.id,
+                    "name": attachment.name,
+                    "content_type": attachment.content_type,
+                    "kind": attachment.kind,
+                    "byte_size": attachment.byte_size,
+                    "sha256": attachment.sha256,
+                },
+            )
+            return True
 
         return await self._with_repo(_op)
 
@@ -1203,7 +1432,7 @@ class TaskFlowService:
         profile_id: str,
         source_task_id: str,
         delegated_owner_ref: str,
-        prompt: str,
+        description: str | None = None,
         actor_type: str,
         actor_ref: str,
         actor_session_id: str | None = None,
@@ -1223,7 +1452,7 @@ class TaskFlowService:
             delegated_owner_ref,
             field_name="delegated_owner_ref",
         )
-        normalized_prompt = _normalize_required_text(prompt, field_name="prompt")
+        normalized_description = _normalize_task_description(description=description, required=True)
         normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
         normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
@@ -1314,7 +1543,7 @@ class TaskFlowService:
                 profile_id=profile_id,
                 flow_id=delegated_flow_id,
                 title=delegated_title,
-                prompt=normalized_prompt,
+                description=normalized_description,
                 status="todo",
                 priority=delegated_priority,
                 due_at=delegated_due_at,
@@ -1522,7 +1751,7 @@ class TaskFlowService:
         profile_id: str,
         task_id: str,
         title: str | None = None,
-        prompt: str | None = None,
+        description: str | None = None,
         status: str | None = None,
         priority: int | None = None,
         due_at: datetime | None = None,
@@ -1540,6 +1769,7 @@ class TaskFlowService:
         blocked_reason_text: str | None | object = _TASK_FIELD_UNSET,
         actor_type: str | None = None,
         actor_ref: str | None = None,
+        attachments: Sequence[TaskAttachmentCreate | dict[str, object]] = (),
     ) -> TaskMetadata:
         """Update mutable task fields."""
 
@@ -1547,9 +1777,12 @@ class TaskFlowService:
         normalized_title = (
             _normalize_required_text(title, field_name="title") if title is not None else None
         )
-        normalized_prompt = (
-            _normalize_required_text(prompt, field_name="prompt") if prompt is not None else None
+        normalized_description = (
+            _normalize_task_description(description=description)
+            if description is not None
+            else None
         )
+        normalized_attachments = _normalize_task_attachment_inputs(attachments)
         normalized_blocked_reason_code: str | None | object = _TASK_FIELD_UNSET
         if blocked_reason_code is not _TASK_FIELD_UNSET:
             normalized_blocked_reason_code = _normalize_optional_text(
@@ -1681,6 +1914,10 @@ class TaskFlowService:
                 owner_ref=effective_owner_ref,
             )
             effective_status_after_update = effective_status or current_row.status
+            _ensure_plan_status_owner_is_human(
+                status=effective_status_after_update,
+                owner_type=effective_owner_type,
+            )
             effective_session_id = (
                 requested_session_id
                 if requested_session_id is not _TASK_FIELD_UNSET
@@ -1739,7 +1976,7 @@ class TaskFlowService:
                     profile_id=profile_id,
                     task_id=task_id,
                     title=normalized_title,
-                    prompt=normalized_prompt,
+                    description=normalized_description,
                     status=effective_status,
                     priority=priority,
                     due_at=due_at,
@@ -1786,11 +2023,26 @@ class TaskFlowService:
                     profile_id=profile_id,
                     task_id=row.id,
                 )
+            elif effective_status == "todo":
+                row = await _reconcile_task_readiness_after_dependency_change(
+                    repo=repo,
+                    task=row,
+                )
+            for attachment_payload in normalized_attachments:
+                await _create_task_attachment(
+                    repo=repo,
+                    task=row,
+                    attachment=attachment_payload,
+                    actor_type=normalized_actor_type or row.created_by_type,
+                    actor_ref=normalized_actor_ref or row.created_by_ref,
+                )
             update_details = _build_task_update_event_details(
                 before=before,
                 after=row,
                 labels=labels,
             )
+            if normalized_attachments:
+                update_details["attachments_added"] = len(normalized_attachments)
             if update_details:
                 await record_task_event(
                     repo=repo,
@@ -2165,6 +2417,30 @@ def _normalize_required_text(value: str | None, *, field_name: str) -> str:
     raise TaskFlowServiceError(error_code=f"invalid_{field_name}", reason=f"{field_name} is required")
 
 
+@overload
+def _normalize_task_description(*, description: str | None, required: Literal[True]) -> str: ...
+
+
+@overload
+def _normalize_task_description(
+    *,
+    description: str | None,
+    required: Literal[False] = False,
+) -> str | None: ...
+
+
+def _normalize_task_description(*, description: str | None, required: bool = False) -> str | None:
+    """Normalize the canonical task description."""
+
+    normalized_description = _normalize_optional_text(description)
+    if required and normalized_description is None:
+        raise TaskFlowServiceError(
+            error_code="invalid_description",
+            reason="description is required",
+        )
+    return normalized_description
+
+
 def _normalize_optional_text(value: str | None) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
@@ -2199,6 +2475,87 @@ def _normalize_statuses(statuses: Sequence[str] | None) -> tuple[str, ...]:
     if not statuses:
         return ()
     return tuple(_normalize_status(status) for status in statuses)
+
+
+def _normalize_create_task_status(status: str | None) -> str | None:
+    """Normalize one optional create-time task status."""
+
+    normalized = _normalize_status(status) if status is not None else None
+    if normalized in {None, "plan", "todo"}:
+        return normalized
+    raise TaskFlowServiceError(
+        error_code="invalid_status",
+        reason="New tasks may start only in PLAN or Todo",
+    )
+
+
+def _ensure_plan_status_owner_is_human(*, status: str | None, owner_type: str) -> None:
+    """Reject PLAN assignments for AI-owned tasks so work cannot silently stall."""
+
+    if status != "plan":
+        return
+    if owner_type == "human":
+        return
+    raise TaskFlowServiceError(
+        error_code=_PLAN_AI_OWNER_ERROR_CODE,
+        reason=_PLAN_AI_OWNER_REASON,
+    )
+
+
+def _normalize_task_attachment_input(
+    attachment: TaskAttachmentCreate | dict[str, object],
+) -> _NormalizedTaskAttachment:
+    """Validate one attachment payload and decode it into binary content."""
+
+    payload = (
+        attachment
+        if isinstance(attachment, TaskAttachmentCreate)
+        else TaskAttachmentCreate.model_validate(attachment)
+    )
+    if len(payload.content_base64) > _MAX_TASK_ATTACHMENT_BASE64_BYTES:
+        raise TaskFlowServiceError(
+            error_code="task_attachment_too_large",
+            reason=(
+                f"Attachment {payload.name!r} exceeds the maximum encoded size of "
+                f"{_MAX_TASK_ATTACHMENT_BASE64_BYTES} base64 characters"
+            ),
+        )
+    try:
+        content_bytes = base64.b64decode(payload.content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise TaskFlowServiceError(
+            error_code="invalid_attachment_content",
+            reason=f"Attachment {payload.name!r} has invalid base64 content",
+        ) from exc
+    if not content_bytes:
+        raise TaskFlowServiceError(
+            error_code="invalid_attachment_content",
+            reason=f"Attachment {payload.name!r} is empty",
+        )
+    if len(content_bytes) > _MAX_TASK_ATTACHMENT_BYTES:
+        raise TaskFlowServiceError(
+            error_code="task_attachment_too_large",
+            reason=(
+                f"Attachment {payload.name!r} exceeds the maximum size of "
+                f"{_MAX_TASK_ATTACHMENT_BYTES} bytes"
+            ),
+        )
+    return _NormalizedTaskAttachment(
+        name=payload.name,
+        content_type=_normalize_optional_text(payload.content_type),
+        kind=_normalize_required_text(payload.kind, field_name="attachment_kind"),
+        content_bytes=content_bytes,
+        byte_size=len(content_bytes),
+        sha256=hashlib.sha256(content_bytes).hexdigest(),
+    )
+
+
+def _normalize_task_attachment_inputs(
+    attachments: Sequence[TaskAttachmentCreate | dict[str, object]] | None,
+) -> tuple[_NormalizedTaskAttachment, ...]:
+    if not attachments:
+        return ()
+    return tuple(_normalize_task_attachment_input(item) for item in attachments)
 
 
 def _validate_owner_pair(
@@ -2442,13 +2799,14 @@ def _to_task_metadata(
     *,
     depends_on_task_ids: tuple[str, ...] = (),
     active_session: TaskSessionActivityMetadata | None = None,
+    attachment_count: int = 0,
 ) -> TaskMetadata:
     return TaskMetadata(
         id=row.id,
         profile_id=row.profile_id,
         flow_id=row.flow_id,
         title=row.title,
-        prompt=row.prompt,
+        description=row.description,
         status=row.status,
         priority=row.priority,
         due_at=row.due_at,
@@ -2477,6 +2835,7 @@ def _to_task_metadata(
         last_run_id=row.last_run_id,
         last_error_code=row.last_error_code,
         last_error_text=row.last_error_text,
+        attachment_count=attachment_count,
         started_at=row.started_at,
         finished_at=row.finished_at,
         created_at=row.created_at,
@@ -2496,10 +2855,12 @@ async def _build_task_metadata(
         settings=settings,
     )
     dependencies = await repo.list_dependencies(task_id=row.id)
+    attachment_counts = await repo.count_task_attachments_for_tasks(task_ids=(row.id,))
     return _to_task_metadata(
         row,
         depends_on_task_ids=tuple(edge.depends_on_task_id for edge in dependencies),
         active_session=active_sessions.get(row.id),
+        attachment_count=attachment_counts.get(row.id, 0),
     )
 
 
@@ -2518,6 +2879,7 @@ async def _build_task_metadata_many(
         settings=settings,
     )
     dependencies = await repo.list_dependencies_for_tasks(task_ids=tuple(row.id for row in row_list))
+    attachment_counts = await repo.count_task_attachments_for_tasks(task_ids=tuple(row.id for row in row_list))
     dependency_ids_by_task_id: dict[str, list[str]] = {}
     for edge in dependencies:
         dependency_ids_by_task_id.setdefault(edge.task_id, []).append(edge.depends_on_task_id)
@@ -2528,6 +2890,7 @@ async def _build_task_metadata_many(
                 row,
                 depends_on_task_ids=tuple(dependency_ids_by_task_id.get(row.id, ())),
                 active_session=active_sessions.get(row.id),
+                attachment_count=attachment_counts.get(row.id, 0),
             )
         )
     return items
@@ -2586,6 +2949,23 @@ def _to_dependency_metadata(row: TaskDependency) -> TaskDependencyMetadata:
         depends_on_task_id=row.depends_on_task_id,
         satisfied_on_status=row.satisfied_on_status,
         created_at=row.created_at,
+    )
+
+
+def _to_task_attachment_metadata(row: TaskAttachment) -> TaskAttachmentMetadata:
+    return TaskAttachmentMetadata(
+        id=row.id,
+        task_id=row.task_id,
+        profile_id=row.profile_id,
+        name=row.name,
+        content_type=row.content_type,
+        kind=row.kind,
+        byte_size=row.byte_size,
+        sha256=row.sha256,
+        created_by_type=row.created_by_type,
+        created_by_ref=row.created_by_ref,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -2793,8 +3173,8 @@ def _build_task_update_event_details(
     details: dict[str, object] = {}
     if before.title != after.title:
         details["title"] = {"before": before.title, "after": after.title}
-    if before.prompt != after.prompt:
-        details["prompt_changed"] = True
+    if before.description != after.description:
+        details["description_changed"] = True
     if before.priority != after.priority:
         details["priority"] = {"before": before.priority, "after": after.priority}
     if before.due_at != after.due_at:
@@ -2854,7 +3234,7 @@ def _build_task_update_event_details(
 def _snapshot_task(row: Task) -> _TaskSnapshot:
     return _TaskSnapshot(
         title=row.title,
-        prompt=row.prompt,
+        description=row.description,
         priority=row.priority,
         due_at=row.due_at,
         ready_at=row.ready_at,
@@ -3129,6 +3509,48 @@ async def _append_task_comment_event(
     )
 
 
+async def _create_task_attachment(
+    *,
+    repo: TaskFlowRepository,
+    task: Task,
+    attachment: _NormalizedTaskAttachment,
+    actor_type: str,
+    actor_ref: str,
+) -> TaskAttachment:
+    """Persist one task attachment and emit a matching history event."""
+
+    row = await repo.create_task_attachment(
+        attachment_id=_new_identifier("task_attachment"),
+        task_id=task.id,
+        profile_id=task.profile_id,
+        name=attachment.name,
+        content_type=attachment.content_type,
+        kind=attachment.kind,
+        byte_size=attachment.byte_size,
+        sha256=attachment.sha256,
+        created_by_type=actor_type,
+        created_by_ref=actor_ref,
+        content=attachment.content_bytes,
+    )
+    await record_task_event(
+        repo=repo,
+        task_id=task.id,
+        event_type="attachment_added",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=row.name,
+        details={
+            "attachment_id": row.id,
+            "name": row.name,
+            "content_type": row.content_type,
+            "kind": row.kind,
+            "byte_size": row.byte_size,
+            "sha256": row.sha256,
+        },
+    )
+    return row
+
+
 async def _delete_task_row(
     *,
     repo: TaskFlowRepository,
@@ -3149,6 +3571,7 @@ async def _delete_task_row(
         for edge in dependent_edges
         if edge.task_id not in skip_ids
     )
+    await repo.delete_task_attachments(task_id=row.id)
     await repo.delete_task_events(task_id=row.id)
     await repo.delete_task_runs(task_id=row.id)
     await repo.delete_task_dependencies(task_id=row.id)

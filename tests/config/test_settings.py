@@ -167,6 +167,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.taskflow_runtime_poll_interval_sec == 5.0
     assert settings.taskflow_runtime_maintenance_batch_size == 32
     assert settings.taskflow_runtime_claim_ttl_sec == 900
+    assert settings.taskflow_runtime_owner_ref is None
     assert settings.taskflow_public_principal_required is False
     assert settings.taskflow_strict_team_profile_ids is False
     assert settings.browser_headless is True

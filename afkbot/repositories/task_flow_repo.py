@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from afkbot.models.task import Task
+from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
@@ -98,7 +99,7 @@ class TaskFlowRepository:
         profile_id: str,
         flow_id: str | None,
         title: str,
-        prompt: str,
+        description: str,
         status: str,
         priority: int,
         due_at: datetime | None,
@@ -125,7 +126,7 @@ class TaskFlowRepository:
             profile_id=profile_id,
             flow_id=flow_id,
             title=title,
-            prompt=prompt,
+            description=description,
             status=status,
             priority=priority,
             due_at=due_at,
@@ -255,7 +256,7 @@ class TaskFlowRepository:
         profile_id: str,
         task_id: str,
         title: str | None = None,
-        prompt: str | None = None,
+        description: str | None = None,
         status: str | None = None,
         priority: int | None = None,
         due_at: datetime | None = None,
@@ -278,8 +279,8 @@ class TaskFlowRepository:
             return None
         if title is not None:
             row.title = title
-        if prompt is not None:
-            row.prompt = prompt
+        if description is not None:
+            row.description = description
         if status is not None:
             row.status = status
         if priority is not None:
@@ -345,6 +346,107 @@ class TaskFlowRepository:
         await self._session.flush()
         await self._session.refresh(row)
         return row
+
+    async def create_task_attachment(
+        self,
+        *,
+        attachment_id: str,
+        task_id: str,
+        profile_id: str,
+        name: str,
+        content_type: str | None,
+        kind: str,
+        byte_size: int,
+        sha256: str,
+        created_by_type: str,
+        created_by_ref: str,
+        content: bytes,
+    ) -> TaskAttachment:
+        """Persist one binary attachment row."""
+
+        row = TaskAttachment(
+            id=attachment_id,
+            task_id=task_id,
+            profile_id=profile_id,
+            name=name,
+            content_type=content_type,
+            kind=kind,
+            byte_size=byte_size,
+            sha256=sha256,
+            created_by_type=created_by_type,
+            created_by_ref=created_by_ref,
+            content=content,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def get_task_attachment(
+        self,
+        *,
+        task_id: str,
+        attachment_id: str,
+    ) -> TaskAttachment | None:
+        """Return one task attachment scoped to its task id."""
+
+        statement: Select[tuple[TaskAttachment]] = select(TaskAttachment).where(
+            TaskAttachment.task_id == task_id,
+            TaskAttachment.id == attachment_id,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def list_task_attachments(self, *, task_id: str) -> list[TaskAttachment]:
+        """Return attachments ordered by newest first."""
+
+        statement: Select[tuple[TaskAttachment]] = (
+            select(TaskAttachment)
+            .where(TaskAttachment.task_id == task_id)
+            .order_by(TaskAttachment.created_at.desc(), TaskAttachment.id.desc())
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def count_task_attachments_for_tasks(
+        self,
+        *,
+        task_ids: Sequence[str],
+    ) -> dict[str, int]:
+        """Return attachment counts keyed by task id for one task slice."""
+
+        normalized_task_ids = tuple(
+            dict.fromkeys(str(task_id).strip() for task_id in task_ids if str(task_id).strip())
+        )
+        if not normalized_task_ids:
+            return {}
+        rows = await self._session.execute(
+            select(TaskAttachment.task_id, func.count(TaskAttachment.id))
+            .where(TaskAttachment.task_id.in_(normalized_task_ids))
+            .group_by(TaskAttachment.task_id)
+        )
+        return {str(task_id): int(count or 0) for task_id, count in rows.all()}
+
+    async def delete_task_attachment(
+        self,
+        *,
+        task_id: str,
+        attachment_id: str,
+    ) -> bool:
+        """Delete one task attachment."""
+
+        statement: Delete = delete(TaskAttachment).where(
+            TaskAttachment.task_id == task_id,
+            TaskAttachment.id == attachment_id,
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return _result_succeeded(result)
+
+    async def delete_task_attachments(self, *, task_id: str) -> int:
+        """Delete all attachments linked to one task."""
+
+        statement: Delete = delete(TaskAttachment).where(TaskAttachment.task_id == task_id)
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def create_dependency(
         self,
@@ -729,6 +831,7 @@ class TaskFlowRepository:
         lease_until: datetime,
         claim_token: str,
         claimed_by: str,
+        owner_ref: str | None = None,
     ) -> Task | None:
         """Atomically claim one runnable AI-owned task."""
 
@@ -760,6 +863,7 @@ class TaskFlowRepository:
             )
             .where(
                 Task.owner_type == "ai_profile",
+                Task.owner_ref == owner_ref if owner_ref is not None else true(),
                 or_(
                     and_(
                         Task.status == "todo",

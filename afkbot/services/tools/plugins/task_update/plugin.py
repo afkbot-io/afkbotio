@@ -8,6 +8,7 @@ from pydantic import Field
 
 from afkbot.services.task_flow import (
     TASK_FLOW_FIELD_UNSET,
+    TaskAttachmentCreate,
     TaskFlowServiceError,
     get_task_flow_service,
 )
@@ -25,7 +26,7 @@ class TaskUpdateParams(ToolParameters):
 
     task_id: str = Field(min_length=1, max_length=64)
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    prompt: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1)
     status: str | None = Field(default=None, max_length=32)
     priority: int | None = Field(default=None, ge=0)
     due_at: datetime | None = None
@@ -41,6 +42,7 @@ class TaskUpdateParams(ToolParameters):
     session_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
     blocked_reason_code: str | None = Field(default=None, max_length=64)
     blocked_reason_text: str | None = None
+    attachments: tuple[TaskAttachmentCreate, ...] = ()
 
 
 class TaskUpdateTool(ToolBase):
@@ -112,7 +114,7 @@ class TaskUpdateTool(ToolBase):
                         profile_id=target_profile_id,
                         task_id=payload.task_id,
                         title=payload.title,
-                        prompt=payload.prompt,
+                        description=payload.description,
                         status=payload.status,
                         priority=payload.priority,
                         due_at=payload.due_at,
@@ -134,13 +136,14 @@ class TaskUpdateTool(ToolBase):
                         actor_session_id=ctx.session_id,
                         actor_type="ai_profile",
                         actor_ref=ctx.profile_id,
+                        attachments=payload.attachments,
                     )
                 else:
                     item = await service.update_task(
                         profile_id=target_profile_id,
                         task_id=payload.task_id,
                         title=payload.title,
-                        prompt=payload.prompt,
+                        description=payload.description,
                         status=payload.status,
                         priority=payload.priority,
                         due_at=payload.due_at,
@@ -156,13 +159,14 @@ class TaskUpdateTool(ToolBase):
                         actor_session_id=ctx.session_id,
                         actor_type="ai_profile",
                         actor_ref=ctx.profile_id,
+                        attachments=payload.attachments,
                     )
             elif effective_session_id is not None:
                 item = await service.update_task(
                     profile_id=target_profile_id,
                     task_id=payload.task_id,
                     title=payload.title,
-                    prompt=payload.prompt,
+                    description=payload.description,
                     status=payload.status,
                     priority=payload.priority,
                     due_at=payload.due_at,
@@ -183,13 +187,14 @@ class TaskUpdateTool(ToolBase):
                     actor_session_id=ctx.session_id,
                     actor_type="ai_profile",
                     actor_ref=ctx.profile_id,
+                    attachments=payload.attachments,
                 )
             else:
                 item = await service.update_task(
                     profile_id=target_profile_id,
                     task_id=payload.task_id,
                     title=payload.title,
-                    prompt=payload.prompt,
+                    description=payload.description,
                     status=payload.status,
                     priority=payload.priority,
                     due_at=payload.due_at,
@@ -204,6 +209,7 @@ class TaskUpdateTool(ToolBase):
                     actor_session_id=ctx.session_id,
                     actor_type="ai_profile",
                     actor_ref=ctx.profile_id,
+                    attachments=payload.attachments,
                 )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:
