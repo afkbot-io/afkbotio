@@ -48,7 +48,14 @@ class _SlidingWindowRateLimiter:
                 bucket = deque()
                 self._events[key] = bucket
             else:
-                self._events.move_to_end(key)
+                cutoff = now - max(float(window_sec), 1.0)
+                _trim_bucket(bucket, cutoff=cutoff)
+                if not bucket:
+                    self._events.pop(key, None)
+                    bucket = deque()
+                    self._events[key] = bucket
+                else:
+                    self._events.move_to_end(key)
             bucket.append(now)
             self._evict_if_oversized()
             if len(bucket) < max(max_attempts, 1):

@@ -40,22 +40,33 @@ def resolve_ui_auth_surface(
     if not ui_auth_is_configured(settings):
         return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
 
+    mounts = tuple(plugin_auth_mounts or ())
     protected_ids = {
         plugin_id_value.strip().lower()
         for plugin_id_value in settings.ui_auth_protected_plugin_ids
         if plugin_id_value.strip()
     }
-    protected_mounts = tuple(
-        mount
-        for mount in (plugin_auth_mounts or ())
-        if mount.operator_required or mount.plugin_id in protected_ids
+    protected_ids.update(
+        mount.plugin_id.strip().lower()
+        for mount in mounts
+        if mount.operator_required and mount.plugin_id.strip()
     )
 
-    for mount in protected_mounts:
+    for mount in mounts:
+        mount_plugin_id = mount.plugin_id.strip().lower()
+        mount_protected = bool(mount_plugin_id and mount_plugin_id in protected_ids)
         if _path_matches_prefix(normalized, mount.api_prefix):
-            return UIAuthProtectedSurface(protected=True, api_request=True, plugin_id=mount.plugin_id)
+            return UIAuthProtectedSurface(
+                protected=mount_protected,
+                api_request=True,
+                plugin_id=mount.plugin_id if mount_protected else None,
+            )
         if _path_matches_prefix(normalized, mount.web_prefix):
-            return UIAuthProtectedSurface(protected=True, api_request=False, plugin_id=mount.plugin_id)
+            return UIAuthProtectedSurface(
+                protected=mount_protected,
+                api_request=False,
+                plugin_id=mount.plugin_id if mount_protected else None,
+            )
     return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
 
 

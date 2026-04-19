@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections import deque
+
 import pytest
+from pytest import MonkeyPatch
 
 from afkbot.services.ui_auth.rate_limit import (
     _KEY_DIGEST_LEN,
@@ -30,16 +33,51 @@ async def test_ui_auth_rate_limiter_bounds_bucket_count_for_many_unique_keys() -
     assert "ui-auth:test:499" in limiter._events
 
 
-def test_ui_auth_rate_limit_keys_are_normalized_and_bounded() -> None:
-    """Remote host/username key components should be normalized and capped."""
+@pytest.mark.asyncio
+async def test_ui_auth_rate_limiter_add_failure_prunes_empty_buckets() -> None:
+    """`add_failure` should not leave unrelated empty buckets behind."""
 
-    very_long_host = " EXAMPLE-HOST " + ("A" * 300)
-    very_long_user = " USER.Name+Alias@Example.Com " + ("B" * 300)
+    limiter = _SlidingWindowRateLimiter(max_buckets=32)
+    limiter._events["ui-auth:empty-a"] = deque()
+    limiter._events["ui-auth:empty-b"] = deque()
 
-    keys = _iter_rate_limit_keys(
-        remote_host=very_long_host,
-        username=very_long_user,
+    await limiter.add_failure(
+        key="ui-auth:active",
+        window_sec=600,
+        max_attempts=5,
     )
+
+    assert "ui-auth:empty-a" not in limiter._events
+    assert "ui-auth:empty-b" not in limiter._events
+    assert all(bucket for bucket in limiter._events.values())
+
+
+@pytest.mark.asyncio
+async def test_ui_auth_rate_limiter_add_failure_cleans_stale_buckets(monkeypatch: MonkeyPatch) -> None:
+    """`add_failure` should trim stale buckets and keep only live keys."""
+
+    limiter = _SlidingWindowRateLimiter(max_buckets=32)
+    limiter._events["ui-auth:stale-a"] = deque([10.0])
+    limiter._events["ui-auth:stale-b"] = deque([20.0])
+    monkeypatch.setattr("afkbot.services.ui_auth.rate_limit.monotonic", lambda: 1000.0)
+
+    await limiter.add_failure(
+        key="ui-auth:active",
+        window_sec=60,
+        max_attempts=5,
+    )
+
+    assert set(limiter._events.keys()) == {"ui-auth:active"}
+    assert list(limiter._events["ui-auth:active"]) == [1000.0]
+
+
+def test_ui_auth_rate_limit_keys_are_normalized_and_bounded() -> None:
+    """Rate-limit keys should normalize user input and cap raw key material length."""
+
+    remote_host = "X" * 256 + " Example.COM "
+    username = "  VeryLongUserName_With.Mixed-Case.And+Symbols@example.com  "
+
+    keys = _iter_rate_limit_keys(remote_host=remote_host, username=username)
 
     assert len(keys) == 3
     assert all(key == key.lower() for key in keys)

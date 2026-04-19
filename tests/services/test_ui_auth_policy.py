@@ -34,7 +34,7 @@ def test_plugin_api_surface_uses_combined_runtime_and_manifest_protection() -> N
     )
 
     surface_without_protection = resolve_ui_auth_surface(
-        "/v1/plugins/public/ping",
+        "/v1/plugins/runtime-only/ping",
         settings,
         plugin_auth_mounts=(mount_manifest_only, mount_runtime_only),
     )
@@ -59,3 +59,40 @@ def test_plugin_api_surface_uses_combined_runtime_and_manifest_protection() -> N
     assert surface_runtime_protected.api_request is True
     assert surface_runtime_protected.plugin_id == "runtime-only"
     assert surface_runtime_protected.protected is True
+
+
+def test_plugin_operator_required_on_web_mount_protects_api_mount_with_same_plugin_id() -> None:
+    """Operator-required on any mount should protect API and web surfaces for that plugin id."""
+
+    settings = _configured_settings(protected_plugin_ids=())
+    web_mount = PluginAuthMount(
+        plugin_id="demo",
+        api_prefix=None,
+        web_prefix="/plugins/demo",
+        operator_required=True,
+    )
+    api_mount = PluginAuthMount(
+        plugin_id="demo",
+        api_prefix="/v1/plugins/demo",
+        web_prefix=None,
+        operator_required=False,
+    )
+
+    api_surface = resolve_ui_auth_surface(
+        "/v1/plugins/demo/ping",
+        settings,
+        plugin_auth_mounts=(api_mount, web_mount),
+    )
+    web_surface = resolve_ui_auth_surface(
+        "/plugins/demo",
+        settings,
+        plugin_auth_mounts=(api_mount, web_mount),
+    )
+
+    assert api_surface.api_request is True
+    assert api_surface.plugin_id == "demo"
+    assert api_surface.protected is True
+
+    assert web_surface.api_request is False
+    assert web_surface.plugin_id == "demo"
+    assert web_surface.protected is True
