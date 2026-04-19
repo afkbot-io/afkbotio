@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+from collections import OrderedDict, deque
+import hashlib
 from math import ceil
 from time import monotonic
 
 from afkbot.settings import Settings
 
+_MAX_RATE_LIMIT_BUCKETS = 4096
+_MAX_RATE_LIMIT_KEY_PART_LEN = 64
+_KEY_DIGEST_LEN = 16
+
 
 class _SlidingWindowRateLimiter:
     """Bound failed login attempts inside one moving time window per logical key."""
 
-    def __init__(self) -> None:
-        self._events: dict[str, deque[float]] = {}
+    def __init__(self, *, max_buckets: int = _MAX_RATE_LIMIT_BUCKETS) -> None:
+        self._events: OrderedDict[str, deque[float]] = OrderedDict()
+        self._max_buckets = max(max_buckets, 1)
         self._lock = asyncio.Lock()
 
     async def retry_after(self, *, key: str, window_sec: int, max_attempts: int) -> int | None:
@@ -22,13 +28,11 @@ class _SlidingWindowRateLimiter:
 
         now = monotonic()
         async with self._lock:
+            self._sweep(now=now, window_sec=window_sec)
             bucket = self._events.get(key)
             if bucket is None:
                 return None
-            _trim_bucket(bucket, now=now, window_sec=window_sec)
-            if not bucket:
-                self._events.pop(key, None)
-                return None
+            self._events.move_to_end(key)
             if len(bucket) < max(max_attempts, 1):
                 return None
             return max(1, ceil(bucket[0] + max(float(window_sec), 1.0) - now))
@@ -38,9 +42,15 @@ class _SlidingWindowRateLimiter:
 
         now = monotonic()
         async with self._lock:
-            bucket = self._events.setdefault(key, deque())
-            _trim_bucket(bucket, now=now, window_sec=window_sec)
+            self._sweep(now=now, window_sec=window_sec)
+            bucket = self._events.get(key)
+            if bucket is None:
+                bucket = deque()
+                self._events[key] = bucket
+            else:
+                self._events.move_to_end(key)
             bucket.append(now)
+            self._evict_if_oversized()
             if len(bucket) < max(max_attempts, 1):
                 return None
             return max(1, ceil(bucket[0] + max(float(window_sec), 1.0) - now))
@@ -57,9 +67,22 @@ class _SlidingWindowRateLimiter:
         async with self._lock:
             self._events.clear()
 
+    def _sweep(self, *, now: float, window_sec: int) -> None:
+        cutoff = now - max(float(window_sec), 1.0)
+        stale_keys: list[str] = []
+        for bucket_key, bucket in self._events.items():
+            _trim_bucket(bucket, cutoff=cutoff)
+            if not bucket:
+                stale_keys.append(bucket_key)
+        for bucket_key in stale_keys:
+            self._events.pop(bucket_key, None)
 
-def _trim_bucket(bucket: deque[float], *, now: float, window_sec: int) -> None:
-    cutoff = now - max(float(window_sec), 1.0)
+    def _evict_if_oversized(self) -> None:
+        while len(self._events) > self._max_buckets:
+            self._events.popitem(last=False)
+
+
+def _trim_bucket(bucket: deque[float], *, cutoff: float) -> None:
     while bucket and bucket[0] <= cutoff:
         bucket.popleft()
 
@@ -127,11 +150,19 @@ async def reset_ui_auth_rate_limits() -> None:
 
 
 def _iter_rate_limit_keys(*, remote_host: str | None, username: str | None) -> tuple[str, ...]:
-    normalized_host = str(remote_host or "").strip() or "unknown"
-    normalized_user = str(username or "").strip().lower() or "unknown"
+    normalized_host = _normalize_key_part(remote_host, fallback="unknown")
+    normalized_user = _normalize_key_part(username, fallback="unknown")
     return (
         f"ui-auth:remote:{normalized_host}",
         f"ui-auth:user:{normalized_user}",
         f"ui-auth:remote-user:{normalized_host}:{normalized_user}",
     )
 
+
+def _normalize_key_part(value: str | None, *, fallback: str) -> str:
+    normalized = " ".join(str(value or "").split()).lower()
+    if not normalized:
+        return fallback
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:_KEY_DIGEST_LEN]
+    preview = normalized[:_MAX_RATE_LIMIT_KEY_PART_LEN]
+    return f"{preview}:{digest}"
