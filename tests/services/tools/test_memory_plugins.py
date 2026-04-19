@@ -494,3 +494,142 @@ async def test_trusted_memory_digest_can_include_promoted_global(
         assert "## Promoted Global" in digest_result.payload["digest_md"]
     finally:
         await engine.dispose()
+
+
+async def test_memory_search_keeps_local_scope_ahead_of_global_fallback_and_respects_limit(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Local scope hits should remain first, and merged global fallback must still honor limit."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        upsert_tool = registry.get("memory.upsert")
+        search_tool = registry.get("memory.search")
+        assert upsert_tool is not None
+        assert search_tool is not None
+
+        local_result = await upsert_tool.execute(
+            _user_facing_ctx(peer_id="100"),
+            upsert_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "memory_key": "deploy_policy",
+                    "summary": "For this chat, deploy to staging first.",
+                    "memory_kind": "decision",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert local_result.ok is True
+
+        global_result = await upsert_tool.execute(
+            _trusted_ctx(),
+            upsert_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "scope": "profile",
+                    "memory_key": "deploy_policy",
+                    "summary": "Globally, deploy directly to production.",
+                    "memory_kind": "decision",
+                    "visibility": "promoted_global",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert global_result.ok is True
+
+        result = await search_tool.execute(
+            _user_facing_ctx(peer_id="100"),
+            search_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "query": "deploy_policy",
+                    "include_global": True,
+                    "limit": 1,
+                    "global_limit": 1,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert result.ok is True
+        items = result.payload["items"]
+        assert isinstance(items, list)
+        assert len(items) == 1
+        assert items[0]["memory_key"] == "deploy_policy"
+        assert items[0]["scope_kind"] == "chat"
+    finally:
+        await engine.dispose()
+
+
+async def test_memory_search_preserves_local_first_even_when_global_key_matches_exactly(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Exact-key promoted globals should not evict semantically relevant local hits."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        upsert_tool = registry.get("memory.upsert")
+        search_tool = registry.get("memory.search")
+        assert upsert_tool is not None
+        assert search_tool is not None
+
+        local_result = await upsert_tool.execute(
+            _user_facing_ctx(peer_id="100"),
+            upsert_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "memory_key": "staging_flow",
+                    "summary": "Deployment flow for this chat uses staging before production.",
+                    "memory_kind": "decision",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert local_result.ok is True
+
+        global_result = await upsert_tool.execute(
+            _trusted_ctx(),
+            upsert_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "scope": "profile",
+                    "memory_key": "deploy_policy",
+                    "summary": "Globally, deploy directly to production.",
+                    "memory_kind": "decision",
+                    "visibility": "promoted_global",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert global_result.ok is True
+
+        result = await search_tool.execute(
+            _user_facing_ctx(peer_id="100"),
+            search_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "query": "deployment flow",
+                    "include_global": True,
+                    "limit": 1,
+                    "global_limit": 1,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert result.ok is True
+        items = result.payload["items"]
+        assert isinstance(items, list)
+        assert len(items) == 1
+        assert items[0]["memory_key"] == "staging_flow"
+        assert items[0]["scope_kind"] == "chat"
+    finally:
+        await engine.dispose()

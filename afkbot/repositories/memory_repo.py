@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import Select, delete, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.models.memory_item import MemoryItem
@@ -277,6 +277,35 @@ class MemoryRepository:
             for candidate, score in ranked_candidates
             if candidate.item_id in items_by_id
         ]
+
+    async def search_by_logical_key(
+        self,
+        *,
+        profile_id: str,
+        logical_key: str,
+        scope_key: str | None = None,
+        visibility: MemoryVisibility | None = None,
+        memory_kinds: Sequence[MemoryKind] | None = None,
+        source_kinds: Sequence[MemorySourceKind] | None = None,
+        limit: int = 5,
+    ) -> list[MemoryItem]:
+        """Return exact logical-key hits before semantic fallback."""
+
+        statement: Select[tuple[MemoryItem]] = select(MemoryItem).where(
+            MemoryItem.profile_id == profile_id,
+            func.lower(MemoryItem.logical_key) == logical_key.lower(),
+        )
+        if scope_key is not None:
+            statement = statement.where(MemoryItem.scope_key == scope_key)
+        if visibility is not None:
+            statement = statement.where(MemoryItem.visibility == visibility)
+        if memory_kinds:
+            statement = statement.where(MemoryItem.memory_kind.in_(tuple(memory_kinds)))
+        if source_kinds:
+            statement = statement.where(MemoryItem.source_kind.in_(tuple(source_kinds)))
+        statement = statement.order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).limit(limit)
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
 
     async def validate_profile_exists(self, profile_id: str) -> bool:
         """Return True when profile exists in storage."""

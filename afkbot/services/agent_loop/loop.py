@@ -62,6 +62,7 @@ from afkbot.services.agent_loop.turn_preparation import (
 )
 from afkbot.services.llm.contracts import LLMProvider
 from afkbot.services.llm.reasoning import ThinkingLevel
+from afkbot.services.memory.consolidation import get_memory_consolidation_service
 from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_REQUEST_TIMEOUT_SEC,
     DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
@@ -97,6 +98,9 @@ class AgentLoop:
         tool_timeout_max_sec: int = 120,
         secure_request_ttl_sec: int = 900,
         policy_engine: PolicyEngine | None = None,
+        memory_core_enabled: bool = False,
+        memory_core_max_items: int = 8,
+        memory_core_max_chars: int = 600,
         memory_auto_search_enabled: bool = False,
         memory_auto_search_scope_mode: Literal[
             "auto", "profile", "chat", "thread", "user_in_chat"
@@ -259,6 +263,11 @@ class AgentLoop:
             auto_promote_enabled=memory_auto_promote_enabled,
             auto_save_kinds=memory_auto_save_kinds,
             auto_save_max_chars=memory_auto_save_max_chars,
+            consolidation_service=(
+                get_memory_consolidation_service(context_builder.settings)
+                if memory_core_enabled
+                else None
+            ),
         )
         self._turn_preparation = TurnPreparationRuntime(
             context_builder=context_builder,
@@ -270,6 +279,9 @@ class AgentLoop:
             tool_exposure=self._tool_exposure,
             browser_carryover=self._browser_carryover,
             runtime_facts=self._runtime_facts,
+            memory_core_enabled=memory_core_enabled,
+            memory_core_max_items=memory_core_max_items,
+            memory_core_max_chars=memory_core_max_chars,
         )
         self._llm_iterations = (
             LLMIterationRuntime(

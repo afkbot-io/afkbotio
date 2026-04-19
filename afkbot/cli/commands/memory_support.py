@@ -138,31 +138,10 @@ def normalize_choice(*, values: list[str], allowed: tuple[object, ...]) -> tuple
     return tuple(normalized)
 
 
-def merge_search_hits(
-    local_items: list[SerializedMemoryItem],
-    global_items: list[SerializedMemoryItem],
-) -> list[SerializedMemoryItem]:
-    """Append global fallback hits after local hits without duplicating exact scope/key pairs."""
-
-    seen = {
-        (str(item.get("scope_key") or ""), str(item.get("memory_key") or ""))
-        for item in local_items
-    }
-    merged = list(local_items)
-    for item in global_items:
-        dedupe_key = (str(item.get("scope_key") or ""), str(item.get("memory_key") or ""))
-        if dedupe_key in seen:
-            continue
-        seen.add(dedupe_key)
-        merged.append(item)
-    return merged
-
-
 __all__ = [
     "SerializedMemoryItem",
     "filter_items",
     "filter_memory_metadata",
-    "merge_search_hits",
     "normalize_choice",
     "normalize_memory_kinds",
     "normalize_source_kinds",

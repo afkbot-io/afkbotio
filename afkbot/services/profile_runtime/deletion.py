@@ -26,6 +26,7 @@ from afkbot.models.credential_profile import CredentialProfile
 from afkbot.models.memory_item import MemoryItem
 from afkbot.models.pending_secure_request import PendingSecureRequest
 from afkbot.models.profile import Profile
+from afkbot.models.profile_memory_item import ProfileMemoryItem
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.models.run import Run
 from afkbot.models.runlog_event import RunlogEvent
@@ -122,6 +123,7 @@ async def purge_profile_rows(
     await session.execute(delete(ChannelBinding).where(ChannelBinding.profile_id == profile_id))
     await session.execute(delete(ChannelEndpoint).where(ChannelEndpoint.profile_id == profile_id))
     await session.execute(delete(MemoryItem).where(MemoryItem.profile_id == profile_id))
+    await session.execute(delete(ProfileMemoryItem).where(ProfileMemoryItem.profile_id == profile_id))
     await session.execute(delete(SubagentTask).where(SubagentTask.profile_id == profile_id))
     await session.execute(delete(ProfilePolicy).where(ProfilePolicy.profile_id == profile_id))
     await session.execute(delete(Profile).where(Profile.id == profile_id))

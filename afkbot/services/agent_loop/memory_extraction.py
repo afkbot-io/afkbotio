@@ -1,8 +1,7 @@
-"""Deterministic extraction of durable semantic memory facts from finalized turns."""
+"""Deterministic extraction of durable memory candidates from finalized turns."""
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 
@@ -12,11 +11,19 @@ _GREETING_RE = re.compile(
     r"^(hi|hello|hey|привет|здравствуй|добрый день|ок|okay|thanks|thank you|спасибо)\b",
     re.IGNORECASE,
 )
+_POLITE_PREFIX_RE = re.compile(
+    r"^(?:thanks|thank you|спасибо|ок|okay|понял|принял|хорошо|ладно)[,!.:\s-]+",
+    re.IGNORECASE,
+)
 _SECRET_RE = re.compile(
     r"(api[_ -]?key|token|password|парол|session[_ -]?string|otp|2fa|код подтверждения|code)",
     re.IGNORECASE,
 )
 _HEX_SECRET_RE = re.compile(r"\b[a-f0-9]{24,}\b", re.IGNORECASE)
+_SECRET_VALUE_RE = re.compile(
+    r"\b(?:sk|ghp|xoxb|xoxp)-[A-Za-z0-9_-]{8,}\b|\bAKIA[0-9A-Z]{12,}\b",
+    re.IGNORECASE,
+)
 _PREFERENCE_RE = re.compile(
     r"(prefer|preferred|предпочита|отвечай|пиши|говори|на русском|на английском|short answers|коротк|подробн)",
     re.IGNORECASE,
@@ -31,67 +38,67 @@ _FACT_RE = re.compile(
     r"(my name is|меня зовут|я |мой |для этого клиента|в этом чате|this client|nickname is)",
     re.IGNORECASE,
 )
-_GLOBAL_RE = re.compile(
-    r"(по умолчанию|во всех чатах|везде|глобально|для всего профиля|for all chats|globally|by default)",
+_TEMPORARY_RE = re.compile(
+    r"(на сегодня|временно|пока что|for today|temporar|for now|на время задачи|until tomorrow|до завтра)",
     re.IGNORECASE,
 )
 _SPLIT_RE = re.compile(r"(?:[\n\r]+|[.!?;]+)\s*")
+_CLAUSE_SPLIT_RE = re.compile(r"(?:,\s*(?:а|но)?\s*|:\s*|\s+(?:а|но|but|however)\s+)")
 
 
 @dataclass(frozen=True, slots=True)
-class ExtractedMemoryRecord:
-    """One deterministic semantic memory record extracted from one finalized turn."""
+class ExtractedMemoryCandidate:
+    """One extracted durable memory candidate before storage-policy decisions."""
 
-    memory_key: str
+    source_text: str
     summary: str
     details_md: str
     memory_kind: MemoryKind
-    promote_global: bool = False
 
 
-def extract_memory_records(
+def extract_memory_candidates(
     *,
     user_message: str,
     assistant_message: str,
     max_chars: int,
     allowed_kinds: tuple[str, ...],
-) -> tuple[ExtractedMemoryRecord, ...]:
+) -> tuple[ExtractedMemoryCandidate, ...]:
     """Extract durable memory candidates from one finalized turn."""
 
     normalized_user = _normalize_text(user_message)
     normalized_assistant = _normalize_text(assistant_message)
-    if _should_skip(normalized_user):
+    if not normalized_user:
         return ()
     allowed_kind_set = set(allowed_kinds)
-    records: list[ExtractedMemoryRecord] = []
-    seen_keys: set[str] = set()
-    for candidate in _split_candidates(normalized_user):
-        if _should_skip(candidate):
-            continue
-        memory_kind = _classify_memory_kind(candidate)
-        if memory_kind not in allowed_kind_set or memory_kind == "note":
-            continue
-        summary = _build_summary(text=candidate, memory_kind=memory_kind, max_chars=max_chars)
-        memory_key = _build_memory_key(summary=summary, memory_kind=memory_kind)
-        if memory_key in seen_keys:
-            continue
-        seen_keys.add(memory_key)
-        records.append(
-            ExtractedMemoryRecord(
-                memory_key=memory_key,
-                summary=summary,
-                details_md=_build_details(
-                    user_message=candidate,
-                    assistant_message=normalized_assistant,
-                    max_chars=max_chars,
-                ),
-                memory_kind=memory_kind,
-                promote_global=_GLOBAL_RE.search(candidate) is not None,
+    candidates: list[ExtractedMemoryCandidate] = []
+    seen_summaries: set[str] = set()
+    for candidate_text in _split_candidates(normalized_user):
+        for raw_fragment in _expand_candidate_fragments(candidate_text):
+            cleaned_candidate = _strip_polite_prefix(raw_fragment)
+            if _should_skip(cleaned_candidate):
+                continue
+            memory_kind = _classify_memory_kind(cleaned_candidate)
+            if memory_kind not in allowed_kind_set or memory_kind == "note":
+                continue
+            summary = _build_summary(text=cleaned_candidate, memory_kind=memory_kind, max_chars=max_chars)
+            if summary in seen_summaries:
+                continue
+            seen_summaries.add(summary)
+            candidates.append(
+                ExtractedMemoryCandidate(
+                    source_text=cleaned_candidate,
+                    summary=summary,
+                    details_md=_build_details(
+                        user_message=cleaned_candidate,
+                        assistant_message=normalized_assistant,
+                        max_chars=max_chars,
+                    ),
+                    memory_kind=memory_kind,
+                )
             )
-        )
-        if len(records) >= 3:
-            break
-    return tuple(records)
+            if len(candidates) >= 3:
+                return tuple(candidates)
+    return tuple(candidates)
 
 
 def _normalize_text(value: str) -> str:
@@ -111,9 +118,29 @@ def _should_skip(user_message: str) -> bool:
         return True
     if _GREETING_RE.search(user_message):
         return True
-    if _SECRET_RE.search(user_message) or _HEX_SECRET_RE.search(user_message):
+    if _TEMPORARY_RE.search(user_message):
+        return True
+    if (
+        _SECRET_RE.search(user_message)
+        or _HEX_SECRET_RE.search(user_message)
+        or _SECRET_VALUE_RE.search(user_message)
+    ):
         return True
     return False
+
+
+def _strip_polite_prefix(user_message: str) -> str:
+    return _POLITE_PREFIX_RE.sub("", user_message, count=1).strip()
+
+
+def _expand_candidate_fragments(user_message: str) -> tuple[str, ...]:
+    normalized = user_message.strip()
+    if not normalized:
+        return ()
+    if _TEMPORARY_RE.search(normalized) is None:
+        return (normalized,)
+    fragments = tuple(fragment.strip() for fragment in _CLAUSE_SPLIT_RE.split(normalized) if fragment.strip())
+    return fragments or (normalized,)
 
 
 def _classify_memory_kind(user_message: str) -> MemoryKind:
@@ -150,8 +177,3 @@ def _build_details(*, user_message: str, assistant_message: str, max_chars: int)
     if len(details) <= max_chars:
         return details
     return details[: max(16, max_chars - 3)].rstrip() + "..."
-
-
-def _build_memory_key(*, summary: str, memory_kind: MemoryKind) -> str:
-    digest = hashlib.sha1(summary.encode("utf-8")).hexdigest()[:16]  # noqa: S324
-    return f"auto-{memory_kind}-{digest}"

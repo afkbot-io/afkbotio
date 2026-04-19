@@ -36,6 +36,9 @@ class ProfileRuntimeConfig(BaseModel):
     chat_secret_guard_enabled: bool | None = None
     enabled_tool_plugins: tuple[str, ...] | None = None
     taskflow_team_profile_ids: tuple[str, ...] | None = None
+    memory_core_enabled: bool | None = None
+    memory_core_max_items: int | None = None
+    memory_core_max_chars: int | None = None
     memory_auto_search_enabled: bool | None = None
     memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None = None
     memory_auto_search_limit: int | None = None
@@ -51,6 +54,7 @@ class ProfileRuntimeConfig(BaseModel):
         Literal["fact", "preference", "decision", "task", "risk", "note"], ...
     ] | None = None
     memory_auto_save_max_chars: int | None = None
+    memory_recall_enabled: bool | None = None
     session_compaction_enabled: bool | None = None
     session_compaction_trigger_turns: int | None = None
     session_compaction_keep_recent_turns: int | None = None
@@ -107,6 +111,8 @@ class ProfileRuntimeConfig(BaseModel):
         "memory_auto_search_global_limit",
         "memory_auto_context_item_chars",
         "memory_auto_save_max_chars",
+        "memory_core_max_items",
+        "memory_core_max_chars",
         "session_compaction_trigger_turns",
         "session_compaction_keep_recent_turns",
         "session_compaction_max_chars",
@@ -143,6 +149,9 @@ class ProfileRuntimeResolved(BaseModel):
     chat_planning_mode: Literal["off", "auto", "on"] = "auto"
     chat_secret_guard_enabled: bool = False
     enabled_tool_plugins: tuple[str, ...]
+    memory_core_enabled: bool = False
+    memory_core_max_items: int = 8
+    memory_core_max_chars: int = 600
     memory_auto_search_enabled: bool = False
     memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
     memory_auto_search_limit: int = 3
@@ -158,6 +167,7 @@ class ProfileRuntimeResolved(BaseModel):
         Literal["fact", "preference", "decision", "task", "risk", "note"], ...
     ] = ("fact", "preference", "decision", "task", "risk", "note")
     memory_auto_save_max_chars: int = 1000
+    memory_recall_enabled: bool = False
     session_compaction_enabled: bool = False
     session_compaction_trigger_turns: int = 12
     session_compaction_keep_recent_turns: int = 6

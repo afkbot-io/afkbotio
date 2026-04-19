@@ -31,6 +31,7 @@ _STRICT_READ_ONLY_TOOL_NAMES = frozenset(
         "file.read",
         "file.search",
         "memory.search",
+        "memory.recall.search",
         "mcp.tools.list",
         "skill.profile.get",
         "skill.profile.list",

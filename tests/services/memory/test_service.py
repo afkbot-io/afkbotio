@@ -14,7 +14,10 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.memory_item import MemoryItem
 from afkbot.repositories.profile_repo import ProfileRepository
+from afkbot.services.agent_loop.memory_extraction import ExtractedMemoryCandidate
 from afkbot.services.memory import MemoryScopeDescriptor, MemoryService, MemoryServiceError
+from afkbot.services.memory.consolidation import MemoryConsolidationService
+from afkbot.services.memory.profile_memory_service import get_profile_memory_service
 from afkbot.settings import Settings
 
 
@@ -42,6 +45,24 @@ async def _prepare(tmp_path: Path) -> tuple[AsyncEngine, MemoryService]:
         await profiles.get_or_create_default("default")
         await profiles.get_or_create_default("other")
     return engine, MemoryService(factory)
+
+
+async def _prepare_with_settings(
+    tmp_path: Path,
+) -> tuple[Settings, AsyncEngine, MemoryService]:
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'memory_service_profile.db'}",
+        root_dir=tmp_path,
+        memory_core_enabled=True,
+    )
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    async with session_scope(factory) as session:
+        profiles = ProfileRepository(session)
+        await profiles.get_or_create_default("default")
+        await profiles.get_or_create_default("other")
+    return settings, engine, MemoryService(factory, settings=settings)
 
 
 async def test_memory_service_upsert_search_delete_in_chat_scope(tmp_path: Path) -> None:
@@ -174,6 +195,186 @@ async def test_memory_service_profile_global_memory_stays_explicit(tmp_path: Pat
         assert global_search[0].memory_key == "preferred_language"
     finally:
         await engine.dispose()
+
+
+async def test_memory_service_promote_mirrors_stable_fact_into_profile_memory(
+    tmp_path: Path,
+) -> None:
+    """Promoting stable long-lived facts should also materialize the new pinned profile-memory tier."""
+
+    settings, engine, service = await _prepare_with_settings(tmp_path)
+    try:
+        scope = _chat_scope(peer_id="100")
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="preferred_language",
+            summary="Reply in Russian by default",
+            source_kind="auto",
+            memory_kind="preference",
+        )
+
+        await service.promote(
+            profile_id="default",
+            memory_key="preferred_language",
+            from_scope=scope,
+        )
+
+        profile_memory = get_profile_memory_service(settings)
+        pinned_items = await profile_memory.list(profile_id="default")
+        assert any(item.memory_key == "preferred_language" for item in pinned_items)
+    finally:
+        await engine.dispose()
+
+
+async def test_memory_service_promote_does_not_mirror_secrets_or_chat_only_facts_into_core_memory(
+    tmp_path: Path,
+) -> None:
+    """Promoted archival rows should still pass safe core-memory gates."""
+
+    settings, engine, service = await _prepare_with_settings(tmp_path)
+    try:
+        scope = _chat_scope(peer_id="100")
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="api_key",
+            summary="API key is sk-secretsecretsecret",
+            source_kind="auto",
+            memory_kind="fact",
+        )
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="chat_style",
+            summary="For this chat only, answer in English.",
+            source_kind="auto",
+            memory_kind="preference",
+        )
+
+        await service.promote(profile_id="default", memory_key="api_key", from_scope=scope)
+        await service.promote(profile_id="default", memory_key="chat_style", from_scope=scope)
+
+        pinned_items = await get_profile_memory_service(settings).list(profile_id="default")
+        pinned_keys = {item.memory_key for item in pinned_items}
+        assert "api_key" not in pinned_keys
+        assert "chat_style" not in pinned_keys
+    finally:
+        await engine.dispose()
+
+
+async def test_memory_service_search_prefers_exact_logical_key_before_semantic_fallback(
+    tmp_path: Path,
+) -> None:
+    """Search should hit an exact logical key before weaker semantic matches."""
+
+    engine, service = await _prepare(tmp_path)
+    try:
+        scope = _chat_scope(peer_id="100")
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="preferred_language",
+            summary="Reply in Russian by default",
+            source_kind="manual",
+            memory_kind="preference",
+        )
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="documentation_note",
+            summary="The token preferred_language appears in setup docs.",
+            source_kind="manual",
+            memory_kind="note",
+        )
+
+        search = await service.search(
+            profile_id="default",
+            scope=scope,
+            query="preferred_language",
+            limit=5,
+        )
+
+        assert search
+        assert search[0].memory_key == "preferred_language"
+    finally:
+        await engine.dispose()
+
+
+async def test_memory_service_search_includes_promoted_global_as_local_first_fallback(
+    tmp_path: Path,
+) -> None:
+    """Global fallback should be owned by the service and appended only after local hits."""
+
+    engine, service = await _prepare(tmp_path)
+    try:
+        scope = _chat_scope(peer_id="100")
+        await service.upsert(
+            profile_id="default",
+            scope=scope,
+            memory_key="staging_flow",
+            summary="Deployment flow for this chat uses staging before production.",
+            source_kind="manual",
+            memory_kind="decision",
+        )
+        await service.upsert(
+            profile_id="default",
+            scope=MemoryScopeDescriptor.profile_scope(),
+            memory_key="deploy_policy",
+            summary="Globally, deploy directly to production.",
+            source_kind="manual",
+            memory_kind="decision",
+            visibility="promoted_global",
+        )
+
+        search = await service.search(
+            profile_id="default",
+            scope=scope,
+            query="deployment flow",
+            include_global=True,
+            global_limit=1,
+            limit=2,
+        )
+
+        assert [item.memory_key for item in search] == ["staging_flow", "deploy_policy"]
+        assert [item.scope_kind for item in search] == ["chat", "profile"]
+    finally:
+        await engine.dispose()
+
+
+def test_memory_consolidation_service_plans_global_preference_for_core_and_promotion() -> None:
+    """Consolidation policy should decide core/global writes outside the extractor."""
+
+    candidate = ExtractedMemoryCandidate(
+        source_text="По умолчанию отвечай по-русски и кратко",
+        summary="Chat preference: По умолчанию отвечай по-русски и кратко",
+        details_md="User said: По умолчанию отвечай по-русски и кратко",
+        memory_kind="preference",
+    )
+
+    plan = MemoryConsolidationService.plan_candidate(candidate)
+
+    assert plan.memory_key == "preferred_language"
+    assert plan.promote_global is True
+    assert plan.mirror_to_core is True
+    assert plan.core_memory_key == "preferred_language"
+
+
+def test_memory_consolidation_service_keeps_generic_chat_preference_local() -> None:
+    """Chat-local preferences should not leak into core/global plans."""
+
+    candidate = ExtractedMemoryCandidate(
+        source_text="Отвечай по-русски и кратко",
+        summary="Chat preference: Отвечай по-русски и кратко",
+        details_md="User said: Отвечай по-русски и кратко",
+        memory_kind="preference",
+    )
+
+    plan = MemoryConsolidationService.plan_candidate(candidate)
+
+    assert plan.promote_global is False
+    assert plan.mirror_to_core is False
+    assert plan.core_memory_key is None
 
 
 async def test_memory_service_profile_isolation(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ _MODEL_EXPORT_MODULES = {
     "PendingResumeEnvelope": "pending_resume_envelope",
     "PendingSecureRequest": "pending_secure_request",
     "Profile": "profile",
+    "ProfileMemoryItem": "profile_memory_item",
     "ProfilePolicy": "profile_policy",
     "Run": "run",
     "RunlogEvent": "runlog_event",

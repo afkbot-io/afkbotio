@@ -37,6 +37,9 @@ from afkbot.services.tools.plugins.memory_delete import create_tool as create_me
 from afkbot.services.tools.plugins.memory_digest import create_tool as create_memory_digest_tool
 from afkbot.services.tools.plugins.memory_list import create_tool as create_memory_list_tool
 from afkbot.services.tools.plugins.memory_promote import create_tool as create_memory_promote_tool
+from afkbot.services.tools.plugins.memory_recall_search import (
+    create_tool as create_memory_recall_search_tool,
+)
 from afkbot.services.tools.plugins.memory_search import create_tool as create_memory_search_tool
 from afkbot.services.tools.plugins.memory_upsert import create_tool as create_memory_upsert_tool
 from afkbot.services.tools.plugins.mcp_profile_delete import (
@@ -206,6 +209,7 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "http_request": create_http_request_tool,
     "memory_upsert": create_memory_upsert_tool,
     "memory_search": create_memory_search_tool,
+    "memory_recall_search": create_memory_recall_search_tool,
     "memory_delete": create_memory_delete_tool,
     "memory_digest": create_memory_digest_tool,
     "memory_list": create_memory_list_tool,

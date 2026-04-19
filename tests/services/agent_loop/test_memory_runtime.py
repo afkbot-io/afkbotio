@@ -46,6 +46,24 @@ class _FakeToolExecution:
         return self._results.pop(0)
 
 
+class _FakeConsolidationService:
+    def __init__(
+        self,
+        *,
+        result: object | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._result = {"ok": True} if result is None else result
+        self._error = error
+
+    async def mirror_plan_to_core(self, **kwargs: object) -> object | None:
+        self.calls.append(dict(kwargs))
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
 async def _collect_log_event(storage: list[dict[str, object]], **kwargs: object) -> None:
     storage.append(dict(kwargs))
 
@@ -263,3 +281,132 @@ async def test_memory_runtime_auto_search_uses_local_chat_scope_for_watcher_dige
             "payload": {"ok": True, "hits": 0, "scope_kind": "chat", "include_global": True},
         }
     ]
+
+
+async def test_memory_runtime_consolidation_mirrors_profile_worthy_preference() -> None:
+    """Profile-worthy extracted plans should be mirrored into core memory via consolidator."""
+
+    policy = ProfilePolicy(profile_id="default")
+    events: list[dict[str, object]] = []
+    execution = _FakeToolExecution(ToolResult(ok=True, payload={"item": {"memory_key": "saved"}}))
+    profile_memory = _FakeConsolidationService()
+    runtime = MemoryRuntime(
+        tool_registry=_FakeRegistry("memory.upsert"),
+        policy_engine=_AllowAllPolicyEngine(),
+        tool_execution=execution,
+        log_event=lambda **kwargs: _collect_log_event(events, **kwargs),
+        auto_search_enabled=False,
+        auto_search_scope_mode="chat",
+        auto_search_limit=2,
+        auto_search_include_global=True,
+        auto_search_chat_limit=2,
+        auto_search_global_limit=1,
+        global_fallback_enabled=True,
+        auto_context_item_chars=64,
+        auto_save_enabled=True,
+        auto_save_scope_mode="chat",
+        auto_promote_enabled=False,
+        auto_save_kinds=("fact", "preference", "decision"),
+        auto_save_max_chars=200,
+        consolidation_service=profile_memory,  # type: ignore[arg-type]
+    )
+
+    await runtime.auto_save_turn(
+        run_id=14,
+        session_id="s-3",
+        profile_id="default",
+        user_message="По умолчанию отвечай по-русски и кратко.",
+        assistant_message="Принял. По умолчанию буду отвечать по-русски и кратко.",
+        action="finalize",
+        policy=policy,
+        runtime_metadata=_runtime_metadata(),
+    )
+
+    assert profile_memory.calls
+    assert profile_memory.calls[0]["plan"].core_memory_key == "preferred_language"
+    assert profile_memory.calls[0]["plan"].memory_kind == "preference"
+
+
+async def test_memory_runtime_does_not_mirror_profile_memory_when_upsert_fails() -> None:
+    """Core-memory mirroring should only happen after archival save succeeds."""
+
+    policy = ProfilePolicy(profile_id="default")
+    execution = _FakeToolExecution(ToolResult(ok=False, error_code="boom", reason="nope"))
+    profile_memory = _FakeConsolidationService()
+    runtime = MemoryRuntime(
+        tool_registry=_FakeRegistry("memory.upsert"),
+        policy_engine=_AllowAllPolicyEngine(),
+        tool_execution=execution,
+        log_event=lambda **kwargs: _collect_log_event([], **kwargs),
+        auto_search_enabled=False,
+        auto_search_scope_mode="chat",
+        auto_search_limit=2,
+        auto_search_include_global=True,
+        auto_search_chat_limit=2,
+        auto_search_global_limit=1,
+        global_fallback_enabled=True,
+        auto_context_item_chars=64,
+        auto_save_enabled=True,
+        auto_save_scope_mode="chat",
+        auto_promote_enabled=False,
+        auto_save_kinds=("fact", "preference", "decision"),
+        auto_save_max_chars=200,
+        consolidation_service=profile_memory,  # type: ignore[arg-type]
+    )
+
+    await runtime.auto_save_turn(
+        run_id=15,
+        session_id="s-4",
+        profile_id="default",
+        user_message="По умолчанию отвечай по-русски и кратко.",
+        assistant_message="Принял.",
+        action="finalize",
+        policy=policy,
+        runtime_metadata=_runtime_metadata(),
+    )
+
+    assert profile_memory.calls == []
+
+
+async def test_memory_runtime_profile_mirror_failure_does_not_break_auto_save() -> None:
+    """Secondary core-memory mirror failures must not fail the turn."""
+
+    policy = ProfilePolicy(profile_id="default")
+    events: list[dict[str, object]] = []
+    execution = _FakeToolExecution(ToolResult(ok=True, payload={"item": {"memory_key": "saved"}}))
+    profile_memory = _FakeConsolidationService(error=RuntimeError("mirror failed"))
+    runtime = MemoryRuntime(
+        tool_registry=_FakeRegistry("memory.upsert"),
+        policy_engine=_AllowAllPolicyEngine(),
+        tool_execution=execution,
+        log_event=lambda **kwargs: _collect_log_event(events, **kwargs),
+        auto_search_enabled=False,
+        auto_search_scope_mode="chat",
+        auto_search_limit=2,
+        auto_search_include_global=True,
+        auto_search_chat_limit=2,
+        auto_search_global_limit=1,
+        global_fallback_enabled=True,
+        auto_context_item_chars=64,
+        auto_save_enabled=True,
+        auto_save_scope_mode="chat",
+        auto_promote_enabled=False,
+        auto_save_kinds=("fact", "preference", "decision"),
+        auto_save_max_chars=200,
+        consolidation_service=profile_memory,  # type: ignore[arg-type]
+    )
+
+    await runtime.auto_save_turn(
+        run_id=16,
+        session_id="s-5",
+        profile_id="default",
+        user_message="По умолчанию отвечай по-русски и кратко.",
+        assistant_message="Принял.",
+        action="finalize",
+        policy=policy,
+        runtime_metadata=_runtime_metadata(),
+    )
+
+    assert profile_memory.calls
+    assert events[-1]["event_type"] == "memory.auto_save"
+    assert events[-1]["payload"]["saved"] == 1

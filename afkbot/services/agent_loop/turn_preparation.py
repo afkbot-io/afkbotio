@@ -36,6 +36,7 @@ from afkbot.services.agent_loop.turn_preparation_support import (
     turn_plan_payload as _turn_plan_payload,
 )
 from afkbot.services.llm.contracts import LLMMessage, LLMToolDefinition
+from afkbot.services.memory.profile_memory_service import get_profile_memory_service
 
 planned_tools_final_message = _planned_tools_final_message
 turn_plan_payload = _turn_plan_payload
@@ -74,6 +75,9 @@ class TurnPreparationRuntime:
         tool_exposure: ToolExposureBuilder,
         browser_carryover: BrowserCarryoverService | None = None,
         runtime_facts: TrustedRuntimeFactsService | None = None,
+        memory_core_enabled: bool = False,
+        memory_core_max_items: int = 8,
+        memory_core_max_chars: int = 600,
     ) -> None:
         self._context_builder = context_builder
         self._chat_history = chat_history
@@ -84,6 +88,11 @@ class TurnPreparationRuntime:
         self._tool_exposure = tool_exposure
         self._browser_carryover = browser_carryover
         self._runtime_facts = runtime_facts
+        self._memory_core_max_items = max(1, memory_core_max_items)
+        self._memory_core_max_chars = max(64, memory_core_max_chars)
+        self._profile_memory = (
+            get_profile_memory_service(context_builder.settings) if memory_core_enabled else None
+        )
 
     async def prepare(
         self,
@@ -163,6 +172,15 @@ class TurnPreparationRuntime:
             policy=policy,
         )
         trusted_runtime_notes = _combine_trusted_runtime_notes(
+            None
+            if self._profile_memory is None
+            else (
+                await self._profile_memory.render_prompt_block(
+                    profile_id=profile_id,
+                    max_chars=self._memory_core_max_chars,
+                    max_items=self._memory_core_max_items,
+                )
+            ).content,
             None
             if self._runtime_facts is None
             else await self._runtime_facts.build_prompt_block(profile_id=profile_id),
