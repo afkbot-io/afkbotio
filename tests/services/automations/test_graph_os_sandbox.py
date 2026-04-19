@@ -132,21 +132,45 @@ async def test_macos_os_sandbox_denies_child_exec(tmp_path: Path) -> None:
     assert "Operation not permitted" in stderr.decode("utf-8", errors="replace")
 
 
-@pytest.mark.parametrize("sandbox_mode", ["auto", "required"])
-def test_os_sandbox_enabled_modes_fail_closed_when_host_support_is_missing(
-    tmp_path: Path,
+def test_os_sandbox_auto_mode_falls_back_when_host_support_is_missing(
     monkeypatch: pytest.MonkeyPatch,
-    sandbox_mode: str,
+    tmp_path: Path,
 ) -> None:
-    """Enabled modes should reject hosts where no supported OS sandbox exists."""
+    monkeypatch.setattr(
+        "afkbot.services.automations.graph.os_sandbox.sandbox_exec_available",
+        lambda: False,
+    )
 
-    from afkbot.services.automations.graph import os_sandbox as os_sandbox_module
-
-    monkeypatch.setattr(os_sandbox_module, "sandbox_exec_available", lambda: False)
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'sandbox.db'}",
         root_dir=tmp_path,
-        automation_graph_code_os_sandbox=sandbox_mode,
+        automation_graph_code_os_sandbox="auto",
+    )
+
+    launch = build_code_node_launch(
+        base_argv=(sys.executable, "-c", "print('ok')"),
+        sandbox_root=tmp_path,
+        settings=settings,
+    )
+
+    assert launch.sandbox_kind == "none"
+    assert launch.argv == (sys.executable, "-c", "print('ok')")
+    assert launch.profile_path is None
+
+
+def test_os_sandbox_required_mode_fails_when_host_support_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "afkbot.services.automations.graph.os_sandbox.sandbox_exec_available",
+        lambda: False,
+    )
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'sandbox.db'}",
+        root_dir=tmp_path,
+        automation_graph_code_os_sandbox="required",
     )
 
     with pytest.raises(OSSandboxUnavailableError):

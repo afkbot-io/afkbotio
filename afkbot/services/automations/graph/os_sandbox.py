@@ -40,10 +40,13 @@ def build_code_node_launch(
 ) -> CodeNodeLaunch:
     """Wrap the worker command in one host-level sandbox when supported."""
 
-    if settings.automation_graph_code_os_sandbox == "disabled":
+    sandbox_mode = settings.automation_graph_code_os_sandbox
+    if sandbox_mode == "disabled":
         return CodeNodeLaunch(argv=base_argv, sandbox_kind="none")
     if not sandbox_exec_available():
-        raise OSSandboxUnavailableError("OS sandbox is unavailable on this host")
+        if sandbox_mode == "required":
+            raise OSSandboxUnavailableError("OS sandbox is required but unavailable on this host")
+        return CodeNodeLaunch(argv=base_argv, sandbox_kind="none")
     sandbox_root = sandbox_root.resolve(strict=False)
     profile_path = sandbox_root / "macos-sandbox.sb"
     profile_path.write_text(
