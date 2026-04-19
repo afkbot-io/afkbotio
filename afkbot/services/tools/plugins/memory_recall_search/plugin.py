@@ -54,6 +54,8 @@ class MemoryRecallSearchTool(ToolBase):
                 limit=typed.limit,
                 actor_account_id=self._actor_account_id(ctx),
                 actor_peer_id=self._actor_peer_id(ctx),
+                actor_thread_id=self._actor_thread_id(ctx),
+                actor_user_id=self._actor_user_id(ctx),
             )
         except ConversationRecallServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
@@ -93,6 +95,24 @@ class MemoryRecallSearchTool(ToolBase):
         if not isinstance(peer_id, str):
             return None
         normalized = peer_id.strip()
+        return normalized or None
+
+    @staticmethod
+    def _actor_thread_id(ctx: ToolContext) -> str | None:
+        metadata = ctx.runtime_metadata or {}
+        thread_id = metadata.get("thread_id")
+        if not isinstance(thread_id, str):
+            return None
+        normalized = thread_id.strip()
+        return normalized or None
+
+    @staticmethod
+    def _actor_user_id(ctx: ToolContext) -> str | None:
+        metadata = ctx.runtime_metadata or {}
+        user_id = metadata.get("user_id")
+        if not isinstance(user_id, str):
+            return None
+        normalized = user_id.strip()
         return normalized or None
 
 

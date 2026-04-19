@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import re
 from typing import TypeVar
-
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.engine import create_engine
@@ -56,6 +55,8 @@ class ConversationRecallActor:
     transport: str | None = None
     account_id: str | None = None
     peer_id: str | None = None
+    thread_id: str | None = None
+    user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +163,8 @@ class ConversationRecallService:
         limit: int = 5,
         actor_account_id: str | None = None,
         actor_peer_id: str | None = None,
+        actor_thread_id: str | None = None,
+        actor_user_id: str | None = None,
     ) -> list[ConversationRecallHit]:
         """Authorize one actor boundary, then search recall for the resolved target session."""
 
@@ -176,6 +179,8 @@ class ConversationRecallService:
                 )
             ),
             peer_id=self._normalize_selector_value(actor_peer_id),
+            thread_id=self._normalize_selector_value(actor_thread_id),
+            user_id=self._normalize_selector_value(actor_user_id),
         )
         resolved_target = await self._resolve_target_session(
             profile_id=profile_id,
@@ -330,27 +335,82 @@ class ConversationRecallService:
             return True
         if not is_user_facing_transport(transport):
             return False
+
         account_id = actor.account_id
         peer_id = actor.peer_id
         if not account_id or not peer_id:
             return False
-        expected_session_id = resolve_session_id(
-            policy="per-chat",
-            routing_input=ChannelRoutingInput(
-                transport=transport,
-                account_id=account_id,
-                peer_id=peer_id,
-                default_session_id="main",
-            ),
+
+        target_components = ConversationRecallService._parse_user_facing_session_components(
+            session_id=session_id,
+            profile_id=profile_id,
         )
-        if session_id == expected_session_id:
-            return True
-        expected_scoped_session_id = compose_bounded_session_id(
-            "profile",
-            encode_session_component(profile_id),
-            expected_session_id,
+        actor_components = ConversationRecallService._parse_user_facing_session_components(
+            session_id=actor.session_id,
+            profile_id=profile_id,
         )
-        return session_id == expected_scoped_session_id
+
+        if target_components is None or actor_components is None:
+            expected_scoped_actor_session_id = compose_bounded_session_id(
+                "profile",
+                encode_session_component(profile_id),
+                actor.session_id,
+            )
+            return session_id in {actor.session_id, expected_scoped_actor_session_id}
+
+        expected_peer = encode_session_component(peer_id)
+        if target_components.get("chat") != expected_peer:
+            return False
+        if actor_components.get("chat") != expected_peer:
+            return False
+
+        for component in ("thread", "user"):
+            if actor_components.get(component) != target_components.get(component):
+                return False
+        return True
+
+    @classmethod
+    def _parse_user_facing_session_components(
+        cls,
+        *,
+        session_id: str,
+        profile_id: str,
+    ) -> dict[str, str] | None:
+        normalized_session = session_id.strip()
+        if not normalized_session:
+            return None
+
+        scoped_prefix = compose_bounded_session_id("profile", encode_session_component(profile_id)) + ":"
+        if normalized_session.startswith(scoped_prefix):
+            normalized_session = normalized_session[len(scoped_prefix) :]
+
+        parsed = cls._parse_session_components(normalized_session)
+        if parsed is None:
+            return None
+        if "chat" not in parsed:
+            return None
+        return parsed
+
+    @staticmethod
+    def _parse_session_components(session_id: str) -> dict[str, str] | None:
+        parts = session_id.split(":")
+        if len(parts) < 2 or parts[0] != "chat":
+            return None
+
+        result: dict[str, str] = {"chat": parts[1]}
+        index = 2
+        while index + 1 < len(parts):
+            key = parts[index]
+            value = parts[index + 1]
+            if key not in {"thread", "user"}:
+                return None
+            if key in result:
+                return None
+            result[key] = value
+            index += 2
+        if index != len(parts):
+            return None
+        return result
 
     @staticmethod
     def _tokenize(text: str) -> tuple[str, ...]:
