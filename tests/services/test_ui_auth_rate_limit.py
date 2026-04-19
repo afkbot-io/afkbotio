@@ -44,12 +44,20 @@ def test_ui_auth_rate_limit_keys_are_normalized_and_bounded() -> None:
     assert len(keys) == 3
     assert all(key == key.lower() for key in keys)
 
-    key_prefixes = ("ui-auth:remote:", "ui-auth:user:", "ui-auth:remote-user:")
-    for key, prefix in zip(keys, key_prefixes, strict=True):
-        suffix = key.removeprefix(prefix)
-        parts = suffix.split(":")
-        assert len(parts) in {2, 4}
-        digests = parts[1::2]
-        previews = parts[0::2]
-        assert all(len(preview) <= _MAX_RATE_LIMIT_KEY_PART_LEN for preview in previews)
-        assert all(len(digest) == _KEY_DIGEST_LEN for digest in digests)
+    remote_key, user_key, remote_user_key = keys
+
+    assert remote_key.startswith("ui-auth:remote:")
+    remote_suffix = remote_key.removeprefix("ui-auth:remote:")
+    remote_preview, remote_digest = remote_suffix.rsplit(":", 1)
+    assert len(remote_preview) <= _MAX_RATE_LIMIT_KEY_PART_LEN
+    assert len(remote_digest) == _KEY_DIGEST_LEN
+
+    assert user_key.startswith("ui-auth:user:")
+    user_suffix = user_key.removeprefix("ui-auth:user:")
+    user_preview, user_digest = user_suffix.rsplit(":", 1)
+    assert len(user_preview) <= _MAX_RATE_LIMIT_KEY_PART_LEN
+    assert len(user_digest) == _KEY_DIGEST_LEN
+
+    assert remote_user_key.startswith("ui-auth:remote-user:")
+    remote_user_suffix = remote_user_key.removeprefix("ui-auth:remote-user:")
+    assert remote_user_suffix == f"{remote_suffix}:{user_suffix}"
