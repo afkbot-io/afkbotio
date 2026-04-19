@@ -14,7 +14,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.channel_routing.contracts import ChannelBindingRule
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.memory import reset_memory_services
-from afkbot.services.tools.base import ToolContext, ToolResult
+from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.plugins.memory_search import plugin as memory_search_plugin
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
