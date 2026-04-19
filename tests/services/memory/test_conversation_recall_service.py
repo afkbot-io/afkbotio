@@ -359,6 +359,27 @@ async def test_conversation_recall_service_allows_user_facing_routed_thread_user
         await engine.dispose()
 
 
+async def test_conversation_recall_service_blocks_user_facing_routed_thread_session_for_actor_without_thread(
+    tmp_path: Path,
+) -> None:
+    engine, service = await _prepare(tmp_path)
+    try:
+        with pytest.raises(ConversationRecallServiceError) as exc_info:
+            await service.search_for_actor(
+                profile_id="default",
+                actor_session_id="chat:100",
+                actor_transport="telegram",
+                target_session_id="chat:100:thread:topic-9",
+                query="invoice",
+                limit=5,
+                actor_account_id="acc-1",
+                actor_peer_id="100",
+            )
+        assert exc_info.value.error_code == "memory_cross_scope_forbidden"
+    finally:
+        await engine.dispose()
+
+
 async def test_conversation_recall_service_blocks_user_facing_routed_thread_session_for_other_thread(
     tmp_path: Path,
 ) -> None:

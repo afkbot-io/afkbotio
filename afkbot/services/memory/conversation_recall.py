@@ -364,8 +364,17 @@ class ConversationRecallService:
         if actor_components.get("chat") != expected_peer:
             return False
 
-        for component in ("thread", "user"):
-            if actor_components.get(component) != target_components.get(component):
+        scope_components = ("thread", "user")
+        actor_scope_keys = {
+            component for component in scope_components if actor_components.get(component) is not None
+        }
+        target_scope_keys = {
+            component for component in scope_components if target_components.get(component) is not None
+        }
+        if actor_scope_keys != target_scope_keys:
+            return False
+        for component in actor_scope_keys:
+            if actor_components[component] != target_components[component]:
                 return False
         return True
 
