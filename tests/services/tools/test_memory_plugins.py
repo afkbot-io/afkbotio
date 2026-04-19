@@ -14,7 +14,8 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.channel_routing.contracts import ChannelBindingRule
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.memory import reset_memory_services
-from afkbot.services.tools.base import ToolContext
+from afkbot.services.tools.base import ToolContext, ToolResult
+from afkbot.services.tools.plugins.memory_search import plugin as memory_search_plugin
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
 
@@ -245,6 +246,36 @@ async def test_user_facing_memory_search_cannot_jump_to_other_chat(
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
         result = await search_tool.execute(ctx, params)
+        assert result.ok is False
+        assert result.error_code == "memory_cross_scope_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_memory_search_enforces_explicit_scope_guard(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+
+    def _forbidden_guard(*, ctx, requested_scope, operation):
+        return ("memory_cross_scope_forbidden", "forced guard denial")
+
+    monkeypatch.setattr(
+        memory_search_plugin,
+        "ensure_memory_scope_allowed",
+        _forbidden_guard,
+    )
+
+    try:
+        search_tool = registry.get("memory.search")
+        assert search_tool is not None
+        params = search_tool.parse_params(
+            {"profile_key": "default", "scope": "chat", "query": "private fact"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await search_tool.execute(_user_facing_ctx(peer_id="100"), params)
         assert result.ok is False
         assert result.error_code == "memory_cross_scope_forbidden"
     finally:

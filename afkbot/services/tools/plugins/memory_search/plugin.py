@@ -7,6 +7,7 @@ from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.memory_shared import (
     MemorySearchParams,
+    ensure_memory_scope_allowed,
     resolve_memory_scope_for_operation,
 )
 from afkbot.settings import Settings
@@ -34,6 +35,13 @@ class MemorySearchTool(ToolBase):
         )
         if isinstance(requested_scope, ToolResult):
             return requested_scope
+        scope_error = ensure_memory_scope_allowed(
+            ctx=ctx,
+            requested_scope=requested_scope,
+            operation="search",
+        )
+        if scope_error is not None:
+            return ToolResult.error(error_code=scope_error[0], reason=scope_error[1])
 
         try:
             service = get_memory_service(self._settings)

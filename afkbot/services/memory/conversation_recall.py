@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.chat_session_compaction_repo import ChatSessionCompactionRepository
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.repositories.support import profile_exists
 from afkbot.settings import Settings
@@ -49,6 +50,15 @@ class ConversationRecallActor:
 
     session_id: str
     transport: str | None = None
+    account_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationRecallTarget:
+    """Normalized target session with optional ownership metadata."""
+
+    session_id: str
+    owner_profile_id: str | None
 
 
 class ConversationRecallService:
@@ -151,11 +161,17 @@ class ConversationRecallService:
         actor = ConversationRecallActor(
             session_id=self._normalize_query(actor_session_id),
             transport=self._normalize_transport(actor_transport),
+            account_id=self._normalize_account_id(
+                actor_transport=actor_transport,
+                actor_session_id=actor_session_id,
+            ),
         )
-        resolved_session_id = self._resolve_target_session(
+        resolved_target = await self._resolve_target_session(
+            profile_id=profile_id,
             actor=actor,
             target_session_id=target_session_id,
         )
+        resolved_session_id = resolved_target.session_id
         return await self.search(
             profile_id=profile_id,
             session_id=resolved_session_id,
@@ -198,6 +214,25 @@ class ConversationRecallService:
         return normalized or None
 
     @staticmethod
+    def _normalize_account_id(*, actor_transport: str | None, actor_session_id: str) -> str | None:
+        normalized_transport = (actor_transport or "").strip().lower()
+        if normalized_transport == "taskflow":
+            if actor_session_id.startswith("taskflow:"):
+                return actor_session_id.removeprefix("taskflow:")
+            return None
+        if normalized_transport == "automation":
+            for prefix in ("automation-webhook-", "automation-cron-"):
+                if actor_session_id.startswith(prefix):
+                    suffix = actor_session_id.removeprefix(prefix)
+                    return suffix.split("-", 1)[0] if suffix else None
+            return None
+        if normalized_transport == "cli":
+            if actor_session_id.startswith("cli:"):
+                return actor_session_id.removeprefix("cli:")
+            return None
+        return None
+
+    @staticmethod
     def _normalize_limit(limit: int) -> int:
         if limit < 1:
             raise ConversationRecallServiceError(
@@ -206,22 +241,65 @@ class ConversationRecallService:
             )
         return min(limit, 20)
 
-    @classmethod
-    def _resolve_target_session(
-        cls,
+    async def _resolve_target_session(
+        self,
         *,
+        profile_id: str,
         actor: ConversationRecallActor,
         target_session_id: str | None,
-    ) -> str:
+    ) -> ConversationRecallTarget:
         normalized_target = " ".join((target_session_id or "").strip().split()) or actor.session_id
         if normalized_target == actor.session_id:
-            return normalized_target
+            return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=profile_id)
         if actor.transport not in _TRUSTED_FOREIGN_RECALL_TRANSPORTS:
             raise ConversationRecallServiceError(
                 error_code="memory_cross_scope_forbidden",
                 reason="This runtime may not access recall from another session.",
             )
-        return normalized_target
+        owner_profile_id = await self._lookup_session_owner_profile_id(session_id=normalized_target)
+        if owner_profile_id != profile_id:
+            raise ConversationRecallServiceError(
+                error_code="memory_cross_scope_forbidden",
+                reason="This runtime may not access recall from another session.",
+            )
+        if not self._is_target_allowed_for_trusted_actor(actor=actor, session_id=normalized_target):
+            raise ConversationRecallServiceError(
+                error_code="memory_cross_scope_forbidden",
+                reason="This runtime may not access recall from another session.",
+            )
+        return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=owner_profile_id)
+
+    async def _lookup_session_owner_profile_id(self, *, session_id: str) -> str | None:
+        async def _op(
+            session: AsyncSession,
+            _turns: ChatTurnRepository,
+            _compactions: ChatSessionCompactionRepository,
+        ) -> str | None:
+            row = await ChatSessionRepository(session).get(session_id)
+            if row is None:
+                return None
+            return row.profile_id
+
+        return await self._with_repos(_op)
+
+    @staticmethod
+    def _is_target_allowed_for_trusted_actor(*, actor: ConversationRecallActor, session_id: str) -> bool:
+        transport = actor.transport
+        if transport == "taskflow":
+            account_id = actor.account_id
+            if not account_id:
+                return False
+            return session_id == f"taskflow:{account_id}"
+        if transport == "automation":
+            account_id = actor.account_id
+            if not account_id:
+                return False
+            return session_id.startswith(f"automation-webhook-{account_id}-") or session_id.startswith(
+                f"automation-cron-{account_id}-"
+            )
+        if transport == "cli":
+            return True
+        return False
 
     @staticmethod
     def _tokenize(text: str) -> tuple[str, ...]:
