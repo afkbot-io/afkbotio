@@ -92,7 +92,7 @@ class RunRepository:
             .where(Run.id == run_id)
             .values(cancel_requested=True)
         )
-        return (result.rowcount or 0) > 0
+        return int(getattr(result, "rowcount", 0) or 0) > 0
 
     async def get_latest_run_id(self, profile_id: str, session_id: str) -> int | None:
         """Return latest run id for profile/session pair."""
