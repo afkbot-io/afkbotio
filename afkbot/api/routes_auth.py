@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hmac import compare_digest
 import json
 from urllib.parse import urlencode
 
@@ -13,12 +14,11 @@ from afkbot.services.ui_auth import (
     clear_ui_auth_cookie,
     peek_ui_auth_retry_after,
     read_ui_auth_session,
+    record_ui_auth_failure,
     reset_ui_auth_failures,
     set_ui_auth_cookie,
     ui_auth_is_configured,
-    ui_auth_runtime_payload,
     verify_ui_auth_password,
-    record_ui_auth_failure,
 )
 from afkbot.settings import get_settings
 
@@ -40,11 +40,14 @@ async def get_auth_session(request: Request) -> JSONResponse:
 
     settings = get_settings()
     session = read_ui_auth_session(request, settings)
-    payload = ui_auth_runtime_payload(settings)
+    configured = ui_auth_is_configured(settings)
     response = {
         "authenticated": session is not None,
         "session": None,
-        "auth": payload,
+        "auth": {
+            "mode": "password" if configured else "disabled",
+            "configured": configured,
+        },
     }
     if session is not None:
         response["session"] = {
@@ -72,10 +75,12 @@ async def post_auth_login(login: UILoginRequest, request: Request) -> JSONRespon
         )
 
     remote_host = _remote_host(request, settings)
+    configured_username = str(settings.ui_auth_username or "").strip()
+    provided_username = login.username.strip()
     retry_after = await peek_ui_auth_retry_after(
         settings=settings,
         remote_host=remote_host,
-        username=login.username,
+        username=provided_username,
     )
     if retry_after is not None:
         return JSONResponse(
@@ -88,14 +93,13 @@ async def post_auth_login(login: UILoginRequest, request: Request) -> JSONRespon
             },
         )
 
-    if (
-        login.username.strip() != str(settings.ui_auth_username or "").strip()
-        or not verify_ui_auth_password(login.password, settings.ui_auth_password_hash)
-    ):
+    password_ok = verify_ui_auth_password(login.password, settings.ui_auth_password_hash)
+    username_ok = compare_digest(provided_username, configured_username)
+    if not username_ok or not password_ok:
         retry_after = await record_ui_auth_failure(
             settings=settings,
             remote_host=remote_host,
-            username=login.username,
+            username=provided_username,
         )
         headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
         return JSONResponse(
@@ -108,18 +112,18 @@ async def post_auth_login(login: UILoginRequest, request: Request) -> JSONRespon
             },
         )
 
-    await reset_ui_auth_failures(remote_host=remote_host, username=login.username)
+    await reset_ui_auth_failures(remote_host=remote_host, username=provided_username)
     response = JSONResponse(
         {
             "ok": True,
-            "username": login.username.strip(),
+            "username": provided_username,
         }
     )
     set_ui_auth_cookie(
         response,
         request,
         settings,
-        username=login.username.strip(),
+        username=provided_username,
     )
     return response
 
@@ -212,7 +216,7 @@ async def get_auth_login_page(request: Request, next: str | None = None):
       <h1>AFKBOT Login</h1>
       <p>Sign in to access protected AFKBOT plugin interfaces and APIs.</p>
       <label for="username">Username</label>
-      <input id="username" name="username" value={json.dumps(str(settings.ui_auth_username or ""))} autocomplete="username" required />
+      <input id="username" name="username" value="" autocomplete="username" required />
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required />
       <button type="submit">Sign In</button>

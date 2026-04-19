@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import dataclass
 
+from afkbot.services.plugins.contracts import PluginAuthMount
 from afkbot.settings import Settings
 
 
@@ -31,7 +32,7 @@ def resolve_ui_auth_surface(
     path: str,
     settings: Settings,
     *,
-    protected_web_plugin_ids: Collection[str] | None = None,
+    plugin_auth_mounts: Collection[PluginAuthMount] | None = None,
 ) -> UIAuthProtectedSurface:
     """Resolve whether one request path belongs to an auth-protected plugin surface."""
 
@@ -39,33 +40,29 @@ def resolve_ui_auth_surface(
     if not ui_auth_is_configured(settings):
         return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
 
-    if normalized == "/v1/plugins" or normalized.startswith("/v1/plugins/"):
-        return UIAuthProtectedSurface(protected=True, api_request=True)
+    protected_ids = {
+        plugin_id_value.strip().lower()
+        for plugin_id_value in settings.ui_auth_protected_plugin_ids
+        if plugin_id_value.strip()
+    }
+    protected_mounts = tuple(
+        mount
+        for mount in (plugin_auth_mounts or ())
+        if mount.operator_required or mount.plugin_id in protected_ids
+    )
 
-    if normalized.startswith("/plugins/"):
-        plugin_id = _path_segment(normalized, prefix="/plugins/")
-        protected_ids = {
-            plugin_id_value.strip().lower()
-            for plugin_id_value in settings.ui_auth_protected_plugin_ids
-            if plugin_id_value.strip()
-        }
-        if protected_web_plugin_ids:
-            protected_ids.update(
-                plugin_id_value.strip().lower()
-                for plugin_id_value in protected_web_plugin_ids
-                if str(plugin_id_value).strip()
-            )
-        return UIAuthProtectedSurface(
-            protected=plugin_id in protected_ids,
-            api_request=False,
-            plugin_id=plugin_id,
-        )
+    for mount in protected_mounts:
+        if _path_matches_prefix(normalized, mount.api_prefix):
+            return UIAuthProtectedSurface(protected=True, api_request=True, plugin_id=mount.plugin_id)
+        if _path_matches_prefix(normalized, mount.web_prefix):
+            return UIAuthProtectedSurface(protected=True, api_request=False, plugin_id=mount.plugin_id)
     return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
 
 
-def _path_segment(path: str, *, prefix: str) -> str | None:
-    remainder = path[len(prefix) :]
-    if not remainder:
-        return None
-    segment = remainder.split("/", 1)[0].strip().lower()
-    return segment or None
+def _path_matches_prefix(path: str, prefix: str | None) -> bool:
+    normalized_prefix = str(prefix or "").strip()
+    if not normalized_prefix:
+        return False
+    if path == normalized_prefix:
+        return True
+    return path.startswith(f"{normalized_prefix}/")

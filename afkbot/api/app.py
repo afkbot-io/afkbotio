@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         PluginUIAuthMiddleware,
         settings=settings,
-        protected_web_plugin_ids=plugin_runtime.operator_auth_plugin_ids,
+        plugin_auth_mounts=plugin_runtime.plugin_auth_mounts,
     )
 
     @app.get("/healthz")

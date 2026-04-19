@@ -300,6 +300,16 @@ class PluginStaticMount:
 
 
 @dataclass(frozen=True, slots=True)
+class PluginAuthMount:
+    """Auth-relevant mount prefixes contributed by one active plugin."""
+
+    plugin_id: str
+    api_prefix: str | None
+    web_prefix: str | None
+    operator_required: bool
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedPluginRuntime:
     """Runtime surfaces contributed by one active plugin."""
 
@@ -326,6 +336,20 @@ class PluginRuntimeSnapshot:
     @property
     def static_mounts(self) -> tuple[PluginStaticMount, ...]:
         return tuple(item for plugin in self.plugins for item in plugin.static_mounts)
+
+    @property
+    def plugin_auth_mounts(self) -> tuple[PluginAuthMount, ...]:
+        """Return auth-relevant mount prefixes for every active plugin."""
+
+        return tuple(
+            PluginAuthMount(
+                plugin_id=plugin.record.plugin_id,
+                api_prefix=plugin.record.manifest.mounts.api_prefix,
+                web_prefix=plugin.record.manifest.mounts.web_prefix,
+                operator_required=plugin.record.manifest.auth.operator_required,
+            )
+            for plugin in self.plugins
+        )
 
     @property
     def operator_auth_plugin_ids(self) -> tuple[str, ...]:

@@ -8,6 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from afkbot.api.routes_auth import login_redirect_url
+from afkbot.services.plugins.contracts import PluginAuthMount
 from afkbot.services.ui_auth import (
     maybe_refresh_ui_auth_cookie,
     read_ui_auth_session,
@@ -24,17 +25,17 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
         app: ASGIApp,
         *,
         settings: Settings,
-        protected_web_plugin_ids: tuple[str, ...] = (),
+        plugin_auth_mounts: tuple[PluginAuthMount, ...] = (),
     ) -> None:
         super().__init__(app)
         self._settings = settings
-        self._protected_web_plugin_ids = protected_web_plugin_ids
+        self._plugin_auth_mounts = plugin_auth_mounts
 
     async def dispatch(self, request: Request, call_next) -> Response:
         surface = resolve_ui_auth_surface(
             request.url.path,
             self._settings,
-            protected_web_plugin_ids=self._protected_web_plugin_ids,
+            plugin_auth_mounts=self._plugin_auth_mounts,
         )
         if not surface.protected:
             return await call_next(request)

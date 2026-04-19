@@ -363,9 +363,13 @@ operator password managed at the core runtime level.
 - Inspect or update the policy with `afk auth status`, `afk auth update`, and
   `afk auth rotate-password`.
 - Disable it with `afk auth disable`.
-- Protected browser surfaces redirect to `/auth/login`, and protected
-  `/v1/plugins/...` API routes return `401` until the operator session is
+- Protection applies only to plugin surfaces that opt in through
+  `auth.operator_required` or are explicitly listed with `--protected-plugin-id`.
+- Protected browser surfaces redirect to `/auth/login`, and only the matching
+  protected plugin API routes return `401` until the operator session is
   established.
+- Protection follows each plugin's declared API and web mount prefixes, so
+  custom prefixes such as `/internal/...` or `/ui/...` are covered too.
 - Password hashes and cookie keys live in encrypted runtime secrets, not inside
   plugin packages or plugin config JSON.
 

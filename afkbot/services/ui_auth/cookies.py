@@ -8,6 +8,7 @@ from time import time
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Request, Response
 
+from afkbot.services.ui_auth.configuration import ensure_ui_auth_cookie_key
 from afkbot.services.ui_auth.contracts import UIAuthSession
 from afkbot.services.ui_auth.passwords import password_hash_fingerprint
 from afkbot.settings import Settings
@@ -148,10 +149,7 @@ def clear_ui_auth_cookie(response: Response) -> None:
 
 
 def _fernet(settings: Settings) -> Fernet:
-    cookie_key = str(settings.ui_auth_cookie_key or "").strip()
-    if not cookie_key:
-        raise ValueError("UI auth cookie key is not configured")
-    return Fernet(cookie_key.encode("ascii"))
+    return Fernet(ensure_ui_auth_cookie_key(settings).encode("ascii"))
 
 
 def _cookie_secure(*, request: Request, settings: Settings) -> bool:
