@@ -41,6 +41,8 @@ class MemorySearchTool(ToolBase):
             operation="search",
         )
         if scope_error is not None:
+            if isinstance(scope_error, ToolResult):
+                return scope_error
             return ToolResult.error(error_code=scope_error[0], reason=scope_error[1])
 
         try:

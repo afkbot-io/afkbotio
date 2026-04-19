@@ -46,7 +46,7 @@ class MemoryRecallSearchTool(ToolBase):
         typed = ConversationRecallSearchParams.model_validate(params.model_dump())
         try:
             items = await get_conversation_recall_service(self._settings).search_for_actor(
-                profile_id=typed.profile_key,
+                profile_id=typed.effective_profile_id,
                 actor_session_id=ctx.session_id,
                 actor_transport=self._actor_transport(ctx),
                 target_session_id=typed.session_id,
