@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 
-from afkbot.services.subagents.loader import SubagentLoader
+from afkbot.services.subagents.loader import SubagentLoader, reset_subagent_loader_caches
 from afkbot.settings import Settings
 
 
@@ -115,3 +116,22 @@ async def test_loader_ignores_nested_entries_and_list_matches_resolve_contract(
 
     with pytest.raises(FileNotFoundError):
         await loader.resolve_subagent("helper", "p1")
+
+
+async def test_loader_invalidates_process_cache_after_subagent_update(tmp_path: Path) -> None:
+    """Process-local discovery cache should refresh when subagent markdown changes."""
+
+    reset_subagent_loader_caches()
+    subagent_path = tmp_path / "afkbot/subagents/researcher.md"
+    subagent_path.parent.mkdir(parents=True)
+    subagent_path.write_text("# First researcher", encoding="utf-8")
+
+    loader = SubagentLoader(Settings(root_dir=tmp_path))
+    first = await loader.load_subagent_markdown("researcher", "default")
+    assert "First researcher" in first
+
+    time.sleep(0.01)
+    subagent_path.write_text("# Updated researcher", encoding="utf-8")
+
+    second = await loader.load_subagent_markdown("researcher", "default")
+    assert "Updated researcher" in second

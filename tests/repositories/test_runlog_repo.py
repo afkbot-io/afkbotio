@@ -121,6 +121,25 @@ async def test_run_repo_get_latest_run_id(tmp_path: Path) -> None:
         await engine.dispose()
 
 
+async def test_run_repo_request_cancel_marks_latest_running_only(tmp_path: Path) -> None:
+    """Cancellation should target only the newest running run for the session scope."""
+
+    engine, factory = await _prepare(tmp_path)
+    try:
+        async with session_scope(factory) as session:
+            repo = RunRepository(session)
+            first = await repo.create_run(session_id="s-1", profile_id="default", status="running")
+            latest = await repo.create_run(session_id="s-1", profile_id="default", status="running")
+            await repo.create_run(session_id="s-1", profile_id="default", status="completed")
+            await repo.create_run(session_id="s-2", profile_id="default", status="running")
+
+            assert await repo.request_cancel(profile_id="default", session_id="s-1") is True
+            assert await repo.is_cancel_requested(first.id) is False
+            assert await repo.is_cancel_requested(latest.id) is True
+    finally:
+        await engine.dispose()
+
+
 async def test_runlog_repo_list_session_events_filters_before_limit(tmp_path: Path) -> None:
     """Session event listing should filter by type and keep reverse-chronological order."""
 

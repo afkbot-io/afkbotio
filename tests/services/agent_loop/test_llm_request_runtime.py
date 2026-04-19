@@ -142,6 +142,44 @@ async def test_llm_request_runtime_returns_timeout_fallback() -> None:
     ]
 
 
+async def test_llm_request_runtime_throttles_repeated_tick_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long-running calls should not emit every internal tick to the runlog."""
+
+    monkeypatch.setattr("afkbot.services.agent_loop.llm_request_runtime._LLM_PROGRESS_TICK_SEC", 0.01)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.llm_request_runtime._LLM_PROGRESS_LOG_MIN_INTERVAL_SEC",
+        0.05,
+    )
+    events: list[dict[str, object]] = []
+    runtime = LLMRequestRuntime(
+        llm_provider=_SlowProvider(
+            sleep_sec=0.035,
+            response=LLMResponse.final("ok"),
+        ),
+        llm_request_timeout_sec=0.2,
+        log_event=lambda **kwargs: _collect_log_event(events, **kwargs),
+        raise_if_cancel_requested=_noop_cancel_check,
+    )
+
+    response = await runtime.complete_with_progress(
+        run_id=22,
+        session_id="s-22",
+        iteration=1,
+        request=_request(),
+    )
+
+    assert response.kind == "final"
+    assert response.final_message == "ok"
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.tick",
+        "llm.call.done",
+    ]
+
+
 async def test_llm_request_runtime_returns_provider_error_fallback() -> None:
     """Unexpected provider exceptions should become deterministic error responses."""
 

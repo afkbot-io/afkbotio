@@ -21,6 +21,7 @@ from afkbot.services.subagents.runtime_policy import (
 )
 from afkbot.services.subagents.registry import (
     get_subagent_service,
+    reset_subagent_service_for_root_async,
     reset_subagent_services,
     reset_subagent_services_async,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "get_profile_subagent_service",
     "get_subagent_service",
     "reset_profile_subagent_services",
+    "reset_subagent_service_for_root_async",
     "reset_subagent_services_async",
     "reset_subagent_services",
 ]

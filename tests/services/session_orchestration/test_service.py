@@ -16,6 +16,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.session_orchestration import SessionOrchestrator
+from afkbot.services.session_orchestration.service import _session_queue_poll_delay
 from tests.services.agent_loop._loop_harness import create_test_db
 
 
@@ -237,3 +238,14 @@ async def test_session_orchestrator_turn_lease_serializes_internal_concurrent_ca
             assert started == ["first", "second"]
     finally:
         await engine.dispose()
+
+
+def test_session_queue_poll_delay_uses_capped_backoff() -> None:
+    """Session queue wait loop should reduce DB churn while preserving short first retry."""
+
+    assert _session_queue_poll_delay(0) == pytest.approx(0.05)
+    assert _session_queue_poll_delay(1) == pytest.approx(0.1)
+    assert _session_queue_poll_delay(2) == pytest.approx(0.2)
+    assert _session_queue_poll_delay(3) == pytest.approx(0.4)
+    assert _session_queue_poll_delay(4) == pytest.approx(0.5)
+    assert _session_queue_poll_delay(8) == pytest.approx(0.5)

@@ -460,7 +460,6 @@ async def test_authorize_telethon_endpoint_maps_real_telethon_invalid_code_error
     )
     await _seed_profile(settings, allow_mtproto=True)
     fake_client = _FakeTelethonClient()
-    pytest.importorskip("telethon")
     telethon_errors = importlib.import_module("telethon.errors")
 
     async def _fake_resolve_credentials(**kwargs: object) -> object:

@@ -13,6 +13,7 @@ class RunlogEvent(Base, TimestampMixin):
 
     __tablename__ = "runlog_event"
     __table_args__ = (
+        Index("ix_runlog_event_created_at", "created_at", "id"),
         Index("ix_runlog_event_run_id_id", "run_id", "id"),
     )
 

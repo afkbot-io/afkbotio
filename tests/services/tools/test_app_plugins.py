@@ -25,7 +25,7 @@ from afkbot.services.apps.imap.actions import _search_messages_sync
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.apps.smtp.actions import _send_email_sync
 from afkbot.services.apps.telegram.http_api import _resolve_workspace_media_path
-from afkbot.services.credentials import reset_credentials_services
+from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.tools.base import ToolCall, ToolContext
 from afkbot.services.tools.network.pinned_opener import _NoRedirect
 from afkbot.services.tools.plugins.http_request.plugin import HttpRequestTool
@@ -48,7 +48,7 @@ async def _prepare(
     monkeypatch.setenv("AFKBOT_DB_URL", db_url)
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
-    reset_credentials_services()
+    await reset_credentials_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)

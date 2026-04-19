@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
+import warnings
 
 from sqlalchemy import text
 
 from afkbot.db.bootstrap import create_schema, list_applied_migrations, ping
+from afkbot.db.bootstrap_runtime import prune_runtime_history
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.models.runlog_event import RunlogEvent
+from afkbot.models.task_event import TaskEvent
+from afkbot.models.task_run import TaskRun
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.profile_repo import ProfileRepository
+from afkbot.repositories.run_repo import RunRepository
 from afkbot.settings import Settings
 from afkbot.services.task_flow.service import TaskFlowService
 
@@ -32,8 +41,34 @@ async def test_create_schema_and_ping(tmp_path: Path) -> None:
     assert versions == ()
     async with engine.connect() as conn:
         foreign_keys_enabled = (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one()
+        busy_timeout_ms = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
+        journal_mode = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
+        synchronous_mode = (await conn.execute(text("PRAGMA synchronous"))).scalar_one()
     assert int(foreign_keys_enabled) == 1
+    assert int(busy_timeout_ms) == 5000
+    assert str(journal_mode).strip().lower() != ""
+    if str(journal_mode).lower() == "wal":
+        assert int(synchronous_mode) == 1
     await engine.dispose()
+
+
+async def test_create_engine_registers_explicit_sqlite_datetime_adapters(tmp_path: Path) -> None:
+    """SQLite engine setup should replace Python's deprecated default datetime adapter."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'datetime-adapter.db'}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(settings)
+
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            adapted = sqlite3.adapt(datetime.now(timezone.utc))
+        assert isinstance(adapted, str)
+        assert not [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
+    finally:
+        await engine.dispose()
 
 
 async def test_create_schema_is_idempotent_without_migration_side_state(tmp_path: Path) -> None:
@@ -93,6 +128,45 @@ async def test_create_schema_materializes_task_active_owner_unique_index(tmp_pat
 
     index_names = {str(row[1]) for row in rows}
     assert "ux_task_active_ai_owner" in index_names
+    await engine.dispose()
+
+
+async def test_create_schema_materializes_run_hot_path_indexes(tmp_path: Path) -> None:
+    """Fresh bootstrap should create the run indexes used by progress and cancel lookups."""
+
+    db_path = tmp_path / "run-indexes.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("PRAGMA index_list(run)"))).all()
+
+    index_names = {str(row[1]) for row in rows}
+    assert "ix_run_profile_session_id" in index_names
+    assert "ix_run_profile_session_status_id" in index_names
+    await engine.dispose()
+
+
+async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(tmp_path: Path) -> None:
+    """Repeated bootstrap should backfill run indexes for legacy databases that missed them."""
+
+    db_path = tmp_path / "run-indexes-legacy.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP INDEX IF EXISTS ix_run_profile_session_id"))
+        await conn.execute(text("DROP INDEX IF EXISTS ix_run_profile_session_status_id"))
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("PRAGMA index_list(run)"))).all()
+
+    index_names = {str(row[1]) for row in rows}
+    assert "ix_run_profile_session_id" in index_names
+    assert "ix_run_profile_session_status_id" in index_names
     await engine.dispose()
 
 
@@ -172,3 +246,299 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     assert second_after.status == "claimed"
     assert second_after.last_error_code is None
     await engine.dispose()
+
+
+async def test_create_schema_materializes_runtime_history_retention_indexes(tmp_path: Path) -> None:
+    """Fresh bootstrap should create the indexes used by bounded runtime history cleanup."""
+
+    db_path = tmp_path / "runtime-history-indexes.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        task_rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
+        task_event_rows = (await conn.execute(text("PRAGMA index_list(task_event)"))).all()
+        task_run_rows = (await conn.execute(text("PRAGMA index_list(task_run)"))).all()
+        runlog_rows = (await conn.execute(text("PRAGMA index_list(runlog_event)"))).all()
+
+    assert "ix_task_last_run_id" in {str(row[1]) for row in task_rows}
+    assert "ix_task_event_created_at" in {str(row[1]) for row in task_event_rows}
+    assert "ix_task_run_finished_at" in {str(row[1]) for row in task_run_rows}
+    assert "ix_runlog_event_created_at" in {str(row[1]) for row in runlog_rows}
+    await engine.dispose()
+
+
+async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) -> None:
+    """Bounded runtime cleanup should prune old append-only rows without touching linked task runs."""
+
+    db_path = tmp_path / "runtime-history-prune.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    service = TaskFlowService(factory)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    old_time = cutoff - timedelta(days=3)
+    recent_time = cutoff + timedelta(days=1)
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    kept_task = await service.create_task(
+        profile_id="default",
+        title="Keep linked run",
+        prompt="Retain the run because it still has a surviving task event.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="human",
+        owner_ref="cli",
+    )
+    orphan_task = await service.create_task(
+        profile_id="default",
+        title="Delete orphaned run",
+        prompt="Allow pruning once the old runtime rows are detached.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="human",
+        owner_ref="cli",
+    )
+    kept_run_id = 0
+    orphan_run_id = 0
+    async with session_scope(factory) as session:
+        await ChatSessionRepository(session).create(session_id="s-1", profile_id="default")
+        run = await RunRepository(session).create_run(
+            session_id="s-1",
+            profile_id="default",
+            status="completed",
+        )
+        await session.flush()
+        kept_run = TaskRun(
+            task_id=kept_task.id,
+            attempt=1,
+            owner_type="human",
+            owner_ref="cli",
+            execution_mode="detached",
+            status="completed",
+            session_id="taskflow:kept",
+            run_id=None,
+            worker_id="worker-keep",
+            started_at=old_time,
+            finished_at=old_time,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        orphan_run = TaskRun(
+            task_id=orphan_task.id,
+            attempt=1,
+            owner_type="human",
+            owner_ref="cli",
+            execution_mode="detached",
+            status="completed",
+            session_id="taskflow:orphan",
+            run_id=None,
+            worker_id="worker-prune",
+            started_at=old_time,
+            finished_at=old_time,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        session.add_all([kept_run, orphan_run])
+        await session.flush()
+        kept_run_id = kept_run.id
+        orphan_run_id = orphan_run.id
+        session.add_all(
+            [
+                TaskEvent(
+                    task_id=kept_task.id,
+                    task_run_id=kept_run.id,
+                    event_type="comment_added",
+                    actor_type="human",
+                    actor_ref="cli",
+                    message="old event",
+                    details_json="{}",
+                    created_at=old_time,
+                ),
+                TaskEvent(
+                    task_id=kept_task.id,
+                    task_run_id=kept_run.id,
+                    event_type="comment_added",
+                    actor_type="human",
+                    actor_ref="cli",
+                    message="recent event",
+                    details_json="{}",
+                    created_at=recent_time,
+                ),
+                RunlogEvent(
+                    run_id=run.id,
+                    session_id="s-1",
+                    event_type="llm.call.done",
+                    payload_json="{}",
+                    created_at=old_time,
+                    updated_at=old_time,
+                ),
+                RunlogEvent(
+                    run_id=run.id,
+                    session_id="s-1",
+                    event_type="llm.call.done",
+                    payload_json="{}",
+                    created_at=recent_time,
+                    updated_at=recent_time,
+                ),
+            ]
+        )
+        await session.flush()
+
+    prune_result = await prune_runtime_history(
+        engine,
+        task_event_before=cutoff,
+        task_run_before=cutoff,
+        runlog_event_before=cutoff,
+        batch_size=10,
+    )
+
+    assert prune_result.task_event_count == 1
+    assert prune_result.task_run_count == 1
+    assert prune_result.runlog_event_count == 1
+
+    async with session_scope(factory) as session:
+        remaining_task_events = (await session.execute(text("SELECT COUNT(*) FROM task_event"))).scalar_one()
+        remaining_task_runs = (await session.execute(text("SELECT COUNT(*) FROM task_run"))).scalar_one()
+        remaining_runlog_events = (await session.execute(text("SELECT COUNT(*) FROM runlog_event"))).scalar_one()
+        remaining_task_event_types = (
+            await session.execute(text("SELECT event_type FROM task_event ORDER BY id ASC"))
+        ).scalars().all()
+        kept_run_exists = await session.get(TaskRun, kept_run_id)
+        orphan_run_exists = await session.get(TaskRun, orphan_run_id)
+
+    assert int(remaining_task_events) == 3
+    assert int(remaining_task_runs) == 1
+    assert int(remaining_runlog_events) == 1
+    assert list(remaining_task_event_types).count("comment_added") == 1
+    assert list(remaining_task_event_types).count("created") == 2
+    assert kept_run_exists is not None
+    assert orphan_run_exists is None
+    await engine.dispose()
+
+
+async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Path) -> None:
+    """Bounded cleanup must not delete a finished orphan run still referenced as the task's last run."""
+
+    db_path = tmp_path / "runtime-history-keep-last-run.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    service = TaskFlowService(factory)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    old_time = cutoff - timedelta(days=3)
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    task = await service.create_task(
+        profile_id="default",
+        title="Keep last run reference",
+        prompt="Do not prune the last_run_id reference automatically.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="human",
+        owner_ref="cli",
+    )
+    protected_run_id = 0
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        protected_run = TaskRun(
+            task_id=task.id,
+            attempt=1,
+            owner_type="human",
+            owner_ref="cli",
+            execution_mode="detached",
+            status="completed",
+            session_id="taskflow:protected",
+            run_id=None,
+            worker_id="worker-protected",
+            started_at=old_time,
+            finished_at=old_time,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        session.add(protected_run)
+        await session.flush()
+        protected_run_id = protected_run.id
+        await session.execute(
+            text("UPDATE task SET last_run_id = :run_id WHERE id = :task_id"),
+            {"run_id": protected_run.id, "task_id": task.id},
+        )
+
+    prune_result = await prune_runtime_history(
+        engine,
+        task_event_before=None,
+        task_run_before=cutoff,
+        runlog_event_before=None,
+        batch_size=10,
+    )
+
+    assert prune_result.task_run_count == 0
+    async with session_scope(factory) as session:
+        protected_run_exists = await session.get(TaskRun, protected_run_id)
+        task_last_run_id = (
+            await session.execute(text("SELECT last_run_id FROM task WHERE id = :task_id"), {"task_id": task.id})
+        ).scalar_one()
+
+    assert protected_run_exists is not None
+    assert int(task_last_run_id) == protected_run_id
+    await engine.dispose()
+
+
+async def test_sqlite_connect_degrades_gracefully_when_wal_pragma_fails(tmp_path: Path) -> None:
+    """Engine connect should keep working when WAL activation is unsupported or read-only."""
+
+    db_path = tmp_path / "wal-fallback.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    wal_attempts = {"count": 0}
+    original_connect = sqlite3.connect
+
+    class _CursorWrapper:
+        def __init__(self, inner: sqlite3.Cursor) -> None:
+            self._inner = inner
+
+        def execute(self, sql: str, parameters: object = ()) -> object:
+            if sql == "PRAGMA journal_mode=WAL":
+                wal_attempts["count"] += 1
+                raise sqlite3.OperationalError("attempt to write a readonly database")
+            return self._inner.execute(sql, parameters)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    class _ConnectionWrapper:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def cursor(self, *args: object, **kwargs: object) -> _CursorWrapper:
+            return _CursorWrapper(self._inner.cursor(*args, **kwargs))
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    def _wrapped_connect(*args: object, **kwargs: object) -> _ConnectionWrapper:
+        return _ConnectionWrapper(original_connect(*args, **kwargs))
+
+    sqlite3.connect = _wrapped_connect
+    try:
+        await create_schema(engine)
+        reachable = await ping(engine)
+        async with engine.connect() as conn:
+            foreign_keys_enabled = (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one()
+            busy_timeout_ms = (await conn.execute(text("PRAGMA busy_timeout"))).scalar_one()
+            journal_mode = (await conn.execute(text("PRAGMA journal_mode"))).scalar_one()
+        assert reachable is True
+        assert wal_attempts["count"] >= 1
+        assert int(foreign_keys_enabled) == 1
+        assert int(busy_timeout_ms) == 5000
+        assert str(journal_mode).lower() != ""
+    finally:
+        sqlite3.connect = original_connect
+        await engine.dispose()

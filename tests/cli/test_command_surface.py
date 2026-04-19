@@ -4,9 +4,21 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _skip_setup_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Command-surface help tests are about CLI exposure, not setup gating."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _normalize_text(value: str) -> str:
@@ -114,30 +126,6 @@ def test_task_help_exposes_dependency_and_run_management() -> None:
     assert "stale-list" in output
     assert "stale-sweep" in output
 
-
-def test_task_help_exposes_dependency_and_run_surfaces() -> None:
-    """Task CLI help should expose dependency management and run history commands."""
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["task", "--help"])
-
-    assert result.exit_code == 0
-    output = result.stdout
-    assert "board" in output
-    assert "comment-add" in output
-    assert "comment-list" in output
-    assert "inbox" in output
-    assert "dependency-add" in output
-    assert "dependency-list" in output
-    assert "dependency-remove" in output
-    assert "event-list" in output
-    assert "review-list" in output
-    assert "review-approve" in output
-    assert "review-request-changes" in output
-    assert "run-list" in output
-    assert "run-get" in output
-    assert "stale-list" in output
-    assert "stale-sweep" in output
 
 
 def test_plugin_help_exposes_install_lifecycle() -> None:

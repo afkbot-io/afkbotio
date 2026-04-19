@@ -16,6 +16,7 @@ class TaskRun(Base, TimestampMixin):
     __tablename__ = "task_run"
     __table_args__ = (
         Index("ix_task_run_task_attempt", "task_id", "attempt"),
+        Index("ix_task_run_finished_at", "finished_at", "id"),
         Index("ix_task_run_status", "status"),
         Index("ix_task_run_session", "session_id"),
     )

@@ -24,6 +24,7 @@ from afkbot.settings import Settings, get_settings
 
 IDEMPOTENCY_WAIT_TIMEOUT_SEC = 60.0
 IDEMPOTENCY_WAIT_POLL_SEC = 0.05
+IDEMPOTENCY_WAIT_MAX_POLL_SEC = 0.5
 IDEMPOTENCY_HEARTBEAT_SEC = 15.0
 
 
@@ -157,6 +158,7 @@ async def wait_for_claimed_turn_result(
     """Wait for the in-flight owner to persist a deterministic turn result."""
 
     deadline = time.monotonic() + IDEMPOTENCY_WAIT_TIMEOUT_SEC
+    attempt = 0
     while time.monotonic() < deadline:
         async with session_scope(session_factory) as db:
             repo = ChatTurnIdempotencyRepository(db)
@@ -185,7 +187,8 @@ async def wait_for_claimed_turn_result(
                 client_msg_id=client_msg_id,
             ):
                 return None
-        await asyncio.sleep(IDEMPOTENCY_WAIT_POLL_SEC)
+        await asyncio.sleep(_idempotency_wait_poll_delay(attempt))
+        attempt += 1
     raise TimeoutError(f"Timed out waiting for idempotent turn result for key {client_msg_id!r}")
 
 
@@ -234,3 +237,13 @@ async def heartbeat_turn_claim(
             )
         if not refreshed:
             return
+
+
+def _idempotency_wait_poll_delay(attempt: int) -> float:
+    """Return one capped backoff interval for idempotency wait polling."""
+
+    if attempt <= 0:
+        return IDEMPOTENCY_WAIT_POLL_SEC
+    return float(
+        min(IDEMPOTENCY_WAIT_MAX_POLL_SEC, IDEMPOTENCY_WAIT_POLL_SEC * (2**attempt))
+    )

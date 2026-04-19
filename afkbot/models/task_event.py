@@ -16,6 +16,7 @@ class TaskEvent(Base):
     __tablename__ = "task_event"
     __table_args__ = (
         Index("ix_task_event_task_created", "task_id", "created_at"),
+        Index("ix_task_event_created_at", "created_at", "id"),
         Index("ix_task_event_type", "event_type"),
         Index("ix_task_event_task_run", "task_run_id"),
     )

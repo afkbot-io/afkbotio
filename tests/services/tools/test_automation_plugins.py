@@ -14,7 +14,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.automations import (
     AutomationsServiceError,
     get_automations_service,
-    reset_automations_services,
+    reset_automations_services_async,
 )
 from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.services.tools.base import ToolContext
@@ -30,7 +30,7 @@ async def _prepare(
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", db_url)
     get_settings.cache_clear()
-    reset_automations_services()
+    await reset_automations_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)

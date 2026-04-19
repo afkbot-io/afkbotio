@@ -19,6 +19,7 @@ AsyncLogEvent = Callable[..., Awaitable[None]]
 AsyncCancelCheck = Callable[..., Awaitable[None]]
 
 _LLM_PROGRESS_TICK_SEC = 3.0
+_LLM_PROGRESS_LOG_MIN_INTERVAL_SEC = 15.0
 
 
 class LLMRequestRuntime:
@@ -80,6 +81,7 @@ class LLMRequestRuntime:
             min_interval_ms=self._shared_request_min_interval_ms,
         ):
             started_at = time.monotonic()
+            last_logged_tick_at: float | None = None
             queue_wait_ms = int((started_at - queued_at) * 1000)
             await self._log_event(
                 run_id=run_id,
@@ -141,18 +143,24 @@ class LLMRequestRuntime:
                         )
                         return response
 
-                    elapsed_ms = int((time.monotonic() - started_at) * 1000)
-                    await self._log_event(
-                        run_id=run_id,
-                        session_id=session_id,
-                        event_type="llm.call.tick",
-                        payload={
-                            "iteration": iteration,
-                            "elapsed_ms": elapsed_ms,
-                            "timeout_ms": timeout_ms,
-                            "queue_wait_ms": queue_wait_ms,
-                        },
-                    )
+                    now = time.monotonic()
+                    elapsed_ms = int((now - started_at) * 1000)
+                    if (
+                        last_logged_tick_at is None
+                        or now - last_logged_tick_at >= _LLM_PROGRESS_LOG_MIN_INTERVAL_SEC
+                    ):
+                        await self._log_event(
+                            run_id=run_id,
+                            session_id=session_id,
+                            event_type="llm.call.tick",
+                            payload={
+                                "iteration": iteration,
+                                "elapsed_ms": elapsed_ms,
+                                "timeout_ms": timeout_ms,
+                                "queue_wait_ms": queue_wait_ms,
+                            },
+                        )
+                        last_logged_tick_at = now
                     await self._raise_if_cancel_requested(run_id=run_id)
             except asyncio.CancelledError:
                 task.cancel()

@@ -15,14 +15,17 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.api_runtime import (
+    get_api_session_factory,
     initialize_api_runtime,
     poll_chat_progress,
     run_chat_turn,
     shutdown_api_runtime,
 )
+from afkbot.services.agent_loop.api_runtime_support import _idempotency_wait_poll_delay
 from afkbot.services.agent_loop.progress_stream import ProgressCursor
 from tests.services.agent_loop._loop_harness import create_test_db
 from afkbot.settings import Settings
+from afkbot.services.subagents import get_subagent_service
 
 
 async def _prepare_api_runtime_db(
@@ -58,6 +61,104 @@ async def _create_result_with_run(
         session_id=session_id,
         envelope=ActionEnvelope(action="finalize", message=message),
     )
+
+
+@pytest.mark.asyncio
+async def test_shutdown_api_runtime_resets_only_current_root_subagent_service(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """API runtime shutdown should dispose only the subagent service for the active root."""
+
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    settings_a = Settings(
+        db_url=f"sqlite+aiosqlite:///{root_a / 'api-runtime-a.db'}",
+        root_dir=root_a,
+    )
+    settings_b = Settings(
+        db_url=f"sqlite+aiosqlite:///{root_b / 'api-runtime-b.db'}",
+        root_dir=root_b,
+    )
+    service_a = get_subagent_service(settings_a)
+    service_b = get_subagent_service(settings_b)
+    assert service_a is not service_b
+
+    shutdown_calls: list[str] = []
+
+    async def _shutdown_a() -> None:
+        shutdown_calls.append("a")
+
+    async def _shutdown_b() -> None:
+        shutdown_calls.append("b")
+
+    browser_roots: list[Path] = []
+
+    monkeypatch.setattr(service_a, "shutdown", _shutdown_a)
+    monkeypatch.setattr(service_b, "shutdown", _shutdown_b)
+    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings_b)
+
+    class _FakeBrowserManager:
+        async def close_all_for_root(self, *, root_dir: Path) -> None:
+            browser_roots.append(root_dir)
+
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_browser_session_manager",
+        lambda: _FakeBrowserManager(),
+    )
+
+    await initialize_api_runtime(settings=settings_a)
+    await shutdown_api_runtime()
+
+    assert shutdown_calls == ["a"]
+    assert browser_roots == [settings_a.root_dir]
+    assert get_subagent_service(settings_b) is service_b
+    replacement_a = get_subagent_service(settings_a)
+    assert replacement_a is not service_a
+
+    await replacement_a.shutdown()
+    await service_b.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_api_runtime_keeps_state_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Failed shutdown should leave runtime state available for a later retry."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'api-runtime-cleanup-retry.db'}",
+        root_dir=tmp_path,
+    )
+    attempts: list[str] = []
+
+    class _FlakyBrowserManager:
+        def __init__(self) -> None:
+            self._fail = True
+
+        async def close_all_for_root(self, *, root_dir: Path) -> None:
+            attempts.append(str(root_dir))
+            if self._fail:
+                self._fail = False
+                raise RuntimeError("browser cleanup failed")
+
+    manager = _FlakyBrowserManager()
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_browser_session_manager",
+        lambda: manager,
+    )
+
+    await initialize_api_runtime(settings=settings)
+    with pytest.raises(RuntimeError, match="browser cleanup failed"):
+        await shutdown_api_runtime()
+
+    assert get_api_session_factory() is not None
+
+    await shutdown_api_runtime()
+
+    assert attempts == [str(settings.root_dir), str(settings.root_dir)]
+    assert get_api_session_factory() is None
 
 
 @pytest.mark.asyncio
@@ -406,3 +507,51 @@ async def test_poll_chat_progress_uses_initialized_runtime_resources(
     assert response.events == []
     assert response.cursor.run_id is None
     assert response.cursor.last_event_id == 0
+
+
+def test_idempotency_wait_poll_delay_uses_capped_backoff() -> None:
+    """Idempotency wait loop should widen polls under prolonged contention."""
+
+    assert _idempotency_wait_poll_delay(0) == pytest.approx(0.05)
+    assert _idempotency_wait_poll_delay(1) == pytest.approx(0.1)
+    assert _idempotency_wait_poll_delay(2) == pytest.approx(0.2)
+    assert _idempotency_wait_poll_delay(3) == pytest.approx(0.4)
+    assert _idempotency_wait_poll_delay(4) == pytest.approx(0.5)
+    assert _idempotency_wait_poll_delay(8) == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_api_runtime_resets_subagent_services(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """API shutdown should reset the current-root subagent runtime before tearing down process resources."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'api-runtime-subagents.db'}",
+        root_dir=tmp_path,
+    )
+    calls: dict[str, object] = {}
+
+    class _FakeBrowserManager:
+        async def close_all_for_root(self, *, root_dir: Path) -> None:
+            calls["browser_root"] = root_dir
+
+    async def _fake_reset_subagent_service_for_root_async(*, settings: Settings) -> None:
+        calls["subagents_reset_root"] = settings.root_dir
+
+    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_browser_session_manager",
+        lambda: _FakeBrowserManager(),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.reset_subagent_service_for_root_async",
+        _fake_reset_subagent_service_for_root_async,
+    )
+
+    await initialize_api_runtime(settings=settings)
+    await shutdown_api_runtime()
+
+    assert calls["subagents_reset_root"] == settings.root_dir
+    assert calls["browser_root"] == settings.root_dir

@@ -193,6 +193,8 @@ def test_policy_capability_help_lists_taskflow_and_mcp_for_setup_and_profile_com
     """CLI help should advertise the full canonical capability list anywhere policy is configured."""
 
     prepare_root(tmp_path, monkeypatch)
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
     runner = CliRunner()
     help_text = policy_capability_option_help()
 

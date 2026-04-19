@@ -12,7 +12,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from afkbot.db.bootstrap import create_schema
+from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.task import Task
@@ -2015,7 +2015,7 @@ class TaskFlowService:
             engine = create_engine(self._settings)
             owned_engine = True
         try:
-            await create_schema(engine)
+            await ensure_task_runtime_schema(engine)
         finally:
             if owned_engine:
                 await engine.dispose()

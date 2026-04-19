@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.exc import InvalidRequestError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,8 +74,8 @@ class RunRepository:
     async def request_cancel(self, *, profile_id: str, session_id: str) -> bool:
         """Mark latest running run for session/profile as cancellation requested."""
 
-        statement: Select[tuple[Run]] = (
-            select(Run)
+        statement: Select[tuple[int]] = (
+            select(Run.id)
             .where(
                 Run.profile_id == profile_id,
                 Run.session_id == session_id,
@@ -84,11 +84,15 @@ class RunRepository:
             .order_by(Run.id.desc())
             .limit(1)
         )
-        run = (await self._session.execute(statement)).scalar_one_or_none()
-        if run is None:
+        run_id = (await self._session.execute(statement)).scalar_one_or_none()
+        if run_id is None:
             return False
-        run.cancel_requested = True
-        await self._session.flush()
+        result = await self._session.execute(
+            update(Run)
+            .where(Run.id == run_id)
+            .values(cancel_requested=True)
+        )
+        del result
         return True
 
     async def get_latest_run_id(self, profile_id: str, session_id: str) -> int | None:

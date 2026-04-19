@@ -13,7 +13,7 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.channel_routing.contracts import ChannelBindingRule
 from afkbot.services.channel_routing.service import get_channel_binding_service
-from afkbot.services.memory import reset_memory_services
+from afkbot.services.memory import reset_memory_services_async
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
@@ -83,7 +83,7 @@ async def _prepare(
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", db_url)
     get_settings.cache_clear()
-    reset_memory_services()
+    await reset_memory_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)

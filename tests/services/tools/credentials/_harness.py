@@ -12,7 +12,7 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
-from afkbot.services.credentials import reset_credentials_services
+from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
@@ -34,7 +34,7 @@ async def prepare_credentials_tools(
     get_settings.cache_clear()
 
     settings = get_settings()
-    reset_credentials_services()
+    await reset_credentials_services_async()
 
     engine = create_engine(settings)
     await create_schema(engine)

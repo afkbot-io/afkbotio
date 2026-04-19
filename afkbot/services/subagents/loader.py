@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import asyncio
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 from afkbot.services.naming import normalize_runtime_name
@@ -15,6 +16,20 @@ from afkbot.settings import Settings
 
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _NOT_FOUND_HINT_MAX_NAMES = 8
+_DISCOVERY_CACHE_LOCK = Lock()
+_SUBAGENT_DISCOVERY_CACHE: dict[
+    tuple[str, str],
+    tuple[tuple[tuple[str, tuple[int, int] | None], ...], tuple[SubagentInfo, ...]],
+] = {}
+_SUBAGENT_TEXT_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def reset_subagent_loader_caches() -> None:
+    """Reset process-local subagent discovery caches (used by tests)."""
+
+    with _DISCOVERY_CACHE_LOCK:
+        _SUBAGENT_DISCOVERY_CACHE.clear()
+        _SUBAGENT_TEXT_CACHE.clear()
 
 
 class SubagentLoader:
@@ -84,19 +99,19 @@ class SubagentLoader:
         """Load markdown content for a resolved subagent descriptor."""
 
         info = await self.resolve_subagent(name=name, profile_id=profile_id)
-        return await asyncio.to_thread(info.path.read_text, encoding="utf-8")
+        return await asyncio.to_thread(self._read_cached_text, info.path)
 
     def _discover_core_subagents(self) -> list[SubagentInfo]:
         root = self._settings.subagents_dir
-        if not root.exists():
-            return []
-        return self._discover(root, origin="core")
+        return self._discover_cached(root=root, origin="core", cache_namespace="core")
 
     def _discover_profile_subagents(self, profile_id: str) -> list[SubagentInfo]:
         root = self._safe_profile_subagents_root(profile_id)
-        if not root.exists():
-            return []
-        return self._discover(root, origin="profile")
+        return self._discover_cached(
+            root=root,
+            origin="profile",
+            cache_namespace=f"profile:{profile_id}",
+        )
 
     def _discover(self, root: Path, origin: Literal["core", "profile"]) -> list[SubagentInfo]:
         result: list[SubagentInfo] = []
@@ -112,6 +127,37 @@ class SubagentLoader:
                 continue
             result.append(SubagentInfo(name=name, path=safe_path, origin=origin))
         return result
+
+    def _discover_cached(
+        self,
+        *,
+        root: Path,
+        origin: Literal["core", "profile"],
+        cache_namespace: str,
+    ) -> list[SubagentInfo]:
+        if not root.exists():
+            return []
+        cache_key = (cache_namespace, str(root.resolve()))
+        signature = self._discover_signature(root)
+        with _DISCOVERY_CACHE_LOCK:
+            cached = _SUBAGENT_DISCOVERY_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return list(cached[1])
+        discovered = tuple(self._discover(root, origin=origin))
+        with _DISCOVERY_CACHE_LOCK:
+            _SUBAGENT_DISCOVERY_CACHE[cache_key] = (signature, discovered)
+        return list(discovered)
+
+    def _discover_signature(
+        self,
+        root: Path,
+    ) -> tuple[tuple[str, tuple[int, int] | None], ...]:
+        entries: list[tuple[str, tuple[int, int] | None]] = []
+        for path in sorted(root.iterdir(), key=lambda item: item.name):
+            if not path.is_file() or path.suffix != ".md":
+                continue
+            entries.append((path.name, self._path_signature(path)))
+        return tuple(entries)
 
     @staticmethod
     def _validate_subagent_name(name: str) -> None:
@@ -145,6 +191,28 @@ class SubagentLoader:
         if not path.is_relative_to(root):
             raise ValueError(f"Invalid profile subagent path: {name}")
         return path
+
+    def _read_cached_text(self, path: Path) -> str:
+        signature = self._path_signature(path)
+        if signature is None:
+            raise FileNotFoundError(path)
+        cache_key = str(path.resolve())
+        with _DISCOVERY_CACHE_LOCK:
+            cached = _SUBAGENT_TEXT_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+        text = path.read_text(encoding="utf-8")
+        with _DISCOVERY_CACHE_LOCK:
+            _SUBAGENT_TEXT_CACHE[cache_key] = (signature, text)
+        return text
+
+    @staticmethod
+    def _path_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat_result = path.stat()
+        except OSError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_size)
 
 
 def _requested_subagent_label(*, raw_name: str | None, resolved_name: str) -> str:

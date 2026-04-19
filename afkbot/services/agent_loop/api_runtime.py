@@ -36,6 +36,7 @@ from afkbot.services.agent_loop.progress_stream import (
 )
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_runtime import run_once_result
+from afkbot.services.subagents import reset_subagent_service_for_root_async
 from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
@@ -56,6 +57,7 @@ __all__ = [
 class _ApiRuntimeState:
     """Shared DB resources for API routes lifecycle."""
 
+    settings: Settings
     engine: AsyncEngine
     session_factory: async_sessionmaker[AsyncSession]
 
@@ -79,6 +81,7 @@ async def initialize_api_runtime(*, settings: Settings | None = None) -> None:
         engine = create_engine(resolved_settings)
         await create_schema(engine)
         _API_RUNTIME_STATE = _ApiRuntimeState(
+            settings=resolved_settings,
             engine=engine,
             session_factory=create_session_factory(engine),
         )
@@ -88,13 +91,14 @@ async def shutdown_api_runtime() -> None:
     """Dispose shared API runtime resources if they were initialized."""
 
     global _API_RUNTIME_STATE
-    settings = get_settings()
     async with _API_RUNTIME_LOCK:
         state = _API_RUNTIME_STATE
-        _API_RUNTIME_STATE = None
-    if state is not None:
-        await get_browser_session_manager().close_all_for_root(root_dir=settings.root_dir)
+        if state is None:
+            return
+        await reset_subagent_service_for_root_async(settings=state.settings)
+        await get_browser_session_manager().close_all_for_root(root_dir=state.settings.root_dir)
         await state.engine.dispose()
+        _API_RUNTIME_STATE = None
 
 
 def get_api_session_factory() -> async_sessionmaker[AsyncSession] | None:

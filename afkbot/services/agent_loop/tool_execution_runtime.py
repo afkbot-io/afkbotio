@@ -1,4 +1,4 @@
-"""Tool execution runtime for guarded tool calls and internal subagent polling."""
+"""Tool execution runtime for guarded tool calls and deterministic tool logging."""
 
 from __future__ import annotations
 
@@ -296,90 +296,6 @@ class ToolExecutionRuntime:
                 reason=f"{exc.__class__.__name__}: {exc}",
             )
 
-    async def await_subagent_result_after_run(
-        self,
-        *,
-        run_id: int,
-        session_id: str,
-        ctx: ToolContext,
-        run_result: ToolResult,
-    ) -> ToolResult:
-        """Execute wait/result cycle after successful subagent.run call."""
-
-        payload = run_result.payload if isinstance(run_result.payload, dict) else {}
-        task_id = str(payload.get("task_id") or "").strip()
-        if not task_id:
-            return run_result
-
-        timeout_sec_raw = payload.get("timeout_sec")
-        try:
-            total_timeout_sec = int(str(timeout_sec_raw)) if timeout_sec_raw is not None else 900
-        except (TypeError, ValueError):
-            total_timeout_sec = 900
-        total_timeout_sec = max(1, total_timeout_sec)
-
-        deadline = asyncio.get_running_loop().time() + float(total_timeout_sec)
-        wait_slice_sec = 30
-
-        while True:
-            await self._raise_if_cancel_requested(run_id=run_id)
-            now = asyncio.get_running_loop().time()
-            remaining = deadline - now
-            if remaining <= 0:
-                return ToolResult.error(
-                    error_code="subagent_timeout",
-                    reason=f"Subagent timed out after {total_timeout_sec} seconds",
-                    metadata={"task_id": task_id},
-                )
-
-            wait_call = ToolCall(
-                name="subagent.wait",
-                params={
-                    "task_id": task_id,
-                    "profile_id": ctx.profile_id,
-                    "profile_key": ctx.profile_id,
-                    "timeout_sec": max(1, min(wait_slice_sec, int(remaining))),
-                },
-            )
-            wait_result = await self._execute_internal_tool_with_logging(
-                run_id=run_id,
-                session_id=session_id,
-                ctx=ctx,
-                tool_call=wait_call,
-            )
-            if not wait_result.ok:
-                return wait_result
-            wait_payload = wait_result.payload if isinstance(wait_result.payload, dict) else {}
-            if bool(wait_payload.get("done")):
-                break
-
-        await self._raise_if_cancel_requested(run_id=run_id)
-        result_call = ToolCall(
-            name="subagent.result",
-            params={
-                "task_id": task_id,
-                "profile_id": ctx.profile_id,
-                "profile_key": ctx.profile_id,
-            },
-        )
-        result = await self._execute_internal_tool_with_logging(
-            run_id=run_id,
-            session_id=session_id,
-            ctx=ctx,
-            tool_call=result_call,
-        )
-        if not result.ok:
-            return result
-
-        result_payload = result.payload if isinstance(result.payload, dict) else {}
-        merged_payload = {
-            **payload,
-            "status": result_payload.get("status"),
-            "output": result_payload.get("output"),
-            "result": result_payload,
-        }
-        return ToolResult(ok=True, payload=merged_payload)
-
     async def _prepare_single_tool_call(
         self,
         *,
@@ -583,18 +499,10 @@ class ToolExecutionRuntime:
     async def _execute_prepared_tool_call(self, prepared: _PreparedToolExecution) -> ToolResult:
         """Execute one already-guarded tool call."""
 
-        result = await self.execute_tool_call(
+        return await self.execute_tool_call(
             tool_call=prepared.guarded_call,
             ctx=prepared.ctx,
         )
-        if result.ok and prepared.execution_name == "subagent.run":
-            return await self.await_subagent_result_after_run(
-                run_id=prepared.run_id,
-                session_id=prepared.session_id,
-                ctx=prepared.ctx,
-                run_result=result,
-            )
-        return result
 
     @staticmethod
     def _session_job_params_include_subagent(params: dict[str, object]) -> bool:

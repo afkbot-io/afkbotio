@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import contextlib
 import os
 import signal
 import subprocess
@@ -22,6 +23,7 @@ class SubagentLauncher:
         self._launch_mode = launch_mode
         self._inline_tasks: dict[str, asyncio.Task[bool]] = {}
         self._processes: dict[str, subprocess.Popen[Any]] = {}
+        self._process_stop_timeout_sec = max(0.0, float(settings.runtime_shutdown_timeout_sec))
 
     def spawn(
         self,
@@ -47,41 +49,96 @@ class SubagentLauncher:
         process = spawn_worker(task_id=task_id, settings=self._settings)
         self._processes[task_id] = process
 
-    def cancel(self, *, task_id: str) -> None:
+    def reap(self, *, task_id: str | None = None) -> None:
+        """Drop finished detached workers from the local process-handle map."""
+
+        task_ids = (task_id,) if task_id is not None else tuple(self._processes)
+        for current_task_id in task_ids:
+            process = self._processes.get(current_task_id)
+            if process is None or process.poll() is None:
+                continue
+            with contextlib.suppress(Exception):
+                process.wait(timeout=0)
+            self._processes.pop(current_task_id, None)
+
+    async def cancel(self, *, task_id: str) -> None:
         """Best-effort cancellation for launch handles owned by this service."""
 
         task = self._inline_tasks.pop(task_id, None)
         if task is not None:
             task.cancel()
-        self._reap_finished_processes()
-        process = self._processes.pop(task_id, None)
+        self.reap(task_id=task_id)
+        process = self._processes.get(task_id)
         if process is None or process.poll() is not None:
+            self._processes.pop(task_id, None)
             return
-        try:
-            killpg = getattr(os, "killpg", None)
-            if callable(killpg):
-                killpg(process.pid, signal.SIGTERM)
-            else:
-                process.terminate()
-        except ProcessLookupError:
+        self._signal_process(process, signal.SIGTERM)
+        exited = await self._wait_for_process_exit(
+            task_id=task_id,
+            process=process,
+            timeout_sec=self._process_stop_timeout_sec,
+        )
+        if exited:
             return
-        except PermissionError:
-            process.terminate()
+        self._signal_process(process, signal.SIGKILL)
+        await self._wait_for_process_exit(
+            task_id=task_id,
+            process=process,
+            timeout_sec=max(0.1, self._process_stop_timeout_sec),
+        )
 
     def _reap_finished_processes(self) -> None:
-        finished_task_ids = [
-            task_id for task_id, process in self._processes.items() if process.poll() is not None
-        ]
-        for task_id in finished_task_ids:
-            self._processes.pop(task_id, None)
+        self.reap()
 
     async def shutdown(self) -> None:
         """Wait for outstanding inline tasks to settle."""
 
         inline_tasks = tuple(self._inline_tasks.values())
         for task_id in tuple(self._inline_tasks):
-            self.cancel(task_id=task_id)
+            await self.cancel(task_id=task_id)
         for task_id in tuple(self._processes):
-            self.cancel(task_id=task_id)
+            await self.cancel(task_id=task_id)
         if inline_tasks:
             await asyncio.gather(*inline_tasks, return_exceptions=True)
+        self._reap_finished_processes()
+
+    async def _wait_for_process_exit(
+        self,
+        *,
+        task_id: str,
+        process: subprocess.Popen[Any],
+        timeout_sec: float,
+    ) -> bool:
+        if process.poll() is not None:
+            self._processes.pop(task_id, None)
+            return True
+        timeout = max(0.0, float(timeout_sec))
+        if timeout <= 0:
+            return False
+        try:
+            await asyncio.to_thread(process.wait, timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        finally:
+            if process.poll() is not None:
+                self._processes.pop(task_id, None)
+        return process.poll() is not None
+
+    @staticmethod
+    def _signal_process(process: subprocess.Popen[Any], sig: signal.Signals) -> None:
+        try:
+            killpg = getattr(os, "killpg", None)
+            if callable(killpg):
+                killpg(process.pid, sig)
+                return
+            if sig == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            if sig == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
