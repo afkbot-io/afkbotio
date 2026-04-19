@@ -9,9 +9,11 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from afkbot.api.chat_routes.router import router as chat_router
+from afkbot.api.routes_auth import router as auth_router
 from afkbot.api.routes_connect import router as connect_router
 from afkbot.api.routes_health import router as health_router
 from afkbot.api.routes_plugins import router as plugins_router
+from afkbot.api.ui_auth_middleware import PluginUIAuthMiddleware
 from afkbot.services.agent_loop.api_runtime import (
     initialize_api_runtime,
     shutdown_api_runtime,
@@ -41,7 +43,12 @@ def create_app() -> FastAPI:
             finally:
                 await shutdown_api_runtime()
 
-    app = FastAPI(title="AFKBOT API", version="1.2.0", lifespan=_lifespan)
+    app = FastAPI(title="AFKBOT API", version="1.3.0", lifespan=_lifespan)
+    app.add_middleware(
+        PluginUIAuthMiddleware,
+        settings=settings,
+        protected_web_plugin_ids=plugin_runtime.operator_auth_plugin_ids,
+    )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -52,6 +59,7 @@ def create_app() -> FastAPI:
         return {"status": "ready"}
 
     app.include_router(chat_router)
+    app.include_router(auth_router)
     app.include_router(connect_router)
     app.include_router(health_router)
     app.include_router(plugins_router)

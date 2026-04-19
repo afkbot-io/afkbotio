@@ -150,6 +150,14 @@ class PluginMounts(BaseModel):
         return normalized.rstrip("/") or "/"
 
 
+class PluginAuth(BaseModel):
+    """Auth policy declared by one plugin manifest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operator_required: bool = False
+
+
 class PluginPaths(BaseModel):
     """Relative paths inside one installed plugin package."""
 
@@ -186,6 +194,7 @@ class PluginManifest(BaseModel):
     config_schema: PluginConfigSchema = Field(default_factory=PluginConfigSchema)
     permissions: PluginPermissions = Field(default_factory=PluginPermissions)
     capabilities: PluginCapabilities = Field(default_factory=PluginCapabilities)
+    auth: PluginAuth = Field(default_factory=PluginAuth)
     mounts: PluginMounts = Field(default_factory=PluginMounts)
     paths: PluginPaths = Field(default_factory=PluginPaths)
 
@@ -317,6 +326,16 @@ class PluginRuntimeSnapshot:
     @property
     def static_mounts(self) -> tuple[PluginStaticMount, ...]:
         return tuple(item for plugin in self.plugins for item in plugin.static_mounts)
+
+    @property
+    def operator_auth_plugin_ids(self) -> tuple[str, ...]:
+        """Return plugin ids that declare operator auth in their manifest."""
+
+        return tuple(
+            plugin.record.plugin_id
+            for plugin in self.plugins
+            if plugin.record.manifest.auth.operator_required
+        )
 
     @property
     def skill_dirs(self) -> tuple[Path, ...]:
