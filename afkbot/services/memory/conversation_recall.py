@@ -15,6 +15,10 @@ from afkbot.repositories.chat_session_compaction_repo import ChatSessionCompacti
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.repositories.support import profile_exists
+from afkbot.services.channel_routing.policy import is_user_facing_transport
+from afkbot.services.channel_routing.resolver import resolve_session_id
+from afkbot.services.channel_routing.contracts import ChannelRoutingInput
+from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
 from afkbot.settings import Settings
 
 TValue = TypeVar("TValue")
@@ -51,6 +55,7 @@ class ConversationRecallActor:
     session_id: str
     transport: str | None = None
     account_id: str | None = None
+    peer_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,27 +93,24 @@ class ConversationRecallService:
 
         async def _op(
             session: AsyncSession,
-            turns: ChatTurnRepository,
             compactions: ChatSessionCompactionRepository,
+            turns: ChatTurnRepository,
+            chat_sessions: ChatSessionRepository,
         ) -> list[ConversationRecallHit]:
-            if not await profile_exists(session, profile_id=profile_id):
+            if await profile_exists(session, profile_id=profile_id) is None:
                 raise ConversationRecallServiceError(
-                    error_code="profile_not_found",
-                    reason="Profile not found",
+                    error_code="memory_profile_not_found",
+                    reason=f"Profile '{profile_id}' does not exist.",
                 )
-            compaction = await compactions.get(profile_id=profile_id, session_id=session_id)
-            min_turn_id = 0 if compaction is None else compaction.compacted_until_turn_id
-            raw_turns = await turns.list_range(
-                profile_id=profile_id,
-                session_id=session_id,
-                min_turn_id_exclusive=min_turn_id,
-            )
+            target_session = await chat_sessions.get(session_id)
+            if target_session is None or target_session.profile_id != profile_id:
+                return []
             candidates: list[tuple[tuple[int, int, int, int], ConversationRecallHit]] = []
-            if compaction is not None and compaction.summary_text.strip():
-                compaction_score = self._score_text(
-                    query=normalized_query,
-                    text=compaction.summary_text,
-                )
+            compaction = await compactions.get(profile_id=profile_id, session_id=session_id)
+            compacted_until_turn_id = 0
+            if compaction and compaction.summary_text.strip():
+                compacted_until_turn_id = int(compaction.compacted_until_turn_id)
+                compaction_score = self._score_text(query=normalized_query, text=compaction.summary_text)
                 if compaction_score is not None:
                     candidates.append(
                         (
@@ -123,7 +125,10 @@ class ConversationRecallService:
                             ),
                         )
                     )
+            raw_turns = await turns.list_recent(profile_id=profile_id, session_id=session_id, limit=25)
             for turn in raw_turns:
+                if compacted_until_turn_id and int(turn.id) <= compacted_until_turn_id:
+                    continue
                 combined = f"User: {turn.user_message}\nAssistant: {turn.assistant_message}"
                 turn_score = self._score_text(query=normalized_query, text=combined)
                 if turn_score is None:
@@ -155,62 +160,72 @@ class ConversationRecallService:
         target_session_id: str | None,
         query: str,
         limit: int = 5,
+        actor_account_id: str | None = None,
+        actor_peer_id: str | None = None,
     ) -> list[ConversationRecallHit]:
         """Authorize one actor boundary, then search recall for the resolved target session."""
 
         actor = ConversationRecallActor(
             session_id=self._normalize_query(actor_session_id),
             transport=self._normalize_transport(actor_transport),
-            account_id=self._normalize_account_id(
-                actor_transport=actor_transport,
-                actor_session_id=actor_session_id,
+            account_id=(
+                self._normalize_selector_value(actor_account_id)
+                or self._normalize_account_id(
+                    actor_transport=actor_transport,
+                    actor_session_id=actor_session_id,
+                )
             ),
+            peer_id=self._normalize_selector_value(actor_peer_id),
         )
         resolved_target = await self._resolve_target_session(
             profile_id=profile_id,
             actor=actor,
             target_session_id=target_session_id,
         )
-        resolved_session_id = resolved_target.session_id
         return await self.search(
             profile_id=profile_id,
-            session_id=resolved_session_id,
+            session_id=resolved_target.session_id,
             query=query,
             limit=limit,
         )
 
     async def shutdown(self) -> None:
-        """Dispose owned async engine when created by the service."""
+        """Dispose owned engine resources when this service owns an engine."""
 
-        if self._engine is None:
-            return
-        await self._engine.dispose()
+        if self._engine is not None:
+            await self._engine.dispose()
 
     async def _with_repos(
         self,
         op: Callable[
-            [AsyncSession, ChatTurnRepository, ChatSessionCompactionRepository],
+            [AsyncSession, ChatSessionCompactionRepository, ChatTurnRepository, ChatSessionRepository],
             Awaitable[TValue],
         ],
     ) -> TValue:
         async with session_scope(self._session_factory) as session:
-            turns = ChatTurnRepository(session)
             compactions = ChatSessionCompactionRepository(session)
-            return await op(session, turns, compactions)
+            turns = ChatTurnRepository(session)
+            chat_sessions = ChatSessionRepository(session)
+            return await op(session, compactions, turns, chat_sessions)
 
     @staticmethod
-    def _normalize_query(query: str) -> str:
-        value = " ".join(query.strip().split())
-        if not value:
+    def _normalize_query(value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
             raise ConversationRecallServiceError(
-                error_code="conversation_recall_invalid_query",
-                reason="query is required",
+                error_code="memory_query_empty",
+                reason="Query must not be empty.",
             )
-        return value
+        return normalized
 
     @staticmethod
     def _normalize_transport(transport: str | None) -> str | None:
         normalized = (transport or "").strip().lower()
+        return normalized or None
+
+    @staticmethod
+    def _normalize_selector_value(value: str | None) -> str | None:
+        normalized = (value or "").strip()
         return normalized or None
 
     @staticmethod
@@ -234,12 +249,7 @@ class ConversationRecallService:
 
     @staticmethod
     def _normalize_limit(limit: int) -> int:
-        if limit < 1:
-            raise ConversationRecallServiceError(
-                error_code="conversation_recall_invalid_limit",
-                reason="limit must be >= 1",
-            )
-        return min(limit, 20)
+        return max(1, min(int(limit), 20))
 
     async def _resolve_target_session(
         self,
@@ -251,6 +261,17 @@ class ConversationRecallService:
         normalized_target = " ".join((target_session_id or "").strip().split()) or actor.session_id
         if normalized_target == actor.session_id:
             return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=profile_id)
+        if is_user_facing_transport(actor.transport):
+            if not self._is_target_allowed_for_trusted_actor(
+                actor=actor,
+                session_id=normalized_target,
+                profile_id=profile_id,
+            ):
+                raise ConversationRecallServiceError(
+                    error_code="memory_cross_scope_forbidden",
+                    reason="Actor is not authorized to access recall for the requested session.",
+                )
+            return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=profile_id)
         if actor.transport not in _TRUSTED_FOREIGN_RECALL_TRANSPORTS:
             raise ConversationRecallServiceError(
                 error_code="memory_cross_scope_forbidden",
@@ -260,30 +281,38 @@ class ConversationRecallService:
         if owner_profile_id != profile_id:
             raise ConversationRecallServiceError(
                 error_code="memory_cross_scope_forbidden",
-                reason="This runtime may not access recall from another session.",
+                reason="Target session belongs to another profile.",
             )
-        if not self._is_target_allowed_for_trusted_actor(actor=actor, session_id=normalized_target):
+        if not self._is_target_allowed_for_trusted_actor(
+            actor=actor,
+            session_id=normalized_target,
+            profile_id=profile_id,
+        ):
             raise ConversationRecallServiceError(
                 error_code="memory_cross_scope_forbidden",
-                reason="This runtime may not access recall from another session.",
+                reason="Actor is not authorized to access recall for the requested session.",
             )
         return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=owner_profile_id)
 
     async def _lookup_session_owner_profile_id(self, *, session_id: str) -> str | None:
         async def _op(
             session: AsyncSession,
-            _turns: ChatTurnRepository,
             _compactions: ChatSessionCompactionRepository,
+            _turns: ChatTurnRepository,
+            chat_sessions: ChatSessionRepository,
         ) -> str | None:
-            row = await ChatSessionRepository(session).get(session_id)
-            if row is None:
-                return None
-            return row.profile_id
+            row = await chat_sessions.get(session_id)
+            return None if row is None else row.profile_id
 
         return await self._with_repos(_op)
 
     @staticmethod
-    def _is_target_allowed_for_trusted_actor(*, actor: ConversationRecallActor, session_id: str) -> bool:
+    def _is_target_allowed_for_trusted_actor(
+        *,
+        actor: ConversationRecallActor,
+        session_id: str,
+        profile_id: str,
+    ) -> bool:
         transport = actor.transport
         if transport == "taskflow":
             account_id = actor.account_id
@@ -299,7 +328,29 @@ class ConversationRecallService:
             )
         if transport == "cli":
             return True
-        return False
+        if not is_user_facing_transport(transport):
+            return False
+        account_id = actor.account_id
+        peer_id = actor.peer_id
+        if not account_id or not peer_id:
+            return False
+        expected_session_id = resolve_session_id(
+            policy="per-chat",
+            routing_input=ChannelRoutingInput(
+                transport=transport,
+                account_id=account_id,
+                peer_id=peer_id,
+                default_session_id="main",
+            ),
+        )
+        if session_id == expected_session_id:
+            return True
+        expected_scoped_session_id = compose_bounded_session_id(
+            "profile",
+            encode_session_component(profile_id),
+            expected_session_id,
+        )
+        return session_id == expected_scoped_session_id
 
     @staticmethod
     def _tokenize(text: str) -> tuple[str, ...]:
@@ -310,11 +361,13 @@ class ConversationRecallService:
         query_tokens = cls._tokenize(query)
         if not query_tokens:
             return None
-        haystack = text.lower()
-        exact_phrase = 1 if query.lower() in haystack else 0
-        token_hits = sum(1 for token in query_tokens if token in haystack)
-        if exact_phrase == 0 and token_hits == 0:
+        text_tokens = set(cls._tokenize(text))
+        token_hits = sum(1 for token in query_tokens if token in text_tokens)
+        if token_hits <= 0:
             return None
+        query_phrase = " ".join(query_tokens)
+        text_phrase = " ".join(cls._tokenize(text))
+        exact_phrase = 1 if query_phrase and query_phrase in text_phrase else 0
         return (exact_phrase, token_hits)
 
     @staticmethod

@@ -22,44 +22,42 @@ class ConversationRecallSearchParams(ToolParameters):
 
     @field_validator("session_id", mode="before")
     @classmethod
-    def _normalize_session_id(cls, value: object) -> object:
+    def _normalize_session_id(cls, value: object) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str):
-            return value
-        normalized = value.strip()
+            raise TypeError("session_id must be a string")
+        normalized = " ".join(value.strip().split())
         return normalized or None
 
 
 class MemoryRecallSearchTool(ToolBase):
-    """Search trusted compaction plus recent raw turns for one session."""
+    """Return ranked recall hits from compacted and recent conversation state."""
 
     name = "memory.recall.search"
-    description = "Search historical conversation context for the active session."
+    description = "Search compacted and recent conversation context for one session."
+    tags = ("memory", "recall", "history")
     parameters_model = ConversationRecallSearchParams
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        prepared = self._prepare_params(
-            ctx=ctx,
-            params=params,
-            expected=ConversationRecallSearchParams,
-        )
-        if isinstance(prepared, ToolResult):
-            return prepared
+        typed = ConversationRecallSearchParams.model_validate(params.model_dump())
         try:
             items = await get_conversation_recall_service(self._settings).search_for_actor(
-                profile_id=ctx.profile_id,
+                profile_id=typed.profile_key,
                 actor_session_id=ctx.session_id,
                 actor_transport=self._actor_transport(ctx),
-                target_session_id=prepared.session_id,
-                query=prepared.query,
-                limit=prepared.limit,
+                target_session_id=typed.session_id,
+                query=typed.query,
+                limit=typed.limit,
+                actor_account_id=self._actor_account_id(ctx),
+                actor_peer_id=self._actor_peer_id(ctx),
             )
         except ConversationRecallServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
+
         payload_items = [
             {
                 "kind": item.kind,
@@ -78,6 +76,24 @@ class MemoryRecallSearchTool(ToolBase):
         metadata = ctx.runtime_metadata or {}
         transport = metadata.get("transport")
         return transport.strip() if isinstance(transport, str) else None
+
+    @staticmethod
+    def _actor_account_id(ctx: ToolContext) -> str | None:
+        metadata = ctx.runtime_metadata or {}
+        account_id = metadata.get("account_id")
+        if not isinstance(account_id, str):
+            return None
+        normalized = account_id.strip()
+        return normalized or None
+
+    @staticmethod
+    def _actor_peer_id(ctx: ToolContext) -> str | None:
+        metadata = ctx.runtime_metadata or {}
+        peer_id = metadata.get("peer_id")
+        if not isinstance(peer_id, str):
+            return None
+        normalized = peer_id.strip()
+        return normalized or None
 
 
 def create_tool(settings: Settings) -> ToolBase:

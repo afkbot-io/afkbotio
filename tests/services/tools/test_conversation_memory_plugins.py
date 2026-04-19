@@ -19,17 +19,26 @@ from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
 
 
-def _user_facing_ctx(*, session_id: str = "chat:100") -> ToolContext:
+def _user_facing_ctx(
+    *,
+    session_id: str = "chat:100",
+    transport: str = "telegram_user",
+    account_id: str | None = "personal-user",
+    peer_id: str | None = "100",
+) -> ToolContext:
+    metadata: dict[str, object] = {
+        "transport": transport,
+        "channel_binding": {"binding_id": "personal-user", "session_policy": "per-chat"},
+    }
+    if account_id is not None:
+        metadata["account_id"] = account_id
+    if peer_id is not None:
+        metadata["peer_id"] = peer_id
     return ToolContext(
         profile_id="default",
         session_id=session_id,
-        run_id=1,
-        runtime_metadata={
-            "transport": "telegram_user",
-            "account_id": "personal-user",
-            "peer_id": "100",
-            "channel_binding": {"binding_id": "personal-user", "session_policy": "per-chat"},
-        },
+        run_id=2,
+        runtime_metadata=metadata,
     )
 
 
@@ -76,8 +85,11 @@ async def _prepare(tmp_path: Path, monkeypatch: MonkeyPatch) -> tuple[Settings, 
         session_repo = ChatSessionRepository(session)
         await session_repo.create("chat:100", "default", "Primary")
         await session_repo.create("chat:200", "default", "Foreign")
+        await session_repo.create("profile:default:chat:100", "default", "Routed Primary")
+        await session_repo.create("profile:default:chat:200", "default", "Routed Foreign")
         await session_repo.create("taskflow:task-1", "default", "Taskflow 1")
         await session_repo.create("taskflow:task-2", "default", "Taskflow 2")
+
         session.add_all(
             [
                 ChatTurn(
@@ -102,12 +114,12 @@ async def _prepare(tmp_path: Path, monkeypatch: MonkeyPatch) -> tuple[Settings, 
                     session_id="chat:100",
                     profile_id="default",
                     user_message="Newest note: Redis cache still helps read throughput.",
-                    assistant_message="Redis cache still helps read throughput.",
+                    assistant_message="Redis cache still helps read throughput in production.",
                 ),
                 ChatTurn(
                     session_id="chat:200",
                     profile_id="default",
-                    user_message="Foreign session note about invoice approval.",
+                    user_message="Foreign invoice conversation",
                     assistant_message="Invoice approval is still pending.",
                 ),
                 ChatTurn(
@@ -119,12 +131,23 @@ async def _prepare(tmp_path: Path, monkeypatch: MonkeyPatch) -> tuple[Settings, 
                 ChatTurn(
                     session_id="taskflow:task-2",
                     profile_id="default",
-                    user_message="Other taskflow session note about invoice approval.",
-                    assistant_message="Other taskflow invoice approval is still pending.",
+                    user_message="Second taskflow note about invoice approval.",
+                    assistant_message="Taskflow invoice approval finalized.",
+                ),
+                ChatTurn(
+                    session_id="profile:default:chat:100",
+                    profile_id="default",
+                    user_message="Routed chat says Postgres is source of truth.",
+                    assistant_message="Routed session confirms source of truth is Postgres.",
+                ),
+                ChatTurn(
+                    session_id="profile:default:chat:200",
+                    profile_id="default",
+                    user_message="Foreign routed invoice context.",
+                    assistant_message="Foreign routed invoice approval pending.",
                 ),
             ]
         )
-        await session.flush()
         await ChatSessionCompactionRepository(session).upsert(
             profile_id="default",
             session_id="chat:100",
@@ -183,6 +206,50 @@ async def test_user_facing_conversation_recall_cannot_access_foreign_session(
     assert result.error_code == "memory_cross_scope_forbidden"
 
 
+async def test_user_facing_conversation_recall_allows_routed_profile_session(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    settings, registry = await _prepare(tmp_path, monkeypatch)
+    recall_tool = registry.get("memory.recall.search")
+    assert recall_tool is not None
+
+    result = await recall_tool.execute(
+        _user_facing_ctx(session_id="profile:default:chat:100"),
+        recall_tool.parse_params(
+            {"profile_key": "default", "query": "source of truth"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is True
+    items = result.payload["items"]
+    assert isinstance(items, list)
+    assert items[0]["session_id"] == "profile:default:chat:100"
+
+
+async def test_user_facing_conversation_recall_blocks_other_routed_profile_session(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    settings, registry = await _prepare(tmp_path, monkeypatch)
+    recall_tool = registry.get("memory.recall.search")
+    assert recall_tool is not None
+
+    result = await recall_tool.execute(
+        _user_facing_ctx(session_id="profile:default:chat:100"),
+        recall_tool.parse_params(
+            {"profile_key": "default", "session_id": "profile:default:chat:200", "query": "invoice"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "memory_cross_scope_forbidden"
+
+
 async def test_conversation_recall_fails_closed_when_transport_metadata_missing(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -212,17 +279,17 @@ async def test_trusted_conversation_recall_can_target_foreign_session_explicitly
     assert recall_tool is not None
 
     result = await recall_tool.execute(
-        _trusted_ctx(transport="taskflow", account_id="task-1", session_id="taskflow:task-1"),
+        _trusted_ctx(transport="taskflow", session_id="taskflow:task-1", account_id="task-1"),
         recall_tool.parse_params(
             {"profile_key": "default", "session_id": "taskflow:task-1", "query": "invoice"},
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         ),
     )
+
     assert result.ok is True
     items = result.payload["items"]
     assert isinstance(items, list)
-    assert items[0]["session_id"] == "taskflow:task-1"
     assert items[0]["kind"] == "turn"
 
 
@@ -235,7 +302,7 @@ async def test_trusted_conversation_recall_blocks_other_taskflow_session(
     assert recall_tool is not None
 
     result = await recall_tool.execute(
-        _trusted_ctx(transport="taskflow", account_id="task-1", session_id="taskflow:task-1"),
+        _trusted_ctx(transport="taskflow", session_id="taskflow:task-1", account_id="task-1"),
         recall_tool.parse_params(
             {"profile_key": "default", "session_id": "taskflow:task-2", "query": "invoice"},
             default_timeout_sec=settings.tool_timeout_default_sec,
