@@ -15,8 +15,6 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.repositories.support import profile_exists
 from afkbot.services.channel_routing.policy import is_user_facing_transport
-from afkbot.services.channel_routing.resolver import resolve_session_id
-from afkbot.services.channel_routing.contracts import ChannelRoutingInput
 from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
 from afkbot.settings import Settings
 
