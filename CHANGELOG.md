@@ -2,6 +2,78 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-04-19
+
+### Added
+
+- Platform-level browser UI auth for plugin web surfaces and plugin API routes, including login, logout, session inspection, signed operator cookies, rate limiting, and lockout behavior.
+- New `afk auth ...` command surface with guided setup, create, update, status, password rotation, and disable flows.
+- Plugin manifests can now declare `auth.operator_required`, so protected browser surfaces survive plugin upgrades without storing auth state inside plugin packages.
+
+### Changed
+
+- Plugin web auth enforcement now runs in core `afk` instead of relying on per-plugin logic, and protected UI routes preserve the original `next=` target including query parameters.
+- The curated AFKBOT UI plugin can now consume core auth directly and show operator session state without maintaining its own password flow.
+
+### Fixed
+
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.3.0`.
+
+## [1.2.0] - 2026-04-16
+
+### Added
+
+- Task Flow now supports persisted task attachments end-to-end, including runtime delivery of attached context to AI-owned executions.
+- Task Flow boards and APIs now expose a leading human-only `PLAN` lane so operators can stage work before it becomes claimable by AI workers.
+- Release validation now includes stricter migration and runtime coverage for the Task Flow `description`/attachments rollout.
+
+### Changed
+
+- Task Flow has migrated from `prompt` to `description` as the canonical task body across the service, CLI, tools, and release smoke coverage.
+- Plan-only chat turns keep the normal runtime iteration budget instead of being artificially clamped to two iterations, while still remaining read-only.
+
+### Fixed
+
+- Legacy SQLite Task Flow installs are rebuilt safely so old `task.prompt` data lands in `description` and fresh inserts no longer fail after upgrade.
+- Task Flow runtime and operator surfaces now stay aligned when attachments, plan-stage tasks, and detached execution handoffs are involved.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.2.0`.
+
+## [1.1.1] - 2026-04-15
+
+### Added
+
+- `afk service host <host>` now lets operators persist the managed runtime bind host without coupling that change to a port rewrite.
+
+### Changed
+
+- Managed runtime bind persistence now routes host-only and port changes through the same reload and rollback path.
+
+### Fixed
+
+- Switching the managed AFKBOT service from `127.0.0.1` to `0.0.0.0` on the same runtime port pair no longer requires a manual stop before reload.
+- `afk task create` keeps backward compatibility by accepting legacy `--prompt` as a deprecated alias for `--description`, with deterministic precedence (`--description` wins when both are present) and default status preserved as `todo`.
+- Task attachment ingestion now enforces a pre-decode base64 payload size guard before `base64.b64decode(..., validate=True)` and still keeps the post-decode byte-size limit as a second safety layer.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.1`.
+
+## [1.1.0] - 2026-04-15
+
+### Added
+
+- Parallel planning strategy guidance for chat/runtime operator flows, making multi-tool execution planning more explicit.
+- Profile-aware AI employee Task Flow execution guards, plus scheduler fairness documentation and regression coverage for the new guarded runtime paths.
+
+### Changed
+
+- Task Flow runtime session binding, principal propagation, ownership handoff, and profile-scope resolution are now aligned across `task.create` and detached runtime execution flows.
+- Plugin CLI/operator output and companion docs are clearer around installed plugin surfaces and day-to-day operator usage.
+
+### Fixed
+
+- Cron automations now honor configured IANA timezones when calculating `next_run_at`, and legacy invalid timezone rows fail only their own job instead of aborting the whole cron tick.
+- Managed runtime startup now fails closed with stronger diagnostics and consistently routes managed services through the Python entrypoint.
+- Setup/runtime hardening now verifies OpenAI Codex auth earlier, safely rejects Codex verification rate-limit failures, retries transient LLM provider errors, and keeps the chat secret guard opt-in.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.1.0`.
+
 ## [1.0.13] - 2026-04-14
 
 ### Added

@@ -50,6 +50,28 @@ def test_load_local_codex_access_token_reads_codex_home(monkeypatch, tmp_path: P
     assert token == "local-codex-token"
 
 
+def test_load_local_codex_access_token_ignores_expired_jwt(monkeypatch, tmp_path: Path) -> None:
+    """Expired ChatGPT OAuth access tokens should not be auto-reused during setup."""
+
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "header.eyJleHAiOjEwfQ.signature",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setattr("afkbot.services.setup.provider_secrets.Path.home", lambda: tmp_path)
+
+    token = _load_local_codex_access_token()
+
+    assert token == ""
+
+
 def test_openai_codex_interactive_prefers_detected_local_token(monkeypatch) -> None:
     """Interactive OpenAI Codex setup should accept locally detected token without manual input."""
 

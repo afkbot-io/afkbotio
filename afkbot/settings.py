@@ -227,6 +227,17 @@ class Settings(BaseSettings):
     connect_revoke_rate_limit_window_sec: int = 60
     connect_revoke_rate_limit_max_attempts: int = 10
     connect_claim_pin_max_attempts: int = 5
+    ui_auth_mode: Literal["disabled", "password"] = "disabled"
+    ui_auth_username: str | None = None
+    ui_auth_session_ttl_sec: int = 43200
+    ui_auth_idle_ttl_sec: int = 1800
+    ui_auth_login_rate_limit_window_sec: int = 900
+    ui_auth_login_rate_limit_max_attempts: int = 5
+    ui_auth_lockout_sec: int = 900
+    ui_auth_protected_plugin_ids: tuple[str, ...] = ("afkbotui",)
+    ui_auth_trust_proxy_headers: bool = False
+    ui_auth_password_hash: str | None = None
+    ui_auth_cookie_key: str | None = None
     runtime_queue_max_size: int = 100
     runtime_worker_count: int = 4
     runtime_cron_interval_sec: float = 60.0
@@ -239,6 +250,7 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = False
     taskflow_strict_team_profile_ids: bool = False
     taskflow_blocked_revisit_initial_sec: int = 7200
@@ -269,6 +281,7 @@ class Settings(BaseSettings):
     )
     llm_history_turns: int = 8
     chat_planning_mode: Literal["off", "auto", "on"] = "auto"
+    chat_secret_guard_enabled: bool = False
     secure_request_ttl_sec: int = 900
     secure_flow_max_steps: int = 10
     memory_retention_days: int = 180
@@ -344,6 +357,8 @@ class Settings(BaseSettings):
         "github_copilot_api_key",
         "custom_api_key",
         "brave_api_key",
+        "ui_auth_password_hash",
+        "ui_auth_cookie_key",
         mode="before",
     )
     @classmethod
@@ -428,6 +443,61 @@ class Settings(BaseSettings):
             return normalized or None
         return value
 
+    @field_validator("taskflow_runtime_owner_ref", mode="before")
+    @classmethod
+    def _normalize_taskflow_runtime_owner_ref(cls, value: object) -> str | None:
+        """Normalize optional detached runtime owner filter."""
+
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) > 255:
+            raise ValueError("taskflow_runtime_owner_ref must be <= 255 characters")
+        return text
+
+    @field_validator("ui_auth_mode", mode="before")
+    @classmethod
+    def _normalize_ui_auth_mode(cls, value: object) -> str:
+        """Normalize UI auth mode before enum validation."""
+
+        normalized = str(value or "").strip().lower()
+        return normalized or "disabled"
+
+    @field_validator("ui_auth_username", mode="before")
+    @classmethod
+    def _normalize_ui_auth_username(cls, value: object) -> str | None:
+        """Normalize optional UI auth username."""
+
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("ui_auth_protected_plugin_ids", mode="before")
+    @classmethod
+    def _normalize_ui_auth_protected_plugin_ids(cls, value: object) -> object:
+        """Normalize protected plugin ids into a lowercase tuple."""
+
+        if value is None:
+            return ("afkbotui",)
+        if isinstance(value, str):
+            return tuple(
+                item.strip().lower()
+                for item in value.split(",")
+                if item.strip()
+            )
+        if isinstance(value, Mapping):
+            return value
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return tuple(
+                str(item).strip().lower()
+                for item in value
+                if str(item).strip()
+            )
+        return value
+
     @field_validator(
         "runtime_queue_max_size",
         "connect_claim_rate_limit_window_sec",
@@ -437,6 +507,11 @@ class Settings(BaseSettings):
         "connect_revoke_rate_limit_window_sec",
         "connect_revoke_rate_limit_max_attempts",
         "connect_claim_pin_max_attempts",
+        "ui_auth_session_ttl_sec",
+        "ui_auth_idle_ttl_sec",
+        "ui_auth_login_rate_limit_window_sec",
+        "ui_auth_login_rate_limit_max_attempts",
+        "ui_auth_lockout_sec",
         "runtime_worker_count",
         "agent_tool_parallel_max_concurrent",
         "runtime_cron_max_due_per_tick",
@@ -585,6 +660,18 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
+    def _validate_ui_auth_policy(self) -> Settings:
+        """Validate UI auth runtime policy coherence."""
+
+        if self.ui_auth_mode == "disabled":
+            return self
+        if not self.ui_auth_username:
+            raise ValueError("ui_auth_username is required when ui_auth_mode is enabled")
+        if self.ui_auth_idle_ttl_sec > self.ui_auth_session_ttl_sec:
+            raise ValueError("ui_auth_idle_ttl_sec must be <= ui_auth_session_ttl_sec")
+        return self
+
+    @model_validator(mode="after")
     def _resolve_relative_sqlite_db_url(self) -> Settings:
         """Resolve default relative SQLite URLs under the configured runtime root."""
 
@@ -713,6 +800,8 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
         "github_copilot_api_key",
         "custom_api_key",
         "brave_api_key",
+        "ui_auth_password_hash",
+        "ui_auth_cookie_key",
     }
 )
 _RUNTIME_CONFIG_FIELD_NAMES = frozenset(

@@ -148,10 +148,20 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 path=request_path,
                 timeout_sec=timeout_sec,
             )
-            return self._fallback_response(request, error_code="llm_timeout")
-        except (httpx.TransportError, OSError):
+            return self._fallback_response(
+                request,
+                error_code="llm_timeout",
+                error_detail="provider_request_timeout",
+            )
+        except (httpx.TransportError, OSError) as exc:
             self._emit_debug_diagnostics(stage="network_error", path=request_path, timeout_sec=timeout_sec)
-            return self._fallback_response(request, error_code="llm_provider_network_error")
+            detail = str(exc).strip()
+            error_detail = exc.__class__.__name__ if not detail else f"{exc.__class__.__name__}: {detail}"
+            return self._fallback_response(
+                request,
+                error_code="llm_provider_network_error",
+                error_detail=error_detail,
+            )
         except httpx.HTTPStatusError as exc:
             self._emit_debug_diagnostics(
                 stage="http_error",
@@ -160,9 +170,19 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 http_status=exc.response.status_code,
             )
             return self._fallback_http_status(request, exc)
-        except (ValueError, json.JSONDecodeError):
+        except (ValueError, json.JSONDecodeError) as exc:
             self._emit_debug_diagnostics(stage="invalid_response", path=request_path, timeout_sec=timeout_sec)
-            return self._fallback_response(request, error_code="llm_provider_response_invalid")
+            detail = str(exc).strip()
+            error_detail = (
+                "provider_response_invalid"
+                if not detail
+                else f"{exc.__class__.__name__}: {detail}"
+            )
+            return self._fallback_response(
+                request,
+                error_code="llm_provider_response_invalid",
+                error_detail=error_detail,
+            )
 
     def _is_configured(self) -> bool:
         return bool(self._api_key and self._model and self._base_url)
@@ -603,6 +623,15 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_detail=provider_detail,
             )
         if status_code in {401, 403}:
+            if self._provider_id == LLMProviderId.OPENAI_CODEX:
+                return self._fallback_response(
+                    request,
+                    error_code="llm_provider_auth_error",
+                    message=(
+                        "OpenAI Codex rejected the configured ChatGPT OAuth token. "
+                        "Run `codex login` again or update the profile with a fresh access token."
+                    ),
+                )
             return self._fallback_response(
                 request,
                 error_code="llm_provider_auth_error",
@@ -644,7 +673,14 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_detail=provider_detail,
                 message=message_text,
             )
-        return self._fallback_response(request, error_code="llm_provider_unavailable")
+        detail = f"HTTP {status_code}"
+        if provider_detail:
+            detail = f"{detail}: {provider_detail}"
+        return self._fallback_response(
+            request,
+            error_code="llm_provider_unavailable",
+            error_detail=detail,
+        )
 
     @staticmethod
     def _is_context_window_error(*, status_code: int, provider_detail: str | None) -> bool:

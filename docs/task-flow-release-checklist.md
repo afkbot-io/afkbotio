@@ -44,7 +44,7 @@ Create one AI-owned task:
 ```bash
 uv run afk task create \
   --title "Release pickup smoke" \
-  --prompt "Summarize this request in one short sentence and finish." \
+  --description "Summarize this request in one short sentence and finish." \
   --owner-type ai_profile \
   --owner-ref default
 ```
@@ -69,7 +69,7 @@ Create one review task:
 ```bash
 uv run afk task create \
   --title "Release review smoke" \
-  --prompt "Prepare review-ready output." \
+  --description "Prepare review-ready output." \
   --owner-type ai_profile \
   --owner-ref default \
   --reviewer-type human \

@@ -22,7 +22,11 @@ from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
-from afkbot.services.task_flow.message_factory import compose_task_message, task_session_id
+from afkbot.services.task_flow.message_factory import (
+    TaskMessageAttachment,
+    compose_task_message,
+    task_session_id,
+)
 from afkbot.services.task_flow.runtime_target import build_task_flow_runtime_target
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
@@ -34,6 +38,10 @@ _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
 _LEASE_EXPIRED_ERROR_CODE = "task_lease_expired"
 _LEASE_EXPIRED_ERROR_TEXT = "Task claim lease expired before execution completed."
+_PLAN_AI_OWNER_BLOCKED_REASON_CODE = "invalid_plan_status"
+_PLAN_AI_OWNER_BLOCKED_REASON_TEXT = (
+    "Task assigned to AI was left in PLAN; moved to Blocked so it is visible and can be fixed"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +52,8 @@ class ClaimedTaskExecution:
     task_profile_id: str
     execution_profile_id: str
     flow_id: str | None
-    prompt: str
+    description: str
+    attachments: tuple[TaskMessageAttachment, ...]
     owner_type: str
     owner_ref: str
     source_type: str
@@ -266,20 +275,91 @@ class TaskFlowRuntimeService:
                 result.runlog_event_count,
             )
 
+    async def _guard_ai_owned_plan_tasks(
+        self,
+        *,
+        session: AsyncSession,
+        repo: TaskFlowRepository,
+        worker_id: str,
+        profile_id: str,
+        owner_ref: str | None,
+        limit: int,
+    ) -> int:
+        """Move AI-owned PLAN tasks to blocked so they are visible to operators."""
+
+        moved_count = 0
+        rows = await repo.list_tasks(
+            profile_id=profile_id,
+            statuses=("plan",),
+            owner_type="ai_profile",
+            owner_ref=owner_ref,
+            limit=max(1, limit),
+        )
+        for row in rows:
+            updated = await repo.update_task(
+                profile_id=profile_id,
+                task_id=row.id,
+                status="blocked",
+                blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                blocked_reason_text=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                ready_at=None,
+            )
+            if updated is None:
+                continue
+            await record_task_event(
+                repo=repo,
+                task_id=row.id,
+                event_type="blocked",
+                actor_type="runtime",
+                actor_ref=worker_id,
+                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                from_status="plan",
+                to_status="blocked",
+                details={
+                    "reason_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                },
+            )
+            await record_task_event(
+                repo=repo,
+                task_id=row.id,
+                event_type="runtime_claim_rejected",
+                actor_type="runtime",
+                actor_ref=worker_id,
+                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                from_status="plan",
+                to_status="blocked",
+                details={
+                    "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                },
+            )
+            moved_count += 1
+        return moved_count
+
     async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
         session_factory = self._require_session_factory()
         claim_ttl = _claim_ttl(self._settings)
+        profile_id = _runtime_profile_id(self._settings)
+        owner_ref = _runtime_owner_ref(self._settings)
         for _attempt in range(3):
             now_utc = datetime.now(timezone.utc)
             claim_token = secrets.token_hex(16)
             try:
                 async with session_scope(session_factory) as session:
                     repo = TaskFlowRepository(session)
+                    await self._guard_ai_owned_plan_tasks(
+                        session=session,
+                        repo=repo,
+                        worker_id=worker_id,
+                        profile_id=profile_id,
+                        owner_ref=owner_ref,
+                        limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
+                    )
                     row = await repo.claim_next_runnable_task(
                         now_utc=now_utc,
                         lease_until=now_utc + claim_ttl,
                         claim_token=claim_token,
                         claimed_by=worker_id,
+                        owner_ref=owner_ref,
                     )
                     if row is None:
                         return None
@@ -307,12 +387,25 @@ class TaskFlowRuntimeService:
                     )
                     if not attached:
                         raise RuntimeError("Failed to attach claimed task run metadata")
+                    attachments = await repo.list_task_attachments(task_id=row.id)
                     return ClaimedTaskExecution(
                         task_id=row.id,
                         task_profile_id=row.profile_id,
                         execution_profile_id=execution_profile_id,
                         flow_id=row.flow_id,
-                        prompt=row.prompt,
+                        description=row.description,
+                        attachments=tuple(
+                            TaskMessageAttachment(
+                                id=attachment.id,
+                                name=attachment.name,
+                                content_type=attachment.content_type,
+                                kind=attachment.kind,
+                                byte_size=attachment.byte_size,
+                                sha256=attachment.sha256,
+                                content_bytes=bytes(attachment.content or b""),
+                            )
+                            for attachment in attachments
+                        ),
                         owner_type=row.owner_type,
                         owner_ref=row.owner_ref,
                         source_type=row.source_type,
@@ -360,7 +453,10 @@ class TaskFlowRuntimeService:
             requires_review=claimed.requires_review,
             labels=claimed.labels,
         )
-        message = compose_task_message(claimed.prompt)
+        message = compose_task_message(
+            claimed.description,
+            attachments=claimed.attachments,
+        )
         claim_ttl = _claim_ttl(self._settings)
 
         async def _run() -> TurnResult:
@@ -767,6 +863,9 @@ class TaskFlowRuntimeService:
                     reason = str(payload.get("reason") or "").strip() or (
                         f"Task run completed with LLM error code: {error_code}"
                     )
+                    error_detail = str(payload.get("error_detail") or "").strip()
+                    if error_detail and error_detail not in reason:
+                        reason = f"{reason} Detail: {error_detail}"
                     return TaskExecutionOutcome(
                         status="failed",
                         error_code=error_code,
@@ -1006,6 +1105,13 @@ async def _ensure_runtime_summary_comment(
         details={"comment_type": _runtime_fallback_comment_type(outcome.status)},
     )
 
+
+def _runtime_profile_id(settings: Settings) -> str:
+    return str(getattr(settings, "taskflow_runtime_profile_id", None) or "default")
+
+
+def _runtime_owner_ref(settings: Settings) -> str | None:
+    return settings.taskflow_runtime_owner_ref
 
 def _runtime_fallback_comment_type(status: str) -> str:
     if status == "review":

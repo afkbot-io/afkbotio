@@ -50,8 +50,8 @@ def test_resolve_turn_thinking_config_respects_high_execution_budget() -> None:
     assert result.wall_clock_budget_sec == 3600.0
 
 
-def test_resolve_turn_thinking_config_keeps_plan_only_budget_above_request_timeout_cap() -> None:
-    """Plan-only turns should retain a larger total budget than one request timeout."""
+def test_resolve_turn_thinking_config_plan_only_keeps_runtime_limit_and_clamps_budget() -> None:
+    """Plan-only turns should preserve the runtime iteration limit and cap total budget safely."""
 
     # Arrange
     base_timeout_sec = 1800.0
@@ -68,8 +68,9 @@ def test_resolve_turn_thinking_config_keeps_plan_only_budget_above_request_timeo
     )
 
     # Assert
+    assert result.max_iterations == 10
     assert result.request_timeout_sec == 1800.0
-    assert result.wall_clock_budget_sec == 5400.0
+    assert result.wall_clock_budget_sec == 7200.0
 
 
 def test_resolve_turn_thinking_config_uses_runtime_limit_when_default_cap_is_raised() -> None:

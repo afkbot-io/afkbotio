@@ -19,6 +19,14 @@ def _reset_request_gates() -> None:
     reset_shared_llm_request_gates()
 
 
+@pytest.fixture(autouse=True)
+def _shrink_retry_delays(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.llm_request_runtime._TRANSIENT_LLM_RETRY_DELAYS_SEC",
+        (0.01, 0.01),
+    )
+
+
 class _SlowProvider(BaseLLMProvider):
     def __init__(self, *, sleep_sec: float, response: LLMResponse) -> None:
         self._sleep_sec = sleep_sec
@@ -108,6 +116,97 @@ async def test_llm_request_runtime_logs_successful_completion() -> None:
         "llm.call.start",
         "llm.call.done",
     ]
+
+
+async def test_llm_request_runtime_retries_transient_provider_response() -> None:
+    """Transient upstream failures should be retried before surfacing the final response."""
+
+    events: list[dict[str, object]] = []
+    runtime = LLMRequestRuntime(
+        llm_provider=MockLLMProvider(
+            [
+                LLMResponse.final(
+                    "LLM provider is temporarily unavailable. Please try again shortly.",
+                    error_code="llm_provider_unavailable",
+                    error_detail="HTTP 503",
+                ),
+                LLMResponse.final("ok after retry"),
+            ]
+        ),
+        llm_request_timeout_sec=5.0,
+        log_event=lambda **kwargs: _collect_log_event(events, **kwargs),
+        raise_if_cancel_requested=_noop_cancel_check,
+    )
+
+    response = await runtime.complete_with_progress(
+        run_id=11,
+        session_id="s-retry",
+        iteration=1,
+        request=_request(),
+    )
+
+    assert response.kind == "final"
+    assert response.final_message == "ok after retry"
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.retry",
+        "llm.call.done",
+    ]
+    retry_payload = events[2]["payload"]
+    assert isinstance(retry_payload, dict)
+    assert retry_payload["error_code"] == "llm_provider_unavailable"
+    assert retry_payload["error_detail"] == "HTTP 503"
+
+
+async def test_llm_request_runtime_logs_reason_and_detail_for_final_error_response() -> None:
+    """Final provider error responses should preserve reason and detail in the done event."""
+
+    events: list[dict[str, object]] = []
+    runtime = LLMRequestRuntime(
+        llm_provider=MockLLMProvider(
+            [
+                LLMResponse.final(
+                    "LLM provider is temporarily unavailable. Please try again shortly.",
+                    error_code="llm_provider_unavailable",
+                    error_detail="HTTP 503",
+                ),
+                LLMResponse.final(
+                    "LLM provider is temporarily unavailable. Please try again shortly.",
+                    error_code="llm_provider_unavailable",
+                    error_detail="HTTP 503",
+                ),
+                LLMResponse.final(
+                    "LLM provider is temporarily unavailable. Please try again shortly.",
+                    error_code="llm_provider_unavailable",
+                    error_detail="HTTP 503",
+                ),
+            ]
+        ),
+        llm_request_timeout_sec=5.0,
+        log_event=lambda **kwargs: _collect_log_event(events, **kwargs),
+        raise_if_cancel_requested=_noop_cancel_check,
+    )
+
+    response = await runtime.complete_with_progress(
+        run_id=12,
+        session_id="s-retry-fail",
+        iteration=1,
+        request=_request(),
+    )
+
+    assert response.error_code == "llm_provider_unavailable"
+    assert [item["event_type"] for item in events] == [
+        "llm.call.queued",
+        "llm.call.start",
+        "llm.call.retry",
+        "llm.call.retry",
+        "llm.call.done",
+    ]
+    done_payload = events[-1]["payload"]
+    assert isinstance(done_payload, dict)
+    assert done_payload["reason"] == "LLM provider is temporarily unavailable. Please try again shortly."
+    assert done_payload["error_detail"] == "HTTP 503"
 
 
 async def test_llm_request_runtime_returns_timeout_fallback() -> None:
@@ -204,6 +303,8 @@ async def test_llm_request_runtime_returns_provider_error_fallback() -> None:
     assert [item["event_type"] for item in events] == [
         "llm.call.queued",
         "llm.call.start",
+        "llm.call.retry",
+        "llm.call.retry",
         "llm.call.error",
     ]
 

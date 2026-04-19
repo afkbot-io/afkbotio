@@ -53,6 +53,45 @@ class TaskBlockStateMetadata(BaseModel):
     depends_on_task_ids: tuple[str, ...] = ()
 
 
+class TaskAttachmentCreate(BaseModel):
+    """Validated binary attachment payload accepted by Task Flow APIs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
+    content_type: str | None = Field(default=None, max_length=255)
+    kind: str = Field(default="file", min_length=1, max_length=32)
+
+
+class TaskAttachmentMetadata(BaseModel):
+    """Metadata for one persisted task attachment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    task_id: str
+    profile_id: str
+    name: str
+    content_type: str | None = None
+    kind: str
+    byte_size: int = Field(ge=0)
+    sha256: str
+    created_by_type: str
+    created_by_ref: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskAttachmentContent(BaseModel):
+    """Attachment metadata plus binary content for API download paths."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attachment: TaskAttachmentMetadata
+    content_bytes: bytes
+
+
 class TaskMetadata(BaseModel):
     """Public metadata for one task item."""
 
@@ -62,7 +101,7 @@ class TaskMetadata(BaseModel):
     profile_id: str
     flow_id: str | None = None
     title: str
-    prompt: str
+    description: str
     status: str
     priority: int
     due_at: datetime | None = None
@@ -88,6 +127,7 @@ class TaskMetadata(BaseModel):
     last_run_id: int | None = None
     last_error_code: str | None = None
     last_error_text: str | None = None
+    attachment_count: int = Field(default=0, ge=0)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime

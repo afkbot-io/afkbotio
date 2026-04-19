@@ -56,6 +56,7 @@ __all__ = [
 def verify_profile_provider_token(
     *,
     provider_id: LLMProviderId,
+    model: str,
     base_url: str,
     proxy_type: str,
     proxy_url: str,
@@ -77,6 +78,7 @@ def verify_profile_provider_token(
         provider_id=provider_id,
         api_key=effective_key,
         base_url=base_url,
+        model=model,
         proxy_url=proxy_url if proxy_type != "none" else None,
     )
     if verification.ok:

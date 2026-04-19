@@ -34,6 +34,7 @@ _MODEL_EXPORT_MODULES = {
     "Secret": "secret",
     "SubagentTask": "subagent_task",
     "Task": "task",
+    "TaskAttachment": "task_attachment",
     "TaskDependency": "task_dependency",
     "TaskEvent": "task_event",
     "TaskFlow": "task_flow",

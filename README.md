@@ -132,7 +132,7 @@ Common installer flags:
 curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
 
 # install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.0.13
+curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.3.0
 
 # install from a local checkout
 bash scripts/install.sh --repo-url "file://$PWD"
@@ -353,6 +353,25 @@ The current curated external plugin is AFKBOT UI. Today it provides the web work
 - UI: `/plugins/afkbotui`
 
 Plugin install state lives under the AFKBOT runtime root in `/plugins/...` and is treated as local machine state, not repository content.
+
+## Browser UI Auth
+
+AFKBOT can now protect browser plugin UIs and their plugin API routes with one
+operator password managed at the core runtime level.
+
+- Configure it with `afk auth setup` or `afk auth create`.
+- Inspect or update the policy with `afk auth status`, `afk auth update`, and
+  `afk auth rotate-password`.
+- Disable it with `afk auth disable`.
+- Protection applies only to plugin surfaces that opt in through
+  `auth.operator_required` or are explicitly listed with `--protected-plugin-id`.
+- Protected browser surfaces redirect to `/auth/login`, and only the matching
+  protected plugin API routes return `401` until the operator session is
+  established.
+- Protection follows each plugin's declared API and web mount prefixes, so
+  custom prefixes such as `/internal/...` or `/ui/...` are covered too.
+- Password hashes and cookie keys live in encrypted runtime secrets, not inside
+  plugin packages or plugin config JSON.
 
 ## Channels Quickstart
 

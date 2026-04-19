@@ -117,54 +117,18 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Persist a new runtime bind and reload the managed service."""
 
-        settings = get_settings()
-        runtime_config = dict(read_runtime_config(settings))
-        previous_runtime_config = dict(runtime_config)
-        target_host = str(host or runtime_config.get("runtime_host") or settings.runtime_host).strip() or settings.runtime_host
-        current_host = str(runtime_config.get("runtime_host") or settings.runtime_host).strip() or settings.runtime_host
-        current_port = _resolve_current_runtime_port(
-            runtime_config=runtime_config,
-            fallback_port=settings.runtime_port,
-        )
-        _validate_requested_runtime_bind(
-            host=target_host,
-            runtime_port=runtime_port,
-            current_host=current_host,
-            current_runtime_port=current_port,
-        )
-        if host is not None:
-            runtime_config["runtime_host"] = host
-        runtime_config["runtime_port"] = runtime_port
-        write_runtime_config(settings, config=runtime_config)
-        get_settings.cache_clear()
-        refreshed_settings = get_settings()
-        result = ensure_managed_runtime_service(
-            refreshed_settings,
-            start=setup_is_complete(refreshed_settings),
-        )
-        port_message = _format_port_result(runtime_port=runtime_port, host=host or refreshed_settings.runtime_host)
-        if str(getattr(result, "status", "")) == "failed":
-            write_runtime_config(refreshed_settings, config=previous_runtime_config)
-            get_settings.cache_clear()
-            restored_settings = get_settings()
-            restore_result = ensure_managed_runtime_service(
-                restored_settings,
-                start=setup_is_complete(restored_settings),
-            )
-            restored_host = (
-                str(previous_runtime_config.get("runtime_host") or restored_settings.runtime_host).strip()
-                or restored_settings.runtime_host
-            )
-            restored_port = _resolve_current_runtime_port(
-                runtime_config=previous_runtime_config,
-                fallback_port=restored_settings.runtime_port,
-            )
-            port_message = _format_port_restore_result(runtime_port=restored_port, host=restored_host)
-            typer.echo("runtime bind rollback: restored previous runtime host/port after failed reload")
-            typer.echo(_format_service_result(restore_result))
-        typer.echo(port_message)
-        typer.echo(_format_service_result(result))
-        _exit_for_service_result(result, require_running=setup_is_complete(refreshed_settings))
+        _persist_runtime_bind_and_reload_service(host=host, runtime_port=runtime_port)
+
+    @service_app.command("host")
+    def set_host(
+        host: str = typer.Argument(
+            ...,
+            help="Persisted runtime host used by `afk start` and the managed service.",
+        ),
+    ) -> None:
+        """Persist a new runtime host and reload the managed service."""
+
+        _persist_runtime_bind_and_reload_service(host=host, runtime_port=None)
 
     app.add_typer(service_app, name="service")
 
@@ -243,13 +207,16 @@ def _validate_requested_runtime_bind(
     *,
     host: str,
     runtime_port: int,
-    current_host: str,
     current_runtime_port: int,
 ) -> None:
-    if is_runtime_port_pair_available(host=host, runtime_port=runtime_port):
+    requested_pair_available = is_runtime_port_pair_available(
+        host=host,
+        runtime_port=runtime_port,
+    )
+    if requested_pair_available:
         return
     stack_probe = probe_runtime_stack(host=host, runtime_port=runtime_port)
-    if host == current_host and runtime_port == current_runtime_port and stack_probe.running:
+    if runtime_port == current_runtime_port and stack_probe.running:
         return
     raise_usage_error(
         "Requested runtime bind is busy. "
@@ -277,3 +244,67 @@ def _resolve_current_runtime_port(
         except ValueError:
             return fallback_port
     return fallback_port
+
+
+def _persist_runtime_bind_and_reload_service(
+    *,
+    host: str | None,
+    runtime_port: int | None,
+) -> None:
+    settings = get_settings()
+    runtime_config = dict(read_runtime_config(settings))
+    previous_runtime_config = dict(runtime_config)
+    target_host = (
+        str(host or runtime_config.get("runtime_host") or settings.runtime_host).strip()
+        or settings.runtime_host
+    )
+    target_runtime_port = (
+        runtime_port
+        if runtime_port is not None
+        else _resolve_current_runtime_port(
+            runtime_config=runtime_config,
+            fallback_port=settings.runtime_port,
+        )
+    )
+    current_port = _resolve_current_runtime_port(
+        runtime_config=runtime_config,
+        fallback_port=settings.runtime_port,
+    )
+    _validate_requested_runtime_bind(
+        host=target_host,
+        runtime_port=target_runtime_port,
+        current_runtime_port=current_port,
+    )
+    if host is not None:
+        runtime_config["runtime_host"] = target_host
+    runtime_config["runtime_port"] = target_runtime_port
+    write_runtime_config(settings, config=runtime_config)
+    get_settings.cache_clear()
+    refreshed_settings = get_settings()
+    result = ensure_managed_runtime_service(
+        refreshed_settings,
+        start=setup_is_complete(refreshed_settings),
+    )
+    port_message = _format_port_result(runtime_port=target_runtime_port, host=target_host)
+    if str(getattr(result, "status", "")) == "failed":
+        write_runtime_config(refreshed_settings, config=previous_runtime_config)
+        get_settings.cache_clear()
+        restored_settings = get_settings()
+        restore_result = ensure_managed_runtime_service(
+            restored_settings,
+            start=setup_is_complete(restored_settings),
+        )
+        restored_host = (
+            str(previous_runtime_config.get("runtime_host") or restored_settings.runtime_host).strip()
+            or restored_settings.runtime_host
+        )
+        restored_port = _resolve_current_runtime_port(
+            runtime_config=previous_runtime_config,
+            fallback_port=restored_settings.runtime_port,
+        )
+        port_message = _format_port_restore_result(runtime_port=restored_port, host=restored_host)
+        typer.echo("runtime bind rollback: restored previous runtime host/port after failed reload")
+        typer.echo(_format_service_result(restore_result))
+    typer.echo(port_message)
+    typer.echo(_format_service_result(result))
+    _exit_for_service_result(result, require_running=setup_is_complete(refreshed_settings))

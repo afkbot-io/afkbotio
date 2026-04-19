@@ -37,7 +37,7 @@ async def tick_cron_automations(
     now_utc: datetime,
     settings: Settings,
     session_runner_factory: AutomationSessionRunnerFactory | None,
-    compute_next_run_at: Callable[[str, datetime], datetime],
+    compute_next_run_at: Callable[[str, datetime, str], datetime],
     max_due_per_tick: int | None = None,
     run_timeout_sec: float | None = None,
 ) -> AutomationCronTickResult:
@@ -56,7 +56,7 @@ async def tick_cron_automations(
 
     async def _due_rows(
         repo: AutomationRepository,
-    ) -> list[tuple[int, str, str, str]]:
+    ) -> list[tuple[int, str, str, str, str]]:
         rows = await repo.list_due_cron(
             now_utc=normalized_now,
             limit=normalized_limit,
@@ -67,6 +67,7 @@ async def tick_cron_automations(
                 automation.profile_id,
                 automation.prompt,
                 cron.cron_expr,
+                cron.timezone,
             )
             for automation, cron in rows
         ]
@@ -74,9 +75,8 @@ async def tick_cron_automations(
     due_rows = await with_repo(_due_rows)
     triggered_ids: list[int] = []
     failed_ids: list[int] = []
-    for automation_id, profile_id, prompt, cron_expr in due_rows:
+    for automation_id, profile_id, prompt, cron_expr, timezone_name in due_rows:
         claim_token = secrets.token_hex(16)
-        next_run_at = compute_next_run_at(cron_expr, normalized_now)
         message = compose_cron_message(
             prompt,
         )
@@ -129,6 +129,7 @@ async def tick_cron_automations(
             )
 
         try:
+            next_run_at = compute_next_run_at(cron_expr, normalized_now, timezone_name)
             await run_with_lease_refresh(
                 run=_run,
                 refresh=_refresh_cron_lease,

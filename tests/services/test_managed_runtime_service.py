@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -11,6 +10,7 @@ from pytest import MonkeyPatch
 
 from afkbot.services.managed_runtime_service import (
     _render_service_start_guard,
+    _systemd_user_service_path,
     ensure_managed_runtime_service,
     remove_managed_runtime_service,
     restart_managed_runtime_service,
@@ -239,6 +239,7 @@ def test_ensure_managed_runtime_service_does_not_bootstrap_launchd_when_start_is
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Darwin")
     monkeypatch.setattr("afkbot.services.managed_runtime_service._LAUNCHD_SERVICE_PATH", service_path)
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._resolve_current_afk_launcher_path",
         lambda: launcher_path,
@@ -249,6 +250,18 @@ def test_ensure_managed_runtime_service_does_not_bootstrap_launchd_when_start_is
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.inspect_managed_runtime_service",
+        lambda settings: SimpleNamespace(
+            installed=True,
+            running=False,
+            kind="launchd",
+            path=service_path,
+            manager_state="not_loaded",
+            runtime_ok=False,
+            api_ok=False,
+        ),
+    )
 
     result = ensure_managed_runtime_service(settings, start=False)
 
@@ -256,7 +269,7 @@ def test_ensure_managed_runtime_service_does_not_bootstrap_launchd_when_start_is
     assert result.kind == "launchd"
     assert result.path == service_path
     assert service_path.exists()
-    assert calls == [["launchctl", "print", f"gui/{os.getuid()}/io.afkbot.afkbot"]]
+    assert calls == []
 
 
 def test_ensure_managed_runtime_service_refuses_to_replace_unmanaged_system_unit(
@@ -299,6 +312,7 @@ def test_ensure_managed_runtime_service_refuses_to_replace_unmanaged_system_unit
         "afkbot.services.managed_runtime_service.subprocess.run",
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
     )
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
 
     result = ensure_managed_runtime_service(settings, start=False)
 
@@ -307,6 +321,51 @@ def test_ensure_managed_runtime_service_refuses_to_replace_unmanaged_system_unit
     assert "Using a user-level systemd service" in (result.reason or "")
     assert service_path.read_text(encoding="utf-8") == "[Unit]\nDescription=manual\n"
     assert user_service_path.exists()
+
+
+def test_ensure_managed_runtime_service_defers_install_until_setup_is_complete(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Pre-setup installs should not leave a managed autostart service behind."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'service.db'}")
+    service_path = tmp_path / "systemd-user" / "afkbot.service"
+
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Linux")
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.shutil.which", lambda value: "/bin/systemctl")
+    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.describe_managed_runtime_service",
+        lambda: SimpleNamespace(installed=False, kind=None, path=None),
+    )
+
+    result = ensure_managed_runtime_service(settings, start=False)
+
+    assert result.status == "manual_restart_required"
+    assert "deferred until `afk setup` completes" in (result.reason or "")
+    assert not service_path.exists()
+
+
+def test_systemd_user_service_path_uses_sudo_target_home_by_default(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Sudo shells should manage the target user's unit path instead of /root by default."""
+
+    target_home = tmp_path / "target-home"
+    target_home.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("SUDO_USER", "afkbot-user")
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.pwd.getpwnam",
+        lambda user: SimpleNamespace(pw_dir=str(target_home)),
+    )
+
+    resolved_path = _systemd_user_service_path()
+
+    assert resolved_path == target_home / ".config" / "systemd" / "user" / "afkbot.service"
 
 
 def test_stop_launchd_service_reports_domain_failure(

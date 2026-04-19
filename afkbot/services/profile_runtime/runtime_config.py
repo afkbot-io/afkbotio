@@ -167,6 +167,7 @@ class ProfileRuntimeConfigService:
             llm_thinking_level=settings.llm_thinking_level,
             llm_history_turns=settings.llm_history_turns,
             chat_planning_mode=settings.chat_planning_mode,
+            chat_secret_guard_enabled=settings.chat_secret_guard_enabled,
             enabled_tool_plugins=tuple(settings.enabled_tool_plugins),
             memory_auto_search_enabled=settings.memory_auto_search_enabled,
             memory_auto_search_scope_mode=settings.memory_auto_search_scope_mode,

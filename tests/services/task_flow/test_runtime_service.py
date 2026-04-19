@@ -30,6 +30,7 @@ from tests.repositories._harness import build_repository_factory
 class _ObservedCall:
     profile_id: str
     session_id: str
+    message: str
     transport: str | None
     account_id: str | None
     task_id: str | None
@@ -57,7 +58,6 @@ class _FakeLoop:
         message: str,
         context_overrides: object | None = None,
     ) -> TurnResult:
-        del message
         metadata = (
             context_overrides.runtime_metadata
             if isinstance(context_overrides, TurnContextOverrides)
@@ -68,6 +68,7 @@ class _FakeLoop:
             _ObservedCall(
                 profile_id=profile_id,
                 session_id=session_id,
+                message=message,
                 transport=(
                     str(metadata.get("transport") or "").strip() if isinstance(metadata, dict) else None
                 ),
@@ -279,7 +280,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         first = await service.create_task(
             profile_id="default",
             title="Analyze support backlog",
-            prompt="Summarize the last ten support tickets.",
+            description="Summarize the last ten support tickets.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -288,7 +289,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         dependent = await service.create_task(
             profile_id="default",
             title="Send triage summary",
-            prompt="Send the triage summary after analysis is ready.",
+            description="Send the triage summary after analysis is ready.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -370,7 +371,7 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         task = await service.create_task(
             profile_id="default",
             title="Review risky deployment",
-            prompt="Review the deployment checklist and proceed.",
+            description="Review the deployment checklist and proceed.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -431,7 +432,7 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
         task = await service.create_task(
             profile_id="default",
             title="Escalate incident summary",
-            prompt="Prepare the incident summary and route it to the on-call human reviewer.",
+            description="Prepare the incident summary and route it to the on-call human reviewer.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -440,7 +441,7 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
         dependent = await service.create_task(
             profile_id="default",
             title="Send escalation outcome",
-            prompt="Send the incident outcome after the AI task fully completes.",
+            description="Send the incident outcome after the AI task fully completes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -502,7 +503,7 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
         task = await service.create_task(
             profile_id="default",
             title="Run long market scan",
-            prompt="Analyze the competitive landscape and summarize the result.",
+            description="Analyze the competitive landscape and summarize the result.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -554,7 +555,7 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         task = await service.create_task(
             profile_id="default",
             title="Retryable start transition",
-            prompt="Verify that a lost claim during start is safely retried.",
+            description="Verify that a lost claim during start is safely retried.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -626,7 +627,7 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
         task = await service.create_task(
             profile_id="default",
             title="Recover stale runtime claim",
-            prompt="Recover a stale claim and finish the work.",
+            description="Recover a stale claim and finish the work.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -847,7 +848,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
         default_task = await service.create_task(
             profile_id="default",
             title="Default stale task",
-            prompt="Repair the default-profile stale task.",
+            description="Repair the default-profile stale task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -856,7 +857,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
         ops_task = await service.create_task(
             profile_id="ops",
             title="Ops stale task",
-            prompt="Leave the ops-profile stale task untouched for now.",
+            description="Leave the ops-profile stale task untouched for now.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -953,7 +954,7 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
         first = await service.create_task(
             profile_id="default",
             title="First stale duplicate",
-            prompt="Leave this duplicate stale until maintenance repairs it.",
+            description="Leave this duplicate stale until maintenance repairs it.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -962,7 +963,7 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
         second = await service.create_task(
             profile_id="default",
             title="Second stale duplicate",
-            prompt="Also leave this duplicate stale until maintenance repairs it.",
+            description="Also leave this duplicate stale until maintenance repairs it.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1015,6 +1016,82 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
         await engine.dispose()
 
 
+async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Path) -> None:
+    """Detached runtime owner_ref filter should only apply when explicitly configured."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_owner_ref_filter.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        observed_calls: list[_ObservedCall] = []
+        filtered_runtime = TaskFlowRuntimeService(
+            session_factory=factory,
+            session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+                session,
+                behavior="complete",
+                observed_calls=observed_calls,
+            ),
+            settings=Settings(taskflow_runtime_owner_ref="researcher", llm_max_iterations=10),
+        )
+        try:
+            allowed = await service.create_task(
+                profile_id="default",
+                title="Allowed owner",
+                description="Please handle researcher queue.",
+                owner_type="ai_profile",
+                owner_ref="researcher",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+            skipped = await service.create_task(
+                profile_id="default",
+                title="Skipped owner",
+                description="Please handle analyst queue.",
+                owner_type="ai_profile",
+                owner_ref="analyst",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+
+            processed = await filtered_runtime.execute_next_claimable_task(
+                worker_id="taskflow-runtime:owner-filtered"
+            )
+
+            assert processed is True
+            allowed_after = await service.get_task(profile_id="default", task_id=allowed.id)
+            skipped_after = await service.get_task(profile_id="default", task_id=skipped.id)
+            assert observed_calls[0].task_id == allowed.id
+            assert allowed_after.status == "completed"
+            assert skipped_after.status == "todo"
+        finally:
+            await filtered_runtime.shutdown()
+
+        unfiltered_runtime = TaskFlowRuntimeService(
+            session_factory=factory,
+            session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+                session,
+                behavior="complete",
+                observed_calls=observed_calls,
+            ),
+            settings=Settings(llm_max_iterations=10),
+        )
+        try:
+            processed = await unfiltered_runtime.execute_next_claimable_task(
+                worker_id="taskflow-runtime:owner-unfiltered"
+            )
+            assert processed is True
+            skipped_after_unfiltered = await service.get_task(profile_id="default", task_id=skipped.id)
+            assert observed_calls[1].task_id == skipped.id
+            assert skipped_after_unfiltered.status == "completed"
+        finally:
+            await unfiltered_runtime.shutdown()
+    finally:
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
     tmp_path: Path,
 ) -> None:
@@ -1030,7 +1107,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         analyst_first = await service.create_task(
             profile_id="default",
             title="Analyst high priority",
-            prompt="Take the highest-priority analyst task first.",
+            description="Take the highest-priority analyst task first.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1040,7 +1117,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         analyst_second = await service.create_task(
             profile_id="default",
             title="Analyst second task",
-            prompt="This should wait until analyst is free again.",
+            description="This should wait until analyst is free again.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1050,7 +1127,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         papercliper_task = await service.create_task(
             profile_id="default",
             title="Papercliper task",
-            prompt="Take this once the analyst already has active work.",
+            description="Take this once the analyst already has active work.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1107,7 +1184,7 @@ async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
         default_task = await service.create_task(
             profile_id="default",
             title="Default analyst claim",
-            prompt="Claim analyst work in default profile.",
+            description="Claim analyst work in default profile.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1117,7 +1194,7 @@ async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
         researcher_task = await service.create_task(
             profile_id="researcher",
             title="Researcher analyst claim",
-            prompt="Claim analyst work in researcher profile.",
+            description="Claim analyst work in researcher profile.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1178,7 +1255,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             profile_id="default",
             flow_id=flow_a.id,
             title="Flow A analyst",
-            prompt="Take the first Flow A task.",
+            description="Take the first Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1189,7 +1266,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             profile_id="default",
             flow_id=flow_a.id,
             title="Flow A researcher",
-            prompt="Take the second Flow A task.",
+            description="Take the second Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1200,7 +1277,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             profile_id="default",
             flow_id=flow_b.id,
             title="Flow B papercliper",
-            prompt="Take the first Flow B task.",
+            description="Take the first Flow B task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1264,7 +1341,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             profile_id="default",
             flow_id=flow_a.id,
             title="Flow A first",
-            prompt="Take the highest-priority task first.",
+            description="Take the highest-priority task first.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1275,7 +1352,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             profile_id="default",
             flow_id=flow_a.id,
             title="Flow A second",
-            prompt="This is still higher priority than Flow B.",
+            description="This is still higher priority than Flow B.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1286,7 +1363,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             profile_id="default",
             flow_id=flow_b.id,
             title="Flow B first",
-            prompt="This should wait behind the higher-priority Flow A task.",
+            description="This should wait behind the higher-priority Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1342,7 +1419,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
         no_flow_first = await service.create_task(
             profile_id="default",
             title="No-flow analyst",
-            prompt="Take the first no-flow task.",
+            description="Take the first no-flow task.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1352,7 +1429,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
         no_flow_second = await service.create_task(
             profile_id="default",
             title="No-flow researcher",
-            prompt="This should wait behind the idle flow bucket.",
+            description="This should wait behind the idle flow bucket.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1363,7 +1440,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
             profile_id="default",
             flow_id=flow.id,
             title="Flow papercliper",
-            prompt="Idle flow work should be preferred on the second claim.",
+            description="Idle flow work should be preferred on the second claim.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1443,7 +1520,7 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
         await service.create_task(
             profile_id="default",
             title="Retry transient claim conflict",
-            prompt="Claim this after retrying a transient uniqueness conflict.",
+            description="Claim this after retrying a transient uniqueness conflict.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1491,7 +1568,7 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
         task = await service.create_task(
             profile_id="default",
             title="Wait for delegated work",
-            prompt="Delegate a prerequisite and wait on dependency completion.",
+            description="Delegate a prerequisite and wait on dependency completion.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="ai_profile",
@@ -1516,6 +1593,143 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
             )
 
         assert claimed is None
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should auto-block misassigned PLAN tasks and continue with runnable work."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_plan_skip.db",
+        profile_ids=("default", "researcher", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    service = TaskFlowService(factory)
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session_factory, _profile_id: _FakeSessionRunner(
+            session_factory,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+        settings=Settings(taskflow_runtime_owner_ref="researcher"),
+    )
+    try:
+        planned = await service.create_task(
+            profile_id="default",
+            title="Draft the task before AI starts",
+            description="Stay in PLAN until a human finishes the brief.",
+            status="plan",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="operator",
+        )
+        async with session_scope(factory) as session:
+            await session.execute(
+                text(
+                    "UPDATE task SET status = 'plan', owner_type = 'ai_profile', owner_ref = 'researcher' "
+                    "WHERE profile_id = :profile_id AND id = :task_id"
+                ),
+                {"profile_id": "default", "task_id": planned.id},
+            )
+            await session.commit()
+        runnable = await service.create_task(
+            profile_id="default",
+            title="Run once planning is complete",
+            description="This task is ready for the detached runtime.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="researcher",
+        )
+
+        untouched = await service.create_task(
+            profile_id="default",
+            title="Other owner remains queued",
+            description="Wait for another runtime worker",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:plan-skip")
+
+        assert processed is True
+        planned_after = await service.get_task(profile_id="default", task_id=planned.id)
+        runnable_after = await service.get_task(profile_id="default", task_id=runnable.id)
+        untouched_after = await service.get_task(profile_id="default", task_id=untouched.id)
+        assert planned_after.status == "blocked"
+        assert planned_after.blocked_reason_code == "invalid_plan_status"
+        assert planned_after.blocked_reason_text is not None
+        assert "PLAN" in planned_after.blocked_reason_text
+        assert planned_after.last_error_code is None
+        assert planned_after.last_error_text is None
+        assert runnable_after.status == "completed"
+        assert untouched_after.status == "todo"
+        assert observed_calls[0].task_id == runnable.id
+
+        events = await service.list_task_events(profile_id="default", task_id=planned.id)
+        event_types = [event.event_type for event in events]
+        assert event_types[0] == "runtime_claim_rejected"
+        assert "blocked" in event_types
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_includes_task_attachments_in_execution_message(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should surface persisted task attachments to the worker turn."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_attachments.db",
+        profile_ids=("default",),
+    )
+    observed_calls: list[_ObservedCall] = []
+    service = TaskFlowService(factory)
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session_factory, _profile_id: _FakeSessionRunner(
+            session_factory,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review the attached brief",
+            description="Use the attached requirements before answering.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            attachments=(
+                {
+                    "name": "brief.txt",
+                    "content_type": "text/plain",
+                    "content_base64": "VXNlciBuZWVkczogc2hpcCB0aGUgZGVzY3JpcHRpb24gbWlncmF0aW9uLg==",
+                    "kind": "text",
+                },
+            ),
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:attachments")
+
+        assert processed is True
+        assert observed_calls[0].task_id == task.id
+        assert "Task Attachments:" in observed_calls[0].message
+        assert "brief.txt" in observed_calls[0].message
+        assert "User needs: ship the description migration." in observed_calls[0].message
     finally:
         await runtime.shutdown()
         await engine.dispose()

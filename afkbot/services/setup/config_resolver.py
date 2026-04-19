@@ -110,6 +110,7 @@ def build_default_profile_runtime_config(
         base_runtime=base_runtime,
         runtime_core=runtime_core,
         llm_history_turns=None,
+        chat_secret_guard_enabled=None,
         tool_plugins=(),
         memory_auto_search_enabled=None,
         memory_auto_search_scope_mode=None,
@@ -254,6 +255,7 @@ def collect_setup_config(
             provider_id=provider_id,
             api_key=api_key,
             base_url=base_url,
+            model=model,
             proxy_url=proxy_url if proxy_type != "none" else None,
         )
         if not verification.ok:

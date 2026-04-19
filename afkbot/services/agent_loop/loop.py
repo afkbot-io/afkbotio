@@ -92,6 +92,7 @@ class AgentLoop:
         llm_execution_budget_high_sec: float = 3600.0,
         llm_execution_budget_very_high_sec: float = DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
         llm_history_turns: int = 8,
+        chat_secret_guard_enabled: bool | None = None,
         tool_timeout_default_sec: int = 15,
         tool_timeout_max_sec: int = 120,
         secure_request_ttl_sec: int = 900,
@@ -133,6 +134,11 @@ class AgentLoop:
         self._llm_max_iterations = max(1, llm_max_iterations)
         self._llm_default_thinking_level = llm_default_thinking_level
         self._chat_planning_mode = chat_planning_mode
+        self._chat_secret_guard_enabled = (
+            context_builder.settings.chat_secret_guard_enabled
+            if chat_secret_guard_enabled is None
+            else chat_secret_guard_enabled
+        )
         self._tool_timeout_default_sec = tool_timeout_default_sec
         self._tool_timeout_max_sec = tool_timeout_max_sec
         self._secure_request_ttl_sec = max(60, secure_request_ttl_sec)
@@ -315,6 +321,7 @@ class AgentLoop:
             llm_execution_budget_high_sec=llm_execution_budget_high_sec,
             llm_execution_budget_very_high_sec=llm_execution_budget_very_high_sec,
             turn_finalizer=self._turn_finalizer,
+            chat_secret_guard_enabled=self._chat_secret_guard_enabled,
             sanitize=self._sanitize,
             sanitize_value=self._sanitize_value,
         )

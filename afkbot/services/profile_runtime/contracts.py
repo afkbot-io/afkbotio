@@ -33,6 +33,7 @@ class ProfileRuntimeConfig(BaseModel):
     llm_thinking_level: Literal["low", "medium", "high", "very_high"] | None = None
     llm_history_turns: int | None = None
     chat_planning_mode: Literal["off", "auto", "on"] | None = None
+    chat_secret_guard_enabled: bool | None = None
     enabled_tool_plugins: tuple[str, ...] | None = None
     taskflow_team_profile_ids: tuple[str, ...] | None = None
     memory_auto_search_enabled: bool | None = None
@@ -140,6 +141,7 @@ class ProfileRuntimeResolved(BaseModel):
     llm_thinking_level: Literal["low", "medium", "high", "very_high"] = "medium"
     llm_history_turns: int = 8
     chat_planning_mode: Literal["off", "auto", "on"] = "auto"
+    chat_secret_guard_enabled: bool = False
     enabled_tool_plugins: tuple[str, ...]
     memory_auto_search_enabled: bool = False
     memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"

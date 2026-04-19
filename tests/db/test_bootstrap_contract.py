@@ -187,7 +187,7 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     first = await service.create_task(
         profile_id="default",
         title="Legacy active analyst task",
-        prompt="Keep this active after upgrade normalization.",
+        description="Keep this active after upgrade normalization.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="ai_profile",
@@ -196,7 +196,7 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     second = await service.create_task(
         profile_id="default",
         title="Legacy duplicate analyst task",
-        prompt="This should be released during schema normalization.",
+        description="This should be released during schema normalization.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="ai_profile",
@@ -288,7 +288,7 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     kept_task = await service.create_task(
         profile_id="default",
         title="Keep linked run",
-        prompt="Retain the run because it still has a surviving task event.",
+        description="Retain the run because it still has a surviving task event.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="human",
@@ -297,7 +297,7 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     orphan_task = await service.create_task(
         profile_id="default",
         title="Delete orphaned run",
-        prompt="Allow pruning once the old runtime rows are detached.",
+        description="Allow pruning once the old runtime rows are detached.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="human",
@@ -438,7 +438,7 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
     task = await service.create_task(
         profile_id="default",
         title="Keep last run reference",
-        prompt="Do not prune the last_run_id reference automatically.",
+        description="Do not prune the last_run_id reference automatically.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="human",
@@ -542,3 +542,220 @@ async def test_sqlite_connect_degrades_gracefully_when_wal_pragma_fails(tmp_path
     finally:
         sqlite3.connect = original_connect
         await engine.dispose()
+async def test_create_schema_backfills_task_description_from_legacy_prompt_column(
+    tmp_path: Path,
+) -> None:
+    """Legacy task tables should gain the description column and preserve prompt text."""
+
+    db_path = tmp_path / "legacy_task_description.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    flow_id VARCHAR(64),
+                    title VARCHAR(255) NOT NULL,
+                    prompt TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'todo',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    due_at DATETIME,
+                    ready_at DATETIME,
+                    owner_type VARCHAR(32) NOT NULL,
+                    owner_ref VARCHAR(255) NOT NULL,
+                    reviewer_type VARCHAR(32),
+                    reviewer_ref VARCHAR(255),
+                    source_type VARCHAR(64) NOT NULL DEFAULT 'manual',
+                    source_ref VARCHAR(255),
+                    created_by_type VARCHAR(32) NOT NULL,
+                    created_by_ref VARCHAR(255) NOT NULL,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    requires_review BOOLEAN NOT NULL DEFAULT 0,
+                    blocked_reason_code VARCHAR(64),
+                    blocked_reason_text TEXT,
+                    claim_token VARCHAR(64),
+                    claimed_by VARCHAR(128),
+                    lease_until DATETIME,
+                    current_attempt INTEGER NOT NULL DEFAULT 0,
+                    last_session_id VARCHAR(128),
+                    last_run_id INTEGER,
+                    last_error_code VARCHAR(64),
+                    last_error_text TEXT,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(profile_id) REFERENCES profile(id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO task (
+                    id, profile_id, title, prompt, status, owner_type, owner_ref,
+                    created_by_type, created_by_ref
+                )
+                VALUES (
+                    'task_legacy', 'default', 'Legacy task', 'Legacy prompt body',
+                    'todo', 'human', 'cli_user:alice', 'human', 'cli'
+                )
+                """
+            )
+        )
+
+    await create_schema(engine)
+
+    async with engine.connect() as conn:
+        columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
+        }
+        description = (
+            await conn.execute(text("SELECT description FROM task WHERE id = 'task_legacy'"))
+        ).scalar_one()
+
+    assert "description" in columns
+    assert description == "Legacy prompt body"
+    await engine.dispose()
+
+
+async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade(
+    tmp_path: Path,
+) -> None:
+    """Legacy prompt-only task tables should accept new description-based inserts after upgrade."""
+
+    db_path = tmp_path / "legacy_task_prompt_not_null.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    flow_id VARCHAR(64),
+                    title VARCHAR(255) NOT NULL,
+                    prompt TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'todo',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    due_at DATETIME,
+                    ready_at DATETIME,
+                    owner_type VARCHAR(32) NOT NULL,
+                    owner_ref VARCHAR(255) NOT NULL,
+                    reviewer_type VARCHAR(32),
+                    reviewer_ref VARCHAR(255),
+                    source_type VARCHAR(64) NOT NULL DEFAULT 'manual',
+                    source_ref VARCHAR(255),
+                    created_by_type VARCHAR(32) NOT NULL,
+                    created_by_ref VARCHAR(255) NOT NULL,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    requires_review BOOLEAN NOT NULL DEFAULT 0,
+                    blocked_reason_code VARCHAR(64),
+                    blocked_reason_text TEXT,
+                    claim_token VARCHAR(64),
+                    claimed_by VARCHAR(128),
+                    lease_until DATETIME,
+                    current_attempt INTEGER NOT NULL DEFAULT 0,
+                    last_session_id VARCHAR(128),
+                    last_run_id INTEGER,
+                    last_error_code VARCHAR(64),
+                    last_error_text TEXT,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(profile_id) REFERENCES profile(id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO task (
+                    id, profile_id, title, prompt, status, owner_type, owner_ref,
+                    created_by_type, created_by_ref
+                )
+                VALUES (
+                    'task_legacy', 'default', 'Legacy task', 'Legacy prompt body',
+                    'todo', 'human', 'cli_user:alice', 'human', 'cli'
+                )
+                """
+            )
+        )
+
+    await create_schema(engine)
+
+    service = TaskFlowService(create_session_factory(engine))
+    created = await service.create_task(
+        profile_id="default",
+        title="New description task",
+        description="This insert should succeed after the upgrade.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="ai_profile",
+        owner_ref="default",
+    )
+
+    assert created.description == "This insert should succeed after the upgrade."
+    async with engine.connect() as conn:
+        columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
+        }
+    assert "prompt" not in columns
+    await engine.dispose()

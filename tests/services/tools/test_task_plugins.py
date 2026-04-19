@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from pytest import MonkeyPatch
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -126,7 +128,7 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
             {
                 "profile_key": "default",
                 "title": "Prepare report",
-                "prompt": "Compile the weekly report and store the summary.",
+                "description": "Compile the weekly report and store the summary.",
                 "priority": 80,
                 "labels": ["ops", "weekly"],
                 "owner_type": "human",
@@ -288,7 +290,7 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
                 {
                     "profile_key": "default",
                     "title": "Collect source data",
-                    "prompt": "Collect the source data before preparing the report.",
+                    "description": "Collect the source data before preparing the report.",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -525,6 +527,52 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         await engine.dispose()
 
 
+async def test_task_create_plugin_requires_description_param(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.create` params schema should require description to match service contract."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        create_tool = registry.get("task.create")
+
+        with pytest.raises(ValidationError, match="description"):
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Missing description",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_task_delegate_plugin_requires_description_param(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """`task.delegate` params schema should require description to match service contract."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        delegate_tool = registry.get("task.delegate")
+
+        with pytest.raises(ValidationError, match="description"):
+            delegate_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "owner_ref": "papercliper",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            )
+    finally:
+        await engine.dispose()
+
+
 async def test_task_update_plugin_binds_current_session_for_running_status(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -546,7 +594,7 @@ async def test_task_update_plugin_binds_current_session_for_running_status(
                 {
                     "profile_key": "default",
                     "title": "Bind session",
-                    "prompt": "Attach the current session when work starts.",
+                    "description": "Attach the current session when work starts.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -600,7 +648,7 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
                 {
                     "profile_key": "default",
                     "title": "Poll vendor status",
-                    "prompt": "Recheck the external vendor later.",
+                    "description": "Recheck the external vendor later.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -652,7 +700,7 @@ async def test_task_update_plugin_forwards_explicit_ready_at_null(
         task = await service.create_task(
             profile_id="default",
             title="Scheduled retry to clear",
-            prompt="Clear explicit ready_at via task.update.",
+            description="Clear explicit ready_at via task.update.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -736,7 +784,7 @@ async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
                 {
                     "profile_key": "default",
                     "title": "Bind delegated session",
-                    "prompt": "Attach a delegated execution session.",
+                    "description": "Attach a delegated execution session.",
                     "owner_type": "ai_profile",
                     "owner_ref": "papercliper",
                 },
@@ -788,7 +836,7 @@ async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit
                 {
                     "profile_key": "default",
                     "title": "Recheck vendor reply",
-                    "prompt": "Work this task until the vendor answers.",
+                    "description": "Work this task until the vendor answers.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -879,7 +927,7 @@ async def test_task_block_plugin_rejects_timed_dependency_wait(
                 {
                     "profile_key": "default",
                     "title": "Wait for teammate result",
-                    "prompt": "Pause until the delegated teammate finishes.",
+                    "description": "Pause until the delegated teammate finishes.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -931,7 +979,7 @@ async def test_task_maintenance_sweep_plugin_repairs_stale_claims(
                 {
                     "profile_key": "default",
                     "title": "Repair stale claim",
-                    "prompt": "Repair a stale claim via explicit maintenance.",
+                    "description": "Repair a stale claim via explicit maintenance.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -1046,7 +1094,7 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
             create_tool.parse_params(
                 {
                     "title": "Runtime backlog note",
-                    "prompt": "Keep backlog changes in manager profile.",
+                    "description": "Keep backlog changes in manager profile.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
                 },
@@ -1115,7 +1163,7 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
             create_tool.parse_params(
                 {
                     "title": "Runtime scoped create",
-                    "prompt": "Follow the runtime principal guard",
+                    "description": "Follow the runtime principal guard",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -1203,7 +1251,7 @@ async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
                 {
                     "flow_id": flow_id,
                     "title": "Cross profile create attempt",
-                    "prompt": "should fail because explicit session_profile_id mismatches runtime profile",
+                    "description": "should fail because explicit session_profile_id mismatches runtime profile",
                     "session_profile_id": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1269,7 +1317,7 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
                     {
                         **explicit_target,
                         "title": f"Runtime backlog note #{index}",
-                        "prompt": "Keep backlog changes in manager profile.",
+                        "description": "Keep backlog changes in manager profile.",
                         "owner_type": "human",
                         "owner_ref": "cli_user:alice",
                     },
@@ -1320,7 +1368,7 @@ async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target
                 {
                     "profile_id": "analyst",
                     "title": "Runtime override note",
-                    "prompt": "Allow explicit profile target via guarded override.",
+                    "description": "Allow explicit profile target via guarded override.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
                 },
@@ -1376,7 +1424,7 @@ async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
             create_tool.parse_params(
                 {
                     "title": "Papercliper follow-up",
-                    "prompt": "Take over the research-heavy follow-up work.",
+                    "description": "Take over the research-heavy follow-up work.",
                     "owner_type": "ai_profile",
                     "owner_ref": "papercliper",
                 },
@@ -1428,7 +1476,7 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
                 {
                     "profile_key": "default",
                     "title": "Own launch brief",
-                    "prompt": "Prepare the launch brief and delegate research.",
+                    "description": "Prepare the launch brief and delegate research.",
                     "owner_type": "ai_profile",
                     "owner_ref": "analyst",
                 },
@@ -1458,7 +1506,7 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
             ctx,
             delegate_tool.parse_params(
                 {
-                    "prompt": "Research competitor pricing and summarize the deltas.",
+                    "description": "Research competitor pricing and summarize the deltas.",
                     "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1520,7 +1568,7 @@ async def test_task_update_plugin_rejects_coworker_task_mutation(
                 {
                     "profile_key": "default",
                     "title": "Papercliper owned task",
-                    "prompt": "This task belongs to Papercliper.",
+                    "description": "This task belongs to Papercliper.",
                     "owner_type": "ai_profile",
                     "owner_ref": "papercliper",
                 },
@@ -1587,7 +1635,7 @@ async def test_task_plugins_list_and_repair_stale_claims(
                 {
                     "profile_key": "default",
                     "title": "Recover stale claim",
-                    "prompt": "Repair the stale claim and retry the task.",
+                    "description": "Repair the stale claim and retry the task.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                 },
@@ -1723,7 +1771,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "title": "Review AI answer",
-                    "prompt": "Review the AI-produced answer.",
+                    "description": "Review the AI-produced answer.",
                     "owner_type": "ai_profile",
                     "owner_ref": "default",
                     "reviewer_type": "ai_profile",
@@ -1759,7 +1807,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "title": "Publish after review",
-                    "prompt": "Publish after review is approved.",
+                    "description": "Publish after review is approved.",
                     "depends_on_task_ids": [review_task_id],
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1824,7 +1872,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "title": "Return for changes",
-                    "prompt": "Send this task back with review feedback.",
+                    "description": "Send this task back with review feedback.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
                     "reviewer_type": "ai_profile",

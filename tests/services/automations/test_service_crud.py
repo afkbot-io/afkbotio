@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from afkbot.services.automations import AutomationsServiceError
+import afkbot.services.automations.service as service_module
 from tests.services.automations._harness import prepare_service
 
 
@@ -86,5 +88,37 @@ async def test_service_preserves_literal_prompt_body(tmp_path: Path) -> None:
             prompt="Run audit again\n\nExecution hints:\n- stale hint",
         )
         assert updated.prompt == "Run audit again\n\nExecution hints:\n- stale hint"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_create_cron_uses_timezone_for_next_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cron creation should calculate next_run_at from the configured local timezone."""
+
+    fixed_now = datetime.fromisoformat("2026-03-12T15:59:59+00:00")
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz: timezone | None = None) -> datetime:
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch.setattr(service_module, "datetime", _FixedDateTime)
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        created = await service.create_cron(
+            profile_id="default",
+            name="berlin cron",
+            prompt="run at berlin morning",
+            cron_expr="0 9 * * *",
+            timezone_name="Europe/Berlin",
+        )
+        assert created.cron is not None
+        assert created.cron.timezone == "Europe/Berlin"
+        assert created.cron.next_run_at == datetime.fromisoformat("2026-03-13T08:00:00")
     finally:
         await engine.dispose()
