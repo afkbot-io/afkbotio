@@ -22,6 +22,15 @@ from afkbot.services.automations.contracts import (
 )
 from afkbot.services.automations.cron_execution import tick_cron_automations
 from afkbot.services.automations.errors import AutomationsServiceError
+from afkbot.services.automations.graph.contracts import (
+    AutomationGraphMetadata,
+    AutomationGraphRunMetadata,
+    AutomationGraphSpec,
+    AutomationGraphTraceMetadata,
+    AutomationGraphValidationReport,
+)
+from afkbot.services.automations.graph.executor import AutomationGraphSubagentFactory
+from afkbot.services.automations.graph.service import AutomationGraphService
 from afkbot.services.automations.metadata import to_metadata
 from afkbot.services.automations.repository_support import ensure_profile_exists
 from afkbot.services.automations.update_runtime import apply_automation_update
@@ -29,6 +38,8 @@ from afkbot.services.automations.validators import (
     compute_next_run_at,
     normalize_cron_expr,
     normalize_automation_prompt,
+    normalize_execution_mode,
+    normalize_graph_fallback_mode,
     normalize_timezone_name,
     normalize_update_status,
     validate_create_payload,
@@ -63,12 +74,18 @@ class AutomationsService:
         session_factory: async_sessionmaker[AsyncSession],
         settings: Settings | None = None,
         engine: AsyncEngine | None = None,
+        graph_subagent_service_factory: AutomationGraphSubagentFactory | None = None,
     ) -> None:
         """Capture storage/session dependencies for automation operations."""
 
         self._session_factory = session_factory
         self._settings = settings
         self._engine = engine
+        self._graph_service = AutomationGraphService(
+            session_factory=session_factory,
+            settings=self._resolve_execution_settings(),
+            subagent_service_factory=graph_subagent_service_factory,
+        )
 
     async def create_cron(
         self,
@@ -78,6 +95,8 @@ class AutomationsService:
         prompt: str,
         cron_expr: str,
         timezone_name: str = "UTC",
+        execution_mode: str = "prompt",
+        graph_fallback_mode: str = "resume_with_ai_if_safe",
     ) -> AutomationMetadata:
         """Create profile automation with cron trigger metadata."""
 
@@ -85,6 +104,8 @@ class AutomationsService:
         normalized_cron = normalize_cron_expr(cron_expr)
         normalized_timezone = normalize_timezone_name(timezone_name)
         normalized_prompt = normalize_automation_prompt(prompt)
+        normalized_execution_mode = normalize_execution_mode(execution_mode)
+        normalized_graph_fallback_mode = normalize_graph_fallback_mode(graph_fallback_mode)
         now_utc = datetime.now(timezone.utc)
         next_run_at = compute_next_run_at(normalized_cron, now_utc, normalized_timezone)
 
@@ -97,6 +118,8 @@ class AutomationsService:
                 cron_expr=normalized_cron,
                 timezone=normalized_timezone,
                 next_run_at=next_run_at,
+                execution_mode=normalized_execution_mode,
+                graph_fallback_mode=normalized_graph_fallback_mode,
                 delivery_mode="tool",
             )
             return self._to_metadata(automation=automation, cron=cron, webhook=None)
@@ -109,12 +132,16 @@ class AutomationsService:
         profile_id: str,
         name: str,
         prompt: str,
+        execution_mode: str = "prompt",
+        graph_fallback_mode: str = "resume_with_ai_if_safe",
     ) -> AutomationMetadata:
         """Create profile automation with generated webhook trigger token."""
 
         validate_create_payload(name=name, prompt=prompt)
         stripped_name = name.strip()
         normalized_prompt = normalize_automation_prompt(prompt)
+        normalized_execution_mode = normalize_execution_mode(execution_mode)
+        normalized_graph_fallback_mode = normalize_graph_fallback_mode(graph_fallback_mode)
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
             token = issue_webhook_token()
             token_hash = hash_webhook_token(token)
@@ -126,6 +153,8 @@ class AutomationsService:
                     name=stripped_name,
                     prompt=normalized_prompt,
                     webhook_token_hash=token_hash,
+                    execution_mode=normalized_execution_mode,
+                    graph_fallback_mode=normalized_graph_fallback_mode,
                     delivery_mode="tool",
                 )
                 return self._to_metadata(
@@ -209,12 +238,17 @@ class AutomationsService:
         name: str | None = None,
         prompt: str | None = None,
         status: str | None = None,
+        execution_mode: str | None = None,
+        graph_fallback_mode: str | None = None,
         cron_expr: str | None = None,
         timezone_name: str | None = None,
         rotate_webhook_token: bool | None = None,
     ) -> AutomationMetadata:
         """Update one profile automation and trigger-specific fields."""
-        has_base_updates = any(field is not None for field in (name, prompt, status))
+        has_base_updates = any(
+            field is not None
+            for field in (name, prompt, status, execution_mode, graph_fallback_mode)
+        )
         has_cron_updates = cron_expr is not None or timezone_name is not None
         should_rotate_webhook_token = bool(rotate_webhook_token)
         if not has_base_updates and not has_cron_updates and not should_rotate_webhook_token:
@@ -242,6 +276,14 @@ class AutomationsService:
                 )
 
         normalized_status = normalize_update_status(status) if status is not None else None
+        normalized_execution_mode = (
+            normalize_execution_mode(execution_mode) if execution_mode is not None else None
+        )
+        normalized_graph_fallback_mode = (
+            normalize_graph_fallback_mode(graph_fallback_mode)
+            if graph_fallback_mode is not None
+            else None
+        )
         normalized_cron = normalize_cron_expr(cron_expr) if cron_expr is not None else None
         normalized_timezone = (
             normalize_timezone_name(timezone_name) if timezone_name is not None else None
@@ -258,6 +300,8 @@ class AutomationsService:
                 normalized_name=normalized_name,
                 normalized_prompt=normalized_prompt,
                 normalized_status=normalized_status,
+                normalized_execution_mode=normalized_execution_mode,
+                normalized_graph_fallback_mode=normalized_graph_fallback_mode,
                 normalized_cron=normalized_cron,
                 normalized_timezone=normalized_timezone,
                 issued_webhook_token=issued_webhook_token,
@@ -304,6 +348,7 @@ class AutomationsService:
             payload=payload,
             settings=self._resolve_execution_settings(),
             session_runner_factory=session_runner_factory,
+            graph_service=self._graph_service,
             run_timeout_sec=self._resolve_automation_run_timeout_sec(),
         )
 
@@ -322,10 +367,87 @@ class AutomationsService:
             now_utc=now_utc,
             settings=self._resolve_execution_settings(),
             session_runner_factory=session_runner_factory,
+            graph_service=self._graph_service,
             compute_next_run_at=compute_next_run_at,
             max_due_per_tick=max_due_per_tick,
             run_timeout_sec=self._resolve_automation_run_timeout_sec(),
         )
+
+    async def apply_graph(
+        self,
+        *,
+        profile_id: str,
+        automation_id: int,
+        spec: AutomationGraphSpec,
+    ) -> AutomationGraphMetadata:
+        """Replace the active graph definition for one automation."""
+
+        return await self._graph_service.apply_graph(
+            profile_id=profile_id,
+            automation_id=automation_id,
+            spec=spec,
+        )
+
+    async def get_graph(
+        self,
+        *,
+        profile_id: str,
+        automation_id: int,
+    ) -> AutomationGraphMetadata:
+        """Return the active graph snapshot for one automation."""
+
+        return await self._graph_service.get_graph(
+            profile_id=profile_id,
+            automation_id=automation_id,
+        )
+
+    async def validate_graph(
+        self,
+        *,
+        profile_id: str,
+        automation_id: int,
+    ) -> AutomationGraphValidationReport:
+        """Validate the active graph for one automation."""
+
+        return await self._graph_service.validate_graph(
+            profile_id=profile_id,
+            automation_id=automation_id,
+        )
+
+    async def list_graph_runs(
+        self,
+        *,
+        profile_id: str,
+        automation_id: int,
+        limit: int = 20,
+    ) -> list[AutomationGraphRunMetadata]:
+        """List recent graph runs for one automation."""
+
+        return await self._graph_service.list_runs(
+            profile_id=profile_id,
+            automation_id=automation_id,
+            limit=limit,
+        )
+
+    async def get_graph_run(
+        self,
+        *,
+        profile_id: str,
+        run_id: int,
+    ) -> AutomationGraphRunMetadata:
+        """Return one graph run metadata record."""
+
+        return await self._graph_service.get_run(profile_id=profile_id, run_id=run_id)
+
+    async def get_graph_trace(
+        self,
+        *,
+        profile_id: str,
+        run_id: int,
+    ) -> AutomationGraphTraceMetadata:
+        """Return one graph run trace payload."""
+
+        return await self._graph_service.get_trace(profile_id=profile_id, run_id=run_id)
 
     async def _with_repo(
         self,

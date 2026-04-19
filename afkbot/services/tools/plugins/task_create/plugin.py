@@ -13,6 +13,7 @@ from afkbot.services.task_flow import (
 )
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -66,14 +67,24 @@ class TaskCreateTool(ToolBase):
 
         try:
             service = get_task_flow_service(self._settings)
+            actor = resolve_task_tool_actor(ctx)
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
             session_id_explicit = "session_id" in explicit_fields
             session_profile_id_explicit = "session_profile_id" in explicit_fields
+            if actor.actor_type == "automation" and (session_id_explicit or session_profile_id_explicit):
+                return ToolResult.error(
+                    error_code="task_session_binding_forbidden",
+                    reason="automation graph runtime does not support explicit task session bindings",
+                )
             effective_session_id = payload.session_id if session_id_explicit else None
             effective_session_profile_id = (
                 payload.session_profile_id if session_profile_id_explicit else None
             )
-            if effective_session_id is None and not session_id_explicit:
+            if (
+                actor.actor_type != "automation"
+                and effective_session_id is None
+                and not session_id_explicit
+            ):
                 effective_session_id = ctx.session_id
             if (
                 effective_session_profile_id is None
@@ -83,10 +94,14 @@ class TaskCreateTool(ToolBase):
             ):
                 runtime_taskflow = ctx.runtime_metadata.get("taskflow") if isinstance(ctx.runtime_metadata, dict) else None
                 if isinstance(runtime_taskflow, dict):
-                    runtime_profile_id = runtime_taskflow.get("task_profile_id")
-                    if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
-                        effective_session_profile_id = runtime_profile_id.strip()
-            if effective_session_profile_id is None and not session_profile_id_explicit:
+                        runtime_profile_id = runtime_taskflow.get("task_profile_id")
+                        if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
+                            effective_session_profile_id = runtime_profile_id.strip()
+            if (
+                effective_session_profile_id is None
+                and effective_session_id is not None
+                and not session_profile_id_explicit
+            ):
                 effective_session_profile_id = target_profile_id
             if (
                 session_profile_id_explicit
@@ -102,11 +117,11 @@ class TaskCreateTool(ToolBase):
                 title=payload.title,
                 description=payload.description,
                 status=payload.status,
-                created_by_type="ai_profile",
-                created_by_ref=ctx.profile_id,
+                created_by_type=actor.actor_type,
+                created_by_ref=actor.actor_ref,
                 session_id=effective_session_id,
                 session_profile_id=effective_session_profile_id,
-                actor_session_id=effective_session_id,
+                actor_session_id=actor.actor_session_id,
                 flow_id=payload.flow_id,
                 priority=payload.priority,
                 due_at=payload.due_at,

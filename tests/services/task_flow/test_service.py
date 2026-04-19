@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from afkbot.db.session import session_scope
+from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
@@ -70,6 +71,25 @@ async def _create_chat_session(
                 source="pytest",
                 client_msg_id=None,
             )
+
+
+async def _create_automation_actor(
+    factory,
+    *,
+    profile_id: str,
+    name: str,
+) -> str:
+    async with session_scope(factory) as session:
+        repo = AutomationRepository(session)
+        automation, _ = await repo.create_cron_automation(
+            profile_id=profile_id,
+            name=name,
+            prompt="automation actor seed",
+            cron_expr="0 * * * *",
+            timezone="UTC",
+            next_run_at=None,
+        )
+        return f"automation:{profile_id}:{automation.id}"
 
 
 async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
@@ -1496,6 +1516,221 @@ async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
                 actor_ref="someone_else",
             )
         assert update_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_allows_automation_creator_on_matching_backlog_under_public_principal(
+    tmp_path: Path,
+) -> None:
+    """Automation actors should create tasks in their own backlog without spoofing chat sessions."""
+
+    db_name = "task_flow_public_automation_creator.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        actor_ref = await _create_automation_actor(
+            factory,
+            profile_id="default",
+            name="matching-backlog-automation",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            title="Automation created task",
+            description="Created from webhook automation without a live chat session.",
+            created_by_type="automation",
+            created_by_ref=actor_ref,
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+
+        assert task.created_by_type == "automation"
+        assert task.created_by_ref == actor_ref
+        assert task.owner_type == "ai_profile"
+        assert task.owner_ref == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_automation_creator_for_other_backlog_under_public_principal(
+    tmp_path: Path,
+) -> None:
+    """Automation actors must stay scoped to the backlog encoded in their principal ref."""
+
+    db_name = "task_flow_public_automation_creator_scope.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        actor_ref = await _create_automation_actor(
+            factory,
+            profile_id="analyst",
+            name="cross-backlog-automation",
+        )
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Cross backlog automation task",
+                description="Should fail because the automation principal belongs to another backlog.",
+                created_by_type="automation",
+                created_by_ref=actor_ref,
+                owner_type="ai_profile",
+                owner_ref="default",
+            )
+
+        assert exc_info.value.error_code == "task_creator_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_spoofed_automation_creator_under_public_principal(
+    tmp_path: Path,
+) -> None:
+    """Automation actors must resolve to one real persisted automation record."""
+
+    db_name = "task_flow_public_automation_creator_spoof.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.create_task(
+                profile_id="default",
+                title="Spoofed automation task",
+                description="Should fail because no such automation principal exists.",
+                created_by_type="automation",
+                created_by_ref="automation:default:424242",
+                owner_type="ai_profile",
+                owner_ref="default",
+            )
+
+        assert exc_info.value.error_code == "automation_not_found"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_spoofed_automation_actor_on_task_mutation(
+    tmp_path: Path,
+) -> None:
+    """Mutation paths must also anchor automation actors to real automation rows."""
+
+    db_name = "task_flow_public_automation_mutation_spoof.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Seed task",
+            description="Used to verify automation mutation anchoring.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="blocked",
+                blocked_reason_code="automation_spoof",
+                blocked_reason_text="should fail",
+                actor_type="automation",
+                actor_ref="automation:default:424242",
+            )
+        assert update_exc.value.error_code == "automation_not_found"
+
+        with pytest.raises(TaskFlowServiceError) as comment_exc:
+            await service.add_task_comment(
+                profile_id="default",
+                task_id=task.id,
+                message="spoofed automation comment",
+                actor_type="automation",
+                actor_ref="automation:default:424242",
+            )
+        assert comment_exc.value.error_code == "automation_not_found"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_limits_automation_mutations_to_own_tasks(
+    tmp_path: Path,
+) -> None:
+    """One automation must not get backlog-wide write authority over unrelated tasks."""
+
+    db_name = "task_flow_public_automation_mutation_scope.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        actor_ref = await _create_automation_actor(
+            factory,
+            profile_id="default",
+            name="scoped-automation",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            title="Human task",
+            description="Automation should not manage this backlog item.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="blocked",
+                blocked_reason_code="automation_scope",
+                blocked_reason_text="should fail",
+                actor_type="automation",
+                actor_ref=actor_ref,
+            )
+        assert update_exc.value.error_code == "task_actor_forbidden"
     finally:
         await engine.dispose()
 

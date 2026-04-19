@@ -52,6 +52,12 @@ class AutomationMetadata(BaseModel):
     prompt: str
     trigger_type: Literal["cron", "webhook"]
     status: Literal["active", "paused", "deleted"]
+    execution_mode: Literal["prompt", "graph"]
+    graph_fallback_mode: Literal[
+        "fail_closed",
+        "resume_with_ai",
+        "resume_with_ai_if_safe",
+    ]
     created_at: datetime
     updated_at: datetime
     cron: AutomationCronMetadata | None = None

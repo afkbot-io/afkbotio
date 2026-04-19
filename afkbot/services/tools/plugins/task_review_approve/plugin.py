@@ -7,6 +7,7 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -36,14 +37,15 @@ class TaskReviewApproveTool(ToolBase):
         payload = (
             params if isinstance(params, TaskReviewApproveParams) else TaskReviewApproveParams.model_validate(params)
         )
+        actor = resolve_task_tool_actor(ctx)
         explicit_actor_type = str(payload.actor_type or "").strip() or None
         explicit_actor_ref = str(payload.actor_ref or "").strip() or None
         if (explicit_actor_type is not None or explicit_actor_ref is not None) and (
-            explicit_actor_type != "ai_profile" or explicit_actor_ref != ctx.profile_id
+            explicit_actor_type != actor.actor_type or explicit_actor_ref != actor.actor_ref
         ):
             return ToolResult.error(
                 error_code="task_review_actor_forbidden",
-                reason="Review actions can only be performed by the current AI profile",
+                reason="Review actions can only be performed by the current runtime actor",
             )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
@@ -58,9 +60,9 @@ class TaskReviewApproveTool(ToolBase):
             item = await service.approve_review_task(
                 profile_id=target_profile_id,
                 task_id=payload.task_id,
-                actor_type="ai_profile",
-                actor_ref=ctx.profile_id,
-                actor_session_id=ctx.session_id,
+                actor_type=actor.actor_type,
+                actor_ref=actor.actor_ref,
+                actor_session_id=actor.actor_session_id,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:

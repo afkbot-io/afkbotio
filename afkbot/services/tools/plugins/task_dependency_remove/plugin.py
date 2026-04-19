@@ -7,6 +7,7 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -47,13 +48,14 @@ class TaskDependencyRemoveTool(ToolBase):
             return scope_error
         try:
             service = get_task_flow_service(self._settings)
+            actor = resolve_task_tool_actor(ctx)
             deleted = await service.remove_dependency(
                 profile_id=target_profile_id,
                 task_id=payload.task_id,
                 depends_on_task_id=payload.depends_on_task_id,
-                actor_type="ai_profile",
-                actor_ref=ctx.profile_id,
-                actor_session_id=ctx.session_id,
+                actor_type=actor.actor_type,
+                actor_ref=actor.actor_ref,
+                actor_session_id=actor.actor_session_id,
             )
             return ToolResult(
                 ok=True,

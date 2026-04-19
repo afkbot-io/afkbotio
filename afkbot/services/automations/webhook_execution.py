@@ -13,6 +13,7 @@ from afkbot.models.automation import Automation
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
 from afkbot.services.automations.errors import AutomationsServiceError
+from afkbot.services.automations.graph.service import AutomationGraphService
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
 from afkbot.services.automations.message_factory import (
     compose_webhook_message,
@@ -39,6 +40,7 @@ async def trigger_webhook_automation(
     payload: Mapping[str, object],
     settings: Settings,
     session_runner_factory: AutomationSessionRunnerFactory | None,
+    graph_service: AutomationGraphService,
     run_timeout_sec: float | None = None,
 ) -> AutomationWebhookTriggerResult:
     """Trigger one webhook automation and run its prompt through AgentLoop."""
@@ -86,16 +88,6 @@ async def trigger_webhook_automation(
             deduplicated=True,
         )
 
-    runner = build_automation_session_runner(
-        session_factory=session_factory,
-        profile_id=automation.profile_id,
-        settings=settings,
-        runner_factory=session_runner_factory,
-    )
-    message = compose_webhook_message(
-        automation.prompt,
-        sanitized_payload,
-    )
     runtime_target = build_automation_runtime_target(
         profile_id=automation.profile_id,
         session_id=session_id,
@@ -150,18 +142,47 @@ async def trigger_webhook_automation(
                 error_code="automation_webhook_state_conflict",
                 reason="Failed to mark webhook execution as started",
             )
-        await run_with_lease_refresh(
-            run=lambda: runner.run_turn(
-                profile_id=runtime_target.profile_id,
-                session_id=runtime_target.session_id,
-                message=message,
-                context_overrides=runtime_target.context_overrides,
-                source="automation",
-            ),
-            refresh=_refresh_webhook_lease,
-            ttl=WEBHOOK_CLAIM_TTL,
-            timeout_sec=run_timeout_sec,
-        )
+        if automation.execution_mode == "graph":
+            await run_with_lease_refresh(
+                run=lambda: graph_service.execute_triggered_automation(
+                    profile_id=automation.profile_id,
+                    automation_id=automation.id,
+                    trigger_type="webhook",
+                    trigger_payload=sanitized_payload,
+                    parent_session_id=runtime_target.session_id,
+                    context_overrides=runtime_target.context_overrides,
+                    event_hash=event_hash,
+                    cron_expr=None,
+                    session_runner_factory=session_runner_factory,
+                    run_timeout_sec=run_timeout_sec,
+                ),
+                refresh=_refresh_webhook_lease,
+                ttl=WEBHOOK_CLAIM_TTL,
+                timeout_sec=run_timeout_sec,
+            )
+        else:
+            runner = build_automation_session_runner(
+                session_factory=session_factory,
+                profile_id=automation.profile_id,
+                settings=settings,
+                runner_factory=session_runner_factory,
+            )
+            message = compose_webhook_message(
+                automation.prompt,
+                sanitized_payload,
+            )
+            await run_with_lease_refresh(
+                run=lambda: runner.run_turn(
+                    profile_id=runtime_target.profile_id,
+                    session_id=runtime_target.session_id,
+                    message=message,
+                    context_overrides=runtime_target.context_overrides,
+                    source="automation",
+                ),
+                refresh=_refresh_webhook_lease,
+                ttl=WEBHOOK_CLAIM_TTL,
+                timeout_sec=run_timeout_sec,
+            )
         completed = await with_repo(_complete)
     except asyncio.CancelledError as exc:
         exc_info = exc

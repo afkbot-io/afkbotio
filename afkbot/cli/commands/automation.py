@@ -9,8 +9,14 @@ from datetime import datetime, timezone
 import typer
 
 from afkbot.services.automations.cli_service import (
+    apply_graph_payload,
     create_automation_payload,
     delete_automation_payload,
+    graph_run_list_payload,
+    graph_run_show_payload,
+    graph_show_payload,
+    graph_trace_payload,
+    graph_validate_payload,
     get_automation_payload,
     list_automations_payload,
     update_automation_payload,
@@ -102,6 +108,19 @@ def register(app: typer.Typer) -> None:
             "--timezone",
             help="IANA timezone for cron trigger.",
         ),
+        execution_mode: str = typer.Option(
+            "prompt",
+            "--mode",
+            help="Automation execution mode: prompt or graph.",
+        ),
+        graph_fallback_mode: str = typer.Option(
+            "resume_with_ai_if_safe",
+            "--graph-fallback-mode",
+            help=(
+                "Graph fallback mode: fail_closed, "
+                "resume_with_ai, or resume_with_ai_if_safe."
+            ),
+        ),
     ) -> None:
         """Create one automation under the selected profile."""
 
@@ -113,6 +132,8 @@ def register(app: typer.Typer) -> None:
                 trigger_type=trigger,
                 cron_expr=cron_expr,
                 timezone_name=timezone_name,
+                execution_mode=execution_mode,
+                graph_fallback_mode=graph_fallback_mode,
             )
         )
         typer.echo(payload)
@@ -129,6 +150,19 @@ def register(app: typer.Typer) -> None:
             None,
             "--status",
             help="Updated status: active or paused.",
+        ),
+        execution_mode: str | None = typer.Option(
+            None,
+            "--mode",
+            help="Updated execution mode: prompt or graph.",
+        ),
+        graph_fallback_mode: str | None = typer.Option(
+            None,
+            "--graph-fallback-mode",
+            help=(
+                "Updated graph fallback mode: fail_closed, "
+                "resume_with_ai, or resume_with_ai_if_safe."
+            ),
         ),
         cron_expr: str | None = typer.Option(None, "--cron-expr", help="Updated cron expression."),
         timezone_name: str | None = typer.Option(
@@ -151,6 +185,8 @@ def register(app: typer.Typer) -> None:
                 name=name,
                 prompt=prompt,
                 status=status,
+                execution_mode=execution_mode,
+                graph_fallback_mode=graph_fallback_mode,
                 cron_expr=cron_expr,
                 timezone_name=timezone_name,
                 rotate_webhook_token=rotate_webhook_token,
@@ -209,6 +245,117 @@ def register(app: typer.Typer) -> None:
                 profile_id=_resolve_profile(ctx, profile),
                 token=token,
                 payload_json=payload_json,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("graph-apply")
+    def apply_graph(
+        ctx: typer.Context,
+        automation_id: int = typer.Argument(..., min=1, help="Automation id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        spec_json: str = typer.Option(
+            ...,
+            "--spec-json",
+            help="Graph spec JSON matching AutomationGraphSpec.",
+        ),
+    ) -> None:
+        """Replace the active graph definition for one automation."""
+
+        payload = asyncio.run(
+            apply_graph_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                automation_id=automation_id,
+                spec_json=spec_json,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("graph-show")
+    def show_graph(
+        ctx: typer.Context,
+        automation_id: int = typer.Argument(..., min=1, help="Automation id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+    ) -> None:
+        """Show the active graph snapshot for one automation."""
+
+        payload = asyncio.run(
+            graph_show_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                automation_id=automation_id,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("graph-validate")
+    def validate_graph(
+        ctx: typer.Context,
+        automation_id: int = typer.Argument(..., min=1, help="Automation id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+    ) -> None:
+        """Validate the active graph for one automation."""
+
+        payload = asyncio.run(
+            graph_validate_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                automation_id=automation_id,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("run-list")
+    def list_runs(
+        ctx: typer.Context,
+        automation_id: int = typer.Argument(..., min=1, help="Automation id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        limit: int = typer.Option(20, "--limit", min=1, help="Maximum runs to return."),
+    ) -> None:
+        """List recent graph runs for one automation."""
+
+        payload = asyncio.run(
+            graph_run_list_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                automation_id=automation_id,
+                limit=limit,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("run-show")
+    @automation_app.command("run-get")
+    def show_run(
+        ctx: typer.Context,
+        run_id: int = typer.Argument(..., min=1, help="Graph run id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+    ) -> None:
+        """Show one graph run metadata record."""
+
+        payload = asyncio.run(
+            graph_run_show_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                run_id=run_id,
+            )
+        )
+        typer.echo(payload)
+        _exit_on_error_payload(payload)
+
+    @automation_app.command("trace")
+    def show_trace(
+        ctx: typer.Context,
+        run_id: int = typer.Argument(..., min=1, help="Graph run id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+    ) -> None:
+        """Show one graph run trace payload."""
+
+        payload = asyncio.run(
+            graph_trace_payload(
+                profile_id=_resolve_profile(ctx, profile),
+                run_id=run_id,
             )
         )
         typer.echo(payload)

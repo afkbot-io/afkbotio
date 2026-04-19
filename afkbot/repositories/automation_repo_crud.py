@@ -33,6 +33,8 @@ class AutomationRepositoryCrudMixin:
         cron_expr: str,
         timezone: str,
         next_run_at: datetime | None,
+        execution_mode: str = "prompt",
+        graph_fallback_mode: str = "resume_with_ai_if_safe",
         delivery_mode: str = "tool",
     ) -> tuple[Automation, AutomationTriggerCron]:
         """Create automation row with cron trigger row."""
@@ -43,6 +45,8 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="cron",
             status="active",
+            execution_mode=execution_mode,
+            graph_fallback_mode=graph_fallback_mode,
             delivery_mode=delivery_mode,
         )
         self._session.add(automation)
@@ -68,6 +72,8 @@ class AutomationRepositoryCrudMixin:
         prompt: str,
         webhook_token_hash: str,
         webhook_token_ref: str | None = None,
+        execution_mode: str = "prompt",
+        graph_fallback_mode: str = "resume_with_ai_if_safe",
         delivery_mode: str = "tool",
     ) -> tuple[Automation, AutomationTriggerWebhook]:
         """Create automation row with webhook trigger row."""
@@ -78,6 +84,8 @@ class AutomationRepositoryCrudMixin:
             prompt=prompt,
             trigger_type="webhook",
             status="active",
+            execution_mode=execution_mode,
+            graph_fallback_mode=graph_fallback_mode,
             delivery_mode=delivery_mode,
         )
         self._session.add(automation)
@@ -150,6 +158,8 @@ class AutomationRepositoryCrudMixin:
         name: str | None = None,
         prompt: str | None = None,
         status: str | None = None,
+        execution_mode: str | None = None,
+        graph_fallback_mode: str | None = None,
     ) -> Automation | None:
         """Update base automation fields for one profile automation."""
 
@@ -166,6 +176,10 @@ class AutomationRepositoryCrudMixin:
             automation.prompt = prompt
         if status is not None:
             automation.status = status
+        if execution_mode is not None:
+            automation.execution_mode = execution_mode
+        if graph_fallback_mode is not None:
+            automation.graph_fallback_mode = graph_fallback_mode
         await self._session.flush()
         await self._session.refresh(automation)
         return automation

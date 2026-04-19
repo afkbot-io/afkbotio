@@ -96,6 +96,8 @@ def _upgrade_schema(conn: Connection) -> None:
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
     _ensure_automation_delivery_columns(conn)
+    _ensure_automation_runtime_columns(conn)
+    _ensure_automation_graph_runtime_columns(conn)
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
     _backfill_webhook_token_hashes(conn)
@@ -321,8 +323,8 @@ def _quote_sqlite_identifier(value: str) -> str:
     return '"' + str(value).replace('"', '""') + '"'
 
 
-def _ensure_automation_delivery_columns(conn: Connection) -> None:
-    """Ensure newer automation delivery columns exist for legacy SQLite installs."""
+def _ensure_automation_runtime_columns(conn: Connection) -> None:
+    """Ensure newer automation runtime columns exist for legacy SQLite installs."""
 
     columns = _table_columns(conn, "automation")
     if not columns:
@@ -336,6 +338,21 @@ def _ensure_automation_delivery_columns(conn: Connection) -> None:
         )
     if "delivery_target_json" not in columns:
         conn.execute(text("ALTER TABLE automation ADD COLUMN delivery_target_json TEXT"))
+    if "execution_mode" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation "
+                "ADD COLUMN execution_mode VARCHAR(16) NOT NULL DEFAULT 'prompt'"
+            )
+        )
+    if "graph_fallback_mode" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation "
+                "ADD COLUMN graph_fallback_mode VARCHAR(32) "
+                "NOT NULL DEFAULT 'resume_with_ai_if_safe'"
+            )
+        )
     conn.execute(
         text(
             "UPDATE automation "
@@ -343,6 +360,32 @@ def _ensure_automation_delivery_columns(conn: Connection) -> None:
             "WHERE delivery_mode IS NULL OR delivery_mode = ''"
         )
     )
+    conn.execute(
+        text(
+            "UPDATE automation "
+            "SET execution_mode = 'prompt' "
+            "WHERE execution_mode IS NULL OR execution_mode = ''"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE automation "
+            "SET graph_fallback_mode = 'resume_with_ai_if_safe' "
+            "WHERE graph_fallback_mode IS NULL OR graph_fallback_mode = ''"
+        )
+    )
+
+
+def _ensure_automation_graph_runtime_columns(conn: Connection) -> None:
+    """Ensure newer graph ledger columns exist for legacy SQLite installs."""
+
+    columns = _table_columns(conn, "automation_node_run")
+    if not columns:
+        return
+    if "execution_index" not in columns:
+        conn.execute(text("ALTER TABLE automation_node_run ADD COLUMN execution_index INTEGER"))
+    if "effects_json" not in columns:
+        conn.execute(text("ALTER TABLE automation_node_run ADD COLUMN effects_json TEXT"))
 
 
 def _ensure_webhook_token_columns(conn: Connection) -> None:

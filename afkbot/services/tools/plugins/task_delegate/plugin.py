@@ -9,6 +9,7 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -61,14 +62,15 @@ class TaskDelegateTool(ToolBase):
             return ToolResult.error(error_code="invalid_task_id", reason="task_id is required")
         try:
             service = get_task_flow_service(self._settings)
+            actor = resolve_task_tool_actor(ctx)
             item = await service.delegate_task(
                 profile_id=target_profile_id,
                 source_task_id=source_task_id,
                 delegated_owner_ref=payload.owner_ref,
                 description=payload.description,
-                actor_type="ai_profile",
-                actor_ref=ctx.profile_id,
-                actor_session_id=ctx.session_id,
+                actor_type=actor.actor_type,
+                actor_ref=actor.actor_ref,
+                actor_session_id=actor.actor_session_id,
                 title=payload.title,
                 flow_id=payload.flow_id,
                 priority=payload.priority,

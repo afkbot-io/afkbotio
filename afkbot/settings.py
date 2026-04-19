@@ -245,6 +245,12 @@ class Settings(BaseSettings):
     runtime_shutdown_timeout_sec: float = 10.0
     runtime_read_timeout_sec: float = 5.0
     automation_run_timeout_sec: float = 1800.0
+    automation_graph_code_cpu_time_sec: int = 2
+    automation_graph_code_memory_limit_mb: int = 128
+    automation_graph_code_max_open_files: int = 32
+    automation_graph_code_max_file_size_bytes: int = 1048576
+    automation_graph_code_max_io_bytes: int = 65536
+    automation_graph_code_os_sandbox: Literal["auto", "disabled", "required"] = "auto"
     runtime_max_header_bytes: int = 16384
     runtime_max_body_bytes: int = 262144
     taskflow_runtime_poll_interval_sec: float = 5.0
@@ -643,6 +649,21 @@ class Settings(BaseSettings):
 
         if value <= 0:
             raise ValueError("runtime intervals must be > 0")
+        return value
+
+    @field_validator(
+        "automation_graph_code_cpu_time_sec",
+        "automation_graph_code_memory_limit_mb",
+        "automation_graph_code_max_open_files",
+        "automation_graph_code_max_file_size_bytes",
+        "automation_graph_code_max_io_bytes",
+    )
+    @classmethod
+    def _validate_positive_sandbox_int(cls, value: int) -> int:
+        """Validate sandbox/resource limits that must be strictly positive."""
+
+        if value <= 0:
+            raise ValueError("sandbox limits must be > 0")
         return value
 
     @field_validator("llm_request_timeout_sec")

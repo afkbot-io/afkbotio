@@ -14,6 +14,7 @@ from afkbot.services.task_flow import (
 )
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -68,9 +69,15 @@ class TaskUpdateTool(ToolBase):
 
         try:
             service = get_task_flow_service(self._settings)
+            actor = resolve_task_tool_actor(ctx)
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
             session_id_explicit = "session_id" in explicit_fields
             session_profile_id_explicit = "session_profile_id" in explicit_fields
+            if actor.actor_type == "automation" and (session_id_explicit or session_profile_id_explicit):
+                return ToolResult.error(
+                    error_code="task_session_binding_forbidden",
+                    reason="automation graph runtime does not support explicit task session bindings",
+                )
             effective_session_id = payload.session_id if session_id_explicit else None
             effective_session_profile_id = (
                 payload.session_profile_id if session_profile_id_explicit else None
@@ -98,12 +105,18 @@ class TaskUpdateTool(ToolBase):
                         reason="retry_after_sec requires status=blocked",
                     )
                 effective_ready_at = datetime.now(timezone.utc) + timedelta(seconds=payload.retry_after_sec or 0)
-            if effective_session_id is None and payload.status in {"claimed", "running"}:
+            if (
+                actor.actor_type != "automation"
+                and effective_session_id is None
+                and payload.status in {"claimed", "running"}
+            ):
                 effective_session_id = ctx.session_id
                 if not session_profile_id_explicit:
                     effective_session_profile_id = ctx.profile_id
             elif (
-                effective_session_id == ctx.session_id
+                actor.actor_type != "automation"
+                and effective_session_id is not None
+                and effective_session_id == ctx.session_id
                 and effective_session_profile_id is None
                 and not session_profile_id_explicit
             ):
@@ -133,9 +146,9 @@ class TaskUpdateTool(ToolBase):
                         ),
                         blocked_reason_code=blocked_reason_code_arg,
                         blocked_reason_text=blocked_reason_text_arg,
-                        actor_session_id=ctx.session_id,
-                        actor_type="ai_profile",
-                        actor_ref=ctx.profile_id,
+                        actor_session_id=actor.actor_session_id,
+                        actor_type=actor.actor_type,
+                        actor_ref=actor.actor_ref,
                         attachments=payload.attachments,
                     )
                 else:
@@ -156,9 +169,9 @@ class TaskUpdateTool(ToolBase):
                         labels=payload.labels,
                         blocked_reason_code=blocked_reason_code_arg,
                         blocked_reason_text=blocked_reason_text_arg,
-                        actor_session_id=ctx.session_id,
-                        actor_type="ai_profile",
-                        actor_ref=ctx.profile_id,
+                        actor_session_id=actor.actor_session_id,
+                        actor_type=actor.actor_type,
+                        actor_ref=actor.actor_ref,
                         attachments=payload.attachments,
                     )
             elif effective_session_id is not None:
@@ -184,9 +197,9 @@ class TaskUpdateTool(ToolBase):
                     ),
                     blocked_reason_code=blocked_reason_code_arg,
                     blocked_reason_text=blocked_reason_text_arg,
-                    actor_session_id=ctx.session_id,
-                    actor_type="ai_profile",
-                    actor_ref=ctx.profile_id,
+                    actor_session_id=actor.actor_session_id,
+                    actor_type=actor.actor_type,
+                    actor_ref=actor.actor_ref,
                     attachments=payload.attachments,
                 )
             else:
@@ -206,9 +219,9 @@ class TaskUpdateTool(ToolBase):
                     labels=payload.labels,
                     blocked_reason_code=blocked_reason_code_arg,
                     blocked_reason_text=blocked_reason_text_arg,
-                    actor_session_id=ctx.session_id,
-                    actor_type="ai_profile",
-                    actor_ref=ctx.profile_id,
+                    actor_session_id=actor.actor_session_id,
+                    actor_type=actor.actor_type,
+                    actor_ref=actor.actor_ref,
                     attachments=payload.attachments,
                 )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})

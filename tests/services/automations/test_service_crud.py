@@ -68,6 +68,23 @@ async def test_service_profile_isolation(tmp_path: Path) -> None:
         await engine.dispose()
 
 
+async def test_service_create_rejects_unimplemented_branch_error_only_mode(tmp_path: Path) -> None:
+    """Create should reject fallback modes that are not implemented at runtime."""
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.create_webhook(
+                profile_id="default",
+                name="invalid-fallback",
+                prompt="prompt",
+                graph_fallback_mode="branch_error_only",
+            )
+        assert exc_info.value.error_code == "invalid_graph_fallback_mode"
+    finally:
+        await engine.dispose()
+
+
 async def test_service_preserves_literal_prompt_body(tmp_path: Path) -> None:
     """Service should store prompt body as-is after whitespace normalization."""
 
