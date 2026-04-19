@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-04-19
+
+### Added
+
+- Platform-level browser UI auth for plugin web surfaces and plugin API routes, including login, logout, session inspection, signed operator cookies, rate limiting, and lockout behavior.
+- New `afk auth ...` command surface with guided setup, create, update, status, password rotation, and disable flows.
+- Plugin manifests can now declare `auth.operator_required`, so protected browser surfaces survive plugin upgrades without storing auth state inside plugin packages.
+
+### Changed
+
+- Plugin web auth enforcement now runs in core `afk` instead of relying on per-plugin logic, and protected UI routes preserve the original `next=` target including query parameters.
+- The curated AFKBOT UI plugin can now consume core auth directly and show operator session state without maintaining its own password flow.
+
+### Fixed
+
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.3.0`.
+
 ## [1.2.0] - 2026-04-16
 
 ### Added

@@ -48,6 +48,7 @@ def test_legacy_groups_are_not_exposed() -> None:
     assert "mcp" in output
     assert "plugin" in output
     assert "profile" in output
+    assert "auth" in output
     assert "skill" in output
     assert "start" in output
     assert "automation" in output
@@ -84,6 +85,7 @@ def test_root_help_explains_primary_entrypoints() -> None:
     assert "`afk memory`" in output
     assert "`afk mcp`" in output
     assert "`afk skill` and `afk subagent`" in output
+    assert "`afk auth`" in output
     assert "`afk browser install`" in output
     assert "browser automation runtime" in output
     assert "afk doctor" in output
