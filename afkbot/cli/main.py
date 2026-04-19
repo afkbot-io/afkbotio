@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
+from afkbot.cli.commands.auth import register as register_auth
 from afkbot.cli.commands.bootstrap import register as register_bootstrap
 from afkbot.cli.commands.browser import register as register_browser
 from afkbot.cli.commands.channel import register as register_channel
@@ -39,7 +40,8 @@ app = typer.Typer(
         "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk plugin` to "
         "install optional platform extensions, `afk channel` to operate external adapters, `afk memory` to "
         "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
-        "`afk skill` and `afk subagent` to manage profile assets, and `afk browser install` "
+        "`afk skill` and `afk subagent` to manage profile assets, `afk auth` to protect web/plugin "
+        "surfaces, and `afk browser install` "
         "to prepare browser automation runtime."
     ),
     no_args_is_help=True,
@@ -48,6 +50,7 @@ app = typer.Typer(
 register_setup(app)
 register_uninstall(app)
 register_update(app)
+register_auth(app)
 register_bootstrap(app)
 register_automation(app)
 register_task(app)
@@ -87,6 +90,7 @@ def _guard_setup(ctx: typer.Context) -> None:
         "upgrade",
         "mcp",
         "plugin",
+        "auth",
         "service",
         "version",
     }:

@@ -59,6 +59,9 @@ def scaffold_plugin(
                 "outbound_http": False,
                 "data_dir_write": False,
             },
+            "auth": {
+                "operator_required": False,
+            },
             "capabilities": {
                 "api_router": api_router,
                 "static_web": static_web,

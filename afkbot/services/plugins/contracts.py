@@ -150,6 +150,14 @@ class PluginMounts(BaseModel):
         return normalized.rstrip("/") or "/"
 
 
+class PluginAuth(BaseModel):
+    """Auth policy declared by one plugin manifest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operator_required: bool = False
+
+
 class PluginPaths(BaseModel):
     """Relative paths inside one installed plugin package."""
 
@@ -186,6 +194,7 @@ class PluginManifest(BaseModel):
     config_schema: PluginConfigSchema = Field(default_factory=PluginConfigSchema)
     permissions: PluginPermissions = Field(default_factory=PluginPermissions)
     capabilities: PluginCapabilities = Field(default_factory=PluginCapabilities)
+    auth: PluginAuth = Field(default_factory=PluginAuth)
     mounts: PluginMounts = Field(default_factory=PluginMounts)
     paths: PluginPaths = Field(default_factory=PluginPaths)
 
@@ -291,6 +300,16 @@ class PluginStaticMount:
 
 
 @dataclass(frozen=True, slots=True)
+class PluginAuthMount:
+    """Auth-relevant mount prefixes contributed by one active plugin."""
+
+    plugin_id: str
+    api_prefix: str | None
+    web_prefix: str | None
+    operator_required: bool
+
+
+@dataclass(frozen=True, slots=True)
 class LoadedPluginRuntime:
     """Runtime surfaces contributed by one active plugin."""
 
@@ -317,6 +336,30 @@ class PluginRuntimeSnapshot:
     @property
     def static_mounts(self) -> tuple[PluginStaticMount, ...]:
         return tuple(item for plugin in self.plugins for item in plugin.static_mounts)
+
+    @property
+    def plugin_auth_mounts(self) -> tuple[PluginAuthMount, ...]:
+        """Return auth-relevant mount prefixes for every active plugin."""
+
+        return tuple(
+            PluginAuthMount(
+                plugin_id=plugin.record.plugin_id,
+                api_prefix=plugin.record.manifest.mounts.api_prefix,
+                web_prefix=plugin.record.manifest.mounts.web_prefix,
+                operator_required=plugin.record.manifest.auth.operator_required,
+            )
+            for plugin in self.plugins
+        )
+
+    @property
+    def operator_auth_plugin_ids(self) -> tuple[str, ...]:
+        """Return plugin ids that declare operator auth in their manifest."""
+
+        return tuple(
+            plugin.record.plugin_id
+            for plugin in self.plugins
+            if plugin.record.manifest.auth.operator_required
+        )
 
     @property
     def skill_dirs(self) -> tuple[Path, ...]:
