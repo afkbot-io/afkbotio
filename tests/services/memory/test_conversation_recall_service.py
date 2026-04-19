@@ -251,6 +251,25 @@ async def test_conversation_recall_service_allows_foreign_session_for_cli(
         await engine.dispose()
 
 
+async def test_conversation_recall_service_rejects_missing_actor_session_id(
+    tmp_path: Path,
+) -> None:
+    engine, service = await _prepare(tmp_path)
+    try:
+        with pytest.raises(ConversationRecallServiceError) as exc_info:
+            await service.search_for_actor(
+                profile_id="default",
+                actor_session_id="   ",
+                actor_transport="chat",
+                target_session_id=None,
+                query="source of truth",
+                limit=5,
+            )
+        assert exc_info.value.error_code == "memory_actor_session_required"
+    finally:
+        await engine.dispose()
+
+
 async def test_conversation_recall_service_allows_foreign_session_for_other_trusted_transports(
     tmp_path: Path,
 ) -> None:

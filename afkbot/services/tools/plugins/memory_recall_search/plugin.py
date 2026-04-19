@@ -44,10 +44,16 @@ class MemoryRecallSearchTool(ToolBase):
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         typed = ConversationRecallSearchParams.model_validate(params.model_dump())
+        actor_session_id = ctx.session_id.strip() if isinstance(ctx.session_id, str) else ""
+        if not actor_session_id:
+            return ToolResult.error(
+                error_code="memory_actor_session_required",
+                reason="Session id is required for conversation recall.",
+            )
         try:
             items = await get_conversation_recall_service(self._settings).search_for_actor(
                 profile_id=typed.effective_profile_id,
-                actor_session_id=ctx.session_id,
+                actor_session_id=actor_session_id,
                 actor_transport=self._actor_transport(ctx),
                 target_session_id=typed.session_id,
                 query=typed.query,

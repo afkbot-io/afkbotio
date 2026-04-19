@@ -166,14 +166,15 @@ class ConversationRecallService:
     ) -> list[ConversationRecallHit]:
         """Authorize one actor boundary, then search recall for the resolved target session."""
 
+        normalized_actor_session_id = self._normalize_actor_session_id(actor_session_id)
         actor = ConversationRecallActor(
-            session_id=self._normalize_query(actor_session_id),
+            session_id=normalized_actor_session_id,
             transport=self._normalize_transport(actor_transport),
             account_id=(
                 self._normalize_selector_value(actor_account_id)
                 or self._normalize_account_id(
                     actor_transport=actor_transport,
-                    actor_session_id=actor_session_id,
+                    actor_session_id=normalized_actor_session_id,
                 )
             ),
             peer_id=self._normalize_selector_value(actor_peer_id),
@@ -210,6 +211,16 @@ class ConversationRecallService:
             turns = ChatTurnRepository(session)
             chat_sessions = ChatSessionRepository(session)
             return await op(session, compactions, turns, chat_sessions)
+
+    @staticmethod
+    def _normalize_actor_session_id(value: str | None) -> str:
+        normalized = " ".join((value or "").strip().split())
+        if not normalized:
+            raise ConversationRecallServiceError(
+                error_code="memory_actor_session_required",
+                reason="Session id is required for conversation recall.",
+            )
+        return normalized
 
     @staticmethod
     def _normalize_query(value: str) -> str:

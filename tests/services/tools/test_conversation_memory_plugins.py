@@ -68,6 +68,15 @@ def _metadata_missing_transport_ctx(*, session_id: str = "chat:100") -> ToolCont
     )
 
 
+def _ctx_without_session_id(*, transport: str = "chat") -> ToolContext:
+    return ToolContext(
+        profile_id="default",
+        session_id=None,
+        run_id=4,
+        runtime_metadata={"transport": transport},
+    )
+
+
 async def _prepare(tmp_path: Path, monkeypatch: MonkeyPatch) -> tuple[Settings, ToolRegistry]:
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'conversation_recall.db'}"
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
@@ -268,6 +277,27 @@ async def test_conversation_recall_fails_closed_when_transport_metadata_missing(
     )
     assert result.ok is False
     assert result.error_code == "memory_cross_scope_forbidden"
+
+
+async def test_conversation_recall_fails_closed_without_actor_session_id(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    settings, registry = await _prepare(tmp_path, monkeypatch)
+    recall_tool = registry.get("memory.recall.search")
+    assert recall_tool is not None
+
+    result = await recall_tool.execute(
+        _ctx_without_session_id(),
+        recall_tool.parse_params(
+            {"profile_key": "default", "query": "source of truth"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "memory_actor_session_required"
 
 
 async def test_trusted_conversation_recall_can_target_foreign_session_explicitly(
