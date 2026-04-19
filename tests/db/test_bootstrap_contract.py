@@ -421,6 +421,87 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     await engine.dispose()
 
 
+async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_reference(
+    tmp_path: Path,
+) -> None:
+    """Cleanup should preserve old task runs that still have newer task_event FK references."""
+
+    db_path = tmp_path / "runtime-history-keep-referenced-run.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    service = TaskFlowService(factory)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    old_time = cutoff - timedelta(days=3)
+    recent_time = cutoff + timedelta(days=1)
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    task = await service.create_task(
+        profile_id="default",
+        title="Keep run referenced by newer task event",
+        prompt="Preserve old task run rows while newer task events still reference them.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="human",
+        owner_ref="cli",
+    )
+
+    referenced_run_id = 0
+    async with session_scope(factory) as session:
+        referenced_run = TaskRun(
+            task_id=task.id,
+            attempt=1,
+            owner_type="human",
+            owner_ref="cli",
+            execution_mode="detached",
+            status="completed",
+            session_id="taskflow:referenced",
+            run_id=None,
+            worker_id="worker-referenced",
+            started_at=old_time,
+            finished_at=old_time,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        session.add(referenced_run)
+        await session.flush()
+        referenced_run_id = int(referenced_run.id)
+        session.add(
+            TaskEvent(
+                task_id=task.id,
+                task_run_id=referenced_run.id,
+                event_type="comment_added",
+                actor_type="human",
+                actor_ref="cli",
+                message="newer event keeps task_run referenced",
+                details_json="{}",
+                created_at=recent_time,
+            )
+        )
+        await session.flush()
+
+    prune_result = await prune_runtime_history(
+        engine,
+        task_event_before=cutoff,
+        task_run_before=cutoff,
+        runlog_event_before=cutoff,
+        batch_size=10,
+    )
+
+    assert prune_result.task_event_count == 0
+    assert prune_result.task_run_count == 0
+    assert prune_result.runlog_event_count == 0
+
+    async with session_scope(factory) as session:
+        referenced_run_exists = await session.get(TaskRun, referenced_run_id)
+
+    assert referenced_run_exists is not None
+    await engine.dispose()
+
+
 async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Path) -> None:
     """Bounded cleanup must not delete a finished orphan run still referenced as the task's last run."""
 
