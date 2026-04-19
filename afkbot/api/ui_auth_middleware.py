@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import Request, status
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
 from afkbot.api.routes_auth import login_redirect_url
@@ -31,7 +31,7 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
         self._settings = settings
         self._plugin_auth_mounts = plugin_auth_mounts
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         surface = resolve_ui_auth_surface(
             request.url.path,
             self._settings,

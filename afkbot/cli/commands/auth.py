@@ -267,7 +267,7 @@ def _run_setup(
     resolved_username = (
         str(username).strip()
         if username is not None
-        else _prompt_text("Username", default=str(current_payload["username"] or ""), required=True, yes=yes)
+        else _prompt_text(prompt="Username", default=str(current_payload["username"] or ""), required=True, yes=yes)
     )
 
     resolved_password_hash = str(settings.ui_auth_password_hash or "")

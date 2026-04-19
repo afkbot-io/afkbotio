@@ -41,7 +41,7 @@ async def get_auth_session(request: Request) -> JSONResponse:
     settings = get_settings()
     session = read_ui_auth_session(request, settings)
     configured = ui_auth_is_configured(settings)
-    response = {
+    response: dict[str, object] = {
         "authenticated": session is not None,
         "session": None,
         "auth": {
@@ -138,7 +138,7 @@ async def post_auth_logout() -> JSONResponse:
 
 
 @router.get("/auth/login", response_model=None)
-async def get_auth_login_page(request: Request, next: str | None = None):
+async def get_auth_login_page(request: Request, next: str | None = None) -> HTMLResponse | RedirectResponse:
     """Render the minimal built-in login page for protected plugin surfaces."""
 
     settings = get_settings()
