@@ -442,7 +442,7 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
     task = await service.create_task(
         profile_id="default",
         title="Keep run referenced by newer task event",
-        prompt="Preserve old task run rows while newer task events still reference them.",
+        description="Preserve old task run rows while newer task events still reference them.",
         created_by_type="human",
         created_by_ref="cli",
         owner_type="human",
