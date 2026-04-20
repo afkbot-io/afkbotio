@@ -164,6 +164,23 @@ def test_profile_runtime_config_applies_profile_local_brave_search_key(tmp_path:
     assert summary.brave_api_key_configured is True
 
 
+def test_profile_runtime_resolved_runtime_projects_memory_kinds_without_runtime_memory_import(
+    tmp_path: Path,
+) -> None:
+    """Resolved runtime should project memory kinds without requiring MemoryKind at runtime."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        llm_provider="openai",
+        llm_model="gpt-4o-mini",
+        memory_auto_save_kinds=("fact", "decision"),
+    )
+
+    summary = ProfileRuntimeConfigService.resolved_runtime(settings)
+
+    assert summary.memory_auto_save_kinds == ("fact", "decision")
+
+
 def test_profile_runtime_config_can_repair_layout_explicitly(tmp_path: Path) -> None:
     """Explicit layout repair should recreate canonical profile directories."""
 

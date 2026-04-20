@@ -95,7 +95,6 @@ def _upgrade_schema(conn: Connection) -> None:
     _ensure_task_runtime_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
-    _ensure_automation_delivery_columns(conn)
     _ensure_automation_runtime_columns(conn)
     _ensure_automation_graph_runtime_columns(conn)
     _ensure_webhook_token_columns(conn)
@@ -287,6 +286,8 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
                 "ON runlog_event (created_at, id)"
             )
         )
+
+
 def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str], ...]:
     """Return active AI owner profile scopes violating the one-active-task invariant."""
 
