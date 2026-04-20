@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
+    PartyFlowWebhookEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
-from afkbot.services.channels.runtime_manager import ChannelRuntimeManager, ChannelRuntimeManagerError
+from afkbot.services.channels.runtime_manager import (
+    ChannelRuntimeManager,
+    ChannelRuntimeManagerError,
+)
 from afkbot.services.channels.telethon_user import TelethonUserServiceError
 from afkbot.services.channels.telegram_polling import TelegramPollingServiceError
 from afkbot.settings import Settings
@@ -100,6 +104,18 @@ def _telethon_endpoint(endpoint_id: str, *, enabled: bool = True) -> TelethonUse
     )
 
 
+def _partyflow_endpoint(
+    endpoint_id: str, *, enabled: bool = True
+) -> PartyFlowWebhookEndpointConfig:
+    return PartyFlowWebhookEndpointConfig(
+        endpoint_id=endpoint_id,
+        profile_id="default",
+        credential_profile_key="default",
+        account_id=endpoint_id,
+        enabled=enabled,
+    )
+
+
 async def test_runtime_manager_starts_all_enabled_endpoints(tmp_path) -> None:
     """Manager should start all enabled endpoints by default."""
 
@@ -126,7 +142,9 @@ async def test_runtime_manager_starts_all_enabled_endpoints(tmp_path) -> None:
     assert fake_services["c"].started is False
 
 
-async def test_runtime_manager_wraps_channel_start_failure_and_stops_started_services(tmp_path) -> None:
+async def test_runtime_manager_wraps_channel_start_failure_and_stops_started_services(
+    tmp_path,
+) -> None:
     """Startup failures should surface as ChannelRuntimeManagerError and stop already-started adapters."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
@@ -156,7 +174,9 @@ async def test_runtime_manager_best_effort_keeps_other_channels_running(tmp_path
     """Best-effort startup should collect failures and preserve successfully started adapters."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
-    endpoint_service = _FakeEndpointService((_endpoint("a"), _telethon_endpoint("b"), _endpoint("c")))
+    endpoint_service = _FakeEndpointService(
+        (_endpoint("a"), _telethon_endpoint("b"), _endpoint("c"))
+    )
     first = _FakeChannelService()
     second = _FakeChannelService(should_fail=True, error_kind="telethon")
     third = _FakeChannelService()
@@ -210,3 +230,21 @@ async def test_runtime_manager_best_effort_converts_build_failures_to_report(tmp
     assert report.failures[0].error_code == "channel_adapter_not_supported"
     assert first.started is True
     assert third.started is True
+
+
+async def test_runtime_manager_starts_partyflow_webhook_endpoints(tmp_path) -> None:
+    """Manager should include PartyFlow webhook endpoints in the supported startup set."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    endpoint_service = _FakeEndpointService((_partyflow_endpoint("partyflow-main"),))
+    fake_service = _FakeChannelService()
+    manager = _FakeRuntimeManager(
+        settings,
+        endpoint_service=endpoint_service,
+        service_by_endpoint_id={"partyflow-main": fake_service},
+    )
+
+    started = await manager.start()
+
+    assert started == ("partyflow-main",)
+    assert fake_service.started is True

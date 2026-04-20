@@ -143,6 +143,29 @@ def render_channel_add_intro(
             )
         )
         return
+    if normalized_transport == "partyflow":
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "PartyFlow webhook channel setup\n"
+                    f"- This wizard creates one PartyFlow outgoing-webhook endpoint.\n"
+                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, and `delete` commands. "
+                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- PartyFlow does not support Telegram-style polling here; webhook is the only ingress mode.\n"
+                    "- You will need the bot token and the webhook signing secret from PartyFlow UI."
+                ),
+                ru=(
+                    "Настройка PartyFlow webhook-канала\n"
+                    f"- Этот мастер создаёт один endpoint для outgoing webhook из PartyFlow.\n"
+                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update` и `delete`. "
+                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
+                    "- Telegram-style polling здесь не поддерживается; webhook сейчас единственный ingress mode.\n"
+                    "- Понадобятся bot token и webhook signing secret из UI PartyFlow."
+                ),
+            )
+        )
+        return
     raise ValueError(f"Unsupported channel transport for intro: {transport}")
 
 
@@ -394,8 +417,12 @@ def resolve_binding_update_inputs(
             if session_policy is not None
             else (existing.session_policy if existing is not None else session_policy_default)
         ),
-        priority=priority if priority is not None else (existing.priority if existing is not None else 0),
-        prompt_overlay=prompt_overlay if prompt_overlay is not None else (existing.prompt_overlay if existing is not None else None),
+        priority=priority
+        if priority is not None
+        else (existing.priority if existing is not None else 0),
+        prompt_overlay=prompt_overlay
+        if prompt_overlay is not None
+        else (existing.prompt_overlay if existing is not None else None),
     )
 
 

@@ -1,0 +1,198 @@
+"""Low-level PartyFlow Bot REST API HTTP helpers."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
+
+
+class PartyFlowApiError(RuntimeError):
+    """Structured PartyFlow Bot REST API failure."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int | None,
+        error_code: str,
+        reason: str,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.reason = reason
+        self.metadata = {} if metadata is None else metadata
+
+
+async def _get_me(*, base_url: str, token: str, timeout_sec: int) -> dict[str, object]:
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _request_json_sync,
+            base_url=base_url,
+            token=token,
+            method="GET",
+            path="/api/v1/bot/me",
+            body=None,
+            timeout_sec=timeout_sec,
+        ),
+        timeout=float(timeout_sec),
+    )
+
+
+async def _join_conversation(
+    *,
+    base_url: str,
+    token: str,
+    conversation_id: str,
+    timeout_sec: int,
+) -> dict[str, object]:
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _request_json_sync,
+            base_url=base_url,
+            token=token,
+            method="POST",
+            path=f"/api/v1/bot/conversations/{conversation_id}/join",
+            body=None,
+            timeout_sec=timeout_sec,
+        ),
+        timeout=float(timeout_sec),
+    )
+
+
+async def _send_message(
+    *,
+    base_url: str,
+    token: str,
+    conversation_id: str,
+    content: str,
+    thread_id: str | None,
+    timeout_sec: int,
+) -> dict[str, object]:
+    body = {
+        "conversation_id": conversation_id,
+        "content": content,
+    }
+    if thread_id is not None:
+        body["thread_id"] = thread_id
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                _request_json_sync,
+                base_url=base_url,
+                token=token,
+                method="POST",
+                path="/api/v1/bot/messages",
+                body=body,
+                timeout_sec=timeout_sec,
+            ),
+            timeout=float(timeout_sec),
+        )
+    except PartyFlowApiError as exc:
+        if exc.status_code != 403:
+            raise
+    await _join_conversation(
+        base_url=base_url,
+        token=token,
+        conversation_id=conversation_id,
+        timeout_sec=timeout_sec,
+    )
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _request_json_sync,
+            base_url=base_url,
+            token=token,
+            method="POST",
+            path="/api/v1/bot/messages",
+            body=body,
+            timeout_sec=timeout_sec,
+        ),
+        timeout=float(timeout_sec),
+    )
+
+
+def _request_json_sync(
+    *,
+    base_url: str,
+    token: str,
+    method: str,
+    path: str,
+    body: dict[str, object] | None,
+    timeout_sec: int,
+) -> dict[str, object]:
+    normalized_base_url = base_url.strip().rstrip("/")
+    normalized_token = token.strip()
+    if not normalized_base_url:
+        raise ValueError("PartyFlow base_url is empty")
+    if not normalized_token:
+        raise ValueError("PartyFlow token is empty")
+    request_body: bytes | None = None
+    headers = {
+        "Authorization": f"Bearer {normalized_token}",
+    }
+    if body is not None:
+        request_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = Request(
+        url=urljoin(f"{normalized_base_url}/", path.lstrip("/")),
+        data=request_body,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=timeout_sec) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        raise _http_error(exc) from exc
+    except URLError as exc:
+        raise PartyFlowApiError(
+            status_code=None,
+            error_code="app_run_failed",
+            reason=f"PartyFlow request failed: {exc.reason}",
+        ) from exc
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PartyFlowApiError(
+            status_code=None,
+            error_code="app_run_failed",
+            reason="PartyFlow response was not valid JSON",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise PartyFlowApiError(
+            status_code=None,
+            error_code="app_run_failed",
+            reason="PartyFlow response payload must be an object",
+        )
+    return {str(key): value for key, value in payload.items()}
+
+
+def _http_error(exc: HTTPError) -> PartyFlowApiError:
+    try:
+        raw = exc.read()
+    except Exception:
+        raw = b""
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = {}
+    metadata = {"http_status": exc.code}
+    if isinstance(payload, dict):
+        metadata["response"] = {str(key): value for key, value in payload.items()}
+    reason = f"PartyFlow HTTP {exc.code}: {exc.reason}"
+    error_code = "app_run_failed"
+    if exc.code == 401:
+        error_code = "partyflow_unauthorized"
+    elif exc.code == 403:
+        error_code = "partyflow_bot_not_in_conversation"
+    elif exc.code in {500, 503}:
+        error_code = "partyflow_unavailable"
+    return PartyFlowApiError(
+        status_code=exc.code,
+        error_code=error_code,
+        reason=reason,
+        metadata=metadata,
+    )

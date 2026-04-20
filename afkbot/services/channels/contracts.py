@@ -36,11 +36,14 @@ class ChannelDeliveryTarget(BaseModel):
             and payload.get("address") in {None, ""}
             and payload.get("peer_id") in {None, ""}
         ):
-            if transport in {"telegram", "telegram_user"}:
+            if transport in {"telegram", "telegram_user", "partyflow"}:
                 payload["peer_id"] = chat_id
             else:
                 payload["address"] = chat_id
-        if transport in {"telegram", "telegram_user"} and payload.get("peer_id") in {None, ""}:
+        if transport in {"telegram", "telegram_user", "partyflow"} and payload.get("peer_id") in {
+            None,
+            "",
+        }:
             address = payload.get("address")
             if address not in {None, ""}:
                 payload["peer_id"] = address
@@ -85,9 +88,7 @@ class ChannelDeliveryTarget(BaseModel):
             )
         ):
             return self
-        raise ValueError(
-            "delivery target requires binding_id or explicit channel coordinates"
-        )
+        raise ValueError("delivery target requires binding_id or explicit channel coordinates")
 
 
 def build_delivery_target_runtime_metadata(

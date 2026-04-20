@@ -116,6 +116,12 @@ def resolved_from_target(target: ChannelDeliveryTarget) -> ResolvedDeliveryTarge
             reason="Telegram delivery target requires peer_id.",
             metadata=target.model_dump(exclude_none=True),
         )
+    if target.transport == "partyflow" and not target.peer_id:
+        raise ChannelDeliveryServiceError(
+            error_code="channel_delivery_target_incomplete",
+            reason="PartyFlow delivery target requires peer_id.",
+            metadata=target.model_dump(exclude_none=True),
+        )
     if target.transport == "telegram_user" and (not target.account_id or not target.peer_id):
         raise ChannelDeliveryServiceError(
             error_code="channel_delivery_target_incomplete",
@@ -128,7 +134,7 @@ def resolved_from_target(target: ChannelDeliveryTarget) -> ResolvedDeliveryTarge
             reason="SMTP delivery target requires address.",
             metadata=target.model_dump(exclude_none=True),
         )
-    if target.transport not in {"telegram", "telegram_user", "smtp"}:
+    if target.transport not in {"telegram", "telegram_user", "smtp", "partyflow"}:
         raise ChannelDeliveryServiceError(
             error_code="channel_delivery_transport_not_supported",
             reason=f"Unsupported delivery transport: {target.transport}",

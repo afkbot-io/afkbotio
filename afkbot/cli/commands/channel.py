@@ -20,8 +20,10 @@ from afkbot.cli.commands.inspection_shared import (
 )
 from afkbot.cli.commands.channel_telethon import register_telethon_commands
 from afkbot.cli.commands.channel_telegram import register_telegram_commands
+from afkbot.cli.commands.channel_partyflow import register_partyflow_commands
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
+    PartyFlowWebhookEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
     deserialize_endpoint_config,
@@ -52,7 +54,7 @@ def register(app: typer.Typer) -> None:
         transport: str | None = typer.Option(
             None,
             "--transport",
-            help="Optional transport filter: telegram or telegram_user.",
+            help="Optional transport filter: telegram, telegram_user, or partyflow.",
         ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
@@ -70,7 +72,12 @@ def register(app: typer.Typer) -> None:
         except Exception as exc:
             _raise_channel_cli_error(exc)
         if json_output:
-            typer.echo(json.dumps({"channels": [item.model_dump(mode="json") for item in channels]}, ensure_ascii=True))
+            typer.echo(
+                json.dumps(
+                    {"channels": [item.model_dump(mode="json") for item in channels]},
+                    ensure_ascii=True,
+                )
+            )
             return
         if not channels:
             typer.echo("No channels configured.")
@@ -86,14 +93,18 @@ def register(app: typer.Typer) -> None:
         """Show one channel endpoint regardless of transport family."""
 
         settings = get_settings()
-        channel, profile, inspection = _load_channel_inspection(settings=settings, channel_id=channel_id)
+        channel, profile, inspection = _load_channel_inspection(
+            settings=settings, channel_id=channel_id
+        )
         payload = {
             "channel": channel.model_dump(mode="json"),
             "profile": {"id": profile.id, "name": profile.name},
             "mutation_state": inspection.mutation_state.model_dump(mode="json"),
             "profile_ceiling": inspection.profile_ceiling.model_dump(mode="json"),
             "effective_permissions": inspection.effective_permissions.model_dump(mode="json"),
-            "channel_guardrails": build_channel_guardrail_summary(inspection).model_dump(mode="json"),
+            "channel_guardrails": build_channel_guardrail_summary(inspection).model_dump(
+                mode="json"
+            ),
         }
         if json_output:
             typer.echo(json.dumps(payload, ensure_ascii=True))
@@ -106,12 +117,17 @@ def register(app: typer.Typer) -> None:
         typer.echo(f"- account_id: {channel.account_id}")
         typer.echo(f"- enabled: {channel.enabled}")
         typer.echo(f"- merge_order: {render_merge_order_brief()}")
-        typer.echo(f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}")
+        typer.echo(
+            f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}"
+        )
         typer.echo(
             "- current_channel_overrides: "
             + (", ".join(inspection.mutation_state.current_override_fields) or "none")
         )
-        typer.echo("- profile_ceiling_tool_access: " + render_tool_access_brief(inspection.profile_ceiling.tool_access))
+        typer.echo(
+            "- profile_ceiling_tool_access: "
+            + render_tool_access_brief(inspection.profile_ceiling.tool_access)
+        )
         typer.echo(
             "- profile_memory_defaults: "
             + render_profile_memory_defaults_brief(inspection.profile_ceiling.memory_behavior)
@@ -125,13 +141,26 @@ def register(app: typer.Typer) -> None:
                 else "inherit"
             )
         )
-        typer.echo(f"- effective_workspace_root: {inspection.effective_permissions.default_workspace_root}")
-        typer.echo(f"- effective_file_scope_mode: {inspection.effective_permissions.file_scope_mode}")
+        typer.echo(
+            f"- effective_workspace_root: {inspection.effective_permissions.default_workspace_root}"
+        )
+        typer.echo(
+            f"- effective_file_scope_mode: {inspection.effective_permissions.file_scope_mode}"
+        )
         typer.echo(f"- effective_file_access: {inspection.effective_permissions.file_access_mode}")
         typer.echo(f"- effective_network_access: {inspection.effective_permissions.network_access}")
-        typer.echo("- effective_tool_access: " + render_tool_access_brief(inspection.effective_permissions.tool_access))
-        typer.echo("- effective_memory_auto_search: " + render_memory_auto_search_brief(inspection.effective_permissions.memory_behavior))
-        typer.echo("- effective_memory_auto_save: " + render_memory_auto_save_brief(inspection.effective_permissions.memory_behavior))
+        typer.echo(
+            "- effective_tool_access: "
+            + render_tool_access_brief(inspection.effective_permissions.tool_access)
+        )
+        typer.echo(
+            "- effective_memory_auto_search: "
+            + render_memory_auto_search_brief(inspection.effective_permissions.memory_behavior)
+        )
+        typer.echo(
+            "- effective_memory_auto_save: "
+            + render_memory_auto_save_brief(inspection.effective_permissions.memory_behavior)
+        )
         typer.echo(
             "- effective_memory_cross_chat_access: "
             + inspection.effective_permissions.memory_behavior.explicit_cross_chat_access
@@ -147,9 +176,18 @@ def register(app: typer.Typer) -> None:
             typer.echo(f"- group_invocation_mode: {channel.group_invocation_mode}")
             typer.echo(f"- watcher.enabled: {channel.watcher.enabled}")
             typer.echo(f"- ingress_batch: {_render_batch_brief(channel.ingress_batch.enabled)}")
+        elif isinstance(channel, PartyFlowWebhookEndpointConfig):
+            typer.echo(f"- ingress_mode: {channel.ingress_mode}")
+            typer.echo(f"- trigger_mode: {channel.trigger_mode}")
+            typer.echo("- trigger_keywords: " + (", ".join(channel.trigger_keywords) or "-"))
+            typer.echo(f"- include_context: {channel.include_context}")
+            typer.echo(f"- context_size: {channel.context_size}")
+            typer.echo(f"- reply_mode: {channel.reply_mode}")
+            typer.echo(f"- ingress_batch: {_render_batch_brief(channel.ingress_batch.enabled)}")
 
     register_telegram_commands(channel_app)
     register_telethon_commands(channel_app)
+    register_partyflow_commands(channel_app)
 
 
 def _render_channel_summary(channel: object) -> str:
@@ -165,7 +203,16 @@ def _render_channel_summary(channel: object) -> str:
             f"account_id={channel.account_id}, tool_profile={channel.tool_profile}, reply_mode={channel.reply_mode}, "
             f"watcher={channel.watcher.enabled}, enabled={channel.enabled}"
         )
-    return f"- {getattr(channel, 'endpoint_id', '?')}: transport={getattr(channel, 'transport', '?')}"
+    if isinstance(channel, PartyFlowWebhookEndpointConfig):
+        return (
+            f"- {channel.endpoint_id}: transport={channel.transport}, profile={channel.profile_id}, "
+            f"account_id={channel.account_id}, tool_profile={channel.tool_profile}, trigger_mode={channel.trigger_mode}, "
+            f"trigger_keywords={','.join(channel.trigger_keywords) or '-'}, "
+            f"reply_mode={channel.reply_mode}, enabled={channel.enabled}"
+        )
+    return (
+        f"- {getattr(channel, 'endpoint_id', '?')}: transport={getattr(channel, 'transport', '?')}"
+    )
 
 
 def _render_batch_brief(enabled: bool) -> str:

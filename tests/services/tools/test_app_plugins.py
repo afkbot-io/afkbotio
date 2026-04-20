@@ -134,7 +134,9 @@ async def test_http_request_tool_success(tmp_path: Path, monkeypatch: MonkeyPatc
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
         assert result.payload["status_code"] == 200
     finally:
@@ -216,7 +218,9 @@ async def test_http_request_missing_auth_credential_returns_secure_error(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "credentials_missing"
         assert result.metadata["integration_name"] == "http"
@@ -291,7 +295,9 @@ async def test_http_request_rejects_non_http_scheme(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
     finally:
@@ -321,7 +327,9 @@ async def test_http_request_rejects_non_public_target_resolution(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
         assert "non-public network address" in str(result.reason)
@@ -348,7 +356,9 @@ async def test_http_request_rejects_localhost_target(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
         assert "must not target localhost" in str(result.reason or "")
@@ -361,7 +371,9 @@ def test_http_no_redirect_handler_returns_none() -> None:
 
     handler = _NoRedirect()
     req = Request("https://example.com")
-    redirected = handler.redirect_request(req, fp=object(), code=302, msg="Found", headers={}, newurl="https://127.0.0.1/")
+    redirected = handler.redirect_request(
+        req, fp=object(), code=302, msg="Found", headers={}, newurl="https://127.0.0.1/"
+    )
     assert redirected is None
 
 
@@ -416,6 +428,15 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
         "unban_chat_member",
     }
 
+    partyflow = registry.get("partyflow")
+    assert partyflow is not None
+    assert partyflow.allowed_skills == {"partyflow"}
+    assert partyflow.allowed_actions == {
+        "get_me",
+        "join_conversation",
+        "send_message",
+    }
+
     smtp = registry.get("smtp")
     assert smtp is not None
     assert smtp.allowed_skills == {"smtp"}
@@ -442,15 +463,15 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -466,7 +487,9 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_list.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_list.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
 
         items = cast(list[dict[str, object]], result.payload["apps"])
@@ -510,15 +533,15 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -534,7 +557,9 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_list.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_list.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
 
         items = cast(list[dict[str, object]], result.payload["apps"])
@@ -544,7 +569,9 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
         await engine.dispose()
 
 
-async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+async def test_app_run_uses_profile_local_registry(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """app.run should execute profile-local app registered under profiles/<id>/apps."""
 
     monkeypatch.setenv("AFKBOT_ENABLE_PROFILE_APP_MODULES", "1")
@@ -559,15 +586,15 @@ async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: 
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -587,7 +614,9 @@ async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: 
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
         assert result.payload["action"] == "echo"
         assert result.payload["echo"] == "hello"
@@ -1179,7 +1208,9 @@ async def test_app_run_returns_structured_validation_hint_for_telegram_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1363,7 +1394,12 @@ async def test_app_run_telegram_splits_long_send_message(
 
         async def _fake_post_send_message(**kwargs: object) -> dict[str, object]:
             calls.append(dict(kwargs))
-            return {"ok": True, "action": "send_message", "message_id": len(calls), "chat_id": "1001"}
+            return {
+                "ok": True,
+                "action": "send_message",
+                "message_id": len(calls),
+                "chat_id": "1001",
+            }
 
         monkeypatch.setattr(
             "afkbot.services.apps.telegram.actions._post_send_message",
@@ -1481,7 +1517,9 @@ async def test_telegram_media_path_defaults_to_profile_workspace(tmp_path: Path)
     assert resolved == expected
 
 
-async def test_telegram_media_path_resolves_bare_filename_from_profile_workspace(tmp_path: Path) -> None:
+async def test_telegram_media_path_resolves_bare_filename_from_profile_workspace(
+    tmp_path: Path,
+) -> None:
     """Telegram media helper should resolve bare filenames from the profile workspace root."""
 
     settings = Settings(root_dir=tmp_path)
@@ -1527,7 +1565,9 @@ async def test_telegram_media_path_reports_missing_file(tmp_path: Path) -> None:
         )
 
 
-async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(tmp_path: Path) -> None:
+async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(
+    tmp_path: Path,
+) -> None:
     """Telegram media helper should not mistake opaque file ids for local workspace paths."""
 
     settings = Settings(root_dir=tmp_path)
@@ -1728,7 +1768,9 @@ async def test_app_run_telegram_returns_structured_validation_hint_for_ban_param
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1761,7 +1803,9 @@ async def test_app_run_returns_structured_validation_hint_for_smtp_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1794,7 +1838,9 @@ async def test_app_run_returns_structured_validation_hint_for_imap_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
+    PartyFlowWebhookEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
@@ -16,8 +17,15 @@ from afkbot.services.channels.endpoint_service import (
     ChannelEndpointServiceError,
     get_channel_endpoint_service,
 )
+from afkbot.services.channels.partyflow_webhook import (
+    PartyFlowWebhookService,
+    PartyFlowWebhookServiceError,
+)
 from afkbot.services.channels.telethon_user import TelethonUserService, TelethonUserServiceError
-from afkbot.services.channels.telegram_polling import TelegramPollingService, TelegramPollingServiceError
+from afkbot.services.channels.telegram_polling import (
+    TelegramPollingService,
+    TelegramPollingServiceError,
+)
 from afkbot.settings import Settings
 
 
@@ -158,6 +166,8 @@ class ChannelRuntimeManager:
                 supported.append(TelegramPollingEndpointConfig.model_validate(config.model_dump()))
             if config.transport == "telegram_user" and config.adapter_kind == "telethon_userbot":
                 supported.append(TelethonUserEndpointConfig.model_validate(config.model_dump()))
+            if config.transport == "partyflow" and config.adapter_kind == "partyflow_webhook":
+                supported.append(PartyFlowWebhookEndpointConfig.model_validate(config.model_dump()))
         return tuple(supported)
 
     def _build_service(self, config: ChannelEndpointConfig) -> _ChannelRuntimeService:
@@ -165,13 +175,22 @@ class ChannelRuntimeManager:
             return TelegramPollingService(
                 self._settings,
                 endpoint=TelegramPollingEndpointConfig.model_validate(config.model_dump()),
-                state_path=self._endpoint_service.telegram_polling_state_path(endpoint_id=config.endpoint_id),
+                state_path=self._endpoint_service.telegram_polling_state_path(
+                    endpoint_id=config.endpoint_id
+                ),
             )
         if config.transport == "telegram_user" and config.adapter_kind == "telethon_userbot":
             return TelethonUserService(
                 self._settings,
                 endpoint=TelethonUserEndpointConfig.model_validate(config.model_dump()),
-                state_path=self._endpoint_service.telethon_user_state_path(endpoint_id=config.endpoint_id),
+                state_path=self._endpoint_service.telethon_user_state_path(
+                    endpoint_id=config.endpoint_id
+                ),
+            )
+        if config.transport == "partyflow" and config.adapter_kind == "partyflow_webhook":
+            return PartyFlowWebhookService(
+                self._settings,
+                endpoint=PartyFlowWebhookEndpointConfig.model_validate(config.model_dump()),
             )
         raise ChannelRuntimeManagerError(
             error_code="channel_adapter_not_supported",
@@ -189,7 +208,10 @@ class ChannelRuntimeManager:
     ) -> ChannelRuntimeManagerError:
         if isinstance(exc, ChannelRuntimeManagerError):
             return exc
-        if isinstance(exc, (TelegramPollingServiceError, TelethonUserServiceError)):
+        if isinstance(
+            exc,
+            (TelegramPollingServiceError, TelethonUserServiceError, PartyFlowWebhookServiceError),
+        ):
             return ChannelRuntimeManagerError(
                 error_code=exc.error_code,
                 reason=f"Failed to start channel `{config.endpoint_id}`: {exc.reason}",
@@ -197,7 +219,6 @@ class ChannelRuntimeManager:
         return ChannelRuntimeManagerError(
             error_code="channel_start_failed",
             reason=(
-                f"Failed to start channel `{config.endpoint_id}`: "
-                f"{exc.__class__.__name__}: {exc}"
+                f"Failed to start channel `{config.endpoint_id}`: {exc.__class__.__name__}: {exc}"
             ),
         )

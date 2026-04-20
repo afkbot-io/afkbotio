@@ -57,3 +57,17 @@ def test_channel_delivery_target_accepts_address_alias_for_telegram_peer_id() ->
 
     assert target.peer_id == "-100200300"
     assert target.address is None
+
+
+def test_channel_delivery_target_accepts_address_alias_for_partyflow_peer_id() -> None:
+    """PartyFlow delivery targets may use generic address as one peer_id alias."""
+
+    target = ChannelDeliveryTarget.model_validate(
+        {
+            "transport": "partyflow",
+            "address": "660e8400-e29b-41d4-a716-446655440001",
+        }
+    )
+
+    assert target.peer_id == "660e8400-e29b-41d4-a716-446655440001"
+    assert target.address is None

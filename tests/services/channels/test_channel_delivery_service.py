@@ -16,7 +16,10 @@ from afkbot.services.channels.service import (
     get_channel_delivery_diagnostics,
     reset_channel_delivery_diagnostics,
 )
-from afkbot.services.channels.sender_registry import get_channel_sender_registry, reset_channel_sender_registries
+from afkbot.services.channels.sender_registry import (
+    get_channel_sender_registry,
+    reset_channel_sender_registries,
+)
 from afkbot.services.channels.telethon_user import TelethonUserServiceError
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import ProfileService
@@ -39,6 +42,12 @@ class _FakeAppRuntime(AppRuntime):
         payload: dict[str, object]
         if app == "telegram":
             payload = {"message_id": 77, "chat_id": params["chat_id"]}
+        elif app == "partyflow":
+            payload = {
+                "ok": True,
+                "conversation_id": params["conversation_id"],
+                "thread_id": params["thread_id"],
+            }
         else:
             payload = {"ok": True, "to_email": params["to_email"]}
         self.calls.append(
@@ -204,7 +213,9 @@ async def test_channel_delivery_service_resolves_binding_target(tmp_path: Path) 
             )
         )
         app_runtime = _FakeAppRuntime()
-        service = ChannelDeliveryService(settings, app_runtime=app_runtime, binding_service=bindings)
+        service = ChannelDeliveryService(
+            settings, app_runtime=app_runtime, binding_service=bindings
+        )
 
         result = await service.deliver_turn_result(
             turn_result=TurnResult(
@@ -250,7 +261,9 @@ async def test_channel_delivery_service_rejects_binding_without_peer_id(tmp_path
                 session_policy="main",
             )
         )
-        service = ChannelDeliveryService(settings, app_runtime=_FakeAppRuntime(), binding_service=bindings)
+        service = ChannelDeliveryService(
+            settings, app_runtime=_FakeAppRuntime(), binding_service=bindings
+        )
 
         with pytest.raises(ChannelDeliveryServiceError, match="peer_id"):
             await service.deliver_text(
@@ -284,7 +297,9 @@ async def test_channel_delivery_service_rejects_disabled_binding(tmp_path: Path)
                 enabled=False,
             )
         )
-        service = ChannelDeliveryService(settings, app_runtime=_FakeAppRuntime(), binding_service=bindings)
+        service = ChannelDeliveryService(
+            settings, app_runtime=_FakeAppRuntime(), binding_service=bindings
+        )
 
         with pytest.raises(ChannelDeliveryServiceError, match="disabled"):
             await service.deliver_text(
@@ -335,7 +350,43 @@ async def test_channel_delivery_service_sends_explicit_smtp_target(tmp_path: Pat
     }
 
 
-async def test_channel_delivery_service_records_unexpected_runtime_exception(tmp_path: Path) -> None:
+async def test_channel_delivery_service_sends_explicit_partyflow_target(tmp_path: Path) -> None:
+    """Explicit PartyFlow delivery target should route through the partyflow app runtime."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery.db'}")
+    app_runtime = _FakeAppRuntime()
+    service = ChannelDeliveryService(settings, app_runtime=app_runtime)
+
+    result = await service.deliver_text(
+        profile_id="default",
+        session_id="s-1",
+        run_id=19,
+        target=ChannelDeliveryTarget(
+            transport="partyflow",
+            peer_id="660e8400-e29b-41d4-a716-446655440001",
+            thread_id="770e8400-e29b-41d4-a716-446655440002",
+        ),
+        text="hello from partyflow",
+    )
+
+    assert result.transport == "partyflow"
+    assert result.target == {
+        "transport": "partyflow",
+        "peer_id": "660e8400-e29b-41d4-a716-446655440001",
+        "thread_id": "770e8400-e29b-41d4-a716-446655440002",
+    }
+    assert app_runtime.calls[0]["app"] == "partyflow"
+    assert app_runtime.calls[0]["action"] == "send_message"
+    assert app_runtime.calls[0]["params"] == {
+        "conversation_id": "660e8400-e29b-41d4-a716-446655440001",
+        "content": "hello from partyflow",
+        "thread_id": "770e8400-e29b-41d4-a716-446655440002",
+    }
+
+
+async def test_channel_delivery_service_records_unexpected_runtime_exception(
+    tmp_path: Path,
+) -> None:
     """Unexpected transport exceptions should become structured errors and telemetry events."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery.db'}")
@@ -386,7 +437,9 @@ async def test_channel_delivery_service_retries_one_telegram_timeout(tmp_path: P
     assert getattr(second_ctx, "timeout_sec") == 30
 
 
-async def test_channel_delivery_service_sends_via_registered_telegram_user_sender(tmp_path: Path) -> None:
+async def test_channel_delivery_service_sends_via_registered_telegram_user_sender(
+    tmp_path: Path,
+) -> None:
     """Telegram user transport should dispatch through the live sender registry."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery.db'}")
@@ -466,7 +519,9 @@ async def test_channel_delivery_service_splits_long_telegram_user_message(tmp_pa
     assert all(len(item) <= 4096 for item in sent)
 
 
-async def test_channel_delivery_service_preserves_structured_telegram_user_sender_error(tmp_path: Path) -> None:
+async def test_channel_delivery_service_preserves_structured_telegram_user_sender_error(
+    tmp_path: Path,
+) -> None:
     """Structured live-sender failures should surface without collapsing to generic errors."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery.db'}")
@@ -501,7 +556,9 @@ async def test_channel_delivery_service_preserves_structured_telegram_user_sende
     assert exc_info.value.error_code == "telethon_thread_not_supported"
 
 
-async def test_channel_delivery_service_preserves_telegram_user_sender_metadata(tmp_path: Path) -> None:
+async def test_channel_delivery_service_preserves_telegram_user_sender_metadata(
+    tmp_path: Path,
+) -> None:
     """Structured live-sender metadata should survive the delivery-service wrapper."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery.db'}")

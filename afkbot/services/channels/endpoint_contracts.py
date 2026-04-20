@@ -9,7 +9,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
-from afkbot.services.channels.tool_profiles import ChannelToolProfile, normalize_channel_tool_profile
+from afkbot.services.channels.tool_profiles import (
+    ChannelToolProfile,
+    normalize_channel_tool_profile,
+)
 from afkbot.services.profile_id import validate_profile_id
 
 _CHANNEL_ENDPOINT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -37,9 +40,16 @@ TELETHON_WATCHER_BUFFER_SIZE_MIN = 1
 TELETHON_WATCHER_BUFFER_SIZE_MAX = 5_000
 TELETHON_WATCHER_MESSAGE_CHARS_MIN = 32
 TELETHON_WATCHER_MESSAGE_CHARS_MAX = 4_000
+PARTYFLOW_CONTEXT_SIZE_MIN = 1
+PARTYFLOW_CONTEXT_SIZE_MAX = 50
 TelegramGroupTriggerMode = Literal["mention_or_reply", "reply_only", "mention_only", "all_messages"]
 TelethonReplyMode = Literal["same_chat", "disabled"]
-TelethonGroupInvocationMode = Literal["reply_or_command", "reply_only", "command_only", "all_messages"]
+TelethonGroupInvocationMode = Literal[
+    "reply_or_command", "reply_only", "command_only", "all_messages"
+]
+PartyFlowIngressMode = Literal["webhook"]
+PartyFlowTriggerMode = Literal["all", "mention", "keywords"]
+PartyFlowReplyMode = Literal["same_conversation", "disabled"]
 
 
 def _normalize_chat_pattern_values(value: object, *, error_label: str) -> tuple[str, ...]:
@@ -99,7 +109,9 @@ class ChannelEndpointConfig(BaseModel):
             raise ValueError("channel id is required")
         return validate_channel_endpoint_id(value)
 
-    @field_validator("transport", "adapter_kind", "credential_profile_key", "account_id", mode="before")
+    @field_validator(
+        "transport", "adapter_kind", "credential_profile_key", "account_id", mode="before"
+    )
     @classmethod
     def _normalize_text(cls, value: object) -> str:
         if not isinstance(value, str):
@@ -173,7 +185,9 @@ class ChannelIngressBatchConfig(BaseModel):
         if self.cooldown_sec > 0 and not self.enabled:
             raise ValueError("ingress_batch cooldown_sec requires enabled=true")
         if self.max_buffer_chars < self.max_batch_size * 16:
-            raise ValueError("ingress_batch max_buffer_chars is too small for the selected max_batch_size")
+            raise ValueError(
+                "ingress_batch max_buffer_chars is too small for the selected max_batch_size"
+            )
         return self
 
 
@@ -303,7 +317,9 @@ class TelethonUserEndpointConfig(ChannelEndpointConfig):
     process_self_commands: bool = False
     command_prefix: str = Field(default=".afk", min_length=1, max_length=32)
     ingress_batch: ChannelIngressBatchConfig = Field(default_factory=ChannelIngressBatchConfig)
-    reply_humanization: ChannelReplyHumanizationConfig = Field(default_factory=ChannelReplyHumanizationConfig)
+    reply_humanization: ChannelReplyHumanizationConfig = Field(
+        default_factory=ChannelReplyHumanizationConfig
+    )
     mark_read_before_reply: bool = True
     watcher: TelethonWatcherConfig = Field(default_factory=TelethonWatcherConfig)
 
@@ -360,7 +376,9 @@ class TelethonUserEndpointConfig(ChannelEndpointConfig):
             "process_self_commands": self.process_self_commands,
             "command_prefix": self.command_prefix,
             "ingress_batch": self.ingress_batch.model_dump(mode="python", exclude_none=True),
-            "reply_humanization": self.reply_humanization.model_dump(mode="python", exclude_none=True),
+            "reply_humanization": self.reply_humanization.model_dump(
+                mode="python", exclude_none=True
+            ),
             "mark_read_before_reply": self.mark_read_before_reply,
             "watcher": self.watcher.model_dump(mode="python", exclude_none=True),
         }
@@ -373,7 +391,9 @@ class TelegramPollingEndpointConfig(ChannelEndpointConfig):
     adapter_kind: str = "telegram_bot_polling"
     group_trigger_mode: TelegramGroupTriggerMode = "mention_or_reply"
     ingress_batch: ChannelIngressBatchConfig = Field(default_factory=ChannelIngressBatchConfig)
-    reply_humanization: ChannelReplyHumanizationConfig = Field(default_factory=ChannelReplyHumanizationConfig)
+    reply_humanization: ChannelReplyHumanizationConfig = Field(
+        default_factory=ChannelReplyHumanizationConfig
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -397,7 +417,74 @@ class TelegramPollingEndpointConfig(ChannelEndpointConfig):
         return {
             "tool_profile": self.tool_profile,
             "ingress_batch": self.ingress_batch.model_dump(mode="python", exclude_none=True),
-            "reply_humanization": self.reply_humanization.model_dump(mode="python", exclude_none=True),
+            "reply_humanization": self.reply_humanization.model_dump(
+                mode="python", exclude_none=True
+            ),
+        }
+
+
+class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
+    """Typed PartyFlow outgoing-webhook endpoint config."""
+
+    transport: str = "partyflow"
+    adapter_kind: str = "partyflow_webhook"
+    group_trigger_mode: None = None
+    ingress_mode: PartyFlowIngressMode = "webhook"
+    trigger_mode: PartyFlowTriggerMode = "mention"
+    trigger_keywords: tuple[str, ...] = ()
+    include_context: bool = True
+    context_size: int = Field(
+        default=8, ge=PARTYFLOW_CONTEXT_SIZE_MIN, le=PARTYFLOW_CONTEXT_SIZE_MAX
+    )
+    reply_mode: PartyFlowReplyMode = "same_conversation"
+    ingress_batch: ChannelIngressBatchConfig = Field(default_factory=ChannelIngressBatchConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inflate_config(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        config = payload.get("config")
+        if isinstance(config, Mapping):
+            if "tool_profile" not in payload and "tool_profile" in config:
+                payload["tool_profile"] = config["tool_profile"]
+            for key in (
+                "ingress_mode",
+                "trigger_mode",
+                "trigger_keywords",
+                "include_context",
+                "context_size",
+                "reply_mode",
+                "ingress_batch",
+            ):
+                if key not in payload and key in config:
+                    payload[key] = config[key]
+        return payload
+
+    @field_validator("trigger_keywords", mode="before")
+    @classmethod
+    def _normalize_trigger_keywords(cls, value: object) -> tuple[str, ...]:
+        return _normalize_chat_pattern_values(value, error_label="partyflow trigger keywords")
+
+    @model_validator(mode="after")
+    def _validate_trigger_config(self) -> "PartyFlowWebhookEndpointConfig":
+        if self.trigger_mode == "keywords" and not self.trigger_keywords:
+            raise ValueError("trigger_keywords are required when trigger_mode=keywords")
+        return self
+
+    def storage_config(self) -> dict[str, object]:
+        """Return config payload persisted in `channel_endpoint.config_json`."""
+
+        return {
+            "tool_profile": self.tool_profile,
+            "ingress_mode": self.ingress_mode,
+            "trigger_mode": self.trigger_mode,
+            "trigger_keywords": self.trigger_keywords,
+            "include_context": self.include_context,
+            "context_size": self.context_size,
+            "reply_mode": self.reply_mode,
+            "ingress_batch": self.ingress_batch.model_dump(mode="python", exclude_none=True),
         }
 
 
@@ -410,6 +497,8 @@ def serialize_endpoint_storage_payload(
         return None, config.storage_config()
     if isinstance(config, TelegramPollingEndpointConfig):
         return config.group_trigger_mode, config.storage_config()
+    if isinstance(config, PartyFlowWebhookEndpointConfig):
+        return None, config.storage_config()
     return config.group_trigger_mode, dict(config.config)
 
 
@@ -422,4 +511,6 @@ def deserialize_endpoint_config(payload: Mapping[str, object]) -> ChannelEndpoin
         return TelethonUserEndpointConfig.model_validate(payload)
     if adapter_kind == "telegram_bot_polling" or transport == "telegram":
         return TelegramPollingEndpointConfig.model_validate(payload)
+    if adapter_kind == "partyflow_webhook" or transport == "partyflow":
+        return PartyFlowWebhookEndpointConfig.model_validate(payload)
     return ChannelEndpointConfig.model_validate(payload)
