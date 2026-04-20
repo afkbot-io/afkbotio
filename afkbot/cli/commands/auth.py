@@ -390,7 +390,7 @@ def _prompt_password(*, confirm: bool) -> str:
         typer.echo("Password cannot be empty.")
 
 
-def _prompt_text(*, prompt: str, default: str, required: bool, yes: bool) -> str:
+def _prompt_text(prompt: str, *, default: str, required: bool, yes: bool) -> str:
     if yes:
         if required and not default.strip():
             raise_usage_error(f"{prompt} is required with `--yes`.")

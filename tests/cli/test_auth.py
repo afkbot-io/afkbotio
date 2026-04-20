@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from afkbot.cli.commands.auth import _prompt_text
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
@@ -98,3 +99,8 @@ def test_auth_disable_clears_runtime_policy_and_secrets(
     assert "ui_auth_cookie_key" not in secrets
     get_settings.cache_clear()
 
+
+def test_auth_prompt_text_accepts_legacy_positional_prompt_argument() -> None:
+    """Prompt helper should remain compatible with legacy positional prompt calls."""
+
+    assert _prompt_text("Username", default="operator", required=True, yes=True) == "operator"

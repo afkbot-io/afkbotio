@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-04-20
+
+### Fixed
+
+- `afk auth setup` and related interactive UI-auth flows now accept both keyword and legacy positional prompt calls, avoiding a `TypeError` during username prompting on affected installed binaries.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.4.1`.
+
 ## [1.4.0] - 2026-04-20
 
 ### Added
