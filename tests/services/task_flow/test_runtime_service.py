@@ -827,7 +827,7 @@ async def test_taskflow_runtime_logs_runtime_history_prune_metrics(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Runtime prune logging should report task_run_count in the task_runs field."""
+    """Runtime prune logging should include all counters, including task_event_count."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -861,7 +861,7 @@ async def test_taskflow_runtime_logs_runtime_history_prune_metrics(
         assert prune_engine is engine
         from afkbot.db.bootstrap_runtime import RuntimeHistoryPruneResult
 
-        return RuntimeHistoryPruneResult(task_event_count=5, task_run_count=2, runlog_event_count=3)
+        return RuntimeHistoryPruneResult(task_event_count=5, task_run_count=0, runlog_event_count=0)
 
     monkeypatch.setattr(
         "afkbot.services.task_flow.runtime_service.prune_runtime_history",
@@ -879,7 +879,8 @@ async def test_taskflow_runtime_logs_runtime_history_prune_metrics(
     record = caplog.records[0]
     assert record.levelname == "INFO"
     assert record.message == (
-        "taskflow_runtime_pruned_history worker_id=worker-log task_runs=2 runlog_events=3"
+        "taskflow_runtime_pruned_history worker_id=worker-log "
+        "task_events=5 task_runs=0 runlog_events=0"
     )
 
 

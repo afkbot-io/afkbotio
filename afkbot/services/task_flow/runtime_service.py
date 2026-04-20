@@ -269,8 +269,9 @@ class TaskFlowRuntimeService:
             or result.runlog_event_count
         ):
             _LOGGER.info(
-                "taskflow_runtime_pruned_history worker_id=%s task_runs=%s runlog_events=%s",
+                "taskflow_runtime_pruned_history worker_id=%s task_events=%s task_runs=%s runlog_events=%s",
                 worker_id,
+                result.task_event_count,
                 result.task_run_count,
                 result.runlog_event_count,
             )
