@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from afkbot.services.atomic_writes import atomic_json_write
 from afkbot.services.llm.provider_catalog import parse_provider
-from afkbot.services.memory.contracts import MemoryKind
 from afkbot.services.llm.provider_settings import resolve_api_key, resolve_base_url
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.profile_runtime.contracts import (
@@ -18,6 +17,9 @@ from afkbot.services.profile_runtime.contracts import (
 )
 from afkbot.services.profile_runtime.runtime_secrets import get_profile_runtime_secrets_service
 from afkbot.settings import Settings
+
+if TYPE_CHECKING:
+    from afkbot.services.memory.contracts import MemoryKind
 
 _SERVICES_BY_ROOT: dict[str, "ProfileRuntimeConfigService"] = {}
 PROFILE_RUNTIME_CONFIG_VERSION = 1
