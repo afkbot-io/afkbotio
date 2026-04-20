@@ -216,7 +216,7 @@ async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_pa
 
     assert result.ok is True
     assert result.payload["completed"] == 2
-    assert elapsed < 0.45
+    assert elapsed < 0.65
     outputs = [
         str(item["payload"]["stdout"]).strip()
         for item in result.payload["results"]

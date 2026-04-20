@@ -84,6 +84,9 @@ def test_cli_allows_browser_commands_before_setup(tmp_path: Path, monkeypatch: M
 
     # Assert
     assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["reason"] == "ready"
 
 
 def test_cli_allows_bootstrap_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -98,20 +101,29 @@ def test_cli_allows_bootstrap_commands_before_setup(tmp_path: Path, monkeypatch:
 
     # Assert
     assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert isinstance(payload["bootstrap_files"], list)
 
 
-def test_cli_allows_mcp_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    """MCP config management should stay available before setup marker exists."""
+def test_cli_mcp_commands_bypass_setup_guard_and_report_runtime_error(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """MCP commands should bypass setup guard even when profile runtime state is not ready."""
 
     # Arrange
     _prepare_guard_context(tmp_path, monkeypatch)
     runner = CliRunner()
 
     # Act
-    result = runner.invoke(app, ["mcp", "list", "--profile", "default"])
+    result = runner.invoke(app, ["mcp", "list", "--profile", "default", "--json"])
 
     # Assert
     assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "profile_not_found"
+    assert "Run 'afk setup' first." not in result.stderr
 
 
 def test_cli_allows_plugin_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -120,9 +132,11 @@ def test_cli_allows_plugin_commands_before_setup(tmp_path: Path, monkeypatch: Mo
     _prepare_guard_context(tmp_path, monkeypatch)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["plugin", "list"])
+    result = runner.invoke(app, ["plugin", "list", "--json"])
 
     assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert isinstance(payload["plugins"], list)
 
 
 def test_cli_allows_auth_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -185,12 +199,18 @@ def test_cli_allows_update_commands_before_setup(tmp_path: Path, monkeypatch: Mo
             details=(),
         ),
     )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.update.format_update_success_for_language",
+        lambda result, *, lang: f"sentinel update output ({lang}) [{result.install_mode}]",
+    )
 
     # Act
     result = runner.invoke(app, ["update"])
 
     # Assert
     assert result.exit_code == 0
+    assert result.stdout.strip().endswith("[host]")
+    assert result.stdout.strip().startswith("sentinel update output")
 
 
 def test_cli_allows_runtime_commands_after_setup_marker(

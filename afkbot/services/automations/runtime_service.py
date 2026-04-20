@@ -16,11 +16,12 @@ async def trigger_webhook_payload(*, profile_id: str, token: str, payload_json: 
     """Trigger one webhook automation by token and return deterministic JSON payload."""
 
     settings = get_settings()
-    engine = create_engine(settings)
-    await create_schema(engine)
+    service = get_automations_service(settings)
+    service_engine = getattr(service, "_engine", None)
+    engine = service_engine or create_engine(settings)
     try:
+        await create_schema(engine)
         payload = _parse_payload_json(payload_json)
-        service = get_automations_service(settings)
         result = await service.trigger_webhook(
             profile_id=profile_id,
             token=token,
@@ -32,18 +33,20 @@ async def trigger_webhook_payload(*, profile_id: str, token: str, payload_json: 
     except ValueError as exc:
         return _error_json(error_code="invalid_payload_json", reason=str(exc))
     finally:
-        await engine.dispose()
+        if service_engine is None:
+            await engine.dispose()
 
 
 async def tick_cron_payload(*, now_utc: datetime | None = None) -> str:
     """Execute one cron tick and return deterministic JSON payload."""
 
     settings = get_settings()
-    engine = create_engine(settings)
-    await create_schema(engine)
+    service = get_automations_service(settings)
+    service_engine = getattr(service, "_engine", None)
+    engine = service_engine or create_engine(settings)
     try:
+        await create_schema(engine)
         effective_now = now_utc or datetime.now(timezone.utc)
-        service = get_automations_service(settings)
         result = await service.tick_cron(
             now_utc=effective_now,
         )
@@ -51,7 +54,8 @@ async def tick_cron_payload(*, now_utc: datetime | None = None) -> str:
     except AutomationsServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
-        await engine.dispose()
+        if service_engine is None:
+            await engine.dispose()
 
 
 def _parse_payload_json(payload_json: str) -> Mapping[str, object]:

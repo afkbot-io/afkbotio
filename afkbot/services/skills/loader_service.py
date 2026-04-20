@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from threading import Lock
 
 from afkbot.services.path_scope import resolve_in_scope_or_none
 from afkbot.services.plugins import get_plugin_service
@@ -17,6 +18,7 @@ from afkbot.services.skills.loader_contracts import (
 )
 from afkbot.services.skills.loader_manifest import (
     SKILL_NAME_RE,
+    SKILL_MANIFEST_FILENAME,
     build_default_manifest,
     build_manifest,
     load_overlay,
@@ -28,6 +30,21 @@ from afkbot.services.skills.loader_manifest import (
 )
 from afkbot.services.skills.markdown import FrontmatterValue, parse_frontmatter
 from afkbot.settings import Settings
+
+_DISCOVERY_CACHE_LOCK = Lock()
+_SKILL_DISCOVERY_CACHE: dict[
+    tuple[str, str],
+    tuple[tuple[tuple[str, tuple[int, int] | None, tuple[int, int] | None], ...], tuple[SkillInfo, ...]],
+] = {}
+_SKILL_TEXT_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def reset_skill_loader_caches() -> None:
+    """Reset process-local skill discovery caches (used by tests)."""
+
+    with _DISCOVERY_CACHE_LOCK:
+        _SKILL_DISCOVERY_CACHE.clear()
+        _SKILL_TEXT_CACHE.clear()
 
 
 class SkillLoader:
@@ -71,28 +88,7 @@ class SkillLoader:
     async def load_skill(self, name: str, profile_id: str) -> str:
         """Load one skill markdown file with mandatory/core precedence rules."""
 
-        self._validate_skill_name(name)
-        profile_root = self._safe_profile_skills_root(profile_id)
-        if name in self.ALWAYS_SKILLS:
-            core_path = self._safe_skill_path(self._settings.skills_dir, name)
-            if await asyncio.to_thread(core_path.exists):
-                return await asyncio.to_thread(core_path.read_text, encoding="utf-8")
-            raise FileNotFoundError(f"Skill not found: {name}")
-
-        profile_path = self._safe_skill_path(profile_root, name)
-        if await asyncio.to_thread(profile_path.exists):
-            return await asyncio.to_thread(profile_path.read_text, encoding="utf-8")
-
-        for plugin_root in self._plugin_skill_roots():
-            plugin_path = self._safe_skill_path(plugin_root, name)
-            if await asyncio.to_thread(plugin_path.exists):
-                return await asyncio.to_thread(plugin_path.read_text, encoding="utf-8")
-
-        core_path = self._safe_skill_path(self._settings.skills_dir, name)
-        if await asyncio.to_thread(core_path.exists):
-            return await asyncio.to_thread(core_path.read_text, encoding="utf-8")
-
-        raise FileNotFoundError(f"Skill not found: {name}")
+        return await asyncio.to_thread(self._load_skill_sync, name, profile_id)
 
     def validate_skill_name(self, name: str) -> None:
         """Validate one user-provided skill name for profile CRUD operations."""
@@ -166,22 +162,26 @@ class SkillLoader:
 
     def _discover_core_skills(self) -> list[SkillInfo]:
         root = self._settings.skills_dir
-        if not root.exists():
-            return []
-        return self._discover(root, "core")
+        return self._discover_cached(root=root, origin="core", cache_namespace="core")
 
     def _discover_profile_skills(self, profile_id: str) -> list[SkillInfo]:
         root = self._safe_profile_skills_root(profile_id)
-        if not root.exists():
-            return []
-        return self._discover(root, "profile")
+        return self._discover_cached(
+            root=root,
+            origin="profile",
+            cache_namespace=f"profile:{profile_id}",
+        )
 
     def _discover_plugin_skills(self) -> list[SkillInfo]:
         result: list[SkillInfo] = []
         for root in self._plugin_skill_roots():
-            if not root.exists():
-                continue
-            result.extend(self._discover(root, f"plugin:{root.name}"))
+            result.extend(
+                self._discover_cached(
+                    root=root,
+                    origin=f"plugin:{root.name}",
+                    cache_namespace=f"plugin:{root.resolve()}",
+                )
+            )
         return result
 
     def _plugin_skill_roots(self) -> tuple[Path, ...]:
@@ -246,7 +246,7 @@ class SkillLoader:
         overlay: dict[str, object] = {}
         manifest_errors: tuple[str, ...] = ()
         if path.exists():
-            content = path.read_text(encoding="utf-8")
+            content = self._read_cached_text(path)
             metadata = parse_frontmatter(content)
         if manifest_path.exists():
             overlay, manifest_errors = self._load_overlay(manifest_path)
@@ -277,6 +277,123 @@ class SkillLoader:
             manifest_valid=not manifest_errors,
             manifest_errors=manifest_errors,
         )
+
+    def _load_skill_sync(self, name: str, profile_id: str) -> str:
+        self._validate_skill_name(name)
+        profile_root = self._safe_profile_skills_root(profile_id)
+        if name in self.ALWAYS_SKILLS:
+            core_path = self._safe_skill_path(self._settings.skills_dir, name)
+            if core_path.exists():
+                return self._read_cached_text(core_path)
+            raise FileNotFoundError(f"Skill not found: {name}")
+
+        profile_path = self._safe_skill_path(profile_root, name)
+        if profile_path.exists():
+            return self._read_cached_text(profile_path)
+
+        for plugin_root in self._plugin_skill_roots():
+            plugin_path = self._safe_skill_path(plugin_root, name)
+            if plugin_path.exists():
+                return self._read_cached_text(plugin_path)
+
+        core_path = self._safe_skill_path(self._settings.skills_dir, name)
+        if core_path.exists():
+            return self._read_cached_text(core_path)
+
+        raise FileNotFoundError(f"Skill not found: {name}")
+
+    def _discover_cached(
+        self,
+        *,
+        root: Path,
+        origin: str,
+        cache_namespace: str,
+    ) -> list[SkillInfo]:
+        if not root.exists():
+            return []
+        cache_key = (cache_namespace, str(root.resolve()))
+        signature = self._discover_signature(root)
+        cached_infos: tuple[SkillInfo, ...] | None = None
+        with _DISCOVERY_CACHE_LOCK:
+            cached = _SKILL_DISCOVERY_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                cached_infos = cached[1]
+        if cached_infos is not None:
+            return [self._refresh_skill_info_availability(item) for item in cached_infos]
+        discovered = tuple(self._discover(root, origin))
+        with _DISCOVERY_CACHE_LOCK:
+            _SKILL_DISCOVERY_CACHE[cache_key] = (signature, discovered)
+        return list(discovered)
+
+    def _refresh_skill_info_availability(self, info: SkillInfo) -> SkillInfo:
+        """Recompute volatile availability without invalidating discovery/text caches."""
+
+        metadata: dict[str, FrontmatterValue] = {}
+        if info.path.exists():
+            metadata = parse_frontmatter(self._read_cached_text(info.path))
+        available, missing, suggested_missing = check_skill_availability(
+            path=info.path,
+            settings=self._settings,
+            metadata=metadata,
+            manifest=info.manifest,
+            manifest_errors=info.manifest_errors,
+        )
+        return SkillInfo(
+            name=info.name,
+            path=info.path,
+            origin=info.origin,
+            available=available,
+            missing_requirements=tuple(sorted(missing)),
+            missing_suggested_requirements=tuple(sorted(suggested_missing)),
+            summary=info.summary,
+            aliases=info.aliases,
+            manifest=info.manifest,
+            manifest_path=info.manifest_path,
+            manifest_valid=info.manifest_valid,
+            manifest_errors=info.manifest_errors,
+        )
+
+    def _discover_signature(
+        self,
+        root: Path,
+    ) -> tuple[tuple[str, tuple[int, int] | None, tuple[int, int] | None], ...]:
+        entries: list[tuple[str, tuple[int, int] | None, tuple[int, int] | None]] = []
+        for skill_dir in sorted(root.iterdir(), key=lambda item: item.name):
+            if not skill_dir.is_dir():
+                continue
+            skill_name = skill_dir.name
+            if not SKILL_NAME_RE.match(skill_name):
+                continue
+            entries.append(
+                (
+                    skill_name,
+                    self._path_signature(skill_dir / "SKILL.md"),
+                    self._path_signature(skill_dir / SKILL_MANIFEST_FILENAME),
+                )
+            )
+        return tuple(entries)
+
+    def _read_cached_text(self, path: Path) -> str:
+        signature = self._path_signature(path)
+        if signature is None:
+            raise FileNotFoundError(path)
+        cache_key = str(path.resolve())
+        with _DISCOVERY_CACHE_LOCK:
+            cached = _SKILL_TEXT_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+        text = path.read_text(encoding="utf-8")
+        with _DISCOVERY_CACHE_LOCK:
+            _SKILL_TEXT_CACHE[cache_key] = (signature, text)
+        return text
+
+    @staticmethod
+    def _path_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat_result = path.stat()
+        except OSError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_size)
 
     @staticmethod
     def _validate_skill_name(name: str) -> None:

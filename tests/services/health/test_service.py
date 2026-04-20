@@ -19,7 +19,10 @@ from afkbot.services.channels.endpoint_contracts import (
 )
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
 from afkbot.services.channel_routing.runtime_target import resolve_runtime_target
-from afkbot.services.credentials import get_credentials_service, reset_credentials_services
+from afkbot.services.credentials import (
+    get_credentials_service,
+    reset_credentials_services_async,
+)
 from afkbot.services.health import (
     HealthServiceError,
     run_channel_health_diagnostics,
@@ -65,7 +68,7 @@ async def test_integration_matrix_config_without_credentials_skips_app_integrati
 ) -> None:
     """Config matrix should mark app integrations as skipped when credentials are absent."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -99,7 +102,7 @@ async def test_integration_matrix_without_vault_keys_reports_failures(
 ) -> None:
     """Matrix should report deterministic vault error when master keys are unavailable."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=False)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -136,7 +139,7 @@ async def test_integration_matrix_probe_runs_real_llm_probe(
     """Probe matrix should execute one live LLM probe while keeping config-only tools skipped."""
 
     # Arrange
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -184,7 +187,7 @@ async def test_integration_matrix_probe_reports_llm_probe_failure(
     """Probe matrix should surface real LLM probe failures instead of reporting ready."""
 
     # Arrange
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -227,7 +230,7 @@ async def test_integration_matrix_probe_reports_unexpected_llm_probe_exception(
     """Probe matrix should convert unexpected LLM probe exceptions into one failed row."""
 
     # Arrange
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -266,7 +269,7 @@ async def test_integration_matrix_browser_control_reports_runtime_failure(
 ) -> None:
     """Browser control should skip readiness when Playwright runtime is not installed."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -297,7 +300,7 @@ async def test_integration_matrix_browser_control_check_timeout_is_fail(
 ) -> None:
     """Unexpected browser status probe failures should still fail doctor."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",
@@ -362,7 +365,7 @@ async def test_integration_matrix_uses_profile_effective_runtime(
 ) -> None:
     """Matrix should resolve tool surface and secrets from the selected profile."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     runtime_configs = get_profile_runtime_config_service(settings)
     runtime_secrets = get_profile_runtime_secrets_service(settings)
@@ -427,7 +430,7 @@ async def test_channel_health_diagnostics_report_telegram_polling_status(
 ) -> None:
     """Health diagnostics should expose Telegram polling adapter readiness."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     bindings = ChannelBindingService(settings)
     endpoint_service = get_channel_endpoint_service(settings)
@@ -488,7 +491,7 @@ async def test_channel_health_diagnostics_report_telethon_status(
 ) -> None:
     """Health diagnostics should expose Telethon user-channel readiness."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     bindings = ChannelBindingService(settings)
     endpoint_service = get_channel_endpoint_service(settings)
@@ -570,7 +573,7 @@ async def test_integration_matrix_fails_for_missing_profile(
 ) -> None:
     """Doctor matrix should fail strictly when the selected profile does not exist."""
 
-    reset_credentials_services()
+    await reset_credentials_services_async()
     settings = await _prepare_settings(tmp_path, with_master_key=True)
     monkeypatch.setattr(
         "afkbot.services.health.integration_matrix.get_browser_runtime_status",

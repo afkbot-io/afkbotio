@@ -9,12 +9,13 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import secrets
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap import create_schema
+from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema, prune_runtime_history
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
@@ -100,6 +101,9 @@ class TaskFlowRuntimeService:
         self._engine = engine
         self._managed_engine: AsyncEngine | None = None
         self._start_lock = asyncio.Lock()
+        self._maintenance_lock = asyncio.Lock()
+        self._next_maintenance_run_at = 0.0
+        self._next_runtime_history_prune_at = 0.0
         self._session_runner_factory = session_runner_factory or _default_session_runner_factory(
             self._settings
         )
@@ -125,10 +129,7 @@ class TaskFlowRuntimeService:
         """Claim and execute one runnable AI-owned task, returning whether work was found."""
 
         await self._ensure_started()
-        await self.sweep_expired_claims(
-            worker_id=worker_id,
-            limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
-        )
+        await self._maybe_run_maintenance(worker_id=worker_id)
         claimed = await self._claim_next_task(worker_id=worker_id)
         if claimed is None:
             return False
@@ -223,10 +224,56 @@ class TaskFlowRuntimeService:
             engine = create_engine(self._settings)
             owned_engine = True
         try:
-            await create_schema(engine)
+            await ensure_task_runtime_schema(engine)
         finally:
             if owned_engine:
                 await engine.dispose()
+
+    async def _maybe_run_maintenance(self, *, worker_id: str) -> None:
+        """Run bounded runtime maintenance behind one shared throttle/lock."""
+
+        now = asyncio.get_running_loop().time()
+        if now < self._next_maintenance_run_at and now < self._next_runtime_history_prune_at:
+            return
+        async with self._maintenance_lock:
+            now = asyncio.get_running_loop().time()
+            if now >= self._next_maintenance_run_at:
+                self._next_maintenance_run_at = now + _maintenance_interval_sec(self._settings)
+                await self.sweep_expired_claims(
+                    worker_id=worker_id,
+                    limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
+                )
+            if now >= self._next_runtime_history_prune_at:
+                self._next_runtime_history_prune_at = now + _runtime_history_prune_interval_sec()
+                await self._prune_runtime_history(worker_id=worker_id)
+
+    async def _prune_runtime_history(self, *, worker_id: str) -> None:
+        """Prune bounded runtime history rows using the runtime engine when available."""
+
+        engine = self._engine or self._managed_engine
+        if engine is None and self._session_factory is not None:
+            engine = cast(AsyncEngine | None, self._session_factory.kw.get("bind"))
+        if engine is None:
+            return
+        cutoff = datetime.now(timezone.utc) - _runtime_history_retention()
+        result = await prune_runtime_history(
+            engine,
+            task_event_before=cutoff,
+            task_run_before=cutoff,
+            runlog_event_before=cutoff,
+            batch_size=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
+        )
+        if (
+            result.task_event_count
+            or result.task_run_count
+            or result.runlog_event_count
+        ):
+            _LOGGER.info(
+                "taskflow_runtime_pruned_history worker_id=%s task_runs=%s runlog_events=%s",
+                worker_id,
+                result.task_run_count,
+                result.runlog_event_count,
+            )
 
     async def _guard_ai_owned_plan_tasks(
         self,
@@ -242,50 +289,50 @@ class TaskFlowRuntimeService:
 
         moved_count = 0
         rows = await repo.list_tasks(
-                profile_id=profile_id,
-                statuses=("plan",),
-                owner_type="ai_profile",
-                owner_ref=owner_ref,
-                limit=max(1, limit),
-            )
+            profile_id=profile_id,
+            statuses=("plan",),
+            owner_type="ai_profile",
+            owner_ref=owner_ref,
+            limit=max(1, limit),
+        )
         for row in rows:
-                updated = await repo.update_task(
-                    profile_id=profile_id,
-                    task_id=row.id,
-                    status="blocked",
-                    blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                    blocked_reason_text=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                    ready_at=None,
-                )
-                if updated is None:
-                    continue
-                await record_task_event(
-                    repo=repo,
-                    task_id=row.id,
-                    event_type="blocked",
-                    actor_type="runtime",
-                    actor_ref=worker_id,
-                    message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                    from_status="plan",
-                    to_status="blocked",
-                    details={
-                        "reason_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                    },
-                )
-                await record_task_event(
-                    repo=repo,
-                    task_id=row.id,
-                    event_type="runtime_claim_rejected",
-                    actor_type="runtime",
-                    actor_ref=worker_id,
-                    message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                    from_status="plan",
-                    to_status="blocked",
-                    details={
-                        "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                    },
-                )
-                moved_count += 1
+            updated = await repo.update_task(
+                profile_id=profile_id,
+                task_id=row.id,
+                status="blocked",
+                blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                blocked_reason_text=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                ready_at=None,
+            )
+            if updated is None:
+                continue
+            await record_task_event(
+                repo=repo,
+                task_id=row.id,
+                event_type="blocked",
+                actor_type="runtime",
+                actor_ref=worker_id,
+                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                from_status="plan",
+                to_status="blocked",
+                details={
+                    "reason_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                },
+            )
+            await record_task_event(
+                repo=repo,
+                task_id=row.id,
+                event_type="runtime_claim_rejected",
+                actor_type="runtime",
+                actor_ref=worker_id,
+                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
+                from_status="plan",
+                to_status="blocked",
+                details={
+                    "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                },
+            )
+            moved_count += 1
         return moved_count
 
     async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
@@ -869,6 +916,18 @@ def _resolve_execution_profile_id(row: object) -> str:
 
 def _claim_ttl(settings: Settings) -> timedelta:
     return timedelta(seconds=max(1, int(settings.taskflow_runtime_claim_ttl_sec)))
+
+
+def _maintenance_interval_sec(settings: Settings) -> float:
+    return max(1.0, float(settings.taskflow_runtime_poll_interval_sec))
+
+
+def _runtime_history_prune_interval_sec() -> float:
+    return 6.0 * 60.0 * 60.0
+
+
+def _runtime_history_retention() -> timedelta:
+    return timedelta(days=30)
 
 
 def _should_schedule_blocked_revisit(blocked_reason_code: str | None) -> bool:

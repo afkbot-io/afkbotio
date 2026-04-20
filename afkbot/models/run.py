@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, ForeignKeyConstraint, Integer, String
+from sqlalchemy import Boolean, ForeignKey, ForeignKeyConstraint, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from afkbot.models.base import Base, TimestampMixin
@@ -18,6 +18,8 @@ class Run(Base, TimestampMixin):
             ["chat_session.id", "chat_session.profile_id"],
             name="fk_run_session_profile",
         ),
+        Index("ix_run_profile_session_id", "profile_id", "session_id", "id"),
+        Index("ix_run_profile_session_status_id", "profile_id", "session_id", "status", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

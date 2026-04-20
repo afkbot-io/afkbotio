@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -16,7 +17,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.credentials import (
     CredentialsServiceError,
     get_credentials_service,
-    reset_credentials_services,
+    reset_credentials_services_async,
 )
 from afkbot.settings import get_settings
 
@@ -32,7 +33,7 @@ async def test_create_maps_integrity_error_to_credentials_conflict(
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials.db'}")
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
-    reset_credentials_services()
+    await reset_credentials_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)
@@ -94,7 +95,7 @@ async def test_delete_profile_deactivates_bindings_for_runtime_resolution(
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_delete.db'}")
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
-    reset_credentials_services()
+    await reset_credentials_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)
@@ -154,7 +155,7 @@ async def test_deleted_explicit_profile_requires_reselection_when_other_profiles
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_reselect.db'}")
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
-    reset_credentials_services()
+    await reset_credentials_services_async()
 
     settings = get_settings()
     engine = create_engine(settings)
@@ -221,7 +222,7 @@ def test_get_credentials_service_returns_fresh_service_outside_running_loop(
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_registry.db'}")
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
-    reset_credentials_services()
+    asyncio.run(reset_credentials_services_async())
 
     settings = get_settings()
     first = get_credentials_service(settings)

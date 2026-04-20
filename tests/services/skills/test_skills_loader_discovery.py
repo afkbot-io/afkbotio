@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 
+from afkbot.services.skills.loader_service import reset_skill_loader_caches
 from tests.services.skills._loader_harness import build_loader, write_manifest, write_skill
 
 
@@ -219,3 +221,68 @@ async def test_skills_loader_marks_invalid_afkbot_manifest_unavailable(tmp_path:
     assert info.manifest_valid is False
     assert "parse_error" in info.manifest_errors
     assert "manifest:parse_error" in info.missing_requirements
+
+
+async def test_skills_loader_invalidates_process_cache_after_skill_update(tmp_path: Path) -> None:
+    """Process-local discovery cache should refresh when skill files change on disk."""
+
+    reset_skill_loader_caches()
+    write_skill(
+        tmp_path,
+        "afkbot/skills/security-secrets",
+        "---\nname: security-secrets\ndescription: \"Keep secrets safe.\"\n---\n# security",
+    )
+    described_dir = write_skill(
+        tmp_path,
+        "afkbot/skills/described",
+        "---\nname: described\ndescription: \"First summary.\"\n---\n# described",
+    )
+    loader = build_loader(tmp_path)
+
+    first = {item.name: item for item in await loader.list_skills("default")}["described"]
+    assert first.summary == "First summary."
+
+    time.sleep(0.01)
+    (described_dir / "SKILL.md").write_text(
+        "---\nname: described\ndescription: \"Updated summary.\"\n---\n# described",
+        encoding="utf-8",
+    )
+
+    second = {item.name: item for item in await loader.list_skills("default")}["described"]
+    assert second.summary == "Updated summary."
+
+
+async def test_skills_loader_refreshes_availability_without_skill_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Availability must reflect env changes even when discovery cache stays warm."""
+
+    reset_skill_loader_caches()
+    write_skill(
+        tmp_path,
+        "afkbot/skills/security-secrets",
+        "# security",
+    )
+    write_skill(
+        tmp_path,
+        "afkbot/skills/env-bound",
+        "---\nname: env-bound\nrequires_env: AFKBOT_SKILL_TEST_TOKEN\n---\n# env-bound",
+    )
+    loader = build_loader(tmp_path)
+
+    first = {item.name: item for item in await loader.list_skills("default")}["env-bound"]
+    assert first.available is False
+    assert "env:AFKBOT_SKILL_TEST_TOKEN" in first.missing_requirements
+
+    monkeypatch.setenv("AFKBOT_SKILL_TEST_TOKEN", "present")
+
+    second = {item.name: item for item in await loader.list_skills("default")}["env-bound"]
+    assert second.available is True
+    assert second.missing_requirements == ()
+
+    monkeypatch.delenv("AFKBOT_SKILL_TEST_TOKEN")
+
+    third = {item.name: item for item in await loader.list_skills("default")}["env-bound"]
+    assert third.available is False
+    assert "env:AFKBOT_SKILL_TEST_TOKEN" in third.missing_requirements

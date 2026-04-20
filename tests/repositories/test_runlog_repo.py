@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -119,6 +120,43 @@ async def test_run_repo_get_latest_run_id(tmp_path: Path) -> None:
             )
     finally:
         await engine.dispose()
+
+
+async def test_run_repo_request_cancel_marks_latest_running_only(tmp_path: Path) -> None:
+    """Cancellation should target only the newest running run for the session scope."""
+
+    engine, factory = await _prepare(tmp_path)
+    try:
+        async with session_scope(factory) as session:
+            repo = RunRepository(session)
+            first = await repo.create_run(session_id="s-1", profile_id="default", status="running")
+            latest = await repo.create_run(session_id="s-1", profile_id="default", status="running")
+            await repo.create_run(session_id="s-1", profile_id="default", status="completed")
+            await repo.create_run(session_id="s-2", profile_id="default", status="running")
+
+            assert await repo.request_cancel(profile_id="default", session_id="s-1") is True
+            assert await repo.is_cancel_requested(first.id) is False
+            assert await repo.is_cancel_requested(latest.id) is True
+    finally:
+        await engine.dispose()
+
+
+async def test_run_repo_request_cancel_returns_false_when_update_affects_no_rows() -> None:
+    """Cancellation should report False when UPDATE does not modify any rows."""
+
+    select_result = Mock()
+    select_result.scalar_one_or_none.return_value = 42
+
+    update_result = Mock()
+    update_result.rowcount = 0
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[select_result, update_result])
+
+    repo = RunRepository(session)
+
+    assert await repo.request_cancel(profile_id="default", session_id="s-1") is False
+    assert session.execute.await_count == 2
 
 
 async def test_runlog_repo_list_session_events_filters_before_limit(tmp_path: Path) -> None:

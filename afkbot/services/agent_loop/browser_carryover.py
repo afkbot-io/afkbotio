@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import time
 
 from afkbot.services.browser_sessions import BrowserSessionManager, get_browser_session_manager
 from afkbot.repositories.runlog_repo import RunlogEventRead, RunlogRepository
@@ -37,12 +38,14 @@ class BrowserCarryoverService:
         session_manager: BrowserSessionManager | None = None,
         max_events: int = 24,
         max_chars: int = 1_600,
+        live_refresh_window_sec: float = 5.0,
     ) -> None:
         self._settings = settings
         self._runlog_repo = runlog_repo
         self._session_manager = session_manager or get_browser_session_manager()
         self._max_events = max(1, int(max_events))
         self._max_chars = max(200, int(max_chars))
+        self._live_refresh_window_sec = max(1.0, float(live_refresh_window_sec))
 
     async def build_prompt_block(self, *, profile_id: str, session_id: str) -> str | None:
         """Return compact trusted browser carryover for one chat session, if any."""
@@ -108,13 +111,43 @@ class BrowserCarryoverService:
             profile_id=profile_id,
             session_id=session_id,
             idle_ttl_sec=self._settings.browser_session_idle_ttl_sec,
+            touch=False,
         )
         if handle is None:
             return None
+        current_url = normalize_snapshot_text(getattr(handle.page, "url", "") or "")
+        if self._can_reuse_live_summary(handle=handle, current_url=current_url):
+            return handle.live_carryover_summary
         snapshot = await capture_browser_page_snapshot(
             handle.page,
             max_chars=min(self._max_chars, 800),
         )
+        summary = self._build_live_summary(snapshot=snapshot)
+        handle.live_carryover_summary = summary
+        handle.live_carryover_page_url = (
+            normalize_snapshot_text(snapshot.get("url")) or current_url
+        )
+        handle.live_carryover_updated_monotonic = time.monotonic()
+        return summary
+
+    def _can_reuse_live_summary(
+        self,
+        *,
+        handle: object,
+        current_url: str,
+    ) -> bool:
+        summary = getattr(handle, "live_carryover_summary", None)
+        if not isinstance(summary, str) or not summary.strip():
+            return False
+        cached_url = normalize_snapshot_text(getattr(handle, "live_carryover_page_url", ""))
+        if cached_url != current_url:
+            return False
+        updated_monotonic = getattr(handle, "live_carryover_updated_monotonic", 0.0)
+        if not isinstance(updated_monotonic, (int, float)):
+            return False
+        return (time.monotonic() - float(updated_monotonic)) < self._live_refresh_window_sec
+
+    def _build_live_summary(self, *, snapshot: dict[str, object]) -> str:
         lines = [
             "Trusted live browser carryover from the current runtime.",
             "The browser session for this chat is open right now and should be reused instead of reopening the site unless recovery is required.",

@@ -18,7 +18,7 @@ from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueu
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
-from afkbot.services.task_flow import get_task_flow_service, reset_task_flow_services
+from afkbot.services.task_flow import get_task_flow_service, reset_task_flow_services_async
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
@@ -34,7 +34,7 @@ async def _prepare(
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", db_url)
     get_settings.cache_clear()
-    reset_task_flow_services()
+    await reset_task_flow_services_async()
 
     settings = get_settings()
     settings.taskflow_public_principal_required = taskflow_public_principal_required

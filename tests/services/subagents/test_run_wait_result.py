@@ -199,6 +199,62 @@ async def test_run_wait_result_completed(tmp_path: Path) -> None:
     await service.shutdown()
 
 
+async def test_wait_and_result_reap_finished_detached_process_handles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read paths should opportunistically reap finished detached worker handles."""
+
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-reap.db'}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        session.add(
+            SubagentTask(
+                task_id="task-reap",
+                profile_id="default",
+                session_id="s-1",
+                run_id=1,
+                subagent_name="researcher",
+                prompt="hello",
+                timeout_sec=30,
+                status="completed",
+                created_at=datetime.now(timezone.utc),
+                finished_at=datetime.now(timezone.utc),
+                output="done",
+            )
+        )
+        await session.flush()
+
+    service = SubagentService(settings=settings)
+    reaped: list[str] = []
+    monkeypatch.setattr(service._launcher, "reap", lambda *, task_id=None: reaped.append(str(task_id)))  # noqa: SLF001
+
+    wait_response = await service.wait(
+        task_id="task-reap",
+        timeout_sec=1,
+        profile_id="default",
+        session_id="s-1",
+    )
+    result_response = await service.result(
+        task_id="task-reap",
+        profile_id="default",
+        session_id="s-1",
+    )
+
+    assert wait_response.done is True
+    assert wait_response.status == "completed"
+    assert result_response.status == "completed"
+    assert result_response.output == "done"
+    assert reaped == ["task-reap", "task-reap"]
+
+    await service.shutdown()
+    await engine.dispose()
+
+
 async def test_run_normalizes_profile_subagent_name_before_lookup(tmp_path: Path) -> None:
     """Runtime subagent execution should accept localized/profile labels and normalize them."""
 

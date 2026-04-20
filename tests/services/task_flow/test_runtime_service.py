@@ -695,6 +695,194 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
         await engine.dispose()
 
 
+async def test_taskflow_runtime_throttles_background_maintenance_between_claim_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claim loop should not sweep expired claims on every rapid polling pass."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_maintenance_throttle.db",
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_maintenance_throttle.db'}",
+        taskflow_runtime_poll_interval_sec=5.0,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    maintenance_calls: list[str] = []
+
+    async def _fake_sweep(*, worker_id: str, limit: int = 25, profile_id: str | None = None) -> int:
+        _ = limit, profile_id
+        maintenance_calls.append(worker_id)
+        return 0
+
+    monkeypatch.setattr(runtime, "sweep_expired_claims", _fake_sweep)
+
+    try:
+        first = await runtime.execute_next_claimable_task(worker_id="worker-throttle")
+        second = await runtime.execute_next_claimable_task(worker_id="worker-throttle")
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+    assert first is False
+    assert second is False
+    assert maintenance_calls == ["worker-throttle"]
+
+
+async def test_taskflow_runtime_throttles_runtime_history_pruning_between_claim_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claim loop should run bounded history pruning at most once per prune cadence."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_history_maintenance_throttle.db",
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=(
+            f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_history_maintenance_throttle.db'}"
+        ),
+        taskflow_runtime_poll_interval_sec=5.0,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    maintenance_calls: list[str] = []
+    prune_calls: list[dict[str, object]] = []
+
+    async def _fake_sweep(*, worker_id: str, limit: int = 25, profile_id: str | None = None) -> int:
+        _ = limit, profile_id
+        maintenance_calls.append(worker_id)
+        return 0
+
+    monkeypatch.setattr(runtime, "sweep_expired_claims", _fake_sweep)
+
+    async def _fake_prune_runtime_history(
+        engine,
+        *,
+        task_event_before=None,
+        task_run_before=None,
+        runlog_event_before=None,
+        batch_size: int = 500,
+    ):
+        prune_calls.append(
+            {
+                "engine": engine,
+                "task_event_before": task_event_before,
+                "task_run_before": task_run_before,
+                "runlog_event_before": runlog_event_before,
+                "batch_size": batch_size,
+            }
+        )
+        from afkbot.db.bootstrap_runtime import RuntimeHistoryPruneResult
+
+        return RuntimeHistoryPruneResult()
+
+    monkeypatch.setattr(
+        "afkbot.services.task_flow.runtime_service.prune_runtime_history",
+        _fake_prune_runtime_history,
+    )
+
+    try:
+        first = await runtime.execute_next_claimable_task(worker_id="worker-history-throttle")
+        second = await runtime.execute_next_claimable_task(worker_id="worker-history-throttle")
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+    assert first is False
+    assert second is False
+    assert maintenance_calls == ["worker-history-throttle"]
+    assert len(prune_calls) == 1
+    assert prune_calls[0]["engine"] is engine
+    assert prune_calls[0]["task_event_before"] is not None
+    assert prune_calls[0]["batch_size"] == settings.taskflow_runtime_maintenance_batch_size
+    assert prune_calls[0]["task_run_before"] is not None
+    assert prune_calls[0]["runlog_event_before"] is not None
+
+
+async def test_taskflow_runtime_logs_runtime_history_prune_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Runtime prune logging should report task_run_count in the task_runs field."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_history_prune_logging.db",
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_history_prune_logging.db'}",
+        taskflow_runtime_maintenance_batch_size=17,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+
+    async def _fake_prune_runtime_history(
+        prune_engine,
+        *,
+        task_event_before=None,
+        task_run_before=None,
+        runlog_event_before=None,
+        batch_size: int = 500,
+    ):
+        _ = task_event_before, task_run_before, runlog_event_before, batch_size
+        assert prune_engine is engine
+        from afkbot.db.bootstrap_runtime import RuntimeHistoryPruneResult
+
+        return RuntimeHistoryPruneResult(task_event_count=5, task_run_count=2, runlog_event_count=3)
+
+    monkeypatch.setattr(
+        "afkbot.services.task_flow.runtime_service.prune_runtime_history",
+        _fake_prune_runtime_history,
+    )
+
+    try:
+        caplog.set_level("INFO", logger="afkbot.services.task_flow.runtime_service")
+        await runtime._prune_runtime_history(worker_id="worker-log")
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelname == "INFO"
+    assert record.message == (
+        "taskflow_runtime_pruned_history worker_id=worker-log task_runs=2 runlog_events=3"
+    )
+
+
 async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -> None:
     """Manual stale-claim maintenance should only repair work inside the selected profile."""
 

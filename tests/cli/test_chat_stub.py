@@ -36,6 +36,7 @@ def _prepare_env(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'chat.db'}")
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     monkeypatch.setenv("AFKBOT_LLM_PROVIDER", "openrouter")
     get_settings.cache_clear()
 

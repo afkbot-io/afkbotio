@@ -17,7 +17,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.credentials import get_credentials_service
-from afkbot.services.memory import reset_memory_services
+from afkbot.services.memory import reset_memory_services_async
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolCall
 from afkbot.services.tools.registry import ToolRegistry
@@ -346,7 +346,7 @@ async def test_memory_tool_logs_redact_content_and_query(tmp_path: Path) -> None
     """Runlog payloads must not persist plaintext memory content/query fields."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_memory_redaction.db")
-    reset_memory_services()
+    await reset_memory_services_async()
 
     async with session_scope(factory) as session:
         loop = AgentLoop(

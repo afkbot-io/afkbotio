@@ -11,7 +11,7 @@ from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import (
     ProfileService,
     get_profile_service,
-    reset_profile_services,
+    reset_profile_services_async,
     run_profile_service_sync,
 )
 from afkbot.settings import Settings
@@ -85,7 +85,7 @@ async def test_profile_service_creates_profile_with_config_and_policy(tmp_path: 
 def test_get_profile_service_does_not_cache_across_sync_event_loop_boundaries(tmp_path: Path) -> None:
     """Sync callers should receive fresh services instead of reusing one async engine across loops."""
 
-    reset_profile_services()
+    asyncio.run(reset_profile_services_async())
     settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}", root_dir=tmp_path)
 
     first = get_profile_service(settings)
@@ -100,7 +100,7 @@ def test_get_profile_service_does_not_cache_across_sync_event_loop_boundaries(tm
 def test_run_profile_service_sync_creates_and_reads_default_profile(tmp_path: Path) -> None:
     """Sync helper should isolate setup-style profile operations from event-loop reuse."""
 
-    reset_profile_services()
+    asyncio.run(reset_profile_services_async())
     settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}", root_dir=tmp_path)
 
     created = run_profile_service_sync(
@@ -130,7 +130,7 @@ def test_run_profile_service_sync_keeps_existing_default_bootstrap_files(tmp_pat
     """Default profile bootstrap should seed missing files but preserve existing custom content."""
 
     # Arrange
-    reset_profile_services()
+    asyncio.run(reset_profile_services_async())
     settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}", root_dir=tmp_path)
 
     # Act

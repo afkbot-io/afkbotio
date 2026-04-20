@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import signal
+import subprocess
 
 from pytest import MonkeyPatch
 
@@ -67,3 +69,102 @@ async def test_inline_launcher_shutdown_cancels_running_tasks(tmp_path: Path) ->
     await asyncio.wait_for(launcher.shutdown(), timeout=1)
 
     assert cancelled.is_set()
+
+
+async def test_process_launcher_cancel_escalates_to_kill_after_term_timeout(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Process cancellation should escalate from TERM to KILL when worker does not exit."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'worker-cancel.db'}",
+        root_dir=tmp_path,
+        runtime_shutdown_timeout_sec=0.01,
+    )
+    launcher = SubagentLauncher(settings=settings, launch_mode="process")
+    signals: list[tuple[int, signal.Signals]] = []
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.pid = 1234
+            self._poll_calls = 0
+            self._done = False
+
+        def poll(self) -> int | None:
+            return 0 if self._done else None
+
+        def wait(self, timeout: float | None = None) -> int:
+            self._poll_calls += 1
+            if self._poll_calls == 1:
+                raise subprocess.TimeoutExpired(cmd="subagent", timeout=timeout)
+            self._done = True
+            return 0
+
+        def terminate(self) -> None:
+            signals.append((self.pid, signal.SIGTERM))
+
+        def kill(self) -> None:
+            signals.append((self.pid, signal.SIGKILL))
+
+    monkeypatch.setattr(
+        "afkbot.services.subagents.launcher.os.killpg",
+        lambda pid, sig: signals.append((pid, sig)),
+    )
+
+    launcher._processes["task-1"] = _FakeProc()  # noqa: SLF001
+
+    await launcher.cancel(task_id="task-1")
+
+    assert signals == [(1234, signal.SIGTERM), (1234, signal.SIGKILL)]
+    assert launcher._processes == {}  # noqa: SLF001
+
+
+async def test_process_launcher_cancel_with_zero_timeout_stays_bounded(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Zero shutdown timeout should skip the blocking TERM wait and escalate immediately."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'worker-cancel-zero.db'}",
+        root_dir=tmp_path,
+        runtime_shutdown_timeout_sec=0.0,
+    )
+    launcher = SubagentLauncher(settings=settings, launch_mode="process")
+    signals: list[tuple[int, signal.Signals]] = []
+    wait_calls: list[float | None] = []
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.pid = 5678
+            self._done = False
+
+        def poll(self) -> int | None:
+            return 0 if self._done else None
+
+        def wait(self, timeout: float | None = None) -> int:
+            wait_calls.append(timeout)
+            if not self._done:
+                raise subprocess.TimeoutExpired(cmd="subagent", timeout=timeout)
+            return 0
+
+        def terminate(self) -> None:
+            signals.append((self.pid, signal.SIGTERM))
+
+        def kill(self) -> None:
+            signals.append((self.pid, signal.SIGKILL))
+            self._done = True
+
+    monkeypatch.setattr(
+        "afkbot.services.subagents.launcher.os.killpg",
+        lambda pid, sig: signals.append((pid, sig)) or setattr(launcher._processes["task-0"], "_done", sig == signal.SIGKILL),
+    )
+
+    launcher._processes["task-0"] = _FakeProc()  # noqa: SLF001
+
+    await asyncio.wait_for(launcher.cancel(task_id="task-0"), timeout=1)
+
+    assert signals == [(5678, signal.SIGTERM), (5678, signal.SIGKILL)]
+    assert wait_calls == []
+    assert launcher._processes == {}  # noqa: SLF001

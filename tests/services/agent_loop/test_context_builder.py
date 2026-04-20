@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 
-from afkbot.services.agent_loop.context_builder import ContextBuilder
+from afkbot.services.agent_loop.context_builder import ContextBuilder, reset_context_asset_caches
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.settings import Settings
 
@@ -343,3 +344,68 @@ async def test_context_builder_includes_binding_prompt_overlay_block(tmp_path: P
 
     assert "# Binding Prompt Overlay" in context
     assert "Always answer as the sales operations agent." in context
+
+
+async def test_context_builder_invalidates_cached_bootstrap_file_between_instances(
+    tmp_path: Path,
+) -> None:
+    """Process-local bootstrap cache should refresh when source files change on disk."""
+
+    reset_context_asset_caches()
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    skills_dir = tmp_path / "afkbot/skills/security-secrets"
+    bootstrap_dir.mkdir(parents=True)
+    skills_dir.mkdir(parents=True)
+
+    bootstrap_file = bootstrap_dir / "AGENTS.md"
+    bootstrap_file.write_text("initial bootstrap", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text(
+        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        encoding="utf-8",
+    )
+
+    settings = Settings(root_dir=tmp_path, bootstrap_files=("AGENTS.md",))
+    first_builder = ContextBuilder(settings, SkillLoader(settings))
+    first_context = await first_builder.build(profile_id="default")
+    assert "initial bootstrap" in first_context
+
+    time.sleep(0.01)
+    bootstrap_file.write_text("updated bootstrap", encoding="utf-8")
+
+    second_builder = ContextBuilder(settings, SkillLoader(settings))
+    second_context = await second_builder.build(profile_id="default")
+    assert "updated bootstrap" in second_context
+
+
+async def test_context_builder_invalidates_cached_subagent_summary_between_instances(
+    tmp_path: Path,
+) -> None:
+    """Process-local summary cache should refresh when subagent markdown changes."""
+
+    reset_context_asset_caches()
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    skills_dir = tmp_path / "afkbot/skills/security-secrets"
+    subagents_dir = tmp_path / "afkbot/subagents"
+    bootstrap_dir.mkdir(parents=True)
+    skills_dir.mkdir(parents=True)
+    subagents_dir.mkdir(parents=True)
+
+    (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
+    (skills_dir / "SKILL.md").write_text(
+        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        encoding="utf-8",
+    )
+    subagent_file = subagents_dir / "researcher.md"
+    subagent_file.write_text("# First summary", encoding="utf-8")
+
+    settings = Settings(root_dir=tmp_path, bootstrap_files=("AGENTS.md",))
+    first_builder = ContextBuilder(settings, SkillLoader(settings))
+    first_context = await first_builder.build(profile_id="default")
+    assert "- researcher: First summary" in first_context
+
+    time.sleep(0.01)
+    subagent_file.write_text("# Updated summary", encoding="utf-8")
+
+    second_builder = ContextBuilder(settings, SkillLoader(settings))
+    second_context = await second_builder.build(profile_id="default")
+    assert "- researcher: Updated summary" in second_context

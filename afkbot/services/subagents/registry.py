@@ -25,6 +25,16 @@ def reset_subagent_services() -> None:
     _SERVICES_BY_ROOT.clear()
 
 
+async def reset_subagent_service_for_root_async(*, settings: Settings) -> None:
+    """Reset cached service instance for one root and dispose its resources."""
+
+    key = str(settings.root_dir.resolve())
+    service = _SERVICES_BY_ROOT.pop(key, None)
+    if service is None:
+        return
+    await service.shutdown()
+
+
 async def reset_subagent_services_async() -> None:
     """Reset cached services and dispose their DB engines."""
 

@@ -113,6 +113,7 @@ class SubagentLifecycle:
         deadline = asyncio.get_running_loop().time() + wait_timeout
 
         while True:
+            self._launcher.reap(task_id=task_id)
             state = await self._task_store.load_state(
                 task_id=task_id,
                 profile_id=profile_id,
@@ -148,6 +149,7 @@ class SubagentLifecycle:
     ) -> SubagentResultResponse:
         """Return current or final result for one persisted task."""
 
+        self._launcher.reap(task_id=task_id)
         await self._task_store.ensure_schema()
         await self._task_store.prune_expired_tasks()
         state = await self._task_store.load_state(
@@ -203,7 +205,7 @@ class SubagentLifecycle:
                 reason=state.reason,
             )
 
-        self._launcher.cancel(task_id=task_id)
+        await self._launcher.cancel(task_id=task_id)
         await self._transitions.cancel(task_id=task_id)
         return SubagentResultResponse(
             task_id=task_id,

@@ -26,6 +26,7 @@ from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
 _SESSION_QUEUE_POLL_SEC = 0.05
+_SESSION_QUEUE_MAX_POLL_SEC = 0.5
 _SESSION_QUEUE_HEARTBEAT_SEC = 15.0
 _SESSION_QUEUE_WAIT_TIMEOUT_SEC = 86_400.0
 
@@ -233,6 +234,7 @@ class SessionOrchestrator:
         owner_token: str,
     ) -> None:
         deadline = time.monotonic() + _SESSION_QUEUE_WAIT_TIMEOUT_SEC
+        attempt = 0
         while time.monotonic() < deadline:
             async with session_scope(session_factory) as db:
                 repo = ChatSessionTurnQueueRepository(db)
@@ -249,7 +251,8 @@ class SessionOrchestrator:
                     touched_at=datetime.now(UTC),
                 ):
                     return
-            await asyncio.sleep(_SESSION_QUEUE_POLL_SEC)
+            await asyncio.sleep(_session_queue_poll_delay(attempt))
+            attempt += 1
         raise TimeoutError(
             f"Timed out waiting for session turn queue slot: {profile_id}/{session_id}"
         )
@@ -493,3 +496,11 @@ def session_turn_queue_stale_cutoff(
         float(settings.llm_request_timeout_sec * 2),
     )
     return reference - timedelta(seconds=ttl_sec)
+
+
+def _session_queue_poll_delay(attempt: int) -> float:
+    """Return one capped backoff interval for queue admission polling."""
+
+    if attempt <= 0:
+        return _SESSION_QUEUE_POLL_SEC
+    return float(min(_SESSION_QUEUE_MAX_POLL_SEC, _SESSION_QUEUE_POLL_SEC * (2**attempt)))

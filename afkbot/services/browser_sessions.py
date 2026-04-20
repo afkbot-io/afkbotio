@@ -15,6 +15,8 @@ from afkbot.browser_backends import PLAYWRIGHT_CHROMIUM
 
 
 _SessionKey = tuple[str, str, str]
+_IDLE_CLEANUP_MIN_INTERVAL_SEC = 1.0
+_IDLE_CLEANUP_MAX_INTERVAL_SEC = 30.0
 
 
 @dataclass(slots=True)
@@ -35,6 +37,9 @@ class BrowserSessionHandle:
     headless: bool
     created_monotonic: float
     last_used_monotonic: float
+    live_carryover_summary: str | None = None
+    live_carryover_page_url: str = ""
+    live_carryover_updated_monotonic: float = 0.0
 
 
 class BrowserSessionManager:
@@ -44,6 +49,8 @@ class BrowserSessionManager:
         self._index_lock = asyncio.Lock()
         self._session_locks: MutableMapping[_SessionKey, asyncio.Lock] = {}
         self._sessions: MutableMapping[_SessionKey, BrowserSessionHandle] = {}
+        self._root_cleanup_deadlines: MutableMapping[str, float] = {}
+        self._known_root_keys: set[str] = set()
 
     async def open_or_reuse(
         self,
@@ -60,7 +67,7 @@ class BrowserSessionManager:
     ) -> tuple[BrowserSessionHandle, bool]:
         """Return existing live session for key or create a new one."""
 
-        await self.close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
+        await self._maybe_close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
         key = self._make_key(root_dir=root_dir, profile_id=profile_id, session_id=session_id)
         resolved_backend_identity = (backend_identity or backend_name).strip() or backend_name
         lock = await self._get_session_lock(key)
@@ -71,12 +78,17 @@ class BrowserSessionManager:
                     await self._close_handle(existing)
                     self._sessions.pop(key, None)
                     existing = None
+                elif self._handle_is_expired(existing, idle_ttl_sec=idle_ttl_sec):
+                    await self._close_handle(existing)
+                    self._sessions.pop(key, None)
+                    existing = None
             if existing is not None:
                 if (
                     existing.headless == headless
                     and existing.backend_identity == resolved_backend_identity
                 ):
                     self._touch(existing)
+                    self._invalidate_live_carryover(existing)
                     return existing, True
                 await self._close_handle(existing)
                 self._sessions.pop(key, None)
@@ -150,24 +162,41 @@ class BrowserSessionManager:
         profile_id: str,
         session_id: str,
         idle_ttl_sec: int,
+        touch: bool = True,
     ) -> BrowserSessionHandle | None:
         """Return current live session for key, or `None` when absent/expired."""
 
-        await self.close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
+        await self._maybe_close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
         key = self._make_key(root_dir=root_dir, profile_id=profile_id, session_id=session_id)
         lock = await self._get_session_lock(key)
+        removed_dead_handle = False
+        result: BrowserSessionHandle | None = None
         async with lock:
             handle = self._sessions.get(key)
             if handle is None:
-                return None
-            if not await self._handle_is_alive(handle):
+                result = None
+            elif not await self._handle_is_alive(handle):
                 current = self._sessions.get(key)
                 if current is handle:
                     self._sessions.pop(key, None)
                     await self._close_handle(handle)
-                return None
-            self._touch(handle)
-            return handle
+                    removed_dead_handle = True
+                result = None
+            elif self._handle_is_expired(handle, idle_ttl_sec=idle_ttl_sec):
+                current = self._sessions.get(key)
+                if current is handle:
+                    self._sessions.pop(key, None)
+                    await self._close_handle(handle)
+                    removed_dead_handle = True
+                result = None
+            else:
+                if touch:
+                    self._touch(handle)
+                    self._invalidate_live_carryover(handle)
+                result = handle
+        if removed_dead_handle or result is None:
+            await self._prune_session_lock_if_unused(key, lock)
+        return result
 
     async def close_session(
         self,
@@ -181,34 +210,43 @@ class BrowserSessionManager:
 
         key = self._make_key(root_dir=root_dir, profile_id=profile_id, session_id=session_id)
         lock = await self._get_session_lock(key)
+        closed_handle = False
+        cleared_persisted_state = False
         async with lock:
             handle = self._sessions.pop(key, None)
             if handle is not None:
                 await self._close_handle(handle, clear_persisted_state=clear_persisted_state)
-                return True
-            if clear_persisted_state:
-                return await self.clear_persisted_state(
+                closed_handle = True
+            elif clear_persisted_state:
+                cleared_persisted_state = await self.clear_persisted_state(
                     root_dir=root_dir,
                     profile_id=profile_id,
                     session_id=session_id,
                 )
-            return False
+            else:
+                cleared_persisted_state = False
+        await self._prune_session_lock_if_unused(key, lock)
+        return closed_handle or cleared_persisted_state
 
     async def close_all_for_root(self, *, root_dir: Path, clear_persisted_state: bool = False) -> int:
         """Close every live browser session for one workspace root."""
 
         root_key = str(root_dir.resolve())
+        await self._note_root(root_key)
         keys = [key for key in list(self._sessions) if key[0] == root_key]
         closed = 0
         for key in keys:
             lock = await self._get_session_lock(key)
+            removed = False
             async with lock:
                 handle = self._sessions.pop(key, None)
                 if handle is not None:
                     await self._close_handle(handle, clear_persisted_state=clear_persisted_state)
-            if handle is None:
+                    removed = True
+            if not removed:
                 continue
             closed += 1
+            await self._prune_session_lock_if_unused(key, lock)
         if clear_persisted_state:
             state_root = self.state_root_dir(root_dir=root_dir)
             if state_root.exists():
@@ -224,12 +262,14 @@ class BrowserSessionManager:
                     state_root.rmdir()
                 except OSError:
                     pass
+        await self._prune_root_metadata(root_key)
         return closed
 
     async def close_idle_sessions(self, *, root_dir: Path, idle_ttl_sec: int) -> int:
         """Close expired sessions for one workspace root based on idle TTL."""
 
         root_key = str(root_dir.resolve())
+        await self._note_root(root_key)
         now = time.monotonic()
         expired_keys = [
             key
@@ -239,6 +279,7 @@ class BrowserSessionManager:
         closed = 0
         for key in expired_keys:
             lock = await self._get_session_lock(key)
+            removed = False
             async with lock:
                 handle = self._sessions.get(key)
                 if handle is None:
@@ -247,7 +288,11 @@ class BrowserSessionManager:
                     continue
                 self._sessions.pop(key, None)
                 await self._close_handle(handle)
+                removed = True
+            if removed:
                 closed += 1
+                await self._prune_session_lock_if_unused(key, lock)
+        await self._schedule_next_idle_cleanup(root_key=root_key, idle_ttl_sec=idle_ttl_sec, now=now)
         return closed
 
     async def persist_session_state(
@@ -276,6 +321,7 @@ class BrowserSessionManager:
     ) -> bool:
         """Delete persisted browser storage state for one session, if present."""
 
+        await self._note_root(str(root_dir.resolve()))
         path = self.storage_state_path(
             root_dir=root_dir,
             profile_id=profile_id,
@@ -316,12 +362,73 @@ class BrowserSessionManager:
         )
 
     async def _get_session_lock(self, key: _SessionKey) -> asyncio.Lock:
+        await self._note_root(key[0])
         async with self._index_lock:
             lock = self._session_locks.get(key)
             if lock is None:
                 lock = asyncio.Lock()
                 self._session_locks[key] = lock
             return lock
+
+    async def _note_root(self, root_key: str) -> None:
+        async with self._index_lock:
+            self._known_root_keys.add(root_key)
+
+    async def _maybe_close_idle_sessions(self, *, root_dir: Path, idle_ttl_sec: int) -> int:
+        root_key = str(root_dir.resolve())
+        now = time.monotonic()
+        async with self._index_lock:
+            deadline = self._root_cleanup_deadlines.get(root_key, 0.0)
+            if deadline > now:
+                return 0
+            self._root_cleanup_deadlines[root_key] = (
+                now + self._idle_cleanup_interval_sec(idle_ttl_sec)
+            )
+        return await self.close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
+
+    async def _schedule_next_idle_cleanup(
+        self,
+        *,
+        root_key: str,
+        idle_ttl_sec: int,
+        now: float | None = None,
+    ) -> None:
+        if now is None:
+            now = time.monotonic()
+        async with self._index_lock:
+            self._root_cleanup_deadlines[root_key] = (
+                now + self._idle_cleanup_interval_sec(idle_ttl_sec)
+            )
+
+    async def _prune_session_lock_if_unused(
+        self,
+        key: _SessionKey,
+        lock: asyncio.Lock,
+    ) -> None:
+        async with self._index_lock:
+            current = self._session_locks.get(key)
+            if current is not lock:
+                return
+            if key in self._sessions or current.locked():
+                return
+            if self._has_persisted_session_state(key):
+                return
+            self._session_locks.pop(key, None)
+
+    async def _prune_root_metadata(self, root_key: str) -> None:
+        async with self._index_lock:
+            self._root_cleanup_deadlines.pop(root_key, None)
+            for key, lock in list(self._session_locks.items()):
+                if key[0] != root_key:
+                    continue
+                if key in self._sessions or lock.locked():
+                    continue
+                self._session_locks.pop(key, None)
+            if self._root_has_live_metadata(root_key):
+                return
+            if self._root_has_persisted_state(root_key):
+                return
+            self._known_root_keys.discard(root_key)
 
     @staticmethod
     def _make_key(*, root_dir: Path, profile_id: str, session_id: str) -> _SessionKey:
@@ -335,6 +442,51 @@ class BrowserSessionManager:
     @staticmethod
     def _touch(handle: BrowserSessionHandle) -> None:
         handle.last_used_monotonic = time.monotonic()
+
+    @staticmethod
+    def _handle_is_expired(handle: BrowserSessionHandle, *, idle_ttl_sec: int) -> bool:
+        return (time.monotonic() - handle.last_used_monotonic) >= max(int(idle_ttl_sec), 1)
+
+    @classmethod
+    def _has_persisted_session_state(cls, key: _SessionKey) -> bool:
+        root_key, profile_id, session_id = key
+        return cls.storage_state_path(
+            root_dir=Path(root_key),
+            profile_id=profile_id,
+            session_id=session_id,
+        ).exists()
+
+    def _root_has_live_metadata(self, root_key: str) -> bool:
+        return (
+            any(key[0] == root_key for key in self._sessions)
+            or any(key[0] == root_key for key in self._session_locks)
+            or root_key in self._root_cleanup_deadlines
+        )
+
+    @classmethod
+    def _root_has_persisted_state(cls, root_key: str) -> bool:
+        state_root = cls.state_root_dir(root_dir=Path(root_key))
+        if not state_root.exists():
+            return False
+        try:
+            next(state_root.rglob("*"))
+        except StopIteration:
+            return False
+        return True
+
+    @staticmethod
+    def _invalidate_live_carryover(handle: BrowserSessionHandle) -> None:
+        handle.live_carryover_summary = None
+        handle.live_carryover_page_url = ""
+        handle.live_carryover_updated_monotonic = 0.0
+
+    @staticmethod
+    def _idle_cleanup_interval_sec(idle_ttl_sec: int) -> float:
+        normalized_ttl = max(int(idle_ttl_sec), 1)
+        return max(
+            _IDLE_CLEANUP_MIN_INTERVAL_SEC,
+            min(_IDLE_CLEANUP_MAX_INTERVAL_SEC, normalized_ttl / 4),
+        )
 
     @classmethod
     async def _handle_is_alive(cls, handle: BrowserSessionHandle) -> bool:
@@ -500,3 +652,21 @@ def get_browser_session_manager() -> BrowserSessionManager:
     """Return process-level browser session manager singleton."""
 
     return _BROWSER_SESSION_MANAGER
+
+
+async def reset_browser_session_manager_async(*, clear_persisted_state: bool = False) -> None:
+    """Reset the process-level browser session manager singleton (used by tests/shutdown)."""
+
+    global _BROWSER_SESSION_MANAGER
+    manager = _BROWSER_SESSION_MANAGER
+    root_keys = {
+        *manager._known_root_keys,
+        *{key[0] for key in manager._sessions},
+        *manager._root_cleanup_deadlines.keys(),
+    }
+    for root_key in sorted(root_keys):
+        await manager.close_all_for_root(
+            root_dir=Path(root_key),
+            clear_persisted_state=clear_persisted_state,
+        )
+    _BROWSER_SESSION_MANAGER = BrowserSessionManager()

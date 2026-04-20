@@ -6,13 +6,39 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
+from afkbot.services.skills.loader_service import reset_skill_loader_caches
 from afkbot.services.skills.skills import SkillInfo, SkillLoader
 from afkbot.services.subagents.contracts import SubagentInfo
-from afkbot.services.subagents.loader import SubagentLoader
+from afkbot.services.subagents.loader import (
+    SubagentLoader,
+    reset_subagent_loader_caches,
+)
 from afkbot.settings import Settings
+
+_CONTEXT_CACHE_LOCK = Lock()
+_FORMATTED_FILE_CACHE: dict[tuple[str, str], tuple[tuple[int, int], str]] = {}
+_SUBAGENT_SUMMARY_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+_SUBAGENT_SUMMARY_MAX_CHARS = 160
+
+
+def reset_context_builder_caches() -> None:
+    """Reset process-local context builder caches (used by tests)."""
+
+    with _CONTEXT_CACHE_LOCK:
+        _FORMATTED_FILE_CACHE.clear()
+        _SUBAGENT_SUMMARY_CACHE.clear()
+
+
+def reset_context_asset_caches() -> None:
+    """Reset local context builder and loader caches together."""
+
+    reset_context_builder_caches()
+    reset_skill_loader_caches()
+    reset_subagent_loader_caches()
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,9 +220,7 @@ class ContextBuilder:
     ) -> str:
         """Render markdown bodies for explicitly requested skills."""
 
-        normalized_names = sorted(
-            {name.strip() for name in (explicit_skill_names or set()) if name.strip()}
-        )
+        normalized_names = self._normalize_requested_names(explicit_skill_names)
         if not normalized_names:
             return "- None."
 
@@ -218,9 +242,7 @@ class ContextBuilder:
     ) -> str:
         """Render markdown bodies for explicitly requested subagents."""
 
-        normalized_names = sorted(
-            {name.strip() for name in (explicit_subagent_names or set()) if name.strip()}
-        )
+        normalized_names = self._normalize_requested_names(explicit_subagent_names)
         if not normalized_names:
             return "- None."
 
@@ -254,8 +276,7 @@ class ContextBuilder:
 
     @staticmethod
     async def _format_file(file_path: Path, *, title: str) -> str:
-        content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
-        return f"## {title}\n{content.strip()}"
+        return await asyncio.to_thread(ContextBuilder._format_file_sync, file_path, title)
 
     @staticmethod
     def _prompt_overlay_block(prompt_overlay: str | None) -> str:
@@ -349,7 +370,7 @@ class ContextBuilder:
 
         relevant = None
         if relevant_subagent_names:
-            relevant = {name.strip() for name in relevant_subagent_names if name.strip()}
+            relevant = set(ContextBuilder._normalize_requested_names(relevant_subagent_names))
 
         selected_items: list[SubagentInfo] = []
         for item in subagents:
@@ -436,9 +457,34 @@ class ContextBuilder:
     async def _extract_subagent_summary(path: Path) -> str:
         """Extract deterministic one-line summary from one subagent markdown body."""
 
-        if not await asyncio.to_thread(path.exists):
+        return await asyncio.to_thread(ContextBuilder._extract_subagent_summary_sync, path)
+
+    @staticmethod
+    def _format_file_sync(file_path: Path, title: str) -> str:
+        signature = ContextBuilder._path_signature(file_path)
+        if signature is None:
+            raise FileNotFoundError(file_path)
+        cache_key = (str(file_path.resolve()), title)
+        with _CONTEXT_CACHE_LOCK:
+            cached = _FORMATTED_FILE_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+        formatted = f"## {title}\n{file_path.read_text(encoding='utf-8').strip()}"
+        with _CONTEXT_CACHE_LOCK:
+            _FORMATTED_FILE_CACHE[cache_key] = (signature, formatted)
+        return formatted
+
+    @staticmethod
+    def _extract_subagent_summary_sync(path: Path) -> str:
+        signature = ContextBuilder._path_signature(path)
+        if signature is None:
             return ""
-        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        cache_key = str(path.resolve())
+        with _CONTEXT_CACHE_LOCK:
+            cached = _SUBAGENT_SUMMARY_CACHE.get(cache_key)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+        content = path.read_text(encoding="utf-8")
         for raw in content.splitlines():
             line = raw.strip()
             if not line:
@@ -448,7 +494,25 @@ class ContextBuilder:
             if line.startswith("#"):
                 text = line.lstrip("#").strip()
                 if text:
-                    return " ".join(text.split())[:160]
+                    summary = " ".join(text.split())[:_SUBAGENT_SUMMARY_MAX_CHARS]
+                    break
                 continue
-            return " ".join(line.split())[:160]
-        return ""
+            summary = " ".join(line.split())[:_SUBAGENT_SUMMARY_MAX_CHARS]
+            break
+        else:
+            summary = ""
+        with _CONTEXT_CACHE_LOCK:
+            _SUBAGENT_SUMMARY_CACHE[cache_key] = (signature, summary)
+        return summary
+
+    @staticmethod
+    def _normalize_requested_names(names: set[str] | None) -> list[str]:
+        return sorted({name.strip() for name in (names or set()) if name and name.strip()})
+
+    @staticmethod
+    def _path_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat_result = path.stat()
+        except OSError:
+            return None
+        return (stat_result.st_mtime_ns, stat_result.st_size)
