@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- A new Memory V2 architecture with pinned `profile_memory_item` storage, explicit conversation recall, and a dedicated consolidation layer between extraction, archival memory, and core memory.
+- Regression coverage for local-first memory fallback, recall authorization boundaries, core-memory rendering, and profile-memory persistence/index creation.
+
+### Changed
+
+- Agent loop preparation now injects trusted core memory as a separate prompt block, while automatic search/save paths route through the new memory consolidation policy instead of mixing storage decisions into extraction.
+- Scoped memory fallback is now owned by the memory service, and conversation recall is opt-in through runtime settings rather than enabled by default.
+
+### Fixed
+
+- Mixed temporary and durable user statements no longer drop the durable fact when both appear in one sentence or clause.
+- Profile deletion now cleans up the new core-memory tier, and release/runtime config surfaces stay aligned with the Memory V2 settings.
+
 ## [1.3.0] - 2026-04-19
 
 ### Added

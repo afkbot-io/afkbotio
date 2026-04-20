@@ -80,6 +80,23 @@ async def test_create_schema_materializes_memory_indexes(tmp_path: Path) -> None
     await engine.dispose()
 
 
+async def test_create_schema_materializes_profile_memory_indexes(tmp_path: Path) -> None:
+    """Fresh bootstrap should create dedicated profile-memory indexes for pinned core facts."""
+
+    db_path = tmp_path / "profile-memory-indexes.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("PRAGMA index_list(profile_memory_item)"))).all()
+
+    index_names = {str(row[1]) for row in rows}
+    assert "ix_profile_memory_updated" in index_names
+    assert "ix_profile_memory_status_updated" in index_names
+    await engine.dispose()
+
+
 async def test_create_schema_materializes_task_active_owner_unique_index(tmp_path: Path) -> None:
     """Fresh bootstrap should create the unique active-owner Task Flow index."""
 

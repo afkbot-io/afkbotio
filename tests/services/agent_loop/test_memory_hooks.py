@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.llm import LLMResponse, MockLLMProvider
+from afkbot.services.memory.profile_memory_service import get_profile_memory_service
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -44,28 +46,24 @@ class _MemorySearchStub(ToolBase):
     description = "memory search stub"
     parameters_model = _MemorySearchStubParams
 
-    def __init__(self) -> None:
+    def __init__(self, items: list[dict[str, object]] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self._items = items or [
+            {
+                "memory_key": "user-name",
+                "summary": "Chat fact: The user name is Nikita.",
+                "scope_kind": "chat",
+                "memory_kind": "fact",
+                "visibility": "local",
+                "source_kind": "auto",
+                "score": 0.01,
+            }
+        ]
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         payload = params.model_dump()
         self.calls.append(payload)
-        return ToolResult(
-            ok=True,
-            payload={
-                "items": [
-                    {
-                        "memory_key": "user-name",
-                        "summary": "Chat fact: The user name is Nikita.",
-                        "scope_kind": "chat",
-                        "memory_kind": "fact",
-                        "visibility": "local",
-                        "source_kind": "auto",
-                        "score": 0.01,
-                    }
-                ]
-            },
-        )
+        return ToolResult(ok=True, payload={"items": list(self._items)})
 
 
 class _MemoryUpsertStub(ToolBase):
@@ -179,5 +177,110 @@ async def test_auto_memory_save_calls_memory_upsert(tmp_path: Path) -> None:
         assert payload["scope"] == "chat"
         assert payload["memory_kind"] == "preference"
         assert "В этом чате" in str(payload["summary"])
+
+    await engine.dispose()
+
+
+async def test_core_profile_memory_is_injected_as_trusted_block(tmp_path: Path) -> None:
+    """Pinned core profile memory should render separately from untrusted auto_memory metadata."""
+
+    settings, engine, factory = await _prepare_db(tmp_path, "core_memory.db")
+    llm = MockLLMProvider([LLMResponse.final("finalized: hello")])
+
+    async with session_scope(factory) as session:
+        profiles = ProfileRepository(session)
+        await profiles.get_or_create_default("default")
+
+    profile_memory = get_profile_memory_service(settings)
+    await profile_memory.upsert(
+        profile_id="default",
+        memory_key="preferred_response_style",
+        summary="Reply in Russian and keep answers brief.",
+        memory_kind="preference",
+    )
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry([_MemorySearchStub(), _MemoryUpsertStub()]),
+            llm_provider=llm,
+            memory_core_enabled=True,
+            memory_auto_search_enabled=False,
+            memory_auto_save_enabled=False,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-1",
+            message="Say hello",
+            context_overrides=_channel_overrides(),
+        )
+
+        assert result.envelope.action == "finalize"
+        assert llm.requests
+        assert "# Core Memory (trusted)" in llm.requests[0].context
+        assert "Reply in Russian and keep answers brief." in llm.requests[0].context
+        assert "auto_memory" not in llm.requests[0].context
+
+    await engine.dispose()
+
+
+async def test_auto_memory_does_not_override_profile_core_memory_trusted_block(
+    tmp_path: Path,
+) -> None:
+    """Auto-memory hits should remain untrusted and not overwrite pinned core memory."""
+
+    settings, engine, factory = await _prepare_db(tmp_path, "core_memory_override.db")
+    llm = MockLLMProvider([LLMResponse.final("finalized: hello")])
+
+    async with session_scope(factory) as session:
+        profiles = ProfileRepository(session)
+        await profiles.get_or_create_default("default")
+
+    profile_memory = get_profile_memory_service(settings)
+    await profile_memory.upsert(
+        profile_id="default",
+        memory_key="preferred_response_style",
+        summary="Reply in Russian and keep answers brief.",
+        memory_kind="preference",
+    )
+
+    search_tool = _MemorySearchStub(
+        items=[
+            {
+                "memory_key": "preferred_response_style",
+                "summary": "Chat preference: Reply in English for this chat.",
+                "scope_kind": "chat",
+                "memory_kind": "preference",
+                "visibility": "local",
+                "source_kind": "auto",
+                "score": 0.01,
+            }
+        ]
+    )
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry([search_tool, _MemoryUpsertStub()]),
+            llm_provider=llm,
+            memory_core_enabled=True,
+            memory_auto_search_enabled=True,
+            memory_auto_search_scope_mode="chat",
+            memory_auto_save_enabled=False,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-1",
+            message="How should you answer?",
+            context_overrides=_channel_overrides(),
+        )
+
+        assert result.envelope.action == "finalize"
+        assert llm.requests
+        assert "- preferred_response_style: Reply in Russian and keep answers brief." in llm.requests[0].context
+        assert "# Runtime Metadata (untrusted)" in llm.requests[0].context
+        assert "Reply in English for this chat." in llm.requests[0].context
 
     await engine.dispose()

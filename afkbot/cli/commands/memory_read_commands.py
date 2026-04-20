@@ -10,7 +10,6 @@ import typer
 from afkbot.cli.commands.memory_support import (
     filter_items,
     filter_memory_metadata,
-    merge_search_hits,
     normalize_memory_kinds,
     normalize_source_kinds,
     resolve_cli_scope,
@@ -251,23 +250,12 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                     visibility=None,
                     memory_kinds=memory_kinds,
                     source_kinds=source_kinds,
+                    include_global=include_global and not resolved_scope.is_profile_scope,
+                    global_limit=global_limit,
                     limit=limit,
                 )
             )
             payload_items = serialize_memory_items(items)
-            if include_global and not resolved_scope.is_profile_scope:
-                global_items = asyncio.run(
-                    service.search(
-                        profile_id=normalized_profile_id,
-                        query=query,
-                        scope=MemoryScopeDescriptor.profile_scope(),
-                        visibility="promoted_global",
-                        memory_kinds=memory_kinds,
-                        source_kinds=source_kinds,
-                        limit=global_limit or limit,
-                    )
-                )
-                payload_items = merge_search_hits(payload_items, serialize_memory_items(global_items))
         except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None

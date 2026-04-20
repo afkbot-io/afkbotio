@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from afkbot.models.profile_policy import ProfilePolicy
-from afkbot.services.agent_loop.memory_extraction import extract_memory_records
+from afkbot.services.agent_loop.memory_extraction import (
+    ExtractedMemoryCandidate,
+    extract_memory_candidates,
+)
+from afkbot.services.memory.consolidation import (
+    MemoryConsolidationPlan,
+    MemoryConsolidationService,
+)
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
 from afkbot.services.memory.contracts import MemoryScopeMode
 from afkbot.services.memory.runtime_scope import resolve_runtime_scope
@@ -39,6 +46,7 @@ class MemoryRuntime:
         auto_promote_enabled: bool,
         auto_save_kinds: tuple[str, ...],
         auto_save_max_chars: int,
+        consolidation_service: MemoryConsolidationService | None = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._policy_engine = policy_engine
@@ -57,6 +65,7 @@ class MemoryRuntime:
         self._auto_promote_enabled = auto_promote_enabled
         self._auto_save_kinds = tuple(item.strip().lower() for item in auto_save_kinds if item.strip())
         self._auto_save_max_chars = max(64, auto_save_max_chars)
+        self._consolidation_service = consolidation_service
 
     async def auto_search_metadata(
         self,
@@ -179,13 +188,13 @@ class MemoryRuntime:
             return
         if self._tool_registry is None or self._tool_registry.get("memory.upsert") is None:
             return
-        records = extract_memory_records(
+        candidates = extract_memory_candidates(
             user_message=user_message,
             assistant_message=assistant_message,
             max_chars=self._auto_save_max_chars,
             allowed_kinds=self._auto_save_kinds,
         )
-        if not records:
+        if not candidates:
             await self._log_event(
                 run_id=run_id,
                 session_id=session_id,
@@ -196,17 +205,18 @@ class MemoryRuntime:
 
         saved_keys: list[str] = []
         promoted_keys: list[str] = []
-        for record in records:
+        for candidate in candidates:
+            plan = self._build_consolidation_plan(candidate)
             upsert_params: dict[str, object] = {
                 "profile_id": profile_id,
                 "profile_key": profile_id,
                 "scope": self._auto_save_scope_mode,
-                "memory_key": record.memory_key,
-                "summary": record.summary,
-                "details_md": record.details_md,
+                "memory_key": plan.memory_key,
+                "summary": plan.summary,
+                "details_md": plan.details_md,
                 "source": "agent_loop.auto",
                 "source_kind": "auto",
-                "memory_kind": record.memory_kind,
+                "memory_kind": plan.memory_kind,
             }
             try:
                 self._policy_engine.ensure_tool_call_allowed(
@@ -226,8 +236,27 @@ class MemoryRuntime:
                 ),
             )
             if result.ok:
-                saved_keys.append(record.memory_key)
-            if not result.ok or not self._auto_promote_enabled or not record.promote_global:
+                saved_keys.append(plan.memory_key)
+                if self._consolidation_service is not None and plan.mirror_to_core:
+                    try:
+                        await self._consolidation_service.mirror_plan_to_core(
+                            profile_id=profile_id,
+                            plan=plan,
+                            source="agent_loop.auto",
+                            source_kind="auto",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        await self._log_event(
+                            run_id=run_id,
+                            session_id=session_id,
+                            event_type="memory.auto_save_profile_mirror",
+                            payload={
+                                "ok": False,
+                                "memory_key": plan.core_memory_key or plan.memory_key,
+                                "reason": str(exc),
+                            },
+                        )
+            if not result.ok or not self._auto_promote_enabled or not plan.promote_global:
                 continue
             if self._tool_registry is None or self._tool_registry.get("memory.promote") is None:
                 continue
@@ -235,7 +264,7 @@ class MemoryRuntime:
                 "profile_id": profile_id,
                 "profile_key": profile_id,
                 "scope": self._auto_save_scope_mode,
-                "memory_key": record.memory_key,
+                "memory_key": plan.memory_key,
             }
             try:
                 self._policy_engine.ensure_tool_call_allowed(
@@ -255,7 +284,7 @@ class MemoryRuntime:
                 ),
             )
             if promote_result.ok:
-                promoted_keys.append(record.memory_key)
+                promoted_keys.append(plan.memory_key)
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
@@ -268,3 +297,9 @@ class MemoryRuntime:
                 "promoted_memory_keys": tuple(promoted_keys),
             },
         )
+
+    def _build_consolidation_plan(
+        self,
+        candidate: ExtractedMemoryCandidate,
+    ) -> MemoryConsolidationPlan:
+        return MemoryConsolidationService.plan_candidate(candidate)

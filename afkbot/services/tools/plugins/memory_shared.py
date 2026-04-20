@@ -118,7 +118,7 @@ def ensure_memory_scope_allowed(
     ctx: ToolContext,
     requested_scope: MemoryScopeDescriptor,
     operation: Literal["search", "list", "upsert", "delete", "promote"],
-) -> ToolResult | None:
+) -> tuple[str, str] | ToolResult | None:
     """Return deterministic scope error for forbidden user-facing memory access."""
 
     error = user_facing_scope_access_error(
@@ -167,7 +167,9 @@ async def resolve_memory_scope_for_operation(
         operation=operation,
     )
     if scope_error is not None:
-        return scope_error
+        if isinstance(scope_error, ToolResult):
+            return scope_error
+        return ToolResult.error(error_code=scope_error[0], reason=scope_error[1])
     return requested_scope
 
 

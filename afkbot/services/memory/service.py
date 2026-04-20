@@ -14,6 +14,7 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.memory_item import MemoryItem
 from afkbot.repositories.memory_repo import MemoryRepository
+from afkbot.services.memory.consolidation import get_memory_consolidation_service
 from afkbot.services.memory.contracts import (
     MemoryItemMetadata,
     MemoryKind,
@@ -46,12 +47,14 @@ class MemoryService:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         engine: AsyncEngine | None = None,
+        settings: Settings | None = None,
         retention_days: int = 90,
         max_items_per_profile: int = 2000,
         gc_batch_size: int = 500,
     ) -> None:
         self._session_factory = session_factory
         self._engine = engine
+        self._settings = settings
         self._retention_days = max(0, retention_days)
         self._max_items_per_profile = max(0, max_items_per_profile)
         self._gc_batch_size = max(1, gc_batch_size)
@@ -213,6 +216,8 @@ class MemoryService:
         visibility: MemoryVisibility | None = None,
         memory_kinds: Sequence[MemoryKind] | None = None,
         source_kinds: Sequence[MemorySourceKind] | None = None,
+        include_global: bool = False,
+        global_limit: int | None = None,
         limit: int = 5,
     ) -> builtins.list[MemoryItemMetadata]:
         """Search nearest scoped memory items by semantic embedding distance."""
@@ -221,23 +226,78 @@ class MemoryService:
             content=query, summary=None, details_md=None
         )
         normalized_limit = self._normalize_limit(limit)
+        normalized_global_limit = None if global_limit is None else self._normalize_limit(global_limit)
         query_embedding = self._embed_text(normalized_query)
-        normalized_scope_key = None if scope is None else scope.scope_key()
         normalized_memory_kinds = None if memory_kinds is None else tuple(memory_kinds)
         normalized_source_kinds = None if source_kinds is None else tuple(source_kinds)
 
-        async def _op(repo: MemoryRepository) -> builtins.list[MemoryItemMetadata]:
-            await self._ensure_profile_exists(repo, profile_id)
+        async def _search_scope(
+            repo: MemoryRepository,
+            *,
+            scope_key: str | None,
+            visibility_filter: MemoryVisibility | None,
+            result_limit: int,
+        ) -> builtins.list[MemoryItemMetadata]:
+            exact_rows = await repo.search_by_logical_key(
+                profile_id=profile_id,
+                logical_key=normalized_query,
+                scope_key=scope_key,
+                visibility=visibility_filter,
+                memory_kinds=normalized_memory_kinds,
+                source_kinds=normalized_source_kinds,
+                limit=result_limit,
+            )
             rows = await repo.search_by_embedding(
                 profile_id=profile_id,
                 query_embedding=query_embedding,
-                scope_key=normalized_scope_key,
-                visibility=visibility,
+                scope_key=scope_key,
+                visibility=visibility_filter,
                 memory_kinds=normalized_memory_kinds,
                 source_kinds=normalized_source_kinds,
-                limit=normalized_limit,
+                limit=result_limit,
             )
-            return [self._to_metadata(row=row, score=distance) for row, distance in rows]
+            results: builtins.list[MemoryItemMetadata] = []
+            seen_ids: set[int] = set()
+            for row in exact_rows:
+                seen_ids.add(row.id)
+                results.append(self._to_metadata(row=row, score=-1.0))
+            for row, distance in rows:
+                if row.id in seen_ids:
+                    continue
+                seen_ids.add(row.id)
+                results.append(self._to_metadata(row=row, score=distance))
+                if len(results) >= result_limit:
+                    break
+            return results
+
+        async def _op(repo: MemoryRepository) -> builtins.list[MemoryItemMetadata]:
+            await self._ensure_profile_exists(repo, profile_id)
+            normalized_scope_key = None if scope is None else scope.scope_key()
+            results = await _search_scope(
+                repo,
+                scope_key=normalized_scope_key,
+                visibility_filter=visibility,
+                result_limit=normalized_limit,
+            )
+            if len(results) >= normalized_limit:
+                return results[:normalized_limit]
+            if include_global and scope is not None and not scope.is_profile_scope:
+                global_results = await _search_scope(
+                    repo,
+                    scope_key=MemoryScopeDescriptor.profile_scope(session_id=scope.session_id).scope_key(),
+                    visibility_filter="promoted_global",
+                    result_limit=normalized_global_limit or normalized_limit,
+                )
+                seen_keys = {(item.scope_key, item.memory_key) for item in results}
+                for item in global_results:
+                    dedupe_key = (item.scope_key, item.memory_key)
+                    if dedupe_key in seen_keys:
+                        continue
+                    seen_keys.add(dedupe_key)
+                    results.append(item)
+                    if len(results) >= normalized_limit:
+                        break
+            return results
 
         return await self._with_repo(_op)
 
@@ -255,7 +315,7 @@ class MemoryService:
         if source_item.scope_kind == "profile":
             return source_item
         promoted_key = self._normalize_memory_key(target_memory_key or source_item.memory_key)
-        return await self.upsert(
+        promoted = await self.upsert(
             profile_id=profile_id,
             memory_key=promoted_key,
             content=source_item.content,
@@ -270,6 +330,17 @@ class MemoryService:
             memory_kind=source_item.memory_kind,
             visibility="promoted_global",
         )
+        if (
+            self._settings is not None
+            and self._settings.memory_core_enabled
+        ):
+            await get_memory_consolidation_service(self._settings).mirror_item_to_core(
+                profile_id=profile_id,
+                item=promoted,
+                source=source_item.source or "memory.promote",
+                source_kind="promotion",
+            )
+        return promoted
 
     async def shutdown(self) -> None:
         """Dispose owned async engine when the service created it."""
@@ -458,6 +529,7 @@ def get_memory_service(settings: Settings) -> MemoryService:
     service = MemoryService(
         factory,
         engine=engine,
+        settings=settings,
         retention_days=settings.memory_retention_days,
         max_items_per_profile=settings.memory_max_items_per_profile,
         gc_batch_size=settings.memory_gc_batch_size,
@@ -470,6 +542,13 @@ def reset_memory_services() -> None:
     """Reset cached memory service instances for tests."""
 
     _SERVICES_BY_ROOT.clear()
+    from afkbot.services.memory.consolidation import reset_memory_consolidation_services
+    from afkbot.services.memory.conversation_recall import reset_conversation_recall_services
+    from afkbot.services.memory.profile_memory_service import reset_profile_memory_services
+
+    reset_memory_consolidation_services()
+    reset_conversation_recall_services()
+    reset_profile_memory_services()
 
 
 async def reset_memory_services_async() -> None:
@@ -479,3 +558,12 @@ async def reset_memory_services_async() -> None:
     for service in services:
         await service.shutdown()
     _SERVICES_BY_ROOT.clear()
+    from afkbot.services.memory.consolidation import reset_memory_consolidation_services
+    from afkbot.services.memory.conversation_recall import (
+        reset_conversation_recall_services_async,
+    )
+    from afkbot.services.memory.profile_memory_service import reset_profile_memory_services_async
+
+    reset_memory_consolidation_services()
+    await reset_conversation_recall_services_async()
+    await reset_profile_memory_services_async()

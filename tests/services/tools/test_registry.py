@@ -120,6 +120,16 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("task.stale.sweep") is not None
     assert registry.get("task.run.list") is not None
     assert registry.get("mcp.debug.echo") is None
+    assert registry.get("memory.recall.search") is None
+
+
+def test_registry_from_settings_can_enable_explicit_recall_tool(tmp_path: Path) -> None:
+    """Explicit conversation recall should only load when memory recall is enabled."""
+
+    settings = Settings(root_dir=tmp_path, memory_recall_enabled=True)
+    registry = ToolRegistry.from_settings(settings)
+
+    assert registry.get("memory.recall.search") is not None
 
 
 def test_registry_rejects_unknown_plugin() -> None:

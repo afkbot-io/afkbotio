@@ -287,6 +287,9 @@ class Settings(BaseSettings):
     memory_retention_days: int = 180
     memory_max_items_per_profile: int = 5000
     memory_gc_batch_size: int = 500
+    memory_core_enabled: bool = False
+    memory_core_max_items: int = 8
+    memory_core_max_chars: int = 600
     memory_auto_search_enabled: bool = False
     memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = (
         "auto"
@@ -311,6 +314,7 @@ class Settings(BaseSettings):
         "note",
     )
     memory_auto_save_max_chars: int = 1000
+    memory_recall_enabled: bool = False
     session_compaction_enabled: bool = False
     session_compaction_trigger_turns: int = 12
     session_compaction_keep_recent_turns: int = 6
@@ -558,6 +562,8 @@ class Settings(BaseSettings):
         "memory_retention_days",
         "memory_max_items_per_profile",
         "memory_gc_batch_size",
+        "memory_core_max_items",
+        "memory_core_max_chars",
         "memory_auto_search_limit",
         "memory_auto_search_chat_limit",
         "memory_auto_search_global_limit",
@@ -680,10 +686,12 @@ class Settings(BaseSettings):
                 continue
             relative_path = self.db_url[len(prefix) :]
             if relative_path == ":memory:" or relative_path.startswith("/"):
-                return self
+                break
             resolved = (self.root_dir / relative_path).resolve(strict=False)
             self.db_url = f"{prefix}{resolved}"
-            return self
+            break
+        if self.memory_recall_enabled and "memory_recall_search" not in self.enabled_tool_plugins:
+            self.enabled_tool_plugins = (*self.enabled_tool_plugins, "memory_recall_search")
         return self
 
     @property
