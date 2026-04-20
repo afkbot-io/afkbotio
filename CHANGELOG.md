@@ -4,20 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-04-20
+
 ### Added
 
+- Graph-mode automations with persisted DAG flows, branching/fan-out execution, terminal inspection commands, and secure code-node execution alongside the existing prompt-mode path.
+- AI, subagent, task, and action node adapters plus graph trace/read-model coverage so automations can move between deterministic processing and LLM fallback without conflicting runtimes.
 - A new Memory V2 architecture with pinned `profile_memory_item` storage, explicit conversation recall, and a dedicated consolidation layer between extraction, archival memory, and core memory.
-- Regression coverage for local-first memory fallback, recall authorization boundaries, core-memory rendering, and profile-memory persistence/index creation.
+- Regression coverage for graph runtime schema upgrades, sandbox enforcement, runtime import smoke, local-first memory fallback, recall authorization boundaries, core-memory rendering, and profile-memory persistence/index creation.
 
 ### Changed
 
+- Automations now support both `prompt` and `graph` execution modes with profile-aware tool/runtime settings, safe fallback rules, and automation principals for Task Flow mutations.
 - Agent loop preparation now injects trusted core memory as a separate prompt block, while automatic search/save paths route through the new memory consolidation policy instead of mixing storage decisions into extraction.
 - Scoped memory fallback is now owned by the memory service, and conversation recall is opt-in through runtime settings rather than enabled by default.
 
 ### Fixed
 
+- Graph runtime startup/import cycles, profile runtime version resolution, and sandbox fallback handling are now aligned so release/CLI startup paths stay stable under CI and tagged builds.
 - Mixed temporary and durable user statements no longer drop the durable fact when both appear in one sentence or clause.
 - Profile deletion now cleans up the new core-memory tier, and release/runtime config surfaces stay aligned with the Memory V2 settings.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.4.0`.
 
 ## [1.3.0] - 2026-04-19
 
