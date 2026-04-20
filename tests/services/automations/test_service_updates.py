@@ -16,6 +16,7 @@ from afkbot.services.automations.webhook_tokens import (
     hash_webhook_token,
     stored_webhook_token_ref,
 )
+from afkbot.settings import Settings
 from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
 import afkbot.services.automations.update_runtime as update_runtime_module
@@ -93,6 +94,8 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             old_token_hash = hash_webhook_token(old_token)
             assert created_row[2].webhook_token_hash == old_token_hash
             assert created_row[2].webhook_token == stored_webhook_token_ref(old_token_hash)
+            assert created_row[2].encrypted_webhook_token is not None
+            assert created_row[2].webhook_token_key_version is not None
 
         rotated_webhook = await service.update(
             profile_id="default",
@@ -120,6 +123,8 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             new_token_hash = hash_webhook_token(new_token)
             assert rotated_row[2].webhook_token_hash == new_token_hash
             assert rotated_row[2].webhook_token == stored_webhook_token_ref(new_token_hash)
+            assert rotated_row[2].encrypted_webhook_token is not None
+            assert rotated_row[2].webhook_token_key_version is not None
 
         fake_loop = FakeLoop()
 
@@ -145,6 +150,53 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert new_token_result.deduplicated is False
     finally:
         monkeypatch.undo()
+        await engine.dispose()
+
+
+async def test_service_webhook_metadata_degrades_without_credentials_vault(
+    tmp_path: Path,
+) -> None:
+    """Durable webhook reveal should degrade safely when encryption keys are unavailable."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service_no_vault.db'}",
+        root_dir=tmp_path,
+    )
+    engine, factory, service = await prepare_service(tmp_path, settings_override=settings)
+    try:
+        created = await service.create_webhook(
+            profile_id="default",
+            name="no-vault",
+            prompt="handle webhook",
+        )
+        assert created.webhook is not None
+        token = created.webhook.webhook_token
+        assert token is not None
+
+        fetched = await service.get(profile_id="default", automation_id=created.id)
+        assert fetched.webhook is not None
+        assert fetched.webhook.webhook_token is None
+        assert fetched.webhook.webhook_path is None
+        assert fetched.webhook.webhook_url is None
+        assert fetched.webhook.webhook_token_masked == "[HIDDEN]"
+
+        reveal = await service.reveal_webhook_endpoint(
+            profile_id="default",
+            automation_id=created.id,
+        )
+        assert reveal.recoverable is False
+        assert reveal.webhook_path is None
+        assert reveal.webhook_url is None
+        assert reveal.webhook_token_masked == "[HIDDEN]"
+
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            row = await repo.get_by_id(profile_id="default", automation_id=created.id)
+            assert row is not None
+            assert row[2] is not None
+            assert row[2].encrypted_webhook_token is None
+            assert row[2].webhook_token_key_version is None
+    finally:
         await engine.dispose()
 
 

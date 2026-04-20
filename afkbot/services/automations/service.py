@@ -19,6 +19,7 @@ from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import (
     AutomationCronTickResult,
     AutomationMetadata,
+    AutomationWebhookEndpointMetadata,
     AutomationWebhookTriggerResult,
 )
 from afkbot.services.automations.cron_execution import tick_cron_automations
@@ -45,10 +46,17 @@ from afkbot.services.automations.validators import (
     normalize_update_status,
     validate_create_payload,
 )
+from afkbot.services.automations.webhook_secrets import (
+    encrypt_webhook_token,
+    recover_webhook_token,
+)
 from afkbot.services.automations.webhook_tokens import (
+    build_webhook_path,
+    build_webhook_url,
     hash_webhook_token,
     is_webhook_token_conflict,
     issue_webhook_token,
+    mask_webhook_token,
 )
 from afkbot.services.automations.webhook_execution import trigger_webhook_automation
 from afkbot.services.automations.session_runner_factory import AutomationSessionRunnerFactory
@@ -146,6 +154,10 @@ class AutomationsService:
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
             token = issue_webhook_token()
             token_hash = hash_webhook_token(token)
+            encrypted_webhook_token, webhook_token_key_version = encrypt_webhook_token(
+                plaintext_token=token,
+                settings=self._settings,
+            )
 
             async def _op(repo: AutomationRepository) -> AutomationMetadata:
                 await ensure_profile_exists(repo, profile_id)
@@ -154,6 +166,8 @@ class AutomationsService:
                     name=stripped_name,
                     prompt=normalized_prompt,
                     webhook_token_hash=token_hash,
+                    encrypted_webhook_token=encrypted_webhook_token,
+                    webhook_token_key_version=webhook_token_key_version,
                     execution_mode=normalized_execution_mode,
                     graph_fallback_mode=normalized_graph_fallback_mode,
                     delivery_mode="tool",
@@ -192,6 +206,45 @@ class AutomationsService:
                     reason="Automation not found",
                 )
             return self._to_metadata(automation=row[0], cron=row[1], webhook=row[2])
+
+        return await self._with_repo(_op)
+
+    async def reveal_webhook_endpoint(
+        self,
+        *,
+        profile_id: str,
+        automation_id: int,
+    ) -> AutomationWebhookEndpointMetadata:
+        """Reveal the current webhook endpoint for operator-facing surfaces only."""
+
+        async def _op(repo: AutomationRepository) -> AutomationWebhookEndpointMetadata:
+            await ensure_profile_exists(repo, profile_id)
+            row = await repo.get_by_id(profile_id=profile_id, automation_id=automation_id)
+            if row is None or row[0].status == "deleted":
+                raise AutomationsServiceError(
+                    error_code="automation_not_found",
+                    reason="Automation not found",
+                )
+            automation, _, webhook = row
+            if automation.trigger_type != "webhook" or webhook is None:
+                raise AutomationsServiceError(
+                    error_code="invalid_trigger_type",
+                    reason="Automation does not use a webhook trigger",
+                )
+            persisted_webhook_token = recover_webhook_token(
+                webhook=webhook,
+                settings=self._settings,
+            )
+            return AutomationWebhookEndpointMetadata(
+                recoverable=persisted_webhook_token is not None,
+                webhook_path=build_webhook_path(automation.profile_id, persisted_webhook_token),
+                webhook_url=build_webhook_url(
+                    self._resolve_runtime_base_url(),
+                    automation.profile_id,
+                    persisted_webhook_token,
+                ),
+                webhook_token_masked=mask_webhook_token(persisted_webhook_token),
+            )
 
         return await self._with_repo(_op)
 
@@ -291,6 +344,14 @@ class AutomationsService:
         )
 
         async def _run_update(issued_webhook_token: str | None) -> AutomationMetadata:
+            encrypted_webhook_token, webhook_token_key_version = (
+                encrypt_webhook_token(
+                    plaintext_token=issued_webhook_token,
+                    settings=self._settings,
+                )
+                if issued_webhook_token is not None
+                else (None, None)
+            )
             return await apply_automation_update(
                 with_repo=self._with_repo,
                 profile_id=profile_id,
@@ -306,6 +367,8 @@ class AutomationsService:
                 normalized_cron=normalized_cron,
                 normalized_timezone=normalized_timezone,
                 issued_webhook_token=issued_webhook_token,
+                encrypted_webhook_token=encrypted_webhook_token,
+                webhook_token_key_version=webhook_token_key_version,
                 to_metadata=self._to_metadata,
                 compute_next_run_at=compute_next_run_at,
                 hash_webhook_token=hash_webhook_token,

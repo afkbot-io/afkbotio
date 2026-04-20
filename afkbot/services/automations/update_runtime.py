@@ -30,6 +30,8 @@ async def apply_automation_update(
     normalized_cron: str | None,
     normalized_timezone: str | None,
     issued_webhook_token: str | None,
+    encrypted_webhook_token: str | None,
+    webhook_token_key_version: str | None,
     to_metadata: Callable[..., AutomationMetadata],
     compute_next_run_at: Callable[[str, datetime, str], datetime],
     hash_webhook_token: Callable[[str], str],
@@ -134,6 +136,8 @@ async def apply_automation_update(
             updated_webhook = await repo.update_webhook_trigger(
                 automation_id=automation_id,
                 webhook_token_hash=issued_token_hash,
+                encrypted_webhook_token=encrypted_webhook_token,
+                webhook_token_key_version=webhook_token_key_version,
             )
             if updated_webhook is None:
                 raise AutomationsServiceError(

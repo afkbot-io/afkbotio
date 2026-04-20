@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
             finally:
                 await shutdown_api_runtime()
 
-    app = FastAPI(title="AFKBOT API", version="1.4.1", lifespan=_lifespan)
+    app = FastAPI(title="AFKBOT API", version="1.4.2", lifespan=_lifespan)
     app.add_middleware(
         PluginUIAuthMiddleware,
         settings=settings,

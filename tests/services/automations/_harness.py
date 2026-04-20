@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap import create_schema
@@ -112,6 +113,7 @@ async def prepare_service(
 
     settings = settings_override or Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
         root_dir=tmp_path,
     )
     engine = create_engine(settings)

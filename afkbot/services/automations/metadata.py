@@ -55,7 +55,7 @@ def to_metadata(
         webhook=None
         if webhook is None
         else AutomationWebhookMetadata(
-            webhook_token=public_webhook_token,
+            webhook_token=issued_webhook_token,
             webhook_path=build_webhook_path(automation.profile_id, public_webhook_token),
             webhook_url=build_webhook_url(
                 runtime_base_url,

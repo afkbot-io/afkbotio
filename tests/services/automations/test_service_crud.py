@@ -68,6 +68,41 @@ async def test_service_profile_isolation(tmp_path: Path) -> None:
         await engine.dispose()
 
 
+async def test_service_reveal_webhook_endpoint_recovers_url_without_reissuing_token(
+    tmp_path: Path,
+) -> None:
+    """Operator-only reveal should recover the current webhook URL without token rotation."""
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        created = await service.create_webhook(
+            profile_id="default",
+            name="recoverable webhook",
+            prompt="handle webhook",
+        )
+        assert created.webhook is not None
+        token = created.webhook.webhook_token
+        assert token is not None
+
+        fetched = await service.get(profile_id="default", automation_id=created.id)
+        assert fetched.webhook is not None
+        assert fetched.webhook.webhook_token is None
+        assert fetched.webhook.webhook_path is None
+        assert fetched.webhook.webhook_url is None
+        assert fetched.webhook.webhook_token_masked == "[HIDDEN]"
+
+        reveal = await service.reveal_webhook_endpoint(
+            profile_id="default",
+            automation_id=created.id,
+        )
+        assert reveal.recoverable is True
+        assert reveal.webhook_path == created.webhook.webhook_path
+        assert reveal.webhook_url == created.webhook.webhook_url
+        assert reveal.webhook_token_masked != "[HIDDEN]"
+    finally:
+        await engine.dispose()
+
+
 async def test_service_create_rejects_unimplemented_branch_error_only_mode(tmp_path: Path) -> None:
     """Create should reject fallback modes that are not implemented at runtime."""
 

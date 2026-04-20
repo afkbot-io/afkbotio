@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from pytest import MonkeyPatch
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -29,6 +30,7 @@ async def _prepare(
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'tools_automation.db'}"
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", db_url)
+    monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", Fernet.generate_key().decode("utf-8"))
     get_settings.cache_clear()
     await reset_automations_services_async()
 

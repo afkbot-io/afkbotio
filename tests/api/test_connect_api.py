@@ -28,7 +28,7 @@ def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> N
         _ = access_ttl_sec, refresh_ttl_sec
         assert claim_token == "claim-1"
         assert claim_pin == "2468"
-        assert client == ConnectClientMetadata(platform="desktop", app_version="1.4.1")
+        assert client == ConnectClientMetadata(platform="desktop", app_version="1.4.2")
         return ConnectClaimResult(
             access_token="acc-1",
             refresh_token="ref-1",
@@ -49,7 +49,7 @@ def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> N
                 "claim_pin": "2468",
                 "client": {
                     "platform": "desktop",
-                    "app_version": "1.4.1",
+                    "app_version": "1.4.2",
                 },
             },
         )
