@@ -72,6 +72,10 @@ async def prune_runtime_history(
 ) -> RuntimeHistoryPruneResult:
     """Prune bounded batches from append-only runtime history tables."""
 
+    normalized_batch_size = int(batch_size)
+    if normalized_batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+
     load_all_models()
     async with engine.begin() as conn:
         return await conn.run_sync(
@@ -79,7 +83,7 @@ async def prune_runtime_history(
             task_event_before=task_event_before,
             task_run_before=task_run_before,
             runlog_event_before=runlog_event_before,
-            batch_size=max(1, int(batch_size)),
+            batch_size=normalized_batch_size,
         )
 
 

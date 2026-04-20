@@ -502,6 +502,35 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
     await engine.dispose()
 
 
+async def test_prune_runtime_history_rejects_non_positive_batch_size(tmp_path: Path) -> None:
+    """Bounded cleanup should fail fast when batch_size is not positive."""
+
+    db_path = tmp_path / "runtime-history-invalid-batch-size.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    try:
+        await create_schema(engine)
+        cutoff = datetime.now(timezone.utc)
+
+        for invalid_batch_size in (0, -1):
+            try:
+                await prune_runtime_history(
+                    engine,
+                    task_event_before=cutoff,
+                    task_run_before=cutoff,
+                    runlog_event_before=cutoff,
+                    batch_size=invalid_batch_size,
+                )
+            except ValueError as exc:
+                assert str(exc) == "batch_size must be >= 1"
+            else:
+                raise AssertionError(
+                    f"Expected ValueError for batch_size={invalid_batch_size}"
+                )
+    finally:
+        await engine.dispose()
+
+
 async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Path) -> None:
     """Bounded cleanup must not delete a finished orphan run still referenced as the task's last run."""
 
