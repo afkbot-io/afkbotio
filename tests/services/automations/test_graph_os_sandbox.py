@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -135,6 +136,7 @@ async def test_macos_os_sandbox_denies_child_exec(tmp_path: Path) -> None:
 def test_os_sandbox_auto_mode_falls_back_when_host_support_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(
         "afkbot.services.automations.graph.os_sandbox.sandbox_exec_available",
@@ -147,14 +149,20 @@ def test_os_sandbox_auto_mode_falls_back_when_host_support_is_missing(
         automation_graph_code_os_sandbox="auto",
     )
 
-    launch = build_code_node_launch(
-        base_argv=(sys.executable, "-c", "print('ok')"),
-        sandbox_root=tmp_path,
-        settings=settings,
-    )
+    with caplog.at_level(logging.WARNING, logger="afkbot.services.automations.graph.os_sandbox"):
+        launch = build_code_node_launch(
+            base_argv=(sys.executable, "-c", "print('ok')"),
+            sandbox_root=tmp_path,
+            settings=settings,
+        )
 
     assert launch.sandbox_kind == "none"
     assert launch.argv == (sys.executable, "-c", "print('ok')")
+    assert any(
+        "automation_graph_os_sandbox_auto_fallback" in rec.message
+        and "sandbox_kind=none" in rec.message
+        for rec in caplog.records
+    )
     assert launch.profile_path is None
 
 

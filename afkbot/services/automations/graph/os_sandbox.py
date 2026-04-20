@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import sys
 import sysconfig
@@ -10,6 +11,9 @@ from pathlib import Path
 from typing import Literal
 
 from afkbot.settings import Settings
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +50,11 @@ def build_code_node_launch(
     if not sandbox_exec_available():
         if sandbox_mode == "required":
             raise OSSandboxUnavailableError("OS sandbox is required but unavailable on this host")
+        _LOGGER.warning(
+            "automation_graph_os_sandbox_auto_fallback configured_mode=auto sandbox_kind=none "
+            "reason=sandbox_exec_unavailable platform=%s",
+            sys.platform,
+        )
         return CodeNodeLaunch(argv=base_argv, sandbox_kind="none")
     sandbox_root = sandbox_root.resolve(strict=False)
     profile_path = sandbox_root / "macos-sandbox.sb"
