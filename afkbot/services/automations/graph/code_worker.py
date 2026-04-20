@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """Isolated worker used by code graph nodes.
 
 This file is executed as a standalone script by `CodePythonNodeAdapter`.

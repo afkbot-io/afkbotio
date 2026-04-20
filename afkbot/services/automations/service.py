@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -420,7 +421,7 @@ class AutomationsService:
         profile_id: str,
         automation_id: int,
         limit: int = 20,
-    ) -> list[AutomationGraphRunMetadata]:
+    ) -> builtins.list[AutomationGraphRunMetadata]:
         """List recent graph runs for one automation."""
 
         return await self._graph_service.list_runs(

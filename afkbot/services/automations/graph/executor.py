@@ -13,9 +13,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,13 +26,11 @@ from afkbot.models.automation_node import AutomationNode
 from afkbot.models.automation_node_version import AutomationNodeVersion
 from afkbot.repositories.automation_graph_repo import AutomationGraphRepository
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
-from afkbot.services.agent_loop.channel_tool_policy import blocked_tool_result_for_runtime
 from afkbot.services.agent_loop.loop_sanitizer import sanitize as _loop_sanitize
 from afkbot.services.agent_loop.loop_sanitizer import sanitize_value as _loop_sanitize_value
 from afkbot.services.agent_loop.loop_sanitizer import to_params_dict as _loop_to_params_dict
 from afkbot.services.agent_loop.loop_sanitizer import tool_log_payload as _loop_tool_log_payload
 from afkbot.services.agent_loop.security_guard import SecurityGuard
-from afkbot.services.agent_loop.sensitive_tool_policy import blocked_tool_result
 from afkbot.services.agent_loop.tool_runtime_factory import (
     build_guarded_tool_execution_runtime,
 )
@@ -49,11 +47,13 @@ from afkbot.services.automations.graph.os_sandbox import (
     build_code_node_launch,
 )
 from afkbot.services.policy import PolicyEngine
-from afkbot.services.tools.base import ToolCall, ToolContext, ToolResult
+from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParametersValidationError
 from afkbot.settings import Settings
 
 if TYPE_CHECKING:
+    from afkbot.models.profile_policy import ProfilePolicy
+    from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
     from afkbot.services.agent_loop.turn_context import TurnContextOverrides
     from afkbot.services.subagents.contracts import (
         SubagentResultResponse,
@@ -61,7 +61,10 @@ if TYPE_CHECKING:
         SubagentWaitResponse,
     )
 
-TRepoValue = TypeVar("TRepoValue")
+class _ToolLookup(Protocol):
+    """Minimal lookup surface needed for automation-intent policy checks."""
+
+    def get(self, name: str) -> ToolBase | None: ...
 
 
 class SubagentServiceProtocol(Protocol):
@@ -280,9 +283,11 @@ class SwitchValueNodeAdapter:
         payload = invocation.default_input()
         path = str(invocation.config.get("path") or "").strip()
         value = _resolve_path(payload, path) if path else payload
+        raw_cases = invocation.config.get("cases")
+        cases_payload = raw_cases if isinstance(raw_cases, Mapping) else {}
         cases = {
             str(key): str(inner)
-            for key, inner in dict(invocation.config.get("cases") or {}).items()
+            for key, inner in cases_payload.items()
         }
         selected_port = cases.get(str(value))
         default_port = str(invocation.config.get("default_port") or "").strip()
@@ -347,7 +352,7 @@ class CodePythonNodeAdapter:
             )
         with tempfile.TemporaryDirectory(prefix="afkbot-graph-node-") as temp_dir:
             source_path = Path(temp_dir) / "node_impl.py"
-            source_path.write_text(version.source_code, encoding="utf-8")
+            source_path.write_text(version.source_code or "", encoding="utf-8")
             try:
                 launch = build_code_node_launch(
                     base_argv=(sys.executable, "-I", "-B", str(worker_path), str(source_path)),
@@ -495,7 +500,9 @@ class AgentNodeAdapter:
                 error_code="graph_node_invalid",
                 reason="agent node requires config.prompt",
             )
-        timeout_sec = int(invocation.config.get("timeout_sec") or 300)
+        timeout_sec = _optional_int(invocation.config.get("timeout_sec"))
+        if timeout_sec is None or timeout_sec <= 0:
+            timeout_sec = 300
         subagent_name = str(invocation.config.get("subagent_name") or "").strip() or None
         owner_session_id = (
             invocation.context.parent_session_id
@@ -867,13 +874,13 @@ class ToolRunNodeAdapter:
                 error_code=guarded.error_code or "tool_blocked_in_automation_graph",
                 reason=guarded.blocked_reason or f"Tool `{tool_name}` is blocked in automation graph runtime",
             )
-        sensitive_block = blocked_tool_result(
+        sensitive_block = _blocked_sensitive_tool_result(
             tool_name=tool_name,
             runtime_metadata=ctx.runtime_metadata,
         )
         if sensitive_block is not None:
             return _tool_result_to_failure(sensitive_block)
-        channel_block = blocked_tool_result_for_runtime(
+        channel_block = _blocked_channel_tool_result(
             tool_name=tool_name,
             runtime_metadata=ctx.runtime_metadata,
         )
@@ -1066,8 +1073,8 @@ class AutomationGraphExecutor:
         settings: Settings,
         session_factory: async_sessionmaker[AsyncSession],
         with_repo: Callable[
-            [Callable[[AutomationGraphRepository], Awaitable[TRepoValue]]],
-            Awaitable[TRepoValue],
+            [Callable[[AutomationGraphRepository], Awaitable[object]]],
+            Awaitable[object],
         ],
         registry: AutomationGraphNodeAdapterRegistry | None = None,
     ) -> None:
@@ -1310,8 +1317,8 @@ class AutomationGraphExecutor:
         execution_index: int,
         input_payload: Mapping[str, object],
     ) -> None:
-        await self._with_repo(
-            lambda repo: repo.update_node_run(
+        async def _op(repo: AutomationGraphRepository) -> None:
+            await repo.update_node_run(
                 run_id=run_id,
                 node_id=node_id,
                 status="running",
@@ -1319,7 +1326,8 @@ class AutomationGraphExecutor:
                 input_json=_json_dumps(_sanitize_mapping(input_payload)),
                 started_at=datetime.now(timezone.utc),
             )
-        )
+
+        await self._with_repo(_op)
 
     async def _mark_node_succeeded(
         self,
@@ -1331,8 +1339,8 @@ class AutomationGraphExecutor:
         metadata: Mapping[str, object],
         effects: tuple[GraphNodeEffect, ...],
     ) -> None:
-        await self._with_repo(
-            lambda repo: repo.update_node_run(
+        async def _op(repo: AutomationGraphRepository) -> None:
+            await repo.update_node_run(
                 run_id=run_id,
                 node_id=node_id,
                 status="succeeded",
@@ -1344,7 +1352,8 @@ class AutomationGraphExecutor:
                 child_run_id=_optional_int(metadata.get("child_run_id")),
                 completed_at=datetime.now(timezone.utc),
             )
-        )
+
+        await self._with_repo(_op)
 
     async def _mark_node_failed(
         self,
@@ -1358,8 +1367,8 @@ class AutomationGraphExecutor:
     ) -> None:
         data = metadata or {}
         safe_reason = _sanitize_reason_text(reason)
-        await self._with_repo(
-            lambda repo: repo.update_node_run(
+        async def _op(repo: AutomationGraphRepository) -> None:
+            await repo.update_node_run(
                 run_id=run_id,
                 node_id=node_id,
                 status="failed",
@@ -1371,11 +1380,12 @@ class AutomationGraphExecutor:
                 child_run_id=_optional_int(data.get("child_run_id")),
                 completed_at=datetime.now(timezone.utc),
             )
-        )
+
+        await self._with_repo(_op)
 
     async def _mark_node_skipped(self, *, run_id: int, node_id: int, execution_index: int) -> None:
-        await self._with_repo(
-            lambda repo: repo.update_node_run(
+        async def _op(repo: AutomationGraphRepository) -> None:
+            await repo.update_node_run(
                 run_id=run_id,
                 node_id=node_id,
                 status="skipped",
@@ -1383,7 +1393,8 @@ class AutomationGraphExecutor:
                 reason="No inbound branch delivered payload",
                 completed_at=datetime.now(timezone.utc),
             )
-        )
+
+        await self._with_repo(_op)
 
 def _normalize_state_inputs(inputs: Mapping[str, list[object]]) -> dict[str, object]:
     normalized: dict[str, object] = {}
@@ -1469,9 +1480,12 @@ def _config_int(invocation: NodeInvocation, *, field: str, default: int) -> int:
     value = _config_value(invocation, field=field)
     if value is None or value == "":
         return default
+    text = str(value).strip()
+    if not text:
+        return default
     try:
-        return int(value)
-    except (TypeError, ValueError):
+        return int(text)
+    except ValueError:
         return default
 
 
@@ -1563,14 +1577,18 @@ def _graph_tool_safety_class(tool_name: str) -> Literal["safe", "unsafe"]:
     return "safe" if tool_name in _AUTOMATION_GRAPH_SAFE_TOOL_NAMES else "unsafe"
 
 
-def _tool_requires_automation_intent(*, registry, tool_name: str) -> bool:
+def _tool_requires_automation_intent(*, registry: _ToolLookup, tool_name: str) -> bool:
     tool = registry.get(tool_name)
     if tool is not None:
         return bool(getattr(tool, "requires_automation_intent", False))
     return tool_name.startswith("automation.")
 
 
-def _build_graph_tool_execution_runtime(*, settings: Settings, profile_id: str):
+def _build_graph_tool_execution_runtime(
+    *,
+    settings: Settings,
+    profile_id: str,
+) -> ToolExecutionRuntime:
     from afkbot.services.tools.registry import ToolRegistry
 
     registry = ToolRegistry.from_profile_settings(settings, profile_id=profile_id)
@@ -1603,7 +1621,7 @@ async def _load_graph_tool_policy(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     profile_id: str,
-):
+) -> ProfilePolicy:
     async with session_factory() as session:
         repo = ProfilePolicyRepository(session)
         row = await repo.get(profile_id)
@@ -1872,13 +1890,13 @@ def _build_graph_tool_context(*, invocation: NodeInvocation, session_id: str) ->
     )
 
 
-def _build_task_create_tool(settings: Settings):
+def _build_task_create_tool(settings: Settings) -> ToolBase:
     from afkbot.services.tools.plugins.task_create.plugin import create_tool
 
     return create_tool(settings)
 
 
-def _build_app_run_tool(settings: Settings):
+def _build_app_run_tool(settings: Settings) -> ToolBase:
     from afkbot.services.tools.plugins.app_run.plugin import create_tool
 
     return create_tool(settings)
@@ -1896,10 +1914,33 @@ def _optional_text(value: object) -> str | None:
 def _optional_int(value: object) -> int | None:
     if value is None or value == "":
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+    text = str(value).strip()
+    if not text:
         return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _blocked_sensitive_tool_result(
+    *,
+    tool_name: str,
+    runtime_metadata: dict[str, object] | None,
+) -> ToolResult | None:
+    from afkbot.services.agent_loop.sensitive_tool_policy import blocked_tool_result
+
+    return blocked_tool_result(tool_name=tool_name, runtime_metadata=runtime_metadata)
+
+
+def _blocked_channel_tool_result(
+    *,
+    tool_name: str,
+    runtime_metadata: dict[str, object] | None,
+) -> ToolResult | None:
+    from afkbot.services.agent_loop.channel_tool_policy import blocked_tool_result_for_runtime
+
+    return blocked_tool_result_for_runtime(tool_name=tool_name, runtime_metadata=runtime_metadata)
 
 
 def _sanitize_mapping(value: Mapping[str, object]) -> dict[str, object]:

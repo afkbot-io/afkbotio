@@ -8,8 +8,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal, TypeVar
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -430,18 +430,20 @@ class AutomationGraphService:
 
         node_by_id = {node.id: node for node in graph.nodes}
         try:
-            spec = AutomationGraphSpec(
-                name=graph.flow.name,
-                nodes=[_loaded_node_spec(node=node, graph=graph) for node in graph.nodes],
-                edges=[
-                    {
-                        "source_key": node_by_id[edge.source_node_id].node_key,
-                        "target_key": node_by_id[edge.target_node_id].node_key,
-                        "source_port": edge.source_port,
-                        "target_port": edge.target_port,
-                    }
-                    for edge in graph.edges
-                ],
+            spec = AutomationGraphSpec.model_validate(
+                {
+                    "name": graph.flow.name,
+                    "nodes": [_loaded_node_spec(node=node, graph=graph) for node in graph.nodes],
+                    "edges": [
+                        {
+                            "source_key": node_by_id[edge.source_node_id].node_key,
+                            "target_key": node_by_id[edge.target_node_id].node_key,
+                            "source_port": edge.source_port,
+                            "target_port": edge.target_port,
+                        }
+                        for edge in graph.edges
+                    ],
+                }
             )
         except ValidationError as exc:
             return AutomationGraphValidationReport(
@@ -641,8 +643,8 @@ def _validate_spec(
             errors.append(f"{node.node_kind} node `{node.key}` requires config.prompt")
         if node.node_kind == "agent" and "timeout_sec" in node.config:
             try:
-                timeout_sec = int(node.config["timeout_sec"])
-            except (TypeError, ValueError):
+                timeout_sec = int(str(node.config["timeout_sec"]).strip())
+            except ValueError:
                 errors.append(f"agent node `{node.key}` timeout_sec must be an integer")
             else:
                 if timeout_sec <= 0:
@@ -657,8 +659,12 @@ def _runtime_fallback_mode(value: str) -> Literal["fail_closed", "resume_with_ai
 
     if value == "branch_error_only":
         return "fail_closed"
-    if value in {"fail_closed", "resume_with_ai", "resume_with_ai_if_safe"}:
-        return value
+    if value == "fail_closed":
+        return "fail_closed"
+    if value == "resume_with_ai":
+        return "resume_with_ai"
+    if value == "resume_with_ai_if_safe":
+        return "resume_with_ai_if_safe"
     raise AutomationsServiceError(
         error_code="invalid_graph_fallback_mode",
         reason=f"Unsupported graph fallback mode: {value}",
@@ -753,7 +759,7 @@ def _to_graph_metadata(graph: LoadedGraph) -> AutomationGraphMetadata:
                 name=node.name,
                 node_kind=_as_graph_node_kind(node.node_kind),
                 node_type=node.node_type,
-                config=_parse_json(node.config_json),
+                config=_parse_json(node.config_json) or {},
                 node_version_id=node.node_version_id,
             )
             for node in graph.nodes
@@ -878,8 +884,8 @@ def _fallback_node_output(item: AutomationGraphNodeRunMetadata) -> dict[str, obj
         return None
     if not _fallback_node_output_redacted(item):
         return item.output
-    if len(item.output) == 1 and isinstance(item.output.get("default"), dict):
-        default_payload = item.output["default"]
+    default_payload = item.output.get("default")
+    if len(item.output) == 1 and isinstance(default_payload, dict):
         return {
             "redacted": True,
             "ports": ["default"],

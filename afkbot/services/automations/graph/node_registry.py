@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from afkbot.services.automations.graph.executor import NodeAdapterResult, NodeInvocation
 
 
 class GraphNodeAdapter(Protocol):
     """Runtime contract implemented by each node adapter."""
 
-    async def execute(self, invocation: object) -> object: ...
+    async def execute(self, invocation: NodeInvocation) -> NodeAdapterResult: ...
 
 
 class AutomationGraphNodeAdapterRegistry:
