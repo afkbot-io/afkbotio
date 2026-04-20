@@ -31,7 +31,7 @@ All notable changes to this project will be documented in this file.
 - Graph runtime startup/import cycles, profile runtime version resolution, and sandbox fallback handling are now aligned so release/CLI startup paths stay stable under CI and tagged builds.
 - Mixed temporary and durable user statements no longer drop the durable fact when both appear in one sentence or clause.
 - Profile deletion now cleans up the new core-memory tier, and release/runtime config surfaces stay aligned with the Memory V2 settings.
-- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to the release version.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.4.0`.
 
 ## [1.3.0] - 2026-04-19
 
