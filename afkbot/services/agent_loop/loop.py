@@ -50,7 +50,9 @@ from afkbot.services.agent_loop.session_compaction import SessionCompactionServi
 from afkbot.services.agent_loop.session_retention import SessionRetentionService
 from afkbot.services.agent_loop.sessions import SessionService
 from afkbot.services.agent_loop.skill_router import SkillRouter
-from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
+from afkbot.services.agent_loop.tool_runtime_factory import (
+    build_guarded_tool_execution_runtime,
+)
 from afkbot.services.agent_loop.tool_invocation_gates import ToolInvocationGuards
 from afkbot.services.agent_loop.tool_exposure import ToolExposureBuilder
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
@@ -188,22 +190,22 @@ class AgentLoop:
             tool_requires_automation_intent=self._tool_requires_automation_intent,
             log_skill_read=self._runlog.log_skill_read_event,
         )
-        self._tool_execution = ToolExecutionRuntime(
+        self._tool_execution = build_guarded_tool_execution_runtime(
+            settings=context_builder.settings,
             tool_registry=tool_registry,
-            actor=actor,
             policy_engine=self._policy_engine,
-            security_guard=self._security_guard,
-            safety_policy=self._safety_policy,
-            tool_invocation_gates=self._tool_invocation_gates,
+            actor=actor,
             tool_timeout_default_sec=self._tool_timeout_default_sec,
             tool_timeout_max_sec=self._tool_timeout_max_sec,
             parallel_tool_max_concurrent=context_builder.settings.agent_tool_parallel_max_concurrent,
             log_event=self._runlog.log_event,
             raise_if_cancel_requested=self._runlog.raise_if_cancel_requested,
+            log_skill_read=self._runlog.log_skill_read_event,
             sanitize=self._sanitize,
             sanitize_value=self._sanitize_value,
             to_params_dict=self._to_params_dict,
             tool_log_payload=self._tool_log_payload,
+            tool_requires_automation_intent=self._tool_requires_automation_intent,
         )
         self._pending_envelopes = PendingEnvelopeBuilder(
             params_normalizer=self._to_params_dict,

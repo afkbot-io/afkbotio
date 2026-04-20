@@ -221,6 +221,14 @@ async def test_service_update_validation_errors(tmp_path: Path) -> None:
                 prompt="   ",
             )
         assert invalid_prompt_exc.value.error_code == "invalid_prompt"
+
+        with pytest.raises(AutomationsServiceError) as invalid_fallback_exc:
+            await service.update(
+                profile_id="default",
+                automation_id=created_webhook.id,
+                graph_fallback_mode="branch_error_only",
+            )
+        assert invalid_fallback_exc.value.error_code == "invalid_graph_fallback_mode"
     finally:
         await engine.dispose()
 

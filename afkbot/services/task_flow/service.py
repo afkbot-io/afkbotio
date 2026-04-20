@@ -28,6 +28,11 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository, _UNSET as _REPO_FIELD_UNSET
 from afkbot.repositories.support import profile_exists
+from afkbot.services.automations.principals import (
+    AutomationPrincipalValidationError,
+    ensure_automation_principal_exists,
+    parse_automation_principal_ref,
+)
 from afkbot.services.profile_runtime import get_profile_runtime_config_service
 from afkbot.services.session_orchestration.service import session_turn_queue_stale_cutoff
 from afkbot.services.task_flow.contracts import (
@@ -57,6 +62,7 @@ from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
 _VALID_OWNER_TYPES = {"ai_profile", "human"}
+_VALID_ACTOR_TYPES = _VALID_OWNER_TYPES | {"automation"}
 _VALID_TASK_STATUSES = {
     "plan",
     "todo",
@@ -171,6 +177,11 @@ class TaskFlowService:
             _normalize_optional_text(cast(str | None, actor_session_id))
             if actor_session_id is not _TASK_FIELD_UNSET
             else None
+        )
+        _validate_actor_pair(
+            actor_type=normalized_created_by_type,
+            actor_ref=normalized_created_by_ref,
+            allow_missing=False,
         )
         _ensure_public_principal_identity(
             settings=self._settings,
@@ -334,9 +345,9 @@ class TaskFlowService:
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         normalized_session_id = _normalize_optional_text(session_id)
         normalized_session_profile_id = _normalize_optional_text(session_profile_id)
-        _validate_owner_pair(
-            owner_type=normalized_created_by_type,
-            owner_ref=normalized_created_by_ref,
+        _validate_actor_pair(
+            actor_type=normalized_created_by_type,
+            actor_ref=normalized_created_by_ref,
             allow_missing=False,
         )
         if normalized_session_profile_id is not None and normalized_session_id is None:
@@ -595,9 +606,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         normalized_attachment = _normalize_task_attachment_input(attachment)
-        _validate_owner_pair(
-            owner_type=normalized_actor_type,
-            owner_ref=normalized_actor_ref,
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
             allow_missing=False,
         )
         _ensure_public_principal_identity(
@@ -619,6 +630,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Adding a task attachment requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             _ensure_task_actor_can_manage(
                 row=task,
@@ -652,9 +668,9 @@ class TaskFlowService:
         normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
         normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
-        _validate_owner_pair(
-            owner_type=normalized_actor_type,
-            owner_ref=normalized_actor_ref,
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
             allow_missing=False,
         )
         _ensure_public_principal_identity(
@@ -676,6 +692,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Removing a task attachment requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             _ensure_task_actor_can_manage(
                 row=task,
@@ -946,9 +967,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         normalized_comment_type = _normalize_required_text(comment_type, field_name="comment_type")
-        _validate_owner_pair(
-            owner_type=normalized_actor_type,
-            owner_ref=normalized_actor_ref,
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
             allow_missing=False,
         )
         _ensure_public_principal_identity(
@@ -970,6 +991,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Adding a task comment requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             _ensure_task_actor_can_manage(
                 row=task,
@@ -1018,9 +1044,9 @@ class TaskFlowService:
 
         normalized_actor_type = _normalize_optional_text(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
-        _validate_owner_pair(
-            owner_type=normalized_actor_type,
-            owner_ref=normalized_actor_ref,
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
             allow_missing=False,
         )
         normalized_flow_id = _normalize_optional_text(flow_id)
@@ -1075,9 +1101,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
-            _validate_owner_pair(
-                owner_type=normalized_actor_type,
-                owner_ref=normalized_actor_ref,
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
                 allow_missing=False,
             )
         _ensure_public_principal_identity(
@@ -1099,6 +1125,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_review_actor_required",
                 reason="Review approval requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             if row.status != "review":
                 raise TaskFlowServiceError(
@@ -1162,9 +1193,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
-            _validate_owner_pair(
-                owner_type=normalized_actor_type,
-                owner_ref=normalized_actor_ref,
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
                 allow_missing=False,
             )
         _ensure_public_principal_identity(
@@ -1194,6 +1225,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_review_actor_required",
                 reason="Requesting review changes requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             if row.status != "review":
                 raise TaskFlowServiceError(
@@ -1288,9 +1324,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
-            _validate_owner_pair(
-                owner_type=normalized_actor_type,
-                owner_ref=normalized_actor_ref,
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
                 allow_missing=False,
             )
         _ensure_public_principal_identity(
@@ -1312,6 +1348,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Adding a dependency requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             _ensure_task_actor_can_manage(
                 row=task,
@@ -1370,9 +1411,9 @@ class TaskFlowService:
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
-            _validate_owner_pair(
-                owner_type=normalized_actor_type,
-                owner_ref=normalized_actor_ref,
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
                 allow_missing=False,
             )
         _ensure_public_principal_identity(
@@ -1394,6 +1435,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Removing a dependency requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             _ensure_task_actor_can_manage(
                 row=task,
@@ -1460,9 +1506,9 @@ class TaskFlowService:
         normalized_flow_id = _normalize_optional_text(flow_id)
         normalized_labels = _normalize_labels(labels) if labels is not None else None
         normalized_handoff_note = _normalize_optional_text(handoff_note)
-        _validate_owner_pair(
-            owner_type=normalized_actor_type,
-            owner_ref=normalized_actor_ref,
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
             allow_missing=False,
         )
         _ensure_public_principal_identity(
@@ -1484,6 +1530,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Delegating a task requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             if source_task.status in {"completed", "failed", "cancelled"}:
                 raise TaskFlowServiceError(
@@ -1833,9 +1884,9 @@ class TaskFlowService:
         normalized_actor_type = _normalize_optional_text(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
-            _validate_owner_pair(
-                owner_type=normalized_actor_type,
-                owner_ref=normalized_actor_ref,
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
                 allow_missing=False,
             )
         _ensure_public_principal_identity(
@@ -1862,6 +1913,11 @@ class TaskFlowService:
                 actor_session_id=normalized_actor_session_id,
                 error_code="task_actor_required",
                 reason="Task updates require an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
             )
             current_row = await repo.get_task(profile_id=profile_id, task_id=task_id)
             if current_row is None:
@@ -1928,6 +1984,14 @@ class TaskFlowService:
                 if effective_session_id is not _TASK_FIELD_UNSET
                 else None
             )
+            if (
+                normalized_actor_type == "automation"
+                and effective_status_after_update in {"claimed", "running"}
+            ):
+                raise TaskFlowServiceError(
+                    error_code="task_session_binding_forbidden",
+                    reason="Automation actors cannot move tasks into claimed/running state",
+                )
             if (
                 effective_owner_type == "ai_profile"
                 and effective_status_after_update in {"claimed", "running"}
@@ -2338,10 +2402,30 @@ async def _ensure_principal_exists(
     actor_type: str | None,
     actor_ref: str | None,
 ) -> None:
-    """Validate one actor principal reference when it points at an AI profile."""
+    """Validate one actor principal reference when it points at an AI profile or automation."""
 
     if actor_type == "ai_profile" and actor_ref is not None:
         await _ensure_profile_exists(repo, actor_ref)
+    if actor_type == "automation" and actor_ref is not None:
+        parsed = parse_automation_principal_ref(actor_ref)
+        if parsed is None:
+            raise TaskFlowServiceError(
+                error_code="invalid_actor_ref",
+                reason="automation actor_ref must match automation:<profile_id>:<automation_id>",
+            )
+        await _ensure_profile_exists(repo, parsed.profile_id)
+        try:
+            await ensure_automation_principal_exists(repo._session, actor_ref=actor_ref)
+        except AutomationPrincipalValidationError:
+            raise TaskFlowServiceError(
+                error_code="invalid_actor_ref",
+                reason="automation actor_ref must match automation:<profile_id>:<automation_id>",
+            )
+        except LookupError:
+            raise TaskFlowServiceError(
+                error_code="automation_not_found",
+                reason="Automation principal not found",
+            )
 
 
 async def _ensure_public_ai_principal_session(
@@ -2404,6 +2488,11 @@ def _ensure_public_principal_identity(
     )
     if normalized_actor_type is None or normalized_actor_ref is None:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
+    _validate_actor_pair(
+        actor_type=normalized_actor_type,
+        actor_ref=normalized_actor_ref,
+        allow_missing=False,
+    )
     if normalized_actor_type == "human" and normalized_actor_ref != resolve_local_human_ref(settings):
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
     if normalized_actor_type == "ai_profile" and normalized_actor_session_id is None:
@@ -2462,6 +2551,13 @@ def _normalize_labels(labels: Sequence[str] | None) -> tuple[str, ...]:
 
 def _normalize_identifier_list(values: Sequence[str] | None) -> tuple[str, ...]:
     return _normalize_labels(values)
+
+
+def _parse_automation_actor_ref(actor_ref: str | None) -> tuple[str, str] | None:
+    parsed = parse_automation_principal_ref(actor_ref)
+    if parsed is None:
+        return None
+    return parsed.profile_id, str(parsed.automation_id)
 
 
 def _normalize_status(status: str) -> str:
@@ -2580,6 +2676,33 @@ def _validate_owner_pair(
         )
 
 
+def _validate_actor_pair(
+    *,
+    actor_type: str | None,
+    actor_ref: str | None,
+    allow_missing: bool = False,
+) -> None:
+    normalized_type = _normalize_optional_text(actor_type)
+    normalized_ref = _normalize_optional_text(actor_ref)
+    if normalized_type is None and normalized_ref is None and allow_missing:
+        return
+    if normalized_type is None or normalized_ref is None:
+        raise TaskFlowServiceError(
+            error_code="invalid_actor",
+            reason="actor_type and actor_ref must be provided together",
+        )
+    if normalized_type not in _VALID_ACTOR_TYPES:
+        raise TaskFlowServiceError(
+            error_code="invalid_actor_type",
+            reason=f"Unsupported actor type: {normalized_type}",
+        )
+    if normalized_type == "automation" and _parse_automation_actor_ref(normalized_ref) is None:
+        raise TaskFlowServiceError(
+            error_code="invalid_actor_ref",
+            reason="automation actor_ref must match automation:<profile_id>:<automation_id>",
+        )
+
+
 def _task_actor_has_manager_scope(
     *,
     task_profile_id: str,
@@ -2610,6 +2733,13 @@ def _ensure_task_actor_can_manage(
         task_profile_id=task_profile_id,
         actor_type=normalized_actor_type,
         actor_ref=normalized_actor_ref,
+    ):
+        return
+    if (
+        normalized_actor_type == "automation"
+        and normalized_actor_ref is not None
+        and row.created_by_type == "automation"
+        and row.created_by_ref == normalized_actor_ref
     ):
         return
     if (
@@ -2654,6 +2784,16 @@ def _ensure_ai_owner_assignment_allowed(
             )
     if normalized_actor_type == "human" and normalized_actor_ref is not None:
         return
+    if normalized_actor_type == "automation" and normalized_actor_ref is not None:
+        _ensure_ai_actor_admitted_to_backlog(
+            settings=settings,
+            task_profile_id=task_profile_id,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            error_code="task_owner_forbidden",
+            reason="Automation actor is not allowed to assign tasks in this backlog",
+        )
+        return
     if normalized_actor_type != "ai_profile" or normalized_actor_ref is None:
         return
     _ensure_ai_actor_admitted_to_backlog(
@@ -2686,10 +2826,15 @@ def _ensure_ai_actor_admitted_to_backlog(
     error_code: str,
     reason: str,
 ) -> None:
-    """Allow AI actors only when they belong to the backlog's configured roster."""
+    """Allow AI/automation actors only when they belong to the backlog scope."""
 
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
+    if normalized_actor_type == "automation" and normalized_actor_ref is not None:
+        parsed = _parse_automation_actor_ref(normalized_actor_ref)
+        if parsed is None or parsed[0] != task_profile_id:
+            raise TaskFlowServiceError(error_code=error_code, reason=reason)
+        return
     if normalized_actor_type != "ai_profile" or normalized_actor_ref is None:
         return
     allowed_profiles = _taskflow_allowed_ai_profile_ids(settings=settings, profile_id=task_profile_id)

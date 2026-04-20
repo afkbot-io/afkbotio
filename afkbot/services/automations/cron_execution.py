@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationCronTickResult
 from afkbot.services.automations.errors import AutomationsServiceError
+from afkbot.services.automations.graph.service import AutomationGraphService
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
 from afkbot.services.automations.message_factory import (
     compose_cron_message,
@@ -37,6 +38,7 @@ async def tick_cron_automations(
     now_utc: datetime,
     settings: Settings,
     session_runner_factory: AutomationSessionRunnerFactory | None,
+    graph_service: AutomationGraphService,
     compute_next_run_at: Callable[[str, datetime, str], datetime],
     max_due_per_tick: int | None = None,
     run_timeout_sec: float | None = None,
@@ -56,7 +58,7 @@ async def tick_cron_automations(
 
     async def _due_rows(
         repo: AutomationRepository,
-    ) -> list[tuple[int, str, str, str, str]]:
+    ) -> list[tuple[int, str, str, str, str, str]]:
         rows = await repo.list_due_cron(
             now_utc=normalized_now,
             limit=normalized_limit,
@@ -66,6 +68,7 @@ async def tick_cron_automations(
                 automation.id,
                 automation.profile_id,
                 automation.prompt,
+                automation.execution_mode,
                 cron.cron_expr,
                 cron.timezone,
             )
@@ -75,11 +78,8 @@ async def tick_cron_automations(
     due_rows = await with_repo(_due_rows)
     triggered_ids: list[int] = []
     failed_ids: list[int] = []
-    for automation_id, profile_id, prompt, cron_expr, timezone_name in due_rows:
+    for automation_id, profile_id, prompt, execution_mode, cron_expr, timezone_name in due_rows:
         claim_token = secrets.token_hex(16)
-        message = compose_cron_message(
-            prompt,
-        )
         runtime_target = build_automation_runtime_target(
             profile_id=profile_id,
             session_id=cron_session_id(
@@ -114,6 +114,22 @@ async def tick_cron_automations(
             return await with_repo(_refresh)
 
         async def _run() -> object:
+            if execution_mode == "graph":
+                return await graph_service.execute_triggered_automation(
+                    profile_id=profile_id,
+                    automation_id=automation_id,
+                    trigger_type="cron",
+                    trigger_payload={
+                        "triggered_at": normalized_now.isoformat(),
+                        "cron_expr": cron_expr,
+                    },
+                    parent_session_id=runtime_target.session_id,
+                    context_overrides=runtime_target.context_overrides,
+                    event_hash=None,
+                    cron_expr=cron_expr,
+                    session_runner_factory=session_runner_factory,
+                    run_timeout_sec=run_timeout_sec,
+                )
             runner = build_automation_session_runner(
                 session_factory=session_factory,
                 profile_id=profile_id,
@@ -123,7 +139,7 @@ async def tick_cron_automations(
             return await runner.run_turn(
                 profile_id=runtime_target.profile_id,
                 session_id=runtime_target.session_id,
-                message=message,
+                message=compose_cron_message(prompt),
                 context_overrides=runtime_target.context_overrides,
                 source="automation",
             )

@@ -40,6 +40,8 @@ def to_metadata(
         prompt=automation.prompt,
         trigger_type=trigger_type,
         status=status,
+        execution_mode=as_execution_mode(automation.execution_mode),
+        graph_fallback_mode=as_graph_fallback_mode(automation.graph_fallback_mode),
         created_at=automation.created_at,
         updated_at=automation.updated_at,
         cron=None
@@ -129,4 +131,36 @@ def as_status(value: str) -> Literal["active", "paused", "deleted"]:
     raise AutomationsServiceError(
         error_code="invalid_status",
         reason=f"Unsupported automation status: {value}",
+    )
+
+
+def as_execution_mode(value: str) -> Literal["prompt", "graph"]:
+    """Normalize persisted automation execution mode for contracts."""
+
+    if value == "prompt":
+        return "prompt"
+    if value == "graph":
+        return "graph"
+    raise AutomationsServiceError(
+        error_code="invalid_execution_mode",
+        reason=f"Unsupported execution mode: {value}",
+    )
+
+
+def as_graph_fallback_mode(
+    value: str,
+) -> Literal["fail_closed", "resume_with_ai", "resume_with_ai_if_safe"]:
+    """Normalize persisted graph fallback mode for contracts."""
+
+    if value == "branch_error_only":
+        return "fail_closed"
+    if value in {
+        "fail_closed",
+        "resume_with_ai",
+        "resume_with_ai_if_safe",
+    }:
+        return value  # type: ignore[return-value]
+    raise AutomationsServiceError(
+        error_code="invalid_graph_fallback_mode",
+        reason=f"Unsupported graph fallback mode: {value}",
     )

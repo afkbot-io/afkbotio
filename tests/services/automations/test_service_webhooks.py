@@ -9,8 +9,10 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.services.automations import AutomationsService, AutomationsServiceError
+from afkbot.services.automations.graph.contracts import AutomationGraphNodeSpec, AutomationGraphSpec
 from afkbot.services.automations.payloads import sanitize_payload
 from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
     BlockingLoop,
@@ -157,6 +159,136 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             if call["session_id"] == hook_result.session_id
         ]
         assert len(webhook_messages_after_duplicate) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_service_trigger_webhook_dispatches_graph_mode_without_agentloop(
+    tmp_path: Path,
+) -> None:
+    """Graph-mode webhook automations should execute graph runtime instead of direct AgentLoop."""
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        webhook = await service.create_webhook(
+            profile_id="default",
+            name="graph-webhook",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=webhook.id,
+            spec=AutomationGraphSpec(
+                name="simple-graph",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="finish",
+                        name="Finish",
+                        node_kind="builtin",
+                        node_type="passthrough",
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "finish"}],
+            ),
+        )
+        assert webhook.webhook is not None
+        token = webhook.webhook.webhook_token
+        assert token
+
+        fake_loop = FakeLoop()
+
+        def factory_fn(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return fake_loop
+
+        hook_result = await service.trigger_webhook(
+            profile_id="default",
+            token=token,
+            payload={"event_id": "evt-graph", "k": "v"},
+            session_runner_factory=factory_fn,
+        )
+        assert hook_result.deduplicated is False
+        assert fake_loop.calls == []
+        runs = await service.list_graph_runs(profile_id="default", automation_id=webhook.id)
+        assert len(runs) == 1
+        assert runs[0].status == "succeeded"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_trigger_webhook_graph_uses_profile_runtime_tool_surface(
+    tmp_path: Path,
+) -> None:
+    """Graph-mode tool nodes should honor profile runtime tool overrides just like prompt mode."""
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        get_profile_runtime_config_service(service._settings).write(
+            "default",
+            ProfileRuntimeConfig(
+                llm_provider=service._settings.llm_provider,
+                llm_model=service._settings.llm_model,
+                enabled_tool_plugins=("debug_echo",),
+            ),
+        )
+        webhook = await service.create_webhook(
+            profile_id="default",
+            name="graph-webhook-tool-surface",
+            prompt="fallback prompt",
+            execution_mode="graph",
+            graph_fallback_mode="fail_closed",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=webhook.id,
+            spec=AutomationGraphSpec(
+                name="profile-aware-tool-surface",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="taskflows",
+                        name="Task Flows",
+                        node_kind="action",
+                        node_type="tool.run",
+                        config={
+                            "tool_name": "task.flow.list",
+                            "params": {},
+                        },
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "taskflows"}],
+            ),
+        )
+        assert webhook.webhook is not None
+
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.trigger_webhook(
+                profile_id="default",
+                token=webhook.webhook.webhook_token,
+                payload={"event_id": "evt-profile-runtime"},
+            )
+        assert exc_info.value.error_code == "automation_graph_failed"
+
+        runs = await service.list_graph_runs(profile_id="default", automation_id=webhook.id)
+        assert len(runs) == 1
+        assert runs[0].status == "failed"
+        trace = await service.get_graph_trace(profile_id="default", run_id=runs[0].id)
+        failed = next(item for item in trace.nodes if item.node_key == "taskflows")
+        assert failed.status == "failed"
+        assert failed.error_code == "tool_not_found"
+        assert failed.reason == "Tool not found: task.flow.list"
     finally:
         await engine.dispose()
 

@@ -13,6 +13,7 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.automations import AutomationsService
+from afkbot.services.automations.graph.executor import AutomationGraphSubagentFactory
 from afkbot.settings import Settings
 
 
@@ -103,17 +104,24 @@ class BlockingLoop(FakeLoop):
 
 async def prepare_service(
     tmp_path: Path,
+    *,
+    graph_subagent_service_factory: AutomationGraphSubagentFactory | None = None,
+    settings_override: Settings | None = None,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession], AutomationsService]:
     """Create one disposable automation service + DB fixture tree."""
 
-    settings = Settings(
+    settings = settings_override or Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
         root_dir=tmp_path,
     )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
-    service = AutomationsService(factory, settings=settings)
+    service = AutomationsService(
+        factory,
+        settings=settings,
+        graph_subagent_service_factory=graph_subagent_service_factory,
+    )
     async with session_scope(factory) as session:
         profiles = ProfileRepository(session)
         await profiles.get_or_create_default("default")

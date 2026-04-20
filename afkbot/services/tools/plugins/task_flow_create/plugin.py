@@ -7,6 +7,7 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -51,13 +52,14 @@ class TaskFlowCreateTool(ToolBase):
 
         try:
             service = get_task_flow_service(self._settings)
+            actor = resolve_task_tool_actor(ctx)
             item = await service.create_flow(
                 profile_id=target_profile_id,
                 title=payload.title,
                 description=payload.description,
-                created_by_type="ai_profile",
-                created_by_ref=ctx.profile_id,
-                actor_session_id=ctx.session_id,
+                created_by_type=actor.actor_type,
+                created_by_ref=actor.actor_ref,
+                actor_session_id=actor.actor_session_id,
                 default_owner_type=payload.default_owner_type,
                 default_owner_ref=payload.default_owner_ref,
                 labels=payload.labels,

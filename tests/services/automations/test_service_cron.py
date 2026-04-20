@@ -12,6 +12,7 @@ from afkbot.db.session import session_scope
 from afkbot.models.automation_trigger_cron import AutomationTriggerCron
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations import AutomationsService
+from afkbot.services.automations.graph.contracts import AutomationGraphNodeSpec, AutomationGraphSpec
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
     BlockingLoop,
@@ -103,6 +104,137 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
             ) + timedelta(hours=1)
             assert star.next_run_at == expected_star_next.replace(tzinfo=None)
             assert fallback.next_run_at == expected_fallback_next.replace(tzinfo=None)
+    finally:
+        await engine.dispose()
+
+
+async def test_service_tick_cron_dispatches_graph_mode_without_agentloop(tmp_path: Path) -> None:
+    """Graph-mode cron automations should execute graph runtime instead of direct AgentLoop."""
+
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        now = datetime.now(timezone.utc)
+        created = await service.create_cron(
+            profile_id="default",
+            name="graph-cron",
+            prompt="fallback prompt",
+            cron_expr="* * * * *",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=created.id,
+            spec=AutomationGraphSpec(
+                name="simple-cron-graph",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="finish",
+                        name="Finish",
+                        node_kind="builtin",
+                        node_type="passthrough",
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "finish"}],
+            ),
+        )
+        async with session_scope(factory) as session:
+            cron = await session.get(AutomationTriggerCron, created.id)
+            assert cron is not None
+            cron.next_run_at = now - timedelta(seconds=1)
+            await session.flush()
+
+        fake_loop = FakeLoop()
+
+        def factory_fn(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return fake_loop
+
+        tick_result = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
+        assert tick_result.triggered_ids == [created.id]
+        assert tick_result.failed_ids == []
+        assert fake_loop.calls == []
+        runs = await service.list_graph_runs(profile_id="default", automation_id=created.id)
+        assert len(runs) == 1
+        assert runs[0].status == "succeeded"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_tick_cron_keeps_prompt_and_graph_modes_isolated(
+    tmp_path: Path,
+) -> None:
+    """Prompt-mode and graph-mode cron automations should run side-by-side without cross-dispatch."""
+
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        now = datetime.now(timezone.utc)
+        prompt_created = await service.create_cron(
+            profile_id="default",
+            name="prompt-cron",
+            prompt="prompt path",
+            cron_expr="* * * * *",
+        )
+        graph_created = await service.create_cron(
+            profile_id="default",
+            name="graph-cron",
+            prompt="graph path",
+            cron_expr="* * * * *",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=graph_created.id,
+            spec=AutomationGraphSpec(
+                name="coexistence-graph",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="finish",
+                        name="Finish",
+                        node_kind="builtin",
+                        node_type="passthrough",
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "finish"}],
+            ),
+        )
+        async with session_scope(factory) as session:
+            prompt_cron = await session.get(AutomationTriggerCron, prompt_created.id)
+            graph_cron = await session.get(AutomationTriggerCron, graph_created.id)
+            assert prompt_cron is not None
+            assert graph_cron is not None
+            prompt_cron.next_run_at = now - timedelta(seconds=1)
+            graph_cron.next_run_at = now - timedelta(seconds=1)
+            await session.flush()
+
+        fake_loop = FakeLoop()
+
+        def factory_fn(session: AsyncSession, profile_id: str) -> FakeLoop:
+            _ = session, profile_id
+            return fake_loop
+
+        tick_result = await service.tick_cron(now_utc=now, session_runner_factory=factory_fn)
+
+        assert set(tick_result.triggered_ids) == {prompt_created.id, graph_created.id}
+        assert tick_result.failed_ids == []
+        assert len(fake_loop.calls) == 1
+        assert fake_loop.calls[0]["message"] == "prompt path"
+        assert fake_loop.calls[0]["session_id"].startswith(f"automation-cron-{prompt_created.id}-")
+
+        graph_runs = await service.list_graph_runs(profile_id="default", automation_id=graph_created.id)
+        assert len(graph_runs) == 1
+        assert graph_runs[0].status == "succeeded"
     finally:
         await engine.dispose()
 

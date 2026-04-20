@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+MemoryAutoSaveKind = Literal["fact", "preference", "decision", "task", "risk", "note"]
+
 
 class ProfileRuntimeConfig(BaseModel):
     """Persisted profile-local runtime overrides applied on top of global settings."""
@@ -50,9 +52,7 @@ class ProfileRuntimeConfig(BaseModel):
     memory_auto_save_enabled: bool | None = None
     memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None = None
     memory_auto_promote_enabled: bool | None = None
-    memory_auto_save_kinds: tuple[
-        Literal["fact", "preference", "decision", "task", "risk", "note"], ...
-    ] | None = None
+    memory_auto_save_kinds: tuple[MemoryAutoSaveKind, ...] | None = None
     memory_auto_save_max_chars: int | None = None
     memory_recall_enabled: bool | None = None
     session_compaction_enabled: bool | None = None
@@ -163,9 +163,14 @@ class ProfileRuntimeResolved(BaseModel):
     memory_auto_save_enabled: bool = False
     memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
     memory_auto_promote_enabled: bool = False
-    memory_auto_save_kinds: tuple[
-        Literal["fact", "preference", "decision", "task", "risk", "note"], ...
-    ] = ("fact", "preference", "decision", "task", "risk", "note")
+    memory_auto_save_kinds: tuple[MemoryAutoSaveKind, ...] = (
+        "fact",
+        "preference",
+        "decision",
+        "task",
+        "risk",
+        "note",
+    )
     memory_auto_save_max_chars: int = 1000
     memory_recall_enabled: bool = False
     session_compaction_enabled: bool = False

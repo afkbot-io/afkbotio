@@ -231,3 +231,276 @@ async def test_create_schema_adds_delivery_columns_for_legacy_automation_rows(
         assert automation.delivery_target_json is None
     finally:
         await engine.dispose()
+
+
+async def test_create_schema_backfills_graph_runtime_columns_for_legacy_automation_rows(
+    tmp_path: Path,
+) -> None:
+    """Legacy automation rows should gain graph runtime defaults without breaking ORM reads."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_graph_runtime.db'}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        execution_mode VARCHAR(16),
+                        graph_fallback_mode VARCHAR(32),
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (
+                        id,
+                        profile_id,
+                        name,
+                        prompt,
+                        trigger_type,
+                        status,
+                        execution_mode,
+                        graph_fallback_mode
+                    )
+                    VALUES (1, 'default', 'legacy-graph', 'legacy prompt', 'webhook', 'active', '', NULL)
+                    """
+                )
+            )
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT execution_mode, graph_fallback_mode
+                        FROM automation
+                        WHERE id = 1
+                        """
+                    )
+                )
+            ).one()
+        assert row[0] == "prompt"
+        assert row[1] == "resume_with_ai_if_safe"
+
+        session_factory = create_session_factory(engine)
+        async with session_scope(session_factory) as session:
+            automation = (await session.execute(select(Automation))).scalar_one()
+        assert automation.execution_mode == "prompt"
+        assert automation.graph_fallback_mode == "resume_with_ai_if_safe"
+    finally:
+        await engine.dispose()
+
+
+async def test_create_schema_creates_graph_tables_without_breaking_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    """Schema creation should add graph tables while preserving legacy automation reads."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_graph_tables.db'}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (id, profile_id, name, prompt, trigger_type, status)
+                    VALUES (1, 'default', 'legacy-graph', 'legacy prompt', 'cron', 'active')
+                    """
+                )
+            )
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            table_names = {
+                str(row[0])
+                for row in (
+                    await conn.execute(
+                        text(
+                            """
+                            SELECT name
+                            FROM sqlite_master
+                            WHERE type = 'table'
+                            """
+                        )
+                    )
+                ).fetchall()
+            }
+        assert {
+            "automation_flow",
+            "automation_node_definition",
+            "automation_node_version",
+            "automation_node",
+            "automation_edge",
+            "automation_run",
+            "automation_node_run",
+            "automation_optimization_snapshot",
+        }.issubset(table_names)
+
+        session_factory = create_session_factory(engine)
+        async with session_scope(session_factory) as session:
+            automation = (await session.execute(select(Automation))).scalar_one()
+        assert automation.id == 1
+        assert automation.name == "legacy-graph"
+    finally:
+        await engine.dispose()
+
+
+async def test_create_schema_backfills_graph_node_run_runtime_columns(
+    tmp_path: Path,
+) -> None:
+    """Legacy graph ledgers should gain execution/effect columns during schema upgrade."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_graph_node_run.db'}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_run (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        automation_id INTEGER NOT NULL,
+                        flow_id INTEGER,
+                        profile_id VARCHAR(64) NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        parent_session_id VARCHAR(255),
+                        event_hash VARCHAR(128),
+                        payload_json TEXT,
+                        final_output_json TEXT,
+                        fallback_status VARCHAR(32),
+                        error_code VARCHAR(64),
+                        reason TEXT,
+                        started_at DATETIME,
+                        completed_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_node_run (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id INTEGER NOT NULL,
+                        node_id INTEGER NOT NULL,
+                        node_key VARCHAR(128) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        attempt INTEGER NOT NULL DEFAULT 1,
+                        selected_ports_json TEXT,
+                        input_json TEXT,
+                        output_json TEXT,
+                        error_code VARCHAR(64),
+                        reason TEXT,
+                        child_task_id VARCHAR(128),
+                        child_session_id VARCHAR(255),
+                        child_run_id INTEGER,
+                        started_at DATETIME,
+                        completed_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            columns = {
+                str(row[1])
+                for row in (await conn.execute(text("PRAGMA table_info('automation_node_run')"))).fetchall()
+            }
+        assert "execution_index" in columns
+        assert "effects_json" in columns
+    finally:
+        await engine.dispose()

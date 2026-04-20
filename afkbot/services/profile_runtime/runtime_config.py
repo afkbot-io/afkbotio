@@ -9,10 +9,10 @@ from typing import Any, cast
 
 from afkbot.services.atomic_writes import atomic_json_write
 from afkbot.services.llm.provider_catalog import parse_provider
-from afkbot.services.memory.contracts import MemoryKind
 from afkbot.services.llm.provider_settings import resolve_api_key, resolve_base_url
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.profile_runtime.contracts import (
+    MemoryAutoSaveKind,
     ProfileRuntimeConfig,
     ProfileRuntimeResolved,
 )
@@ -183,7 +183,10 @@ class ProfileRuntimeConfigService:
             memory_auto_save_enabled=settings.memory_auto_save_enabled,
             memory_auto_save_scope_mode=settings.memory_auto_save_scope_mode,
             memory_auto_promote_enabled=settings.memory_auto_promote_enabled,
-            memory_auto_save_kinds=cast(tuple[MemoryKind, ...], settings.memory_auto_save_kinds),
+            memory_auto_save_kinds=cast(
+                tuple[MemoryAutoSaveKind, ...],
+                tuple(settings.memory_auto_save_kinds),
+            ),
             memory_auto_save_max_chars=settings.memory_auto_save_max_chars,
             memory_recall_enabled=settings.memory_recall_enabled,
             session_compaction_enabled=settings.session_compaction_enabled,

@@ -8,6 +8,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from afkbot.services.automations.errors import AutomationsServiceError
 
+AutomationExecutionMode = Literal["prompt", "graph"]
+AutomationGraphFallbackMode = Literal[
+    "fail_closed",
+    "resume_with_ai",
+    "resume_with_ai_if_safe",
+]
+
 
 def validate_create_payload(*, name: str, prompt: str) -> None:
     """Validate required automation creation fields."""
@@ -37,6 +44,35 @@ def normalize_update_status(status: str) -> Literal["active", "paused"]:
     raise AutomationsServiceError(
         error_code="invalid_status",
         reason="Status must be active or paused",
+    )
+
+
+def normalize_execution_mode(value: str) -> AutomationExecutionMode:
+    """Normalize one automation execution mode value."""
+
+    normalized = value.strip().lower()
+    if normalized == "prompt":
+        return "prompt"
+    if normalized == "graph":
+        return "graph"
+    raise AutomationsServiceError(
+        error_code="invalid_execution_mode",
+        reason="execution_mode must be prompt or graph",
+    )
+
+
+def normalize_graph_fallback_mode(value: str) -> AutomationGraphFallbackMode:
+    """Normalize one graph fallback mode value."""
+
+    normalized = value.strip().lower()
+    if normalized in {"fail_closed", "resume_with_ai", "resume_with_ai_if_safe"}:
+        return normalized  # type: ignore[return-value]
+    raise AutomationsServiceError(
+        error_code="invalid_graph_fallback_mode",
+        reason=(
+            "graph_fallback_mode must be one of: fail_closed, "
+            "resume_with_ai, resume_with_ai_if_safe"
+        ),
     )
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -113,6 +114,21 @@ async def _create_chat_session(
                 source="pytest",
                 client_msg_id=None,
             )
+
+
+async def _create_automation_actor(engine: AsyncEngine, *, profile_id: str, name: str) -> str:
+    factory = create_session_factory(engine)
+    async with session_scope(factory) as session:
+        repo = AutomationRepository(session)
+        automation, _ = await repo.create_cron_automation(
+            profile_id=profile_id,
+            name=name,
+            prompt="automation actor seed",
+            cron_expr="0 * * * *",
+            timezone="UTC",
+            next_run_at=None,
+        )
+        return f"automation:{profile_id}:{automation.id}"
 
 
 async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -814,6 +830,70 @@ async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
         await engine.dispose()
 
 
+async def test_task_update_plugin_rejects_explicit_session_binding_in_automation_graph_runtime(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """automation graph runtime must not let generic task.update override session bindings."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        seed_ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        create_result = await create_tool.execute(
+            seed_ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Automation runtime update target",
+                    "description": "Seed task for automation graph update guard.",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        automation_ctx = ToolContext(
+            profile_id="default",
+            session_id="automation-graph-42-9-call_tool",
+            run_id=9,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": 42,
+                    "run_id": 9,
+                    "node_key": "call_tool",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+        update_result = await update_tool.execute(
+            automation_ctx,
+            update_tool.parse_params(
+                {
+                    "task_id": task_id,
+                    "status": "running",
+                    "session_id": "borrowed-session",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert update_result.ok is False
+        assert update_result.error_code == "task_session_binding_forbidden"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -1277,6 +1357,182 @@ async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
         tasks = list_result.payload["tasks"]
         assert isinstance(tasks, list)
         assert tasks == []
+    finally:
+        await engine.dispose()
+
+
+async def test_task_create_plugin_rejects_explicit_session_binding_in_automation_graph_runtime(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """automation graph runtime must not let generic task.create override session bindings."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="automation-graph-42-7-call_tool",
+            run_id=7,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": 42,
+                    "run_id": 7,
+                    "node_key": "call_tool",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Automation runtime create",
+                    "description": "should reject explicit task session binding",
+                    "session_id": "borrowed-session",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert create_result.ok is False
+        assert create_result.error_code == "task_session_binding_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_create_plugin_uses_automation_principal_without_fake_session_binding(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """automation graph task.create should not persist a synthetic task lease session."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        actor_ref = await _create_automation_actor(
+            engine,
+            profile_id="default",
+            name="task-create-automation-actor",
+        )
+        automation_id = int(actor_ref.rsplit(":", 1)[1])
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="automation-graph-actor-create",
+            run_id=8,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": automation_id,
+                    "run_id": 8,
+                    "node_key": "create_task",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Automation created task",
+                    "description": "created without borrowing a chat/task session",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert create_result.ok is True
+        task_payload = create_result.payload["task"]
+        assert isinstance(task_payload, dict)
+        assert task_payload["created_by_type"] == "automation"
+        assert task_payload["created_by_ref"] == actor_ref
+        assert task_payload["last_session_id"] is None
+        assert task_payload["last_session_profile_id"] is None
+    finally:
+        await engine.dispose()
+
+
+async def test_task_update_plugin_rejects_running_status_without_real_session_in_automation_graph(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """automation graph task.update must not synthesize claimed/running task leases."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        actor_ref = await _create_automation_actor(
+            engine,
+            profile_id="default",
+            name="task-update-automation-actor",
+        )
+        automation_id = int(actor_ref.rsplit(":", 1)[1])
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="automation-graph-actor-update",
+            run_id=9,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": automation_id,
+                    "run_id": 9,
+                    "node_key": "task_update",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Task awaiting AI worker",
+                    "description": "automation can create it, but cannot fake a live worker lease",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_payload = create_result.payload["task"]
+        assert isinstance(task_payload, dict)
+
+        update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "task_id": str(task_payload["id"]),
+                    "status": "running",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert update_result.ok is False
+        assert update_result.error_code == "task_session_binding_forbidden"
     finally:
         await engine.dispose()
 

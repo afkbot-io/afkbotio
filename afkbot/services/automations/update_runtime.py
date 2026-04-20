@@ -25,6 +25,8 @@ async def apply_automation_update(
     normalized_name: str | None,
     normalized_prompt: str | None,
     normalized_status: Literal["active", "paused"] | None,
+    normalized_execution_mode: str | None,
+    normalized_graph_fallback_mode: str | None,
     normalized_cron: str | None,
     normalized_timezone: str | None,
     issued_webhook_token: str | None,
@@ -85,6 +87,8 @@ async def apply_automation_update(
                 name=normalized_name,
                 prompt=effective_prompt if has_effective_prompt_update else None,
                 status=normalized_status,
+                execution_mode=normalized_execution_mode,
+                graph_fallback_mode=normalized_graph_fallback_mode,
             )
             if updated_automation is None:
                 raise AutomationsServiceError(
