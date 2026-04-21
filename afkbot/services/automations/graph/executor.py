@@ -910,6 +910,7 @@ class ToolRunNodeAdapter:
                 explicit_subagent_requests=set(),
                 allow_confirmation_markers=False,
                 runtime_metadata=ctx.runtime_metadata,
+                trusted_runtime_context=None,
                 allowed_tool_names=set(_AUTOMATION_GRAPH_ALLOWED_TOOL_NAMES),
             )
         except Exception as exc:

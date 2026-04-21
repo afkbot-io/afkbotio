@@ -1934,6 +1934,12 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subage
                     "owner_ref": "analyst:researcher",
                 },
             },
+            trusted_runtime_context={
+                "taskflow_detached_runtime": {
+                    "owner_type": "ai_subagent",
+                    "owner_ref": "analyst:researcher",
+                }
+            },
         )
         delegate_result = await delegate_tool.execute(
             ctx,

@@ -41,6 +41,12 @@ def build_task_flow_context_overrides(
         taskflow_payload["labels"] = tuple(str(item) for item in labels if str(item).strip())
     return TurnContextOverrides(
         runtime_metadata={"taskflow": taskflow_payload},
+        trusted_runtime_context={
+            "taskflow_detached_runtime": {
+                "owner_type": owner_type,
+                "owner_ref": owner_ref,
+            }
+        },
         execution_planning_mode="on",
         prompt_overlay=_build_task_flow_prompt_overlay(
             task_id=task_id,
