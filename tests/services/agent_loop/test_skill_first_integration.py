@@ -83,9 +83,11 @@ async def _prepare_db(
     bootstrap_dir = tmp_path / "afkbot/bootstrap"
     security_skill_dir = tmp_path / "afkbot/skills/security-secrets"
     telegram_skill_dir = tmp_path / "afkbot/skills/telegram"
+    partyflow_skill_dir = tmp_path / "afkbot/skills/partyflow"
     bootstrap_dir.mkdir(parents=True)
     security_skill_dir.mkdir(parents=True)
     telegram_skill_dir.mkdir(parents=True)
+    partyflow_skill_dir.mkdir(parents=True)
 
     for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
         (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
@@ -112,6 +114,30 @@ preferred_tool_order:
 # telegram
 
 Use `app.run` with `app_name=telegram`.
+""",
+        encoding="utf-8",
+    )
+    (partyflow_skill_dir / "SKILL.md").write_text(
+        """---
+name: partyflow
+description: "PartyFlow bot operations."
+triggers:
+  - partyflow
+  - отправь в partyflow
+tool_names:
+  - credentials.list
+  - credentials.request
+  - app.run
+app_names:
+  - partyflow
+preferred_tool_order:
+  - credentials.list
+  - credentials.request
+  - app.run
+---
+# partyflow
+
+Use `app.run` with `app_name=partyflow`.
 """,
         encoding="utf-8",
     )
@@ -155,7 +181,9 @@ async def test_implicit_skill_first_filters_tools_and_logs_route_metadata(tmp_pa
             .scalars()
             .all()
         )
-        plan_payload = json.loads([event for event in events if event.event_type == "turn.plan"][0].payload_json)
+        plan_payload = json.loads(
+            [event for event in events if event.event_type == "turn.plan"][0].payload_json
+        )
         assert plan_payload["selected_skill_names"] == ["telegram"]
         assert plan_payload["inferred_skill_names"] == ["telegram"]
         assert plan_payload["explicit_skill_mentions"] == []
@@ -242,6 +270,57 @@ async def test_implicit_skill_first_missing_credentials_returns_secure_envelope(
     await engine.dispose()
 
 
+async def test_implicit_partyflow_skill_routes_app_run_to_partyflow_surface(
+    tmp_path: Path,
+) -> None:
+    """Implicit PartyFlow intent should narrow app.run to the PartyFlow app surface."""
+
+    settings, engine, factory = await _prepare_db(tmp_path, "skill_first_partyflow.db")
+    provider = MockLLMProvider([LLMResponse.final("partyflow ready")])
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=_tool_registry_with_app_results(),
+            llm_provider=provider,
+            llm_max_iterations=1,
+        )
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-implicit-partyflow-route",
+            message="отправь в partyflow",
+        )
+
+        assert result.envelope.action == "finalize"
+        assert provider.requests
+        request = provider.requests[0]
+        assert [tool.name for tool in request.available_tools] == [
+            "credentials.list",
+            "credentials.request",
+            "app.run",
+        ]
+        app_tool = next(tool for tool in request.available_tools if tool.name == "app.run")
+        properties = app_tool.parameters_schema.get("properties")
+        assert isinstance(properties, dict)
+        app_name_schema = properties.get("app_name")
+        assert isinstance(app_name_schema, dict)
+        assert app_name_schema.get("const") == "partyflow"
+
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        plan_payload = json.loads(
+            [event for event in events if event.event_type == "turn.plan"][0].payload_json
+        )
+        assert plan_payload["selected_skill_names"] == ["partyflow"]
+        assert plan_payload["inferred_skill_names"] == ["partyflow"]
+
+    await engine.dispose()
+
+
 async def test_implicit_skill_first_successful_app_run_finishes_turn(tmp_path: Path) -> None:
     """Implicit Telegram flow should execute app.run and finalize after provider response."""
 
@@ -286,7 +365,9 @@ async def test_implicit_skill_first_successful_app_run_finishes_turn(tmp_path: P
         assert result.envelope.message == "telegram ok"
         assert len(provider.requests) == 2
         second_history = provider.requests[1].history
-        assert any(message.role == "tool" and message.tool_name == "app.run" for message in second_history)
+        assert any(
+            message.role == "tool" and message.tool_name == "app.run" for message in second_history
+        )
 
         events = (
             (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))

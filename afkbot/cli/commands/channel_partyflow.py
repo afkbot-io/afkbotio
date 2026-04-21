@@ -37,7 +37,7 @@ from afkbot.cli.commands.inspection_shared import (
     render_tool_access_brief,
 )
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
-from afkbot.cli.presentation.prompt_i18n import PromptLanguage
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg
 from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.channel_routing import ChannelBindingRule
 from afkbot.services.channel_routing.contracts import SessionPolicy
@@ -229,12 +229,12 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 value=ingress_mode,
                 interactive=interactive,
                 prompt_en="PartyFlow ingress mode",
-                prompt_ru="Режим ingress для PartyFlow",
+                prompt_ru="Режим входящих событий PartyFlow",
                 default="webhook",
                 allowed=_PARTYFLOW_INGRESS_MODES,
                 lang=prompt_language,
                 detail_en="PartyFlow polling is not available here yet; webhook is the only supported mode.",
-                detail_ru="PartyFlow polling здесь пока недоступен; webhook сейчас единственный поддерживаемый режим.",
+                detail_ru="Polling для PartyFlow здесь пока недоступен; сейчас поддерживается только webhook.",
             )
             resolved_trigger_mode = resolve_channel_choice(
                 value=trigger_mode,
@@ -245,7 +245,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 allowed=_PARTYFLOW_TRIGGER_MODES,
                 lang=prompt_language,
                 detail_en="This mirrors the PartyFlow webhook subscription trigger: reply to all messages, only mentions, or keyword matches.",
-                detail_ru="Это повторяет trigger у webhook subscription в PartyFlow: отвечать на все сообщения, только на mentions или по ключевым словам.",
+                detail_ru="Это повторяет режим срабатывания подписки webhook в PartyFlow: отвечать на все сообщения, только на упоминания или по ключевым словам.",
             )
             resolved_trigger_keywords = (
                 _split_csv_patterns(
@@ -257,7 +257,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         default=None,
                         lang=prompt_language,
                         detail_en="Comma-separated keywords that should trigger AFKBOT when PartyFlow trigger mode is `keywords`.",
-                        detail_ru="Ключевые слова через запятую, по которым AFKBOT должен срабатывать в режиме `keywords`.",
+                        detail_ru="Ключевые слова через запятую, по которым AFKBOT должен срабатывать в режиме `keywords`. Каждое слово должно быть длиной от 2 до 100 символов.",
                     )
                 )
                 if resolved_trigger_mode == "keywords"
@@ -267,23 +267,23 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 value=include_context,
                 interactive=interactive,
                 prompt_en="Include PartyFlow context?",
-                prompt_ru="Подтягивать context из PartyFlow?",
+                prompt_ru="Подтягивать контекст из PartyFlow?",
                 default=True,
                 lang=prompt_language,
                 detail_en="When enabled, the webhook payload should include recent channel messages so AFKBOT sees short local history without extra read API calls.",
-                detail_ru="Если включено, webhook payload должен нести недавние сообщения канала, чтобы AFKBOT видел короткую локальную историю без дополнительных read API вызовов.",
+                detail_ru="Если включено, payload webhook должен содержать недавние сообщения канала, чтобы AFKBOT видел короткую локальную историю без дополнительных вызовов API чтения.",
             )
             resolved_context_size = resolve_channel_int(
                 value=context_size,
                 interactive=interactive and resolved_include_context,
                 prompt_en="PartyFlow context size",
-                prompt_ru="Размер PartyFlow context",
+                prompt_ru="Размер контекста PartyFlow",
                 default=8,
                 lang=prompt_language,
                 min_value=1,
                 max_value=50,
                 detail_en="How many recent PartyFlow messages should be attached to each webhook delivery.",
-                detail_ru="Сколько последних сообщений PartyFlow должно прикладываться к каждой webhook delivery.",
+                detail_ru="Сколько последних сообщений PartyFlow нужно прикладывать к каждой доставке webhook.",
             )
             resolved_reply_mode = resolve_channel_choice(
                 value=reply_mode,
@@ -294,17 +294,17 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 allowed=_PARTYFLOW_REPLY_MODES,
                 lang=prompt_language,
                 detail_en="`same_conversation` replies back into the same PartyFlow channel/thread; `disabled` keeps the channel ingress-only.",
-                detail_ru="`same_conversation` отвечает обратно в тот же канал/тред PartyFlow; `disabled` оставляет канал только для ingress.",
+                detail_ru="`same_conversation` отправляет ответ обратно в тот же канал или тред PartyFlow; `disabled` оставляет канал только входящим.",
             )
             resolved_ingress_enabled = resolve_channel_bool(
                 value=ingress_batch_enabled,
                 interactive=interactive,
                 prompt_en="Enable ingress batching?",
-                prompt_ru="Включить batching входящих webhook-сообщений?",
+                prompt_ru="Включить пакетирование входящих webhook-сообщений?",
                 default=False,
                 lang=prompt_language,
                 detail_en="Batching waits for a short quiet window and merges bursts of inbound webhook messages into one turn.",
-                detail_ru="Batching ждёт короткое окно тишины и объединяет всплески входящих webhook-сообщений в один turn.",
+                detail_ru="Пакетирование ждёт короткое окно тишины и объединяет серию входящих webhook-сообщений в один ход агента.",
             )
             resolved_ingress_batch = build_ingress_batch_config(
                 enabled=resolved_ingress_enabled,
@@ -312,7 +312,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=ingress_debounce_ms,
                     interactive=interactive and resolved_ingress_enabled,
                     prompt_en="Ingress debounce (ms)",
-                    prompt_ru="Ingress debounce (мс)",
+                    prompt_ru="Задержка пакетирования (мс)",
                     default=1500,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
@@ -322,7 +322,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=ingress_cooldown_sec,
                     interactive=interactive and resolved_ingress_enabled,
                     prompt_en="Ingress cooldown (sec)",
-                    prompt_ru="Ingress cooldown (сек)",
+                    prompt_ru="Пауза между пакетами (сек)",
                     default=0,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
@@ -332,7 +332,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=ingress_max_batch_size,
                     interactive=interactive and resolved_ingress_enabled,
                     prompt_en="Ingress max batch size",
-                    prompt_ru="Максимальный размер ingress batch",
+                    prompt_ru="Максимальный размер входящего пакета",
                     default=20,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
@@ -342,7 +342,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=ingress_max_buffer_chars,
                     interactive=interactive and resolved_ingress_enabled,
                     prompt_en="Ingress max buffer chars",
-                    prompt_ru="Максимальный размер ingress buffer в символах",
+                    prompt_ru="Максимальный размер буфера в символах",
                     default=12000,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -398,20 +398,64 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             settings=settings, endpoint_id=saved.endpoint_id
         )
         typer.echo(
-            "PartyFlow channel created "
-            f"(id={saved.endpoint_id}, trigger_mode={saved.trigger_mode}, "
-            f"ingress_batch={saved.ingress_batch.enabled}, reply_mode={saved.reply_mode})."
+            msg(
+                prompt_language,
+                en=(
+                    "PartyFlow channel created "
+                    f"(id={saved.endpoint_id}, trigger_mode={saved.trigger_mode}, "
+                    f"ingress_batch={saved.ingress_batch.enabled}, reply_mode={saved.reply_mode})."
+                ),
+                ru=(
+                    "Канал PartyFlow создан "
+                    f"(id={saved.endpoint_id}, trigger_mode={saved.trigger_mode}, "
+                    f"ingress_batch={saved.ingress_batch.enabled}, reply_mode={saved.reply_mode})."
+                ),
+            )
         )
         if saved.trigger_keywords:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
         typer.echo(f"- webhook_url: {webhook_url or 'unavailable'}")
         typer.echo(
-            "- configure PartyFlow subscription event_types: MESSAGE_CREATED, MESSAGE_UPDATED"
+            msg(
+                prompt_language,
+                en="- configure PartyFlow subscription event_types: MESSAGE_CREATED, MESSAGE_UPDATED",
+                ru="- настройте в подписке PartyFlow event_types: MESSAGE_CREATED, MESSAGE_UPDATED",
+            )
         )
-        typer.echo(f"- configure PartyFlow subscription trigger: {saved.trigger_mode}")
         typer.echo(
-            f"- configure PartyFlow subscription include_context/context_size: {saved.include_context}/{saved.context_size}"
+            msg(
+                prompt_language,
+                en=f"- configure PartyFlow subscription trigger: {saved.trigger_mode}",
+                ru=f"- настройте в подписке PartyFlow режим срабатывания: {saved.trigger_mode}",
+            )
         )
+        typer.echo(
+            msg(
+                prompt_language,
+                en=(
+                    "- configure PartyFlow subscription include_context/context_size: "
+                    f"{saved.include_context}/{saved.context_size}"
+                ),
+                ru=(
+                    "- настройте в подписке PartyFlow include_context/context_size: "
+                    f"{saved.include_context}/{saved.context_size}"
+                ),
+            )
+        )
+        if webhook_url is None:
+            typer.echo(
+                msg(
+                    prompt_language,
+                    en=(
+                        "- webhook_url is unavailable until `AFKBOT_PUBLIC_CHAT_API_URL` points "
+                        "to a public HTTPS base URL."
+                    ),
+                    ru=(
+                        "- webhook_url недоступен, пока `AFKBOT_PUBLIC_CHAT_API_URL` не указывает "
+                        "на публичный HTTPS base URL."
+                    ),
+                )
+            )
         reload_install_managed_runtime_notice(settings)
 
     @partyflow_app.command("update")
@@ -549,7 +593,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 allowed=_PARTYFLOW_TRIGGER_MODES,
                 lang=prompt_language,
                 detail_en="This mirrors the PartyFlow webhook subscription trigger: reply to all messages, only mentions, or keyword matches.",
-                detail_ru="Это повторяет trigger у webhook subscription в PartyFlow: отвечать на все сообщения, только на mentions или по ключевым словам.",
+                detail_ru="Это повторяет режим срабатывания подписки webhook в PartyFlow: отвечать на все сообщения, только на упоминания или по ключевым словам.",
             )
             resolved_trigger_keywords = _resolve_trigger_keywords(
                 interactive=interactive,
@@ -564,11 +608,11 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=None,
                     interactive=True,
                     prompt_en="Include PartyFlow context?",
-                    prompt_ru="Подтягивать context из PartyFlow?",
+                    prompt_ru="Подтягивать контекст из PartyFlow?",
                     default=current.include_context,
                     lang=prompt_language,
                     detail_en="When enabled, the webhook payload should include recent channel messages so AFKBOT sees short local history without extra read API calls.",
-                    detail_ru="Если включено, webhook payload должен нести недавние сообщения канала, чтобы AFKBOT видел короткую локальную историю без дополнительных read API вызовов.",
+                    detail_ru="Если включено, payload webhook должен содержать недавние сообщения канала, чтобы AFKBOT видел короткую локальную историю без дополнительных вызовов API чтения.",
                 )
                 if interactive
                 else (current.include_context if include_context is None else include_context)
@@ -578,13 +622,13 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=None if interactive else context_size,
                     interactive=interactive and resolved_include_context,
                     prompt_en="PartyFlow context size",
-                    prompt_ru="Размер PartyFlow context",
+                    prompt_ru="Размер контекста PartyFlow",
                     default=current.context_size,
                     lang=prompt_language,
                     min_value=1,
                     max_value=50,
                     detail_en="How many recent PartyFlow messages should be attached to each webhook delivery.",
-                    detail_ru="Сколько последних сообщений PartyFlow должно прикладываться к каждой webhook delivery.",
+                    detail_ru="Сколько последних сообщений PartyFlow нужно прикладывать к каждой доставке webhook.",
                 )
                 if resolved_include_context
                 else current.context_size
@@ -598,7 +642,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 allowed=_PARTYFLOW_REPLY_MODES,
                 lang=prompt_language,
                 detail_en="`same_conversation` replies back into the same PartyFlow channel/thread; `disabled` keeps the channel ingress-only.",
-                detail_ru="`same_conversation` отвечает обратно в тот же канал/тред PartyFlow; `disabled` оставляет канал только для ingress.",
+                detail_ru="`same_conversation` отправляет ответ обратно в тот же канал или тред PartyFlow; `disabled` оставляет канал только входящим.",
             )
             resolved_tool_profile = (
                 normalize_channel_tool_profile(
@@ -620,11 +664,11 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     value=None,
                     interactive=True,
                     prompt_en="Enable ingress batching?",
-                    prompt_ru="Включить batching входящих webhook-сообщений?",
+                    prompt_ru="Включить пакетирование входящих webhook-сообщений?",
                     default=current.ingress_batch.enabled,
                     lang=prompt_language,
                     detail_en="Batching waits for a short quiet window and merges bursts of inbound webhook messages into one turn.",
-                    detail_ru="Batching ждёт короткое окно тишины и объединяет всплески входящих webhook-сообщений в один turn.",
+                    detail_ru="Пакетирование ждёт короткое окно тишины и объединяет серию входящих webhook-сообщений в один ход агента.",
                 )
                 if interactive
                 else (
@@ -641,7 +685,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         value=None if interactive else ingress_debounce_ms,
                         interactive=interactive and resolved_ingress_enabled,
                         prompt_en="Ingress debounce (ms)",
-                        prompt_ru="Ingress debounce (мс)",
+                        prompt_ru="Задержка пакетирования (мс)",
                         default=current.ingress_batch.debounce_ms,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
@@ -655,7 +699,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         value=None if interactive else ingress_cooldown_sec,
                         interactive=interactive and resolved_ingress_enabled,
                         prompt_en="Ingress cooldown (sec)",
-                        prompt_ru="Ingress cooldown (сек)",
+                        prompt_ru="Пауза между пакетами (сек)",
                         default=current.ingress_batch.cooldown_sec,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
@@ -669,7 +713,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         value=None if interactive else ingress_max_batch_size,
                         interactive=interactive and resolved_ingress_enabled,
                         prompt_en="Ingress max batch size",
-                        prompt_ru="Максимальный размер ingress batch",
+                        prompt_ru="Максимальный размер входящего пакета",
                         default=current.ingress_batch.max_batch_size,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
@@ -683,7 +727,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         value=None if interactive else ingress_max_buffer_chars,
                         interactive=interactive and resolved_ingress_enabled,
                         prompt_en="Ingress max buffer chars",
-                        prompt_ru="Максимальный размер ingress buffer в символах",
+                        prompt_ru="Максимальный размер буфера в символах",
                         default=current.ingress_batch.max_buffer_chars,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -756,15 +800,32 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             reload_install_managed_runtime_notice(settings)
             return
         typer.echo(
-            f"PartyFlow channel `{saved.endpoint_id}` updated for profile `{saved.profile_id}` "
-            f"(credential_profile={saved.credential_profile_key}, account_id={saved.account_id}, "
-            f"trigger_mode={saved.trigger_mode}, reply_mode={saved.reply_mode}, "
-            f"tool_profile={saved.tool_profile}, ingress_batch={saved.ingress_batch.enabled}, enabled={saved.enabled})."
+            msg(
+                prompt_language,
+                en=(
+                    f"PartyFlow channel `{saved.endpoint_id}` updated for profile `{saved.profile_id}` "
+                    f"(credential_profile={saved.credential_profile_key}, account_id={saved.account_id}, "
+                    f"trigger_mode={saved.trigger_mode}, reply_mode={saved.reply_mode}, "
+                    f"tool_profile={saved.tool_profile}, ingress_batch={saved.ingress_batch.enabled}, enabled={saved.enabled})."
+                ),
+                ru=(
+                    f"Канал PartyFlow `{saved.endpoint_id}` обновлён для профиля `{saved.profile_id}` "
+                    f"(credential_profile={saved.credential_profile_key}, account_id={saved.account_id}, "
+                    f"trigger_mode={saved.trigger_mode}, reply_mode={saved.reply_mode}, "
+                    f"tool_profile={saved.tool_profile}, ingress_batch={saved.ingress_batch.enabled}, enabled={saved.enabled})."
+                ),
+            )
         )
         if saved.trigger_keywords:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
         if sync_binding:
-            typer.echo(f"Matching binding `{saved.endpoint_id}` was also updated.")
+            typer.echo(
+                msg(
+                    prompt_language,
+                    en=f"Matching binding `{saved.endpoint_id}` was also updated.",
+                    ru=f"Связанная привязка `{saved.endpoint_id}` тоже обновлена.",
+                )
+            )
         reload_install_managed_runtime_notice(settings)
 
     @partyflow_app.command("list")
@@ -928,13 +989,9 @@ def resolve_partyflow_webhook_url(*, settings: Settings, endpoint_id: str) -> st
     """Return best-effort PartyFlow webhook URL for one endpoint."""
 
     public_chat_api_url = (settings.public_chat_api_url or "").strip()
-    if public_chat_api_url:
-        base_url = public_chat_api_url.rstrip("/")
-    else:
-        host = settings.runtime_host.strip()
-        if not host or host in {"0.0.0.0", "::", "*"}:
-            return None
-        base_url = f"http://{host}:{int(settings.runtime_port) + 1}"
+    if not public_chat_api_url:
+        return None
+    base_url = public_chat_api_url.rstrip("/")
     return f"{base_url}/v1/channels/partyflow/{endpoint_id}/webhook"
 
 
@@ -1036,6 +1093,6 @@ def _resolve_trigger_keywords(
         default=default_keywords,
         lang=lang,
         detail_en="Comma-separated keywords that should trigger AFKBOT when PartyFlow trigger mode is `keywords`.",
-        detail_ru="Ключевые слова через запятую, по которым AFKBOT должен срабатывать в режиме `keywords`.",
+        detail_ru="Ключевые слова через запятую, по которым AFKBOT должен срабатывать в режиме `keywords`. Каждое слово должно быть длиной от 2 до 100 символов.",
     )
     return _split_csv_patterns(raw_keywords)

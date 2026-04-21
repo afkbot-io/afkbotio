@@ -136,3 +136,50 @@ def test_channel_partyflow_add_persists_keyword_trigger_configuration(
     shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-keywords"]).stdout
     assert "- trigger_mode: keywords" in shown
     assert "- trigger_keywords: billing, urgent" in shown
+
+
+def test_channel_partyflow_show_marks_webhook_url_unavailable_without_public_base_url(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow show should not suggest a localhost webhook URL when no public base URL is configured."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-no-public-url",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-no-public-url",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-no-public-url"]).stdout
+    assert "- webhook_url: unavailable" in shown

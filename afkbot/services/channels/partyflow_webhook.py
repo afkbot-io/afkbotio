@@ -489,6 +489,7 @@ class PartyFlowWebhookService:
         rendered_text = _render_partyflow_ingress_text(
             text=text,
             payload=payload,
+            include_context=self._endpoint.include_context,
         )
         if not rendered_text.strip():
             return None
@@ -524,7 +525,10 @@ class PartyFlowWebhookService:
         if self._endpoint.trigger_mode == "mention":
             return self._bot_id is not None and self._bot_id in set(mentions)
         lowered = text.lower()
-        return any(keyword in lowered for keyword in self._endpoint.trigger_keywords)
+        return any(
+            _matches_keyword_token(text=lowered, keyword=keyword)
+            for keyword in self._endpoint.trigger_keywords
+        )
 
     def _verify_signature(self, *, headers: Mapping[str, str], body: bytes) -> bool:
         signing_secret = self._signing_secret
@@ -539,7 +543,7 @@ class PartyFlowWebhookService:
         except ValueError:
             return False
         now_ts = int(time.time())
-        if ts_value > now_ts + 300:
+        if abs(now_ts - ts_value) > 300:
             return False
         expected_v1 = (
             "sha256="
@@ -602,8 +606,11 @@ def _render_partyflow_ingress_text(
     *,
     text: str,
     payload: Mapping[str, object],
+    include_context: bool,
 ) -> str:
     content = text.strip()
+    if not include_context:
+        return content
     messages = _extract_context_messages(payload)
     if not messages:
         return content
@@ -706,3 +713,20 @@ def _extract_retry_after_sec(exc: Exception) -> int | None:
     if isinstance(retry_after, str) and retry_after.isdigit():
         return int(retry_after)
     return None
+
+
+def _matches_keyword_token(*, text: str, keyword: str) -> bool:
+    needle = keyword.strip().lower()
+    if not needle:
+        return False
+    start = 0
+    while True:
+        index = text.find(needle, start)
+        if index < 0:
+            return False
+        before_ok = index == 0 or not text[index - 1].isalnum()
+        after_index = index + len(needle)
+        after_ok = after_index >= len(text) or not text[after_index].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = index + 1

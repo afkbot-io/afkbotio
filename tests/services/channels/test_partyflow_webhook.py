@@ -128,6 +128,7 @@ def _endpoint(
     trigger_mode: str = "mention",
     ingress_batch: ChannelIngressBatchConfig | None = None,
     reply_mode: str = "same_conversation",
+    trigger_keywords: tuple[str, ...] = (),
 ) -> PartyFlowWebhookEndpointConfig:
     return PartyFlowWebhookEndpointConfig(
         endpoint_id="partyflow-main",
@@ -135,24 +136,31 @@ def _endpoint(
         credential_profile_key="partyflow-main",
         account_id="partyflow-bot",
         trigger_mode=trigger_mode,
+        trigger_keywords=trigger_keywords,
         ingress_batch=ingress_batch or ChannelIngressBatchConfig(),
         reply_mode=reply_mode,
     )
 
 
-def _build_headers(*, secret: bytes, body: bytes, delivery_id: str) -> dict[str, str]:
-    timestamp = str(int(time.time()))
+def _build_headers(
+    *,
+    secret: bytes,
+    body: bytes,
+    delivery_id: str,
+    timestamp: int | None = None,
+) -> dict[str, str]:
+    timestamp_value = str(int(time.time()) if timestamp is None else int(timestamp))
     signature = (
         "sha256="
         + hmac.new(
             secret,
-            f"v1:{timestamp}:".encode("utf-8") + body,
+            f"v1:{timestamp_value}:".encode("utf-8") + body,
             hashlib.sha256,
         ).hexdigest()
     )
     return {
         "x-partyflow-delivery-id": delivery_id,
-        "x-partyflow-timestamp": timestamp,
+        "x-partyflow-timestamp": timestamp_value,
         "x-partyflow-signature": signature,
     }
 
@@ -340,3 +348,114 @@ async def test_partyflow_webhook_ignores_self_authored_messages(
         endpoint_id="partyflow-main"
     )
     assert pending == []
+
+
+async def test_partyflow_webhook_rejects_old_replay_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Webhook runtime should reject stale signed requests older than the allowed window."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_replay.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-1",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "@bot stale replay",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-stale",
+                timestamp=int(time.time()) - 301,
+            ),
+            body=body,
+        )
+    finally:
+        await service.stop()
+
+    assert status == 401
+    assert response == {
+        "ok": False,
+        "error_code": "partyflow_invalid_signature",
+        "reason": "Invalid PartyFlow webhook signature",
+    }
+
+
+async def test_partyflow_webhook_keyword_trigger_uses_token_boundaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keyword mode should not trigger on substring matches like `fail` inside `failover`."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_keywords.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(
+            trigger_mode="keywords",
+            trigger_keywords=("fail",),
+            reply_mode="disabled",
+        ),
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-1",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "failover is starting now",
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-keyword-boundary",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}

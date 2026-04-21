@@ -42,6 +42,9 @@ TELETHON_WATCHER_MESSAGE_CHARS_MIN = 32
 TELETHON_WATCHER_MESSAGE_CHARS_MAX = 4_000
 PARTYFLOW_CONTEXT_SIZE_MIN = 1
 PARTYFLOW_CONTEXT_SIZE_MAX = 50
+PARTYFLOW_TRIGGER_KEYWORDS_MAX = 20
+PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MIN = 2
+PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MAX = 100
 TelegramGroupTriggerMode = Literal["mention_or_reply", "reply_only", "mention_only", "all_messages"]
 TelethonReplyMode = Literal["same_chat", "disabled"]
 TelethonGroupInvocationMode = Literal[
@@ -471,6 +474,21 @@ class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
     def _validate_trigger_config(self) -> "PartyFlowWebhookEndpointConfig":
         if self.trigger_mode == "keywords" and not self.trigger_keywords:
             raise ValueError("trigger_keywords are required when trigger_mode=keywords")
+        if len(self.trigger_keywords) > PARTYFLOW_TRIGGER_KEYWORDS_MAX:
+            raise ValueError(
+                f"trigger_keywords support at most {PARTYFLOW_TRIGGER_KEYWORDS_MAX} values"
+            )
+        for keyword in self.trigger_keywords:
+            if not (
+                PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MIN
+                <= len(keyword)
+                <= PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MAX
+            ):
+                raise ValueError(
+                    "each trigger keyword must be between "
+                    f"{PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MIN} and "
+                    f"{PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MAX} characters"
+                )
         return self
 
     def storage_config(self) -> dict[str, object]:

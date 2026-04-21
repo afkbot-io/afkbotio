@@ -157,11 +157,11 @@ def render_channel_add_intro(
                 ),
                 ru=(
                     "Настройка PartyFlow webhook-канала\n"
-                    f"- Этот мастер создаёт один endpoint для outgoing webhook из PartyFlow.\n"
+                    f"- Этот мастер создаёт один endpoint для исходящих webhook-событий PartyFlow.\n"
                     f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update` и `delete`. "
                     f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
-                    "- Telegram-style polling здесь не поддерживается; webhook сейчас единственный ingress mode.\n"
-                    "- Понадобятся bot token и webhook signing secret из UI PartyFlow."
+                    "- Polling в стиле Telegram здесь не поддерживается; сейчас доступен только режим webhook.\n"
+                    "- Понадобятся токен бота и секрет подписи webhook из UI PartyFlow."
                 ),
             )
         )
