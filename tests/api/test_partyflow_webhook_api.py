@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from afkbot.api.app import create_app
+from afkbot.services.channels.endpoint_contracts import PartyFlowWebhookEndpointConfig
+from afkbot.services.channels.endpoint_service import ChannelEndpointServiceError
 
 
 def test_partyflow_webhook_route_delegates_to_registered_runtime(monkeypatch: MonkeyPatch) -> None:
@@ -54,14 +56,28 @@ def test_partyflow_webhook_route_delegates_to_registered_runtime(monkeypatch: Mo
     assert b'"event_type":"MESSAGE_CREATED"' in captured["body"]
 
 
-def test_partyflow_webhook_route_returns_404_without_registered_runtime(
+def test_partyflow_webhook_route_returns_503_for_configured_but_inactive_runtime(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """API webhook route should fail closed when the endpoint runtime is not active."""
+    """API webhook route should keep PartyFlow retries alive when endpoint config exists."""
 
     monkeypatch.setattr(
         "afkbot.api.routes_partyflow_webhooks.get_partyflow_webhook_runtime_registry",
         lambda _settings: type("_Registry", (), {"get": lambda self, endpoint_id: None})(),
+    )
+
+    class _EndpointService:
+        async def get(self, *, endpoint_id: str) -> object:
+            return PartyFlowWebhookEndpointConfig(
+                endpoint_id=endpoint_id,
+                profile_id="default",
+                credential_profile_key=endpoint_id,
+                account_id="partyflow-bot",
+            )
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_channel_endpoint_service",
+        lambda _settings: _EndpointService(),
     )
 
     client = TestClient(create_app())
@@ -70,11 +86,87 @@ def test_partyflow_webhook_route_returns_404_without_registered_runtime(
         json={"event_type": "MESSAGE_CREATED"},
     )
 
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    assert response.json() == {
+        "ok": False,
+        "error_code": "partyflow_channel_not_active",
+        "reason": "PartyFlow channel runtime is not active: missing",
+        "retry_after": 1,
+    }
+
+
+def test_partyflow_webhook_route_returns_404_for_unknown_endpoint(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """API webhook route should keep 404 only for endpoints that are not configured at all."""
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_partyflow_webhook_runtime_registry",
+        lambda _settings: type("_Registry", (), {"get": lambda self, endpoint_id: None})(),
+    )
+
+    class _MissingEndpointService:
+        async def get(self, *, endpoint_id: str) -> object:
+            raise ChannelEndpointServiceError(
+                error_code="channel_endpoint_not_found",
+                reason=f"Channel endpoint not found: {endpoint_id}",
+            )
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_channel_endpoint_service",
+        lambda _settings: _MissingEndpointService(),
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/v1/channels/partyflow/unknown/webhook",
+        json={"event_type": "MESSAGE_CREATED"},
+    )
+
     assert response.status_code == 404
     assert response.json() == {
         "detail": {
             "ok": False,
-            "error_code": "partyflow_channel_not_active",
-            "reason": "PartyFlow channel runtime is not active: missing",
+            "error_code": "partyflow_channel_not_found",
+            "reason": "PartyFlow channel endpoint is not configured: unknown",
         }
     }
+
+
+def test_partyflow_webhook_route_sets_retry_after_header_from_runtime_payload(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """API webhook route should surface Retry-After when runtime asks PartyFlow to retry later."""
+
+    class _FakeRuntime:
+        async def handle_webhook(
+            self,
+            *,
+            headers: dict[str, str],
+            body: bytes,
+        ) -> tuple[int, dict[str, object]]:
+            return 429, {"ok": False, "retry_after": 7}
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_partyflow_webhook_runtime_registry",
+        lambda _settings: type(
+            "_Registry",
+            (),
+            {"get": lambda self, endpoint_id: _FakeRuntime() if endpoint_id == "partyflow-main" else None},
+        )(),
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/v1/channels/partyflow/partyflow-main/webhook",
+        headers={
+            "X-PartyFlow-Delivery-Id": "01923f5c-a2c8-7890-b4d0-5a2c8a4b6e0c",
+            "X-PartyFlow-Timestamp": "1744934400",
+            "X-PartyFlow-Signature": "sha256=test",
+        },
+        json={"event_type": "MESSAGE_CREATED"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "7"

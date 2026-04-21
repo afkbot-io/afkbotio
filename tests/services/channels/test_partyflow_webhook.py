@@ -538,3 +538,71 @@ async def test_partyflow_webhook_keyword_trigger_uses_token_boundaries(
 
     assert status == 200
     assert response == {"ok": True, "ignored": True}
+
+
+async def test_partyflow_webhook_non_batched_failures_schedule_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default non-batched processing should still retry pending ingress after background failure."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_retry.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    retry_calls: list[int] = []
+
+    async def fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        raise RuntimeError("synthetic processing failure")
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    async def fake_schedule_pending_retry(*, retry_after_sec: int) -> None:
+        retry_calls.append(retry_after_sec)
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    monkeypatch.setattr(service, "_schedule_pending_retry", fake_schedule_pending_retry)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-retry-1",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "@bot retry me",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-retry-1",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 202
+    assert response == {"accepted": True}
+    assert retry_calls == [5]
+    pending = await get_channel_ingress_pending_service(settings).list_pending(
+        endpoint_id="partyflow-main"
+    )
+    assert len(pending) == 1
+    assert pending[0].event_key.startswith("event:")

@@ -194,7 +194,29 @@ class PartyFlowWebhookService:
                     event_key=dedup_event_key,
                 )
                 return 200, {"ok": True, "ignored": True}
-            await self._ingress_coalescer.enqueue(ingress_event)
+            persisted = await get_channel_ingress_pending_service(self._settings).record_pending(
+                event=ingress_event
+            )
+            if not persisted:
+                await self._schedule_pending_retry(retry_after_sec=1)
+                return 200, {"ok": True, "duplicate": True}
+            try:
+                self._queue.put_nowait(_QueuedWebhookEvent(ingress_event=ingress_event))
+            except asyncio.QueueFull:
+                await get_channel_ingress_pending_service(self._settings).release_event(
+                    endpoint_id=self._endpoint.endpoint_id,
+                    event_key=ingress_event.event_key,
+                )
+                await journal.release_claim(
+                    endpoint_id=self._endpoint.endpoint_id,
+                    event_key=dedup_event_key,
+                )
+                return 429, {
+                    "ok": False,
+                    "error_code": "partyflow_queue_full",
+                    "reason": "PartyFlow webhook queue is full",
+                    "retry_after": 1,
+                }
         except PartyFlowWebhookServiceError as exc:
             await journal.release_claim(
                 endpoint_id=self._endpoint.endpoint_id,
@@ -222,6 +244,7 @@ class PartyFlowWebhookService:
         timestamp = headers.get("x-partyflow-timestamp", "").strip()
         material = timestamp.encode("utf-8") + b":" + body
         return "signed-payload:" + hashlib.sha256(material).hexdigest()
+
     async def _bootstrap_identity(self) -> None:
         """Resolve signing secret and bot identity before the service starts."""
 
@@ -274,11 +297,15 @@ class PartyFlowWebhookService:
                 await self._ingress_coalescer.enqueue(item.ingress_event)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                retry_after_sec = _extract_retry_after_sec(exc) or 5
+                await self._schedule_pending_retry(retry_after_sec=retry_after_sec)
                 _LOGGER.exception(
-                    "partyflow_webhook_event_failed endpoint_id=%s event_key=%s",
+                    "partyflow_webhook_event_failed endpoint_id=%s event_key=%s retry_after_sec=%s error=%s",
                     self._endpoint.endpoint_id,
                     item.ingress_event.event_key,
+                    retry_after_sec,
+                    f"{exc.__class__.__name__}: {exc}",
                 )
             finally:
                 self._queue.task_done()

@@ -289,3 +289,53 @@ def test_channel_partyflow_webhook_url_command_returns_copyable_url(
         shown.stdout.strip()
         == "https://bot.example.com/v1/channels/partyflow/ops-webhook-url/webhook"
     )
+
+
+def test_channel_partyflow_show_rejects_private_hostname_suffixes(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow show should not treat obvious private hostname suffixes as public webhook URLs."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+    monkeypatch.setenv("AFKBOT_PUBLIC_CHAT_API_URL", "https://bot.internal")
+    get_settings.cache_clear()
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-private-host",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-private-host",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-private-host"]).stdout
+    assert "- webhook_url: unavailable" in shown
+    assert "localhost/private" in shown

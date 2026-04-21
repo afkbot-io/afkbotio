@@ -73,6 +73,7 @@ from afkbot.settings import Settings, get_settings
 _PARTYFLOW_INGRESS_MODES = ("webhook",)
 _PARTYFLOW_TRIGGER_MODES = ("all", "mention", "keywords")
 _PARTYFLOW_REPLY_MODES = ("same_conversation", "disabled")
+_PRIVATE_HOST_SUFFIXES = (".internal", ".local", ".lan", ".home", ".localhost", ".test", ".invalid")
 
 
 def register_partyflow_commands(channel_app: typer.Typer) -> None:
@@ -1041,6 +1042,8 @@ def _resolve_partyflow_webhook_url(
         return None, "invalid_public_base_url"
     lowered_hostname = hostname.lower()
     if lowered_hostname in {"localhost", "127.0.0.1", "::1"}:
+        return None, "private_public_base_url"
+    if lowered_hostname.endswith(_PRIVATE_HOST_SUFFIXES):
         return None, "private_public_base_url"
     try:
         parsed_ip = ipaddress.ip_address(lowered_hostname)
