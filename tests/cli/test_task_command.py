@@ -331,6 +331,39 @@ def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
     assert captured["actor_ref"] == "papercliper:reviewer"
 
 
+def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(monkeypatch) -> None:
+    """Explicit human actor type should not be silently reinterpreted as an AI selector."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    async def _unexpected_list_review_tasks_payload(**kwargs):
+        raise AssertionError(f"list_review_tasks_payload should not be called: {kwargs}")
+
+    monkeypatch.setattr(module, "list_review_tasks_payload", _unexpected_list_review_tasks_payload)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "review-list",
+            "--actor-type",
+            "human",
+            "--actor-profile",
+            "papercliper",
+            "--actor-subagent",
+            "reviewer",
+        ],
+    )
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.stdout + (result.stderr or ""))
+    assert "require actor_type=ai_subagent" in output
+
+
 def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(monkeypatch) -> None:
     """Review request-changes should normalize structured actor and reassignment selectors."""
 

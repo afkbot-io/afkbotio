@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import datetime
 
+from click.core import ParameterSource
 import typer
 
 from afkbot.services.task_flow.cli_service import (
@@ -312,6 +313,7 @@ def register(app: typer.Typer) -> None:
         """List review queue tasks for one reviewer inbox."""
 
         resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
             actor_type=actor_type,
             actor_ref=actor_ref,
             actor_profile_id=actor_profile,
@@ -355,6 +357,7 @@ def register(app: typer.Typer) -> None:
         """Approve one task currently in review."""
 
         resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
             actor_type=actor_type,
             actor_ref=actor_ref,
             actor_profile_id=actor_profile,
@@ -422,6 +425,7 @@ def register(app: typer.Typer) -> None:
         """Request changes for one review task and move it back to blocked."""
 
         resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
             actor_type=actor_type,
             actor_ref=actor_ref,
             actor_profile_id=actor_profile,
@@ -981,6 +985,7 @@ def _resolve_cli_owner_inputs(
 
 def _resolve_review_actor_inputs(
     *,
+    ctx: typer.Context,
     actor_type: str,
     actor_ref: str | None,
     actor_profile_id: str | None,
@@ -993,7 +998,12 @@ def _resolve_review_actor_inputs(
         or (actor_subagent_name is not None and actor_subagent_name.strip())
     )
     effective_actor_type = actor_type
-    if structured_actor_present and actor_type == "human" and actor_ref is None:
+    if (
+        structured_actor_present
+        and actor_type == "human"
+        and actor_ref is None
+        and not _option_was_explicit(ctx, "actor_type")
+    ):
         effective_actor_type = None
     resolved_type, resolved_ref = _resolve_cli_owner_inputs(
         field_prefix="actor",
@@ -1009,6 +1019,15 @@ def _resolve_review_actor_inputs(
     if resolved_type is None or resolved_ref is None:
         raise typer.BadParameter("--actor-ref is required unless --actor-type=human")
     return resolved_type, resolved_ref
+
+
+def _option_was_explicit(ctx: typer.Context, param_name: str) -> bool:
+    """Return whether one Typer/Click option came from user input instead of the default."""
+
+    getter = getattr(ctx, "get_parameter_source", None)
+    if getter is None:
+        return False
+    return getter(param_name) is not ParameterSource.DEFAULT
 
 
 def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:

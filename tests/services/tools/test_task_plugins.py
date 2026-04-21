@@ -2990,3 +2990,225 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
         assert task_payload["owner_ref"] == "papercliper:reviewer"
     finally:
         await engine.dispose()
+
+
+async def test_task_review_list_supports_structured_ai_subagent_actor(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """task.review.list should accept structured actor selectors for ai_subagent inboxes."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="papercliper",
+            subagent_name="reviewer",
+            markdown="# Reviewer\n\nReview specialist.",
+        )
+        ctx = ToolContext(profile_id="papercliper", session_id="s-review-structured", run_id=2)
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        review_list_tool = registry.get("task.review.list")
+        assert create_tool is not None
+        assert update_tool is not None
+        assert review_list_tool is not None
+
+        task_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "title": "Structured review inbox",
+                    "description": "List review work for one structured subagent actor.",
+                    "owner_profile_id": "papercliper",
+                    "reviewer_profile_id": "papercliper",
+                    "reviewer_subagent_name": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert task_result.ok is True
+        task = task_result.payload["task"]
+        assert isinstance(task, dict)
+
+        mark_review_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "task_id": str(task["id"]),
+                    "status": "review",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert mark_review_result.ok is True
+
+        review_list_result = await review_list_tool.execute(
+            ctx,
+            review_list_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "actor_profile_id": "papercliper",
+                    "actor_subagent_name": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert review_list_result.ok is True
+        review_tasks = review_list_result.payload["review_tasks"]
+        assert isinstance(review_tasks, list)
+        assert [item["id"] for item in review_tasks] == [task["id"]]
+    finally:
+        await engine.dispose()
+
+
+async def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """task.review.list should fail closed when human actor_type conflicts with structured AI actor fields."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="papercliper",
+            subagent_name="reviewer",
+            markdown="# Reviewer\n\nReview specialist.",
+        )
+        ctx = ToolContext(profile_id="papercliper", session_id="s-review-structured-invalid", run_id=2)
+        review_list_tool = registry.get("task.review.list")
+        assert review_list_tool is not None
+
+        review_list_result = await review_list_tool.execute(
+            ctx,
+            review_list_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "actor_type": "human",
+                    "actor_profile_id": "papercliper",
+                    "actor_subagent_name": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert review_list_result.ok is False
+        assert review_list_result.error_code == "invalid_owner_type"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_list_and_board_support_structured_ai_owner_filters(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Read-only task views should accept structured owner selectors without manual owner_ref strings."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="papercliper",
+            subagent_name="reviewer",
+            markdown="# Reviewer\n\nReview specialist.",
+        )
+
+        ctx = ToolContext(profile_id="papercliper", session_id="s-list-board-structured", run_id=3)
+        create_tool = registry.get("task.create")
+        list_tool = registry.get("task.list")
+        board_tool = registry.get("task.board")
+        assert create_tool is not None
+        assert list_tool is not None
+        assert board_tool is not None
+
+        reviewer_task_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "title": "Review task",
+                    "description": "Owned by one structured reviewer subagent.",
+                    "owner_profile_id": "papercliper",
+                    "owner_subagent_name": "reviewer",
+                    "labels": ["queue"],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert reviewer_task_result.ok is True
+        reviewer_task = reviewer_task_result.payload["task"]
+        assert isinstance(reviewer_task, dict)
+
+        orchestrator_task_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "title": "Orchestrator task",
+                    "description": "Owned by the orchestrator profile directly.",
+                    "owner_profile_id": "papercliper",
+                    "labels": ["queue"],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert orchestrator_task_result.ok is True
+
+        list_result = await list_tool.execute(
+            ctx,
+            list_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "owner_profile_id": "papercliper",
+                    "owner_subagent_name": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert list_result.ok is True
+        listed_tasks = list_result.payload["tasks"]
+        assert isinstance(listed_tasks, list)
+        assert [item["id"] for item in listed_tasks] == [reviewer_task["id"]]
+
+        board_result = await board_tool.execute(
+            ctx,
+            board_tool.parse_params(
+                {
+                    "profile_key": "papercliper",
+                    "owner_profile_id": "papercliper",
+                    "owner_subagent_name": "reviewer",
+                    "labels": ["queue"],
+                    "limit_per_column": 5,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert board_result.ok is True
+        board = board_result.payload["board"]
+        assert isinstance(board, dict)
+        assert board["total_count"] == 1
+        todo_column = next(column for column in board["columns"] if column["id"] == "todo")
+        assert todo_column["count"] == 1
+        assert [item["id"] for item in todo_column["tasks"]] == [reviewer_task["id"]]
+    finally:
+        await engine.dispose()
