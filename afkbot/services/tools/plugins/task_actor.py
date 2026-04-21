@@ -21,10 +21,14 @@ def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
     """Return the canonical actor identity for task tools in the current runtime."""
 
     automation_graph = None
+    taskflow_payload = None
     if isinstance(ctx.runtime_metadata, dict):
         candidate = ctx.runtime_metadata.get("automation_graph")
         if isinstance(candidate, dict):
             automation_graph = candidate
+        taskflow_candidate = ctx.runtime_metadata.get("taskflow")
+        if isinstance(taskflow_candidate, dict):
+            taskflow_payload = taskflow_candidate
     if isinstance(automation_graph, dict):
         automation_id = automation_graph.get("automation_id")
         if isinstance(automation_id, int) and automation_id > 0:
@@ -35,6 +39,15 @@ def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
                     automation_id=automation_id,
                 ),
                 actor_session_id=None,
+            )
+    if isinstance(taskflow_payload, dict):
+        owner_type = str(taskflow_payload.get("owner_type") or "").strip()
+        owner_ref = str(taskflow_payload.get("owner_ref") or "").strip()
+        if owner_type == "ai_subagent" and owner_ref:
+            return TaskToolActorIdentity(
+                actor_type="ai_subagent",
+                actor_ref=owner_ref,
+                actor_session_id=ctx.session_id,
             )
     return TaskToolActorIdentity(
         actor_type="ai_profile",

@@ -9,6 +9,10 @@ from afkbot.services.subagents.contracts import (
     SubagentWaitResponse,
 )
 from afkbot.services.subagents.loader import SubagentLoader
+from afkbot.services.subagents.orchestration import (
+    build_subagent_session_orchestrator,
+    resolve_subagent_loop_settings,
+)
 from afkbot.services.subagents.profile_service import (
     ProfileSubagentRecord,
     ProfileSubagentService,
@@ -39,6 +43,8 @@ __all__ = [
     "SubagentRunAccepted",
     "SubagentRuntimePolicy",
     "SubagentRunner",
+    "build_subagent_session_orchestrator",
+    "resolve_subagent_loop_settings",
     "SubagentService",
     "SubagentTaskStatus",
     "SubagentWaitResponse",

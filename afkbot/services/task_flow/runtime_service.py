@@ -20,6 +20,17 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.subagents.loader import SubagentLoader
+from afkbot.services.subagents.orchestration import (
+    build_subagent_session_orchestrator,
+    resolve_subagent_loop_settings,
+)
+from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY
+from afkbot.services.task_flow.ai_executors import (
+    AI_SUBAGENT_OWNER_TYPE,
+    parse_ai_subagent_owner_ref,
+    resolve_ai_executor_profile_id,
+)
 from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
 from afkbot.services.task_flow.message_factory import (
@@ -104,9 +115,8 @@ class TaskFlowRuntimeService:
         self._maintenance_lock = asyncio.Lock()
         self._next_maintenance_run_at = 0.0
         self._next_runtime_history_prune_at = 0.0
-        self._session_runner_factory = session_runner_factory or _default_session_runner_factory(
-            self._settings
-        )
+        self._session_runner_factory_override = session_runner_factory
+        self._session_runner_factory = session_runner_factory or _default_session_runner_factory(self._settings)
 
     async def start(self) -> None:
         """Prepare storage resources when the runtime owns them."""
@@ -142,6 +152,7 @@ class TaskFlowRuntimeService:
         worker_id: str,
         limit: int = 25,
         profile_id: str | None = None,
+        owner_ref: str | None = None,
     ) -> int:
         """Release expired claims back into the backlog and mark their runs cancelled."""
 
@@ -154,6 +165,7 @@ class TaskFlowRuntimeService:
             expired_rows = await repo.list_expired_claimed_tasks(
                 now_utc=now_utc,
                 profile_id=profile_id,
+                owner_ref=owner_ref,
                 limit=max(1, limit),
             )
             for row in expired_rows:
@@ -235,12 +247,16 @@ class TaskFlowRuntimeService:
         now = asyncio.get_running_loop().time()
         if now < self._next_maintenance_run_at and now < self._next_runtime_history_prune_at:
             return
+        profile_id = _runtime_profile_id(self._settings)
+        owner_ref = _runtime_owner_ref(self._settings)
         async with self._maintenance_lock:
             now = asyncio.get_running_loop().time()
             if now >= self._next_maintenance_run_at:
                 self._next_maintenance_run_at = now + _maintenance_interval_sec(self._settings)
                 await self.sweep_expired_claims(
                     worker_id=worker_id,
+                    profile_id=profile_id,
+                    owner_ref=owner_ref,
                     limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
                 )
             if now >= self._next_runtime_history_prune_at:
@@ -278,26 +294,23 @@ class TaskFlowRuntimeService:
     async def _guard_ai_owned_plan_tasks(
         self,
         *,
-        session: AsyncSession,
         repo: TaskFlowRepository,
         worker_id: str,
-        profile_id: str,
+        profile_id: str | None,
         owner_ref: str | None,
         limit: int,
     ) -> int:
         """Move AI-owned PLAN tasks to blocked so they are visible to operators."""
 
         moved_count = 0
-        rows = await repo.list_tasks(
+        rows = await repo.list_ai_plan_tasks(
             profile_id=profile_id,
-            statuses=("plan",),
-            owner_type="ai_profile",
             owner_ref=owner_ref,
             limit=max(1, limit),
         )
         for row in rows:
             updated = await repo.update_task(
-                profile_id=profile_id,
+                profile_id=row.profile_id,
                 task_id=row.id,
                 status="blocked",
                 blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
@@ -347,7 +360,6 @@ class TaskFlowRuntimeService:
                 async with session_scope(session_factory) as session:
                     repo = TaskFlowRepository(session)
                     await self._guard_ai_owned_plan_tasks(
-                        session=session,
                         repo=repo,
                         worker_id=worker_id,
                         profile_id=profile_id,
@@ -359,6 +371,7 @@ class TaskFlowRuntimeService:
                         lease_until=now_utc + claim_ttl,
                         claim_token=claim_token,
                         claimed_by=worker_id,
+                        profile_id=profile_id,
                         owner_ref=owner_ref,
                     )
                     if row is None:
@@ -438,21 +451,7 @@ class TaskFlowRuntimeService:
                 error_text="Failed to transition claimed task into running state",
             )
             return
-        runtime_target = build_task_flow_runtime_target(
-            execution_profile_id=claimed.execution_profile_id,
-            session_id=claimed.session_id,
-            task_id=claimed.task_id,
-            task_profile_id=claimed.task_profile_id,
-            owner_type=claimed.owner_type,
-            owner_ref=claimed.owner_ref,
-            flow_id=claimed.flow_id,
-            source_type=claimed.source_type,
-            source_ref=claimed.source_ref,
-            priority=claimed.priority,
-            attempt=claimed.attempt,
-            requires_review=claimed.requires_review,
-            labels=claimed.labels,
-        )
+        runtime_target = await self._build_runtime_target(claimed)
         message = compose_task_message(
             claimed.description,
             attachments=claimed.attachments,
@@ -461,7 +460,7 @@ class TaskFlowRuntimeService:
 
         async def _run() -> TurnResult:
             session_factory = self._require_session_factory()
-            runner = self._session_runner_factory(session_factory, claimed.execution_profile_id)
+            runner = self._build_runner_for_claimed(session_factory, claimed)
             result = await runner.run_turn(
                 profile_id=runtime_target.profile_id,
                 session_id=runtime_target.session_id,
@@ -499,6 +498,68 @@ class TaskFlowRuntimeService:
                 error_code=error_code,
                 error_text=error_text,
             )
+
+    async def _build_runtime_target(self, claimed: ClaimedTaskExecution):
+        runtime_target = build_task_flow_runtime_target(
+            execution_profile_id=claimed.execution_profile_id,
+            session_id=claimed.session_id,
+            task_id=claimed.task_id,
+            task_profile_id=claimed.task_profile_id,
+            owner_type=claimed.owner_type,
+            owner_ref=claimed.owner_ref,
+            flow_id=claimed.flow_id,
+            source_type=claimed.source_type,
+            source_ref=claimed.source_ref,
+            priority=claimed.priority,
+            attempt=claimed.attempt,
+            requires_review=claimed.requires_review,
+            labels=claimed.labels,
+        )
+        if claimed.owner_type != AI_SUBAGENT_OWNER_TYPE:
+            return runtime_target
+        parsed = parse_ai_subagent_owner_ref(claimed.owner_ref)
+        if parsed is None:
+            raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
+        host_profile_id, subagent_name = parsed
+        from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+
+        subagent_markdown = await SubagentLoader(self._settings).load_subagent_markdown(
+            name=subagent_name,
+            profile_id=host_profile_id,
+        )
+        subagent_overrides = TurnContextOverrides(
+            prompt_overlay=DEFAULT_SUBAGENT_RUNTIME_POLICY.build_prompt_overlay(
+                subagent_name=subagent_name,
+                subagent_markdown=subagent_markdown,
+            )
+        )
+        return type(runtime_target)(
+            profile_id=runtime_target.profile_id,
+            session_id=runtime_target.session_id,
+            context_overrides=merge_turn_context_overrides(
+                runtime_target.context_overrides,
+                subagent_overrides,
+            ),
+        )
+
+    def _build_runner_for_claimed(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        claimed: ClaimedTaskExecution,
+    ) -> SessionTurnRunner:
+        if self._session_runner_factory_override is not None:
+            return self._session_runner_factory_override(session_factory, claimed.execution_profile_id)
+        if claimed.owner_type != AI_SUBAGENT_OWNER_TYPE:
+            return self._session_runner_factory(session_factory, claimed.execution_profile_id)
+        parsed = parse_ai_subagent_owner_ref(claimed.owner_ref)
+        if parsed is None:
+            raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
+        _host_profile_id, subagent_name = parsed
+        return build_taskflow_subagent_runtime_session_runner(
+            session_factory,
+            profile_id=claimed.execution_profile_id,
+            settings=self._settings,
+        )
 
     async def _mark_started(self, *, claimed: ClaimedTaskExecution) -> bool:
         session_factory = self._require_session_factory()
@@ -895,6 +956,27 @@ def build_taskflow_runtime_session_runner(
     )
 
 
+def build_taskflow_subagent_runtime_session_runner(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    profile_id: str,
+    settings: Settings | None = None,
+) -> SessionTurnRunner:
+    """Build the session runner used by Task Flow ai_subagent detached execution."""
+
+    effective_settings = settings or get_settings()
+    loop_settings = resolve_subagent_loop_settings(
+        settings=effective_settings,
+        profile_id=profile_id,
+        runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
+    )
+    return build_subagent_session_orchestrator(
+        session_factory,
+        loop_settings=loop_settings,
+        runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
+    )
+
+
 def _default_session_runner_factory(
     settings: Settings,
 ) -> Callable[[async_sessionmaker[AsyncSession], str], SessionTurnRunner]:
@@ -906,12 +988,11 @@ def _default_session_runner_factory(
 
 
 def _resolve_execution_profile_id(row: object) -> str:
-    owner_type = str(getattr(row, "owner_type", "") or "").strip().lower()
-    owner_ref = str(getattr(row, "owner_ref", "") or "").strip()
-    task_profile_id = str(getattr(row, "profile_id", "") or "").strip()
-    if owner_type == "ai_profile" and owner_ref:
-        return owner_ref
-    return task_profile_id
+    return resolve_ai_executor_profile_id(
+        owner_type=str(getattr(row, "owner_type", "") or "").strip().lower(),
+        owner_ref=str(getattr(row, "owner_ref", "") or "").strip(),
+        task_profile_id=str(getattr(row, "profile_id", "") or "").strip(),
+    )
 
 
 def _claim_ttl(settings: Settings) -> timedelta:
@@ -1106,8 +1187,8 @@ async def _ensure_runtime_summary_comment(
     )
 
 
-def _runtime_profile_id(settings: Settings) -> str:
-    return str(getattr(settings, "taskflow_runtime_profile_id", None) or "default")
+def _runtime_profile_id(settings: Settings) -> str | None:
+    return settings.taskflow_runtime_profile_id
 
 
 def _runtime_owner_ref(settings: Settings) -> str | None:

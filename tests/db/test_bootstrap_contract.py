@@ -257,8 +257,8 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     index_names = {str(row[1]) for row in rows}
     assert "ux_task_active_ai_owner" in index_names
     index_sql_text = str(index_sql)
-    assert "ON task (profile_id, owner_ref)" in index_sql_text
-    assert "NOT (profile_id = 'default' AND owner_ref = 'analyst')" in index_sql_text
+    assert "ON task (profile_id, owner_type, owner_ref)" in index_sql_text
+    assert "NOT (profile_id = 'default' AND owner_type = 'ai_profile' AND owner_ref = 'analyst')" in index_sql_text
     assert first_after.status == "running"
     assert second_after.status == "claimed"
     assert second_after.last_error_code is None

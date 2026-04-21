@@ -12,6 +12,7 @@ from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
+from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import TaskFlowServiceError
@@ -34,6 +35,18 @@ def _taskflow_test_settings(
         taskflow_public_principal_required=taskflow_public_principal_required,
         taskflow_strict_team_profile_ids=taskflow_strict_team_profile_ids,
     )
+
+
+def _write_profile_subagent(
+    *,
+    settings: Settings,
+    profile_id: str,
+    subagent_name: str,
+    markdown: str,
+) -> None:
+    path = settings.profiles_dir / profile_id / "subagents" / f"{subagent_name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown, encoding="utf-8")
 
 
 def _write_team_runtime_config(
@@ -161,6 +174,43 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
         assert {item.id for item in listed} == {first_task.id, dependent_task.id}
         listed_by_id = {item.id: item for item in listed}
         assert listed_by_id[dependent_task.id].depends_on_task_ids == (first_task.id,)
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_allows_assigning_task_to_ai_subagent(tmp_path: Path) -> None:
+    """Tasks should accept direct ai_subagent ownership when the descriptor exists."""
+
+    db_name = "task_flow_ai_subagent_owner.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nHandle research tasks directly.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Subagent-owned task",
+            description="Assign this directly to the analyst researcher subagent.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+            session_id="taskflow:subagent-direct",
+        )
+
+        assert task.owner_type == "ai_subagent"
+        assert task.owner_ref == "analyst:researcher"
+        assert task.last_session_id == "taskflow:subagent-direct"
+        assert task.last_session_profile_id == "analyst"
     finally:
         await engine.dispose()
 
@@ -413,6 +463,110 @@ async def test_task_flow_service_lists_stale_task_claims(tmp_path: Path) -> None
         assert stale_claim.claimed_by == "taskflow-runtime:stale"
         assert stale_claim.task.last_run_id is not None
         assert stale_claim.stale_for_sec >= 0
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_lists_stale_task_claims_for_one_owner_ref(tmp_path: Path) -> None:
+    """Service should scope stale-claim maintenance views to one executor owner ref when requested."""
+
+    db_name = "task_flow_stale_claims_owner_ref.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="papercliper",
+            subagent_name="reviewer",
+            markdown="# Reviewer\nReview stale claim ownership.",
+        )
+        profile_task = await service.create_task(
+            profile_id="default",
+            title="Recover stale orchestrator task",
+            description="Keep this stale claim outside the filtered result.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+        subagent_task = await service.create_task(
+            profile_id="default",
+            title="Recover stale subagent task",
+            description="Return only this filtered stale claim.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="papercliper:reviewer",
+        )
+        stale_now = datetime.now(timezone.utc)
+
+        async def _mark_stale(task_id: str, *, owner_ref: str, claim_token: str, worker_id: str) -> None:
+            async with session_scope(factory) as session:
+                repo = TaskFlowRepository(session)
+                claimed = await repo.claim_next_runnable_task(
+                    now_utc=stale_now,
+                    lease_until=stale_now - timedelta(minutes=3),
+                    claim_token=claim_token,
+                    claimed_by=worker_id,
+                    profile_id="default",
+                    owner_ref=owner_ref,
+                )
+                assert claimed is not None
+                task_run = await repo.create_task_run(
+                    task_id=task_id,
+                    attempt=claimed.current_attempt + 1,
+                    owner_type=claimed.owner_type,
+                    owner_ref=claimed.owner_ref,
+                    execution_mode="detached",
+                    status="running",
+                    session_id=f"taskflow:{task_id}",
+                    run_id=None,
+                    worker_id=worker_id,
+                    started_at=stale_now - timedelta(minutes=5),
+                )
+                attached = await repo.attach_task_run(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    task_run_id=task_run.id,
+                    session_id=f"taskflow:{task_id}",
+                )
+                assert attached is True
+                started = await repo.mark_task_started(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    started_at=stale_now - timedelta(minutes=5),
+                )
+                assert started is True
+
+        await _mark_stale(
+            profile_task.id,
+            owner_ref="analyst",
+            claim_token="stale-profile-claim",
+            worker_id="taskflow-runtime:profile",
+        )
+        await _mark_stale(
+            subagent_task.id,
+            owner_ref="papercliper:reviewer",
+            claim_token="stale-subagent-claim",
+            worker_id="taskflow-runtime:subagent",
+        )
+
+        stale_claims = await service.list_stale_task_claims(
+            profile_id="default",
+            owner_ref="papercliper:reviewer",
+            limit=5,
+        )
+
+        assert len(stale_claims) == 1
+        assert stale_claims[0].task.id == subagent_task.id
+        assert stale_claims[0].task.owner_ref == "papercliper:reviewer"
     finally:
         await engine.dispose()
 
@@ -1132,6 +1286,69 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
         comments = await service.list_task_comments(profile_id="default", task_id=source_task.id)
         assert comments[0].comment_type == "delegation"
         assert delegation.delegated_task.id in comments[0].message
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_delegate_task_supports_ai_subagent_owner(
+    tmp_path: Path,
+) -> None:
+    """Delegation should support direct ai_subagent assignments without proxy profiles."""
+
+    db_name = "task_flow_delegate_ai_subagent.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="papercliper",
+        subagent_name="researcher",
+        markdown="# Researcher\nInvestigate and report.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst", "papercliper"),
+    )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst", "papercliper"),
+    )
+    await _create_chat_session(
+        factory,
+        profile_id="analyst",
+        session_id="taskflow:analyst-subagent-delegate",
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        source_task = await service.create_task(
+            profile_id="default",
+            title="Own launch brief",
+            description="Prepare the launch brief and delegate targeted research.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+        )
+
+        delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=source_task.id,
+            delegated_owner_type="ai_subagent",
+            delegated_owner_ref="papercliper:researcher",
+            description="Research competitors and summarize gaps.",
+            actor_type="ai_profile",
+            actor_ref="analyst",
+            actor_session_id="taskflow:analyst-subagent-delegate",
+            wait_for_delegated_task=True,
+        )
+
+        assert delegation.source_task.status == "blocked"
+        assert delegation.source_task.blocked_reason_code == "dependency_wait"
+        assert delegation.delegated_task.owner_type == "ai_subagent"
+        assert delegation.delegated_task.owner_ref == "papercliper:researcher"
+        assert delegation.delegated_task.created_by_type == "ai_profile"
+        assert delegation.delegated_task.created_by_ref == "analyst"
+        assert delegation.dependency.depends_on_task_id == delegation.delegated_task.id
     finally:
         await engine.dispose()
 

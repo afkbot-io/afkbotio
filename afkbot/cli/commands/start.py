@@ -28,6 +28,7 @@ from afkbot.services.runtime_ports import (
     resolve_default_runtime_port,
 )
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
+from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
 from afkbot.settings import Settings, get_settings
@@ -96,6 +97,26 @@ def register(app: typer.Typer) -> None:
             "--allow-pending-upgrades",
             help="Start even when persisted-state upgrades are still pending.",
         ),
+        taskflow_profile: str | None = typer.Option(
+            None,
+            "--taskflow-profile",
+            help="Optional Task Flow backlog profile shard for detached workers.",
+        ),
+        taskflow_owner_ref: str | None = typer.Option(
+            None,
+            "--taskflow-owner-ref",
+            help="Optional Task Flow executor owner-ref shard, for example `analyst` or `analyst:researcher`.",
+        ),
+        taskflow_owner_profile: str | None = typer.Option(
+            None,
+            "--taskflow-owner-profile",
+            help="Optional structured Task Flow executor profile shard. Without --taskflow-owner-subagent this targets the orchestrator profile directly.",
+        ),
+        taskflow_owner_subagent: str | None = typer.Option(
+            None,
+            "--taskflow-owner-subagent",
+            help="Optional structured Task Flow executor subagent shard inside --taskflow-owner-profile.",
+        ),
     ) -> None:
         """Start the full AFKBOT stack and stop all owned services on exit."""
 
@@ -108,6 +129,10 @@ def register(app: typer.Typer) -> None:
             channel_ids=tuple(channel),
             strict_channels=strict_channels,
             allow_pending_upgrades=allow_pending_upgrades,
+            taskflow_profile=taskflow_profile,
+            taskflow_owner_ref=taskflow_owner_ref,
+            taskflow_owner_profile=taskflow_owner_profile,
+            taskflow_owner_subagent=taskflow_owner_subagent,
         )
 
 
@@ -121,10 +146,33 @@ def run_start_command(
     channel_ids: tuple[str, ...] = (),
     strict_channels: bool = False,
     allow_pending_upgrades: bool = False,
+    taskflow_profile: str | None = None,
+    taskflow_owner_ref: str | None = None,
+    taskflow_owner_profile: str | None = None,
+    taskflow_owner_subagent: str | None = None,
 ) -> None:
     """Run the full AFKBOT stack with one shared CLI/runtime implementation."""
 
     resolved_settings = settings or get_settings()
+    try:
+        _, resolved_taskflow_owner_ref = resolve_task_owner_inputs(
+            field_prefix="owner",
+            owner_type=None,
+            owner_ref=taskflow_owner_ref,
+            owner_profile_id=taskflow_owner_profile,
+            owner_subagent_name=taskflow_owner_subagent,
+        )
+    except TaskOwnerInputError as exc:
+        raise_usage_error(exc.reason)
+    if taskflow_profile is not None or resolved_taskflow_owner_ref is not None:
+        updated_settings = resolved_settings.model_dump()
+        if taskflow_profile is not None:
+            updated_settings["taskflow_runtime_profile_id"] = taskflow_profile
+        if resolved_taskflow_owner_ref is not None:
+            updated_settings["taskflow_runtime_owner_ref"] = resolved_taskflow_owner_ref
+        resolved_settings = Settings(
+            **updated_settings
+        )
     resolved_host = host or resolved_settings.runtime_host
     runtime_config = read_runtime_config(resolved_settings)
     bind_plan = _resolve_runtime_bind_plan(
@@ -164,6 +212,15 @@ def run_start_command(
         f"runtime daemon: http://{resolved_host}:{resolved_runtime_port} "
         "(webhook + cron scheduler + task flow workers)"
     )
+    if (
+        resolved_settings.taskflow_runtime_profile_id is not None
+        or resolved_settings.taskflow_runtime_owner_ref is not None
+    ):
+        typer.echo(
+            "task flow worker scope: "
+            f"profile={resolved_settings.taskflow_runtime_profile_id or '*'} "
+            f"owner_ref={resolved_settings.taskflow_runtime_owner_ref or '*'}"
+        )
     typer.echo(f"chat api/ws: http://{resolved_host}:{resolved_api_port}")
     typer.echo("Press Ctrl+C to stop.")
 

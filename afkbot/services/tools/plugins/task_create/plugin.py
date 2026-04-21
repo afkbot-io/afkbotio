@@ -11,6 +11,7 @@ from afkbot.services.task_flow import (
     TaskFlowServiceError,
     get_task_flow_service,
 )
+from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
@@ -32,8 +33,12 @@ class TaskCreateParams(ToolParameters):
     due_at: datetime | None = None
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
+    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     reviewer_type: str | None = Field(default=None, max_length=32)
     reviewer_ref: str | None = Field(default=None, max_length=255)
+    reviewer_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+    reviewer_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     source_type: str = Field(default="manual", max_length=64)
     source_ref: str | None = Field(default=None, max_length=255)
     labels: tuple[str, ...] = ()
@@ -68,6 +73,20 @@ class TaskCreateTool(ToolBase):
         try:
             service = get_task_flow_service(self._settings)
             actor = resolve_task_tool_actor(ctx)
+            resolved_owner_type, resolved_owner_ref = resolve_task_owner_inputs(
+                field_prefix="owner",
+                owner_type=payload.owner_type,
+                owner_ref=payload.owner_ref,
+                owner_profile_id=payload.owner_profile_id,
+                owner_subagent_name=payload.owner_subagent_name,
+            )
+            resolved_reviewer_type, resolved_reviewer_ref = resolve_task_owner_inputs(
+                field_prefix="reviewer",
+                owner_type=payload.reviewer_type,
+                owner_ref=payload.reviewer_ref,
+                owner_profile_id=payload.reviewer_profile_id,
+                owner_subagent_name=payload.reviewer_subagent_name,
+            )
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
             session_id_explicit = "session_id" in explicit_fields
             session_profile_id_explicit = "session_profile_id" in explicit_fields
@@ -125,10 +144,10 @@ class TaskCreateTool(ToolBase):
                 flow_id=payload.flow_id,
                 priority=payload.priority,
                 due_at=payload.due_at,
-                owner_type=payload.owner_type,
-                owner_ref=payload.owner_ref,
-                reviewer_type=payload.reviewer_type,
-                reviewer_ref=payload.reviewer_ref,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+                reviewer_type=resolved_reviewer_type,
+                reviewer_ref=resolved_reviewer_ref,
                 source_type=payload.source_type,
                 source_ref=payload.source_ref,
                 labels=payload.labels,
@@ -137,6 +156,8 @@ class TaskCreateTool(ToolBase):
                 attachments=payload.attachments,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
+        except TaskOwnerInputError as exc:
+            return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
 

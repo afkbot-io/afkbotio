@@ -90,7 +90,9 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
    - encode important constraints directly in the prompt
 4. For sequencing, create prerequisite tasks first, then create dependent tasks with `depends_on_task_ids`.
 5. For reassignment or handoff, use `task.update`:
-   - `owner_type=ai_profile` to assign an AI profile
+   - prefer `owner_profile_id=<profile_id>` to assign an AI profile/orchestrator without hand-building `owner_ref`
+   - prefer `owner_profile_id=<profile_id>` plus `owner_subagent_name=<subagent_name>` to assign a specific worker subagent
+   - raw `owner_type/owner_ref` still work when you already have canonical refs
    - `owner_type=human` to assign a person
    - `status=review` when ready for human review
    - `status=blocked` when waiting for human input/approval
@@ -123,7 +125,9 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
 
 ## Examples
 - One AI task:
-  create `task.create` with a self-contained prompt and `owner_type=ai_profile`.
+  create `task.create` with a self-contained prompt and either `owner_profile_id=<profile_id>` or `owner_profile_id=<profile_id>` plus `owner_subagent_name=<subagent_name>`.
+- One subagent task:
+  create `task.create` with `owner_profile_id=<profile_id>` and `owner_subagent_name=<subagent_name>` when the backlog should be claimed directly by that subagent instead of the profile.
 - One flow with several sequential tasks:
   create `task.flow.create`, then create the first task, then create the second with `depends_on_task_ids=[first_task_id]`, then the third with `depends_on_task_ids=[second_task_id]`.
 - Human handoff:

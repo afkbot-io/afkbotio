@@ -245,21 +245,23 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
         return
     duplicate_owner_scopes = _list_duplicate_active_ai_owner_scopes(conn)
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
-    predicate = "owner_type = 'ai_profile' AND status IN ('claimed', 'running')"
+    predicate = "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
     if duplicate_owner_scopes:
         excluded_owner_scopes = " AND ".join(
             "NOT (profile_id = "
             + _quote_sqlite_text_literal(profile_id)
+            + " AND owner_type = "
+            + _quote_sqlite_text_literal(owner_type)
             + " AND owner_ref = "
             + _quote_sqlite_text_literal(owner_ref)
             + ")"
-            for profile_id, owner_ref in duplicate_owner_scopes
+            for profile_id, owner_type, owner_ref in duplicate_owner_scopes
         )
         predicate = f"{predicate} AND {excluded_owner_scopes}"
     conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
-            "ON task (profile_id, owner_ref) "
+            "ON task (profile_id, owner_type, owner_ref) "
             f"WHERE {predicate}"
         )
     )
@@ -298,27 +300,28 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
         )
 
 
-def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str], ...]:
+def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
     """Return active AI owner profile scopes violating the one-active-task invariant."""
 
     if not _table_columns(conn, "task"):
         return ()
     rows = conn.execute(
         text(
-            "SELECT profile_id, owner_ref "
+            "SELECT profile_id, owner_type, owner_ref "
             "FROM task "
-            "WHERE owner_type = 'ai_profile' AND status IN ('claimed', 'running') "
-            "GROUP BY profile_id, owner_ref "
+            "WHERE owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "GROUP BY profile_id, owner_type, owner_ref "
             "HAVING COUNT(*) > 1 "
-            "ORDER BY profile_id ASC, owner_ref ASC"
+            "ORDER BY profile_id ASC, owner_type ASC, owner_ref ASC"
         )
     ).fetchall()
-    scopes: list[tuple[str, str]] = []
-    for profile_id, owner_ref in rows:
+    scopes: list[tuple[str, str, str]] = []
+    for profile_id, owner_type, owner_ref in rows:
         profile_text = str(profile_id or "").strip()
+        owner_type_text = str(owner_type or "").strip()
         owner_text = str(owner_ref or "").strip()
-        if profile_text and owner_text:
-            scopes.append((profile_text, owner_text))
+        if profile_text and owner_type_text and owner_text:
+            scopes.append((profile_text, owner_type_text, owner_text))
     return tuple(scopes)
 
 

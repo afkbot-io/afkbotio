@@ -11,6 +11,7 @@ from afkbot.services.task_flow import (
     TaskMaintenanceSweepMetadata,
     get_task_flow_service,
 )
+from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -25,6 +26,9 @@ class TaskMaintenanceSweepParams(ToolParameters):
     """Parameters for task.stale.sweep tool."""
 
     limit: int | None = Field(default=None, ge=1, le=100)
+    owner_ref: str | None = Field(default=None, min_length=1, max_length=255)
+    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class TaskMaintenanceSweepTool(ToolBase):
@@ -58,19 +62,29 @@ class TaskMaintenanceSweepTool(ToolBase):
             else self._settings.taskflow_runtime_maintenance_batch_size
         )
         try:
+            _, resolved_owner_ref = resolve_task_owner_inputs(
+                field_prefix="owner",
+                owner_type=None,
+                owner_ref=payload.owner_ref,
+                owner_profile_id=payload.owner_profile_id,
+                owner_subagent_name=payload.owner_subagent_name,
+            )
             released_count = await runtime.sweep_expired_claims(
                 worker_id=f"taskflow-tool-maintenance:{ctx.profile_id}",
                 profile_id=target_profile_id,
+                owner_ref=resolved_owner_ref,
                 limit=limit,
             )
             service = get_task_flow_service(self._settings)
             remaining = await service.list_stale_task_claims(
                 profile_id=target_profile_id,
+                owner_ref=resolved_owner_ref,
                 limit=limit,
             )
             metadata = TaskMaintenanceSweepMetadata(
                 generated_at=datetime.now(timezone.utc),
                 profile_id=target_profile_id,
+                owner_ref=resolved_owner_ref,
                 limit=limit,
                 repaired_count=released_count,
                 remaining_count=len(remaining),
@@ -80,6 +94,8 @@ class TaskMaintenanceSweepTool(ToolBase):
                 ok=True,
                 payload={"maintenance": metadata.model_dump(mode="json")},
             )
+        except TaskOwnerInputError as exc:
+            return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         finally:
