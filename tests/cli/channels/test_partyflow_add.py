@@ -183,3 +183,109 @@ def test_channel_partyflow_show_marks_webhook_url_unavailable_without_public_bas
     assert result.exit_code == 0
     shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-no-public-url"]).stdout
     assert "- webhook_url: unavailable" in shown
+
+
+def test_channel_partyflow_show_rejects_non_https_public_base_url(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow show should not suggest plain HTTP because PartyFlow requires HTTPS."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+    monkeypatch.setenv("AFKBOT_PUBLIC_CHAT_API_URL", "http://localhost:8080")
+    get_settings.cache_clear()
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-http-url",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-http-url",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-http-url"]).stdout
+    assert "- webhook_url: unavailable" in shown
+    assert "must use public HTTPS" in shown
+
+
+def test_channel_partyflow_webhook_url_command_returns_copyable_url(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Dedicated webhook-url command should print only the URL when configured correctly."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+    monkeypatch.setenv("AFKBOT_PUBLIC_CHAT_API_URL", "https://bot.example.com")
+    get_settings.cache_clear()
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-webhook-url",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-webhook-url",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    shown = runner.invoke(
+        app,
+        ["channel", "partyflow", "webhook-url", "ops-webhook-url"],
+    )
+    assert shown.exit_code == 0
+    assert (
+        shown.stdout.strip()
+        == "https://bot.example.com/v1/channels/partyflow/ops-webhook-url/webhook"
+    )

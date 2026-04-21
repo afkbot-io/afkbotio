@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+from typing import cast
+from urllib.parse import urlparse
 
 import typer
 
@@ -442,16 +445,12 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         )
         if webhook_url is None:
             typer.echo(
-                msg(
+                _render_partyflow_webhook_url_unavailable_hint(
                     prompt_language,
-                    en=(
-                        "- webhook_url is unavailable until `AFKBOT_PUBLIC_CHAT_API_URL` points "
-                        "to a public HTTPS base URL."
-                    ),
-                    ru=(
-                        "- webhook_url недоступен, пока `AFKBOT_PUBLIC_CHAT_API_URL` не указывает "
-                        "на публичный HTTPS base URL."
-                    ),
+                    reason=_resolve_partyflow_webhook_url(
+                        settings=settings,
+                        endpoint_id=saved.endpoint_id,
+                    )[1],
                 )
             )
         reload_install_managed_runtime_notice(settings)
@@ -929,6 +928,47 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         )
         typer.echo(f"- enabled: {channel.enabled}")
         typer.echo(f"- webhook_url: {webhook_url or 'unavailable'}")
+        if webhook_url is None:
+            typer.echo(
+                _render_partyflow_webhook_url_unavailable_hint(
+                    None,
+                    reason=_resolve_partyflow_webhook_url(
+                        settings=settings,
+                        endpoint_id=channel.endpoint_id,
+                    )[1],
+                )
+            )
+
+    @partyflow_app.command("webhook-url")
+    def partyflow_webhook_url(
+        channel_id: str = typer.Argument(..., help="PartyFlow channel endpoint id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        settings = get_settings()
+        try:
+            channel = _load_partyflow_endpoint(settings=settings, channel_id=channel_id)
+        except Exception as exc:
+            _raise_partyflow_cli_error(exc)
+        webhook_url, reason = _resolve_partyflow_webhook_url(
+            settings=settings,
+            endpoint_id=channel.endpoint_id,
+        )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "channel_id": channel.endpoint_id,
+                        "webhook_url": webhook_url,
+                        "status": "ok" if webhook_url is not None else "unavailable",
+                        "reason": reason,
+                    },
+                    ensure_ascii=True,
+                )
+            )
+            return
+        if webhook_url is None:
+            raise_usage_error(_partyflow_webhook_url_unavailable_message(reason))
+        typer.echo(webhook_url)
 
     @partyflow_app.command("enable")
     def partyflow_enable(
@@ -984,11 +1024,114 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
 def resolve_partyflow_webhook_url(*, settings: Settings, endpoint_id: str) -> str | None:
     """Return best-effort PartyFlow webhook URL for one endpoint."""
 
+    return _resolve_partyflow_webhook_url(settings=settings, endpoint_id=endpoint_id)[0]
+
+
+def _resolve_partyflow_webhook_url(
+    *, settings: Settings, endpoint_id: str
+) -> tuple[str | None, str | None]:
     public_chat_api_url = (settings.public_chat_api_url or "").strip()
     if not public_chat_api_url:
-        return None
+        return None, "missing_public_base_url"
+    parsed = urlparse(public_chat_api_url)
+    if parsed.scheme.lower() != "https":
+        return None, "non_https_public_base_url"
+    hostname = (parsed.hostname or "").strip()
+    if not hostname:
+        return None, "invalid_public_base_url"
+    lowered_hostname = hostname.lower()
+    if lowered_hostname in {"localhost", "127.0.0.1", "::1"}:
+        return None, "private_public_base_url"
+    try:
+        parsed_ip = ipaddress.ip_address(lowered_hostname)
+    except ValueError:
+        parsed_ip = None
+    if parsed_ip is not None and (
+        parsed_ip.is_private
+        or parsed_ip.is_loopback
+        or parsed_ip.is_link_local
+        or parsed_ip.is_multicast
+        or parsed_ip.is_reserved
+        or parsed_ip.is_unspecified
+    ):
+        return None, "private_public_base_url"
     base_url = public_chat_api_url.rstrip("/")
-    return f"{base_url}/v1/channels/partyflow/{endpoint_id}/webhook"
+    return f"{base_url}/v1/channels/partyflow/{endpoint_id}/webhook", None
+
+
+def _partyflow_webhook_url_unavailable_message(reason: str | None) -> str:
+    if reason == "non_https_public_base_url":
+        return (
+            "Webhook URL unavailable: `AFKBOT_PUBLIC_CHAT_API_URL` must use public HTTPS "
+            "(PartyFlow rejects plain HTTP)."
+        )
+    if reason == "private_public_base_url":
+        return (
+            "Webhook URL unavailable: `AFKBOT_PUBLIC_CHAT_API_URL` points to localhost/private "
+            "addressing, but PartyFlow requires a public HTTPS endpoint."
+        )
+    if reason == "invalid_public_base_url":
+        return (
+            "Webhook URL unavailable: `AFKBOT_PUBLIC_CHAT_API_URL` is invalid. Set it to a "
+            "public HTTPS base URL."
+        )
+    return (
+        "Webhook URL unavailable: set `AFKBOT_PUBLIC_CHAT_API_URL` to a public HTTPS base URL "
+        "first."
+    )
+
+
+def _render_partyflow_webhook_url_unavailable_hint(
+    lang: PromptLanguage | None, *, reason: str | None
+) -> str:
+    resolved_lang = cast(PromptLanguage, lang or "en")
+    if reason == "non_https_public_base_url":
+        return msg(
+            resolved_lang,
+            en=(
+                "- webhook_url is unavailable because `AFKBOT_PUBLIC_CHAT_API_URL` must use "
+                "public HTTPS; PartyFlow rejects plain HTTP."
+            ),
+            ru=(
+                "- webhook_url недоступен, потому что `AFKBOT_PUBLIC_CHAT_API_URL` должен "
+                "использовать публичный HTTPS; PartyFlow не принимает plain HTTP."
+            ),
+        )
+    if reason == "private_public_base_url":
+        return msg(
+            resolved_lang,
+            en=(
+                "- webhook_url is unavailable because `AFKBOT_PUBLIC_CHAT_API_URL` points to "
+                "localhost/private addressing, but PartyFlow requires a public HTTPS endpoint."
+            ),
+            ru=(
+                "- webhook_url недоступен, потому что `AFKBOT_PUBLIC_CHAT_API_URL` указывает "
+                "на localhost/private адрес, а PartyFlow требует публичный HTTPS endpoint."
+            ),
+        )
+    if reason == "invalid_public_base_url":
+        return msg(
+            resolved_lang,
+            en=(
+                "- webhook_url is unavailable because `AFKBOT_PUBLIC_CHAT_API_URL` is invalid. "
+                "Set it to a public HTTPS base URL."
+            ),
+            ru=(
+                "- webhook_url недоступен, потому что `AFKBOT_PUBLIC_CHAT_API_URL` задан "
+                "некорректно. Укажите публичный HTTPS base URL."
+            ),
+        )
+    return msg(
+        resolved_lang,
+        en=(
+            "- webhook_url is unavailable until `AFKBOT_PUBLIC_CHAT_API_URL` points to a public "
+            "HTTPS base URL."
+        ),
+        ru=(
+            "- webhook_url недоступен, пока `AFKBOT_PUBLIC_CHAT_API_URL` не указывает на "
+            "публичный HTTPS base URL."
+        ),
+    )
 
 
 def _load_partyflow_endpoint(
