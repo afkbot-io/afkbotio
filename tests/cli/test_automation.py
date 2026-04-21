@@ -6,6 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 import typer
 from pytest import MonkeyPatch
 from typer.testing import CliRunner
@@ -28,6 +29,7 @@ def _prepare_env(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'automations.db'}")
+    monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", Fernet.generate_key().decode("utf-8"))
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
     asyncio.run(_ensure_default_profile())
@@ -109,6 +111,11 @@ def test_automation_cli_crud_and_token_rotation(tmp_path: Path, monkeypatch: Mon
     assert list_result.exit_code == 0
     listed = json.loads(list_result.stdout)
     assert [item["id"] for item in listed["automations"]] == [automation_id]
+    listed_webhook = listed["automations"][0]["webhook"]
+    assert listed_webhook["webhook_token"] is None
+    assert listed_webhook["webhook_path"] is None
+    assert listed_webhook["webhook_url"] is None
+    assert listed_webhook["webhook_token_masked"] == "[HIDDEN]"
 
     show_result = runner.invoke(
         app,

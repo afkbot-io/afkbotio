@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
@@ -39,6 +40,7 @@ async def test_list_automations_payload_does_not_create_profile_layout(
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_cli.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
     )
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
@@ -68,6 +70,7 @@ async def test_graph_show_payload_does_not_create_profile_layout(
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_cli_graph.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
     )
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)

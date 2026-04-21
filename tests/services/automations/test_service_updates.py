@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
@@ -16,6 +17,7 @@ from afkbot.services.automations.webhook_tokens import (
     hash_webhook_token,
     stored_webhook_token_ref,
 )
+from afkbot.settings import Settings
 from tests.services.automations._harness import FakeLoop, prepare_service
 import afkbot.services.automations.service as service_module
 import afkbot.services.automations.update_runtime as update_runtime_module
@@ -93,6 +95,8 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             old_token_hash = hash_webhook_token(old_token)
             assert created_row[2].webhook_token_hash == old_token_hash
             assert created_row[2].webhook_token == stored_webhook_token_ref(old_token_hash)
+            assert created_row[2].encrypted_webhook_token is not None
+            assert created_row[2].webhook_token_key_version is not None
 
         rotated_webhook = await service.update(
             profile_id="default",
@@ -120,6 +124,8 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
             new_token_hash = hash_webhook_token(new_token)
             assert rotated_row[2].webhook_token_hash == new_token_hash
             assert rotated_row[2].webhook_token == stored_webhook_token_ref(new_token_hash)
+            assert rotated_row[2].encrypted_webhook_token is not None
+            assert rotated_row[2].webhook_token_key_version is not None
 
         fake_loop = FakeLoop()
 
@@ -145,6 +151,75 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         assert new_token_result.deduplicated is False
     finally:
         monkeypatch.undo()
+        await engine.dispose()
+
+
+async def test_service_create_webhook_requires_credentials_vault(
+    tmp_path: Path,
+) -> None:
+    """Webhook create should fail closed when durable reveal storage is unavailable."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service_no_vault.db'}",
+        root_dir=tmp_path,
+    )
+    engine, factory, service = await prepare_service(
+        tmp_path,
+        settings_override=settings,
+        allow_missing_credentials_master_keys=True,
+    )
+    try:
+        with pytest.raises(AutomationsServiceError) as exc:
+            await service.create_webhook(
+                profile_id="default",
+                name="no-vault",
+                prompt="handle webhook",
+            )
+        assert exc.value.error_code == "automation_webhook_reveal_unavailable"
+        async with session_scope(factory) as session:
+            repo = AutomationRepository(session)
+            rows = await repo.list_by_profile(profile_id="default", include_deleted=True)
+            assert rows == []
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rotate_webhook_requires_credentials_vault(tmp_path: Path) -> None:
+    """Webhook rotate should also fail closed without durable reveal storage."""
+
+    seeded_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service_rotate_no_vault.db'}",
+        root_dir=tmp_path,
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+    )
+    engine, _, seeded_service = await prepare_service(tmp_path, settings_override=seeded_settings)
+    try:
+        created = await seeded_service.create_webhook(
+            profile_id="default",
+            name="rotate-me",
+            prompt="handle webhook",
+        )
+    finally:
+        await engine.dispose()
+
+    no_vault_settings = Settings(
+        db_url=seeded_settings.db_url,
+        root_dir=tmp_path,
+    )
+    engine, _, service = await prepare_service(
+        tmp_path,
+        settings_override=no_vault_settings,
+        allow_missing_credentials_master_keys=True,
+    )
+    try:
+        with pytest.raises(AutomationsServiceError) as exc:
+            await service.update(
+                profile_id="default",
+                automation_id=created.id,
+                rotate_webhook_token=True,
+            )
+        assert exc.value.error_code == "automation_webhook_reveal_unavailable"
+    finally:
         await engine.dispose()
 
 

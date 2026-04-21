@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap import create_schema
@@ -107,13 +108,23 @@ async def prepare_service(
     *,
     graph_subagent_service_factory: AutomationGraphSubagentFactory | None = None,
     settings_override: Settings | None = None,
+    allow_missing_credentials_master_keys: bool = False,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession], AutomationsService]:
     """Create one disposable automation service + DB fixture tree."""
 
     settings = settings_override or Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
         root_dir=tmp_path,
     )
+    if (
+        settings_override is not None
+        and not allow_missing_credentials_master_keys
+        and not (settings.credentials_master_keys or "").strip()
+    ):
+        settings = settings.model_copy(
+            update={"credentials_master_keys": Fernet.generate_key().decode("utf-8")}
+        )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)

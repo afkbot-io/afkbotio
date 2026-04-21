@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from sqlalchemy import select, text
+import pytest
 
 from afkbot.db.bootstrap import create_schema
+from afkbot.db.bootstrap_runtime import LegacyWebhookSecretUpgradeError
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.automation import Automation
@@ -114,6 +117,8 @@ async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
                         SELECT
                             webhook_token,
                             webhook_token_hash,
+                            encrypted_webhook_token,
+                            webhook_token_key_version,
                             last_session_id,
                             last_started_at,
                             last_succeeded_at,
@@ -135,6 +140,354 @@ async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
         assert row[4] is None
         assert row[5] is None
         assert row[6] is None
+        assert row[7] is None
+        assert row[8] is None
+    finally:
+        await engine.dispose()
+
+
+async def test_create_schema_encrypts_legacy_plaintext_webhook_tokens_when_vault_is_configured(
+    tmp_path: Path,
+) -> None:
+    """Legacy plaintext webhook tokens should be encrypted before hash-ref replacement."""
+
+    plaintext_token = "legacy-plaintext-token"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_plaintext_webhook_schema.db'}",
+        root_dir=tmp_path,
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_trigger_webhook (
+                        automation_id INTEGER PRIMARY KEY,
+                        webhook_token VARCHAR(255) UNIQUE,
+                        webhook_token_hash VARCHAR(128) UNIQUE,
+                        FOREIGN KEY(automation_id) REFERENCES automation(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (id, profile_id, name, prompt, trigger_type, status)
+                    VALUES (1, 'default', 'legacy-hook', 'legacy prompt', 'webhook', 'active')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation_trigger_webhook (automation_id, webhook_token)
+                    VALUES (1, :webhook_token)
+                    """
+                ),
+                {"webhook_token": plaintext_token},
+            )
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT
+                            webhook_token,
+                            webhook_token_hash,
+                            encrypted_webhook_token,
+                            webhook_token_key_version
+                        FROM automation_trigger_webhook
+                        WHERE automation_id = 1
+                        """
+                    )
+                )
+            ).one()
+        token_ref = str(row[0] or "")
+        token_hash = str(row[1] or "")
+        encrypted_token = str(row[2] or "")
+        key_version = str(row[3] or "")
+        assert token_hash == hash_webhook_token(plaintext_token)
+        assert token_ref == stored_webhook_token_ref(token_hash)
+        assert encrypted_token
+        assert key_version.startswith("sha256:")
+
+        session_factory = create_session_factory(engine)
+        async with session_scope(session_factory) as session:
+            result = await session.execute(select(Automation))
+            automation = result.scalar_one()
+        assert automation.id == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_create_schema_requires_vault_for_legacy_plaintext_webhook_tokens(
+    tmp_path: Path,
+) -> None:
+    """Upgrade should fail closed until legacy plaintext webhook secrets can be encrypted."""
+
+    db_path = tmp_path / "legacy_plaintext_preserved.db"
+    plaintext_token = "legacy-preserve-me"
+    initial_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(initial_settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_trigger_webhook (
+                        automation_id INTEGER PRIMARY KEY,
+                        webhook_token VARCHAR(255) UNIQUE,
+                        webhook_token_hash VARCHAR(128) UNIQUE,
+                        FOREIGN KEY(automation_id) REFERENCES automation(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (id, profile_id, name, prompt, trigger_type, status)
+                    VALUES (1, 'default', 'legacy-hook', 'legacy prompt', 'webhook', 'active')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation_trigger_webhook (automation_id, webhook_token)
+                    VALUES (1, :webhook_token)
+                    """
+                ),
+                {"webhook_token": plaintext_token},
+            )
+
+        with pytest.raises(
+            LegacyWebhookSecretUpgradeError,
+            match="AFKBOT_CREDENTIALS_MASTER_KEYS",
+        ):
+            await create_schema(engine)
+    finally:
+        await engine.dispose()
+
+    upgraded_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+    )
+    upgraded_engine = create_engine(upgraded_settings)
+    try:
+        await create_schema(upgraded_engine)
+        async with upgraded_engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT
+                            webhook_token,
+                            webhook_token_hash,
+                            encrypted_webhook_token,
+                            webhook_token_key_version
+                        FROM automation_trigger_webhook
+                        WHERE automation_id = 1
+                        """
+                    )
+                )
+            ).one()
+        token_ref = str(row[0] or "")
+        token_hash = str(row[1] or "")
+        assert token_hash == hash_webhook_token(plaintext_token)
+        assert token_ref == stored_webhook_token_ref(token_hash)
+        assert str(row[2] or "")
+        assert str(row[3] or "").startswith("sha256:")
+    finally:
+        await upgraded_engine.dispose()
+
+
+async def test_create_schema_requires_vault_when_mixed_refs_and_plaintext_exist(
+    tmp_path: Path,
+) -> None:
+    """Guard must still fail when one table mixes sha256 refs with later plaintext rows."""
+
+    db_path = tmp_path / "legacy_mixed_refs_and_plaintext.db"
+    initial_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(initial_settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_trigger_webhook (
+                        automation_id INTEGER PRIMARY KEY,
+                        webhook_token VARCHAR(255) UNIQUE,
+                        webhook_token_hash VARCHAR(128) UNIQUE,
+                        FOREIGN KEY(automation_id) REFERENCES automation(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (id, profile_id, name, prompt, trigger_type, status)
+                    VALUES
+                        (1, 'default', 'ref-hook', 'legacy prompt', 'webhook', 'active'),
+                        (2, 'default', 'plain-hook', 'legacy prompt', 'webhook', 'active')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation_trigger_webhook (automation_id, webhook_token, webhook_token_hash)
+                    VALUES
+                        (1, :token_ref, :token_hash),
+                        (2, :plaintext, NULL)
+                    """
+                ),
+                {
+                    "token_ref": stored_webhook_token_ref(hash_webhook_token("already-migrated")),
+                    "token_hash": hash_webhook_token("already-migrated"),
+                    "plaintext": "legacy-plaintext-token",
+                },
+            )
+
+        with pytest.raises(
+            LegacyWebhookSecretUpgradeError,
+            match="AFKBOT_CREDENTIALS_MASTER_KEYS",
+        ):
+            await create_schema(engine)
     finally:
         await engine.dispose()
 

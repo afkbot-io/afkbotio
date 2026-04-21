@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-04-21
+
+### Changed
+
+- Webhook automations now persist an encrypted-at-rest secret copy for operator-side endpoint reveal while keeping generic automation metadata, CLI reads, tool reads, and LLM-facing list/get surfaces masked by default.
+- AFKBOT UI can rehydrate the current webhook URL inside the automation inspector through an operator-only reveal path instead of browser or plugin-process secret caches.
+
+### Fixed
+
+- Legacy plaintext webhook rows now fail closed during schema upgrade until `AFKBOT_CREDENTIALS_MASTER_KEYS` is configured, preventing silent secret loss or indefinite plaintext persistence during rollout.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.4.2`.
+
 ## [1.4.1] - 2026-04-20
 
 ### Fixed

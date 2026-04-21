@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.services.automations import AutomationsService, AutomationsServiceError
@@ -301,6 +302,7 @@ async def test_service_webhook_metadata_prefers_public_runtime_url(tmp_path: Pat
         factory,
         settings=Settings(
             db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+            credentials_master_keys=Fernet.generate_key().decode("utf-8"),
             root_dir=tmp_path,
             public_runtime_url="https://hooks.example.com/base",
         ),
@@ -447,7 +449,11 @@ async def test_webhook_claim_released_on_run_timeout(tmp_path: Path) -> None:
     engine, factory, _ = await prepare_service(tmp_path)
     timeout_service = AutomationsService(
         factory,
-        settings=Settings(root_dir=tmp_path, automation_run_timeout_sec=0.01),
+        settings=Settings(
+            root_dir=tmp_path,
+            automation_run_timeout_sec=0.01,
+            credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+        ),
     )
     try:
         created = await timeout_service.create_webhook(
@@ -505,7 +511,13 @@ async def test_webhook_concurrency_deduplicates_across_service_instances(tmp_pat
     """Parallel webhook calls from two service instances must execute only once."""
 
     engine, factory, service_a = await prepare_service(tmp_path)
-    service_b = AutomationsService(factory, settings=Settings(root_dir=tmp_path))
+    service_b = AutomationsService(
+        factory,
+        settings=Settings(
+            root_dir=tmp_path,
+            credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+        ),
+    )
     try:
         created = await service_a.create_webhook(
             profile_id="default",
