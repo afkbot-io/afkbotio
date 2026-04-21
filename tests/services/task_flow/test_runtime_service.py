@@ -2249,5 +2249,9 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "task.delegate" in overrides.prompt_overlay
     assert "execution plan" in overrides.prompt_overlay
     assert "another AI executor (ai_profile or ai_subagent)" in overrides.prompt_overlay
+    assert "task.list, task.board, task.stale.list, or task.stale.sweep" in overrides.prompt_overlay
+    assert "owner_profile_id plus optional owner_subagent_name" in overrides.prompt_overlay
+    assert "task.review.list" in overrides.prompt_overlay
+    assert "actor_profile_id plus optional actor_subagent_name" in overrides.prompt_overlay
     assert "task.dependency.add" in overrides.prompt_overlay
     assert "retry_after_sec" in overrides.prompt_overlay

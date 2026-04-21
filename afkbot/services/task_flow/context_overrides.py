@@ -73,6 +73,8 @@ def _build_task_flow_prompt_overlay(
         "This runtime is non-interactive. Do not ask the user follow-up questions inside this run.",
         "Use task.* tools to manage backlog items in task_profile_id. When you need to touch the backlog, prefer passing profile_id=task_profile_id explicitly.",
         "When assigning AI work with task.* tools, prefer owner_profile_id plus optional owner_subagent_name instead of hand-building owner_ref strings.",
+        "When filtering AI backlog views with task.list, task.board, task.stale.list, or task.stale.sweep, prefer owner_profile_id plus optional owner_subagent_name instead of raw owner_ref strings.",
+        "When inspecting AI review queues with task.review.list, prefer actor_profile_id plus optional actor_subagent_name instead of hand-building actor_ref strings.",
         "Durable Task Flow state changes must be persisted through task.* tools. Do not rely on the final assistant message alone to reassign, block, or review a task.",
         "Before doing non-trivial work, create an execution plan and persist it with task.comment.add using comment_type=plan. Capture architecture assumptions, ordered steps, dependencies, and validation you intend to run.",
         "Before the task ends in review, blocked, completed, failed, or human handoff state, add a durable task.comment.add note that summarizes outcome, remaining work, and any review context.",
