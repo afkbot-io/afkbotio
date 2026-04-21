@@ -21,6 +21,7 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
+from afkbot.services.apps.partyflow.http_api import PartyFlowApiError, _send_message
 from afkbot.services.apps.imap.actions import _search_messages_sync
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.apps.smtp.actions import _send_email_sync
@@ -827,6 +828,182 @@ async def test_app_run_telegram_smtp_imap_with_credentials(
         assert imap_result.payload["count"] == 1
     finally:
         await engine.dispose()
+
+
+async def test_app_run_partyflow_get_me_with_credentials(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should execute PartyFlow get_me with stored credentials and allowlisted host."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_get_me(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"bot": {"id": "bot-42", "name": "PartyFlow Test Bot"}}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._get_me",
+            _fake_get_me,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "get_me",
+                "profile_name": "default",
+                "params": {},
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["bot"]["id"] == "bot-42"
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_send_message_with_thread_id(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should forward PartyFlow send_message params including thread_id."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_send_message(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"message_id": "msg-99", "conversation_id": "conv-1", "thread_id": "thr-7"}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._send_message",
+            _fake_send_message,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "send_message",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "content": "hello over partyflow",
+                    "thread_id": "thr-7",
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["message_id"] == "msg-99"
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "conversation_id": "conv-1",
+                "content": "hello over partyflow",
+                "thread_id": "thr-7",
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_partyflow_http_send_message_joins_on_403(monkeypatch: MonkeyPatch) -> None:
+    """PartyFlow HTTP helper should join conversation then retry send after a 403."""
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_request_json_sync(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise PartyFlowApiError(
+                status_code=403,
+                error_code="partyflow_bot_not_in_conversation",
+                reason="PartyFlow HTTP 403: Forbidden",
+            )
+        if len(calls) == 2:
+            assert kwargs["path"] == "/api/v1/bot/conversations/conv-1/join"
+            return {"ok": True}
+        assert kwargs["path"] == "/api/v1/bot/messages"
+        return {"message_id": "msg-100", "conversation_id": "conv-1"}
+
+    monkeypatch.setattr(
+        "afkbot.services.apps.partyflow.http_api._request_json_sync",
+        _fake_request_json_sync,
+    )
+
+    result = await _send_message(
+        base_url="https://api.partyflow.ru",
+        token="fri_bot_test_token",
+        conversation_id="conv-1",
+        content="hello over helper",
+        thread_id="thr-7",
+        timeout_sec=5,
+    )
+
+    assert result["message_id"] == "msg-100"
+    assert [str(item["path"]) for item in calls] == [
+        "/api/v1/bot/messages",
+        "/api/v1/bot/conversations/conv-1/join",
+        "/api/v1/bot/messages",
+    ]
 
 
 async def test_app_run_telegram_auto_picks_single_profile_when_omitted(
