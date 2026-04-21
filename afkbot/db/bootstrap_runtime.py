@@ -593,23 +593,12 @@ def _guard_legacy_plaintext_webhook_tokens(
     row = conn.execute(
         text(
             "SELECT automation_id FROM automation_trigger_webhook "
-            "WHERE webhook_token IS NOT NULL AND webhook_token != '' "
+            "WHERE webhook_token IS NOT NULL AND TRIM(webhook_token) != '' "
+            "AND TRIM(webhook_token) NOT LIKE 'sha256:%' "
             "AND (encrypted_webhook_token IS NULL OR encrypted_webhook_token = '')"
         )
     ).fetchone()
     if row is None:
-        return
-    token_ref = str(
-        conn.execute(
-            text(
-                "SELECT webhook_token FROM automation_trigger_webhook "
-                "WHERE automation_id = :automation_id"
-            ),
-            {"automation_id": int(row[0])},
-        ).scalar_one()
-        or ""
-    ).strip()
-    if not token_ref or stored_webhook_token_ref_hash(token_ref):
         return
     raise LegacyWebhookSecretUpgradeError(
         "Legacy plaintext webhook tokens require AFKBOT_CREDENTIALS_MASTER_KEYS before upgrade"

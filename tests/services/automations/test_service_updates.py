@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
@@ -153,49 +154,71 @@ async def test_service_update_cron_and_webhook_rotation(tmp_path: Path) -> None:
         await engine.dispose()
 
 
-async def test_service_webhook_metadata_degrades_without_credentials_vault(
+async def test_service_create_webhook_requires_credentials_vault(
     tmp_path: Path,
 ) -> None:
-    """Durable webhook reveal should degrade safely when encryption keys are unavailable."""
+    """Webhook create should fail closed when durable reveal storage is unavailable."""
 
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service_no_vault.db'}",
         root_dir=tmp_path,
     )
-    engine, factory, service = await prepare_service(tmp_path, settings_override=settings)
+    engine, factory, service = await prepare_service(
+        tmp_path,
+        settings_override=settings,
+        allow_missing_credentials_master_keys=True,
+    )
     try:
-        created = await service.create_webhook(
-            profile_id="default",
-            name="no-vault",
-            prompt="handle webhook",
-        )
-        assert created.webhook is not None
-        token = created.webhook.webhook_token
-        assert token is not None
-
-        fetched = await service.get(profile_id="default", automation_id=created.id)
-        assert fetched.webhook is not None
-        assert fetched.webhook.webhook_token is None
-        assert fetched.webhook.webhook_path is None
-        assert fetched.webhook.webhook_url is None
-        assert fetched.webhook.webhook_token_masked == "[HIDDEN]"
-
-        reveal = await service.reveal_webhook_endpoint(
-            profile_id="default",
-            automation_id=created.id,
-        )
-        assert reveal.recoverable is False
-        assert reveal.webhook_path is None
-        assert reveal.webhook_url is None
-        assert reveal.webhook_token_masked == "[HIDDEN]"
-
+        with pytest.raises(AutomationsServiceError) as exc:
+            await service.create_webhook(
+                profile_id="default",
+                name="no-vault",
+                prompt="handle webhook",
+            )
+        assert exc.value.error_code == "automation_webhook_reveal_unavailable"
         async with session_scope(factory) as session:
             repo = AutomationRepository(session)
-            row = await repo.get_by_id(profile_id="default", automation_id=created.id)
-            assert row is not None
-            assert row[2] is not None
-            assert row[2].encrypted_webhook_token is None
-            assert row[2].webhook_token_key_version is None
+            rows = await repo.list_by_profile(profile_id="default", include_deleted=True)
+            assert rows == []
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rotate_webhook_requires_credentials_vault(tmp_path: Path) -> None:
+    """Webhook rotate should also fail closed without durable reveal storage."""
+
+    seeded_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service_rotate_no_vault.db'}",
+        root_dir=tmp_path,
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+    )
+    engine, _, seeded_service = await prepare_service(tmp_path, settings_override=seeded_settings)
+    try:
+        created = await seeded_service.create_webhook(
+            profile_id="default",
+            name="rotate-me",
+            prompt="handle webhook",
+        )
+    finally:
+        await engine.dispose()
+
+    no_vault_settings = Settings(
+        db_url=seeded_settings.db_url,
+        root_dir=tmp_path,
+    )
+    engine, _, service = await prepare_service(
+        tmp_path,
+        settings_override=no_vault_settings,
+        allow_missing_credentials_master_keys=True,
+    )
+    try:
+        with pytest.raises(AutomationsServiceError) as exc:
+            await service.update(
+                profile_id="default",
+                automation_id=created.id,
+                rotate_webhook_token=True,
+            )
+        assert exc.value.error_code == "automation_webhook_reveal_unavailable"
     finally:
         await engine.dispose()
 

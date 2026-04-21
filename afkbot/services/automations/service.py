@@ -75,6 +75,24 @@ __all__ = [
 ]
 
 
+def _require_durable_webhook_reveal(settings: Settings | None) -> None:
+    """Fail closed when durable operator-side webhook reveal is unavailable."""
+
+    encrypted, key_version = encrypt_webhook_token(
+        plaintext_token="probe-webhook-token",
+        settings=settings,
+    )
+    if encrypted and key_version:
+        return
+    raise AutomationsServiceError(
+        error_code="automation_webhook_reveal_unavailable",
+        reason=(
+            "Webhook create/rotate requires AFKBOT_CREDENTIALS_MASTER_KEYS "
+            "for durable operator reveal"
+        ),
+    )
+
+
 class AutomationsService:
     """Service for automation CRUD and trigger execution flows."""
 
@@ -147,6 +165,7 @@ class AutomationsService:
         """Create profile automation with generated webhook trigger token."""
 
         validate_create_payload(name=name, prompt=prompt)
+        _require_durable_webhook_reveal(self._settings)
         stripped_name = name.strip()
         normalized_prompt = normalize_automation_prompt(prompt)
         normalized_execution_mode = normalize_execution_mode(execution_mode)
@@ -377,6 +396,7 @@ class AutomationsService:
         if not should_rotate_webhook_token:
             return await _run_update(None)
 
+        _require_durable_webhook_reveal(self._settings)
         for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
             issued_webhook_token = issue_webhook_token()
             try:

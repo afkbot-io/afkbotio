@@ -58,11 +58,11 @@ Use this skill only for explicit automation requests:
    - `id`, `name`, `status`, `trigger_type`
    - for cron: `cron.cron_expr`, `cron.timezone`
    - for webhook create/rotate: `webhook.webhook_path`, `webhook.webhook_url`, `webhook.webhook_token`, and `webhook.webhook_token_masked`; create/rotate still reveal the fresh endpoint directly
-   - for webhook get/list: `webhook.webhook_token_masked` and execution status fields; treat these as non-secret status reads and do not rotate a live webhook unless the user explicitly asked for a new endpoint
+   - for webhook get/list: only `webhook.webhook_token_masked` and execution status fields are available; these are non-secret status reads
    - explain that external webhook providers should call the returned path/URL directly; the token is embedded into the webhook path, not passed via headers
 6. For read-only webhook questions such as “what is the webhook URL/token/path?”:
-   - use `automation.get` when the automation id is known
-   - use `automation.list` first when the id is not known
+   - use `automation.get`/`automation.list` only to identify the automation and report masked status fields
+   - explain that current live webhook URL/path is not available from generic automation tool reads
    - do not call `automation.update` or rotate webhook tokens unless the user explicitly asked to rotate/regenerate them
 
 ## Rules

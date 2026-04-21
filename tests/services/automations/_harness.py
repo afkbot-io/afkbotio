@@ -108,6 +108,7 @@ async def prepare_service(
     *,
     graph_subagent_service_factory: AutomationGraphSubagentFactory | None = None,
     settings_override: Settings | None = None,
+    allow_missing_credentials_master_keys: bool = False,
 ) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession], AutomationsService]:
     """Create one disposable automation service + DB fixture tree."""
 
@@ -116,6 +117,14 @@ async def prepare_service(
         credentials_master_keys=Fernet.generate_key().decode("utf-8"),
         root_dir=tmp_path,
     )
+    if (
+        settings_override is not None
+        and not allow_missing_credentials_master_keys
+        and not (settings.credentials_master_keys or "").strip()
+    ):
+        settings = settings.model_copy(
+            update={"credentials_master_keys": Fernet.generate_key().decode("utf-8")}
+        )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)

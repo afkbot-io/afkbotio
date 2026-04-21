@@ -392,6 +392,106 @@ async def test_create_schema_requires_vault_for_legacy_plaintext_webhook_tokens(
         await upgraded_engine.dispose()
 
 
+async def test_create_schema_requires_vault_when_mixed_refs_and_plaintext_exist(
+    tmp_path: Path,
+) -> None:
+    """Guard must still fail when one table mixes sha256 refs with later plaintext rows."""
+
+    db_path = tmp_path / "legacy_mixed_refs_and_plaintext.db"
+    initial_settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(initial_settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        prompt TEXT NOT NULL,
+                        trigger_type VARCHAR(32) NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(profile_id) REFERENCES profile(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE automation_trigger_webhook (
+                        automation_id INTEGER PRIMARY KEY,
+                        webhook_token VARCHAR(255) UNIQUE,
+                        webhook_token_hash VARCHAR(128) UNIQUE,
+                        FOREIGN KEY(automation_id) REFERENCES automation(id)
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO profile (id, name, is_default, status, settings_json)
+                    VALUES ('default', 'Default', 1, 'active', '{}')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation (id, profile_id, name, prompt, trigger_type, status)
+                    VALUES
+                        (1, 'default', 'ref-hook', 'legacy prompt', 'webhook', 'active'),
+                        (2, 'default', 'plain-hook', 'legacy prompt', 'webhook', 'active')
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO automation_trigger_webhook (automation_id, webhook_token, webhook_token_hash)
+                    VALUES
+                        (1, :token_ref, :token_hash),
+                        (2, :plaintext, NULL)
+                    """
+                ),
+                {
+                    "token_ref": stored_webhook_token_ref(hash_webhook_token("already-migrated")),
+                    "token_hash": hash_webhook_token("already-migrated"),
+                    "plaintext": "legacy-plaintext-token",
+                },
+            )
+
+        with pytest.raises(
+            LegacyWebhookSecretUpgradeError,
+            match="AFKBOT_CREDENTIALS_MASTER_KEYS",
+        ):
+            await create_schema(engine)
+    finally:
+        await engine.dispose()
+
+
 async def test_create_schema_adds_delivery_columns_for_legacy_automation_rows(
     tmp_path: Path,
 ) -> None:
