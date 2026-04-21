@@ -11,6 +11,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import threading
 from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from afkbot.settings import Settings
 
 _SERVICES_BY_ROOT: dict[str, "PluginService"] = {}
+_SERVICES_LOCK = threading.Lock()
 _COPY_IGNORE = shutil.ignore_patterns(
     ".git",
     ".idea",
@@ -56,6 +58,7 @@ class PluginService:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._entrypoint_import_lock = threading.RLock()
 
     def list_installed(self) -> tuple[InstalledPluginRecord, ...]:
         """Return installed plugins in deterministic order."""
@@ -338,19 +341,20 @@ class PluginService:
                 reason=f"Plugin python root is missing: {python_root}",
             )
         module_name, function_name = manifest.entrypoint.split(":", 1)
-        _ensure_python_root_on_path(python_root)
-        _reset_module_tree(module_name)
-        importlib.invalidate_caches()
-        try:
-            module = importlib.import_module(module_name)
-        except Exception as exc:
-            raise PluginServiceError(
-                error_code="plugin_entrypoint_import_failed",
-                reason=(
-                    f"Failed to import plugin entrypoint module {module_name}: "
-                    f"{exc.__class__.__name__}: {exc}"
-                ),
-            ) from exc
+        with self._entrypoint_import_lock:
+            _ensure_python_root_on_path(python_root)
+            _reset_module_tree(module_name)
+            importlib.invalidate_caches()
+            try:
+                module = importlib.import_module(module_name)
+            except Exception as exc:
+                raise PluginServiceError(
+                    error_code="plugin_entrypoint_import_failed",
+                    reason=(
+                        f"Failed to import plugin entrypoint module {module_name}: "
+                        f"{exc.__class__.__name__}: {exc}"
+                    ),
+                ) from exc
         callback = getattr(module, function_name, None)
         if not callable(callback):
             raise PluginServiceError(
@@ -703,8 +707,9 @@ def get_plugin_service(settings: Settings) -> PluginService:
     """Return cached plugin service for one runtime root."""
 
     root = str(settings.root_dir.resolve(strict=False))
-    service = _SERVICES_BY_ROOT.get(root)
-    if service is None:
-        service = PluginService(settings)
-        _SERVICES_BY_ROOT[root] = service
-    return service
+    with _SERVICES_LOCK:
+        service = _SERVICES_BY_ROOT.get(root)
+        if service is None:
+            service = PluginService(settings)
+            _SERVICES_BY_ROOT[root] = service
+        return service

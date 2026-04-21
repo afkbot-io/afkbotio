@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Callable
@@ -15,6 +16,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
+from afkbot.db.sqlite_resilience import is_sqlite_lock_error, run_with_sqlite_lock_retry
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
@@ -25,9 +27,12 @@ from afkbot.services.session_orchestration.contracts import SessionTurnSource
 from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
+_LOGGER = logging.getLogger(__name__)
 _SESSION_QUEUE_POLL_SEC = 0.05
 _SESSION_QUEUE_MAX_POLL_SEC = 0.5
 _SESSION_QUEUE_HEARTBEAT_SEC = 15.0
+_SESSION_QUEUE_HEARTBEAT_RETRY_SEC = 1.0
+_SESSION_QUEUE_STALE_SWEEP_SEC = 5.0
 _SESSION_QUEUE_WAIT_TIMEOUT_SEC = 86_400.0
 
 
@@ -174,6 +179,8 @@ class SessionOrchestrator:
                     session_factory=resources.session_factory,
                     queue_item_id=queue_item_id,
                     owner_token=owner_token,
+                    profile_id=profile_id,
+                    session_id=session_id,
                 ),
                 name=f"session-turn-queue-heartbeat:{profile_id}:{session_id}:{queue_item_id}",
             )
@@ -213,6 +220,27 @@ class SessionOrchestrator:
         source: str,
         client_msg_id: str | None,
     ) -> int:
+        return await run_with_sqlite_lock_retry(
+            lambda: self._enqueue_turn_marker_once(
+                session_factory=session_factory,
+                profile_id=profile_id,
+                session_id=session_id,
+                owner_token=owner_token,
+                source=source,
+                client_msg_id=client_msg_id,
+            )
+        )
+
+    async def _enqueue_turn_marker_once(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        profile_id: str,
+        session_id: str,
+        owner_token: str,
+        source: str,
+        client_msg_id: str | None,
+    ) -> int:
         async with session_scope(session_factory) as db:
             await ProfileRepository(db).get_or_create_default(profile_id)
             row = await ChatSessionTurnQueueRepository(db).enqueue(
@@ -235,27 +263,61 @@ class SessionOrchestrator:
     ) -> None:
         deadline = time.monotonic() + _SESSION_QUEUE_WAIT_TIMEOUT_SEC
         attempt = 0
+        next_stale_sweep_at = 0.0
         while time.monotonic() < deadline:
-            async with session_scope(session_factory) as db:
-                repo = ChatSessionTurnQueueRepository(db)
-                await repo.release_stale(
-                    profile_id=profile_id,
-                    session_id=session_id,
-                    older_than=self._stale_queue_cutoff(),
+            now = time.monotonic()
+            should_sweep_stale = now >= next_stale_sweep_at
+            if should_sweep_stale:
+                next_stale_sweep_at = now + _SESSION_QUEUE_STALE_SWEEP_SEC
+            try:
+                acquired = await run_with_sqlite_lock_retry(
+                    lambda: self._poll_queue_marker_once(
+                        session_factory=session_factory,
+                        queue_item_id=queue_item_id,
+                        profile_id=profile_id,
+                        session_id=session_id,
+                        owner_token=owner_token,
+                        should_sweep_stale=should_sweep_stale,
+                    ),
+                    attempts=2,
                 )
-                if await repo.try_mark_running(
-                    queue_item_id=queue_item_id,
-                    profile_id=profile_id,
-                    session_id=session_id,
-                    owner_token=owner_token,
-                    touched_at=datetime.now(UTC),
-                ):
-                    return
+            except Exception as exc:
+                if not is_sqlite_lock_error(exc):
+                    raise
+                acquired = False
+            if acquired:
+                return
             await asyncio.sleep(_session_queue_poll_delay(attempt))
             attempt += 1
         raise TimeoutError(
             f"Timed out waiting for session turn queue slot: {profile_id}/{session_id}"
         )
+
+    async def _poll_queue_marker_once(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        queue_item_id: int,
+        profile_id: str,
+        session_id: str,
+        owner_token: str,
+        should_sweep_stale: bool,
+    ) -> bool:
+        async with session_scope(session_factory) as db:
+            repo = ChatSessionTurnQueueRepository(db)
+            if should_sweep_stale:
+                await repo.release_stale(
+                    profile_id=profile_id,
+                    session_id=session_id,
+                    older_than=self._stale_queue_cutoff(),
+                )
+            return await repo.try_mark_running(
+                queue_item_id=queue_item_id,
+                profile_id=profile_id,
+                session_id=session_id,
+                owner_token=owner_token,
+                touched_at=datetime.now(UTC),
+            )
 
     async def _heartbeat_queue_marker(
         self,
@@ -263,19 +325,72 @@ class SessionOrchestrator:
         session_factory: async_sessionmaker[AsyncSession],
         queue_item_id: int,
         owner_token: str,
+        profile_id: str,
+        session_id: str,
     ) -> None:
         while True:
-            async with session_scope(session_factory) as db:
-                touched = await ChatSessionTurnQueueRepository(db).touch(
-                    queue_item_id=queue_item_id,
-                    owner_token=owner_token,
-                    touched_at=datetime.now(UTC),
+            try:
+                touched = await run_with_sqlite_lock_retry(
+                    lambda: self._touch_queue_marker_once(
+                        session_factory=session_factory,
+                        queue_item_id=queue_item_id,
+                        owner_token=owner_token,
+                    )
                 )
+            except Exception as exc:
+                if not is_sqlite_lock_error(exc):
+                    raise
+                _LOGGER.warning(
+                    "session_turn_queue_heartbeat_locked profile_id=%s session_id=%s queue_item_id=%s",
+                    profile_id,
+                    session_id,
+                    queue_item_id,
+                )
+                await asyncio.sleep(_SESSION_QUEUE_HEARTBEAT_RETRY_SEC)
+                continue
             if not touched:
                 return
             await asyncio.sleep(_SESSION_QUEUE_HEARTBEAT_SEC)
 
+    async def _touch_queue_marker_once(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        queue_item_id: int,
+        owner_token: str,
+    ) -> bool:
+        async with session_scope(session_factory) as db:
+            return await ChatSessionTurnQueueRepository(db).touch(
+                queue_item_id=queue_item_id,
+                owner_token=owner_token,
+                touched_at=datetime.now(UTC),
+            )
+
     async def _release_queue_marker(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        queue_item_id: int,
+        owner_token: str,
+    ) -> None:
+        try:
+            await run_with_sqlite_lock_retry(
+                lambda: self._release_queue_marker_once(
+                    session_factory=session_factory,
+                    queue_item_id=queue_item_id,
+                    owner_token=owner_token,
+                )
+            )
+        except Exception as exc:
+            if not is_sqlite_lock_error(exc):
+                raise
+            _LOGGER.warning(
+                "session_turn_queue_release_locked queue_item_id=%s owner_token=%s",
+                queue_item_id,
+                owner_token,
+            )
+
+    async def _release_queue_marker_once(
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
