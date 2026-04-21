@@ -296,6 +296,85 @@ async def test_partyflow_webhook_batches_messages_and_delivers_reply(
     assert pending == []
 
 
+async def test_partyflow_webhook_replay_with_new_delivery_id_is_deduplicated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same signed payload replayed with a new delivery id should still deduplicate."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_replay_delivery.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_chat_turn(**kwargs):
+        calls.append(kwargs)
+        return TurnResult(
+            run_id=1,
+            session_id="session-1",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="ignored"),
+        )
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-replay-dedup",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-replay-1",
+            "author_id": "user-1",
+            "text": "@bot replay once",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        timestamp = int(time.time())
+        first_status, first_response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-1",
+                timestamp=timestamp,
+            ),
+            body=body,
+        )
+        second_status, second_response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-2",
+                timestamp=timestamp,
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert first_status == 202
+    assert first_response == {"accepted": True}
+    assert second_status == 200
+    assert second_response == {"ok": True, "duplicate": True}
+    assert len(calls) == 1
+
+
 async def test_partyflow_webhook_ignores_self_authored_messages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

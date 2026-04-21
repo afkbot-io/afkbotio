@@ -12,6 +12,7 @@ import hmac
 import json
 import logging
 import time
+from uuid import UUID
 from typing import Any
 
 from afkbot.services.agent_loop.api_runtime import run_chat_turn
@@ -152,13 +153,7 @@ class PartyFlowWebhookService:
     ) -> tuple[int, dict[str, object]]:
         """Verify and enqueue one PartyFlow outgoing webhook delivery."""
 
-        delivery_id = headers.get("x-partyflow-delivery-id", "").strip()
-        if not delivery_id:
-            return 400, {
-                "ok": False,
-                "error_code": "partyflow_delivery_id_required",
-                "reason": "Missing X-PartyFlow-Delivery-Id header",
-            }
+        delivery_id = headers.get("x-partyflow-delivery-id", "").strip() or None
         verified = self._verify_signature(headers=headers, body=body)
         if not verified:
             return 401, {
@@ -166,55 +161,67 @@ class PartyFlowWebhookService:
                 "error_code": "partyflow_invalid_signature",
                 "reason": "Invalid PartyFlow webhook signature",
             }
+        try:
+            payload = _parse_payload(body)
+        except PartyFlowWebhookServiceError as exc:
+            return 400, {"ok": False, "error_code": exc.error_code, "reason": exc.reason}
+
+        dedup_event_key = self._build_dedup_event_key(payload=payload, headers=headers, body=body)
         journal = get_channel_ingress_journal_service(self._settings)
         claimed = await journal.try_claim(
             endpoint_id=self._endpoint.endpoint_id,
             transport=self._endpoint.transport,
-            event_key=delivery_id,
+            event_key=dedup_event_key,
         )
         if not claimed:
+            _LOGGER.debug(
+                "partyflow_webhook_duplicate endpoint_id=%s event_key=%s delivery_id=%s",
+                self._endpoint.endpoint_id,
+                dedup_event_key,
+                delivery_id,
+            )
             return 200, {"ok": True, "duplicate": True}
+
         try:
-            payload = _parse_payload(body)
             ingress_event = self._build_ingress_event(
-                delivery_id=delivery_id,
                 payload=payload,
+                dedup_event_key=dedup_event_key,
             )
             if ingress_event is None:
-                return 200, {"ok": True, "ignored": True}
-            persisted = await get_channel_ingress_pending_service(self._settings).record_pending(
-                event=ingress_event
-            )
-            if not persisted:
-                return 200, {"ok": True, "duplicate": True}
-            try:
-                self._queue.put_nowait(_QueuedWebhookEvent(ingress_event=ingress_event))
-            except asyncio.QueueFull:
-                await get_channel_ingress_pending_service(self._settings).release_event(
+                await journal.record_processed(
                     endpoint_id=self._endpoint.endpoint_id,
-                    event_key=ingress_event.event_key,
+                    transport=self._endpoint.transport,
+                    event_key=dedup_event_key,
                 )
-                await journal.release_claim(
-                    endpoint_id=self._endpoint.endpoint_id, event_key=delivery_id
-                )
-                return 429, {
-                    "ok": False,
-                    "error_code": "partyflow_queue_full",
-                    "reason": "PartyFlow webhook queue is full",
-                    "retry_after": 1,
-                }
+                return 200, {"ok": True, "ignored": True}
+            await self._ingress_coalescer.enqueue(ingress_event)
         except PartyFlowWebhookServiceError as exc:
             await journal.release_claim(
-                endpoint_id=self._endpoint.endpoint_id, event_key=delivery_id
+                endpoint_id=self._endpoint.endpoint_id,
+                event_key=dedup_event_key,
             )
             return 400, {"ok": False, "error_code": exc.error_code, "reason": exc.reason}
         except Exception:
             await journal.release_claim(
-                endpoint_id=self._endpoint.endpoint_id, event_key=delivery_id
+                endpoint_id=self._endpoint.endpoint_id,
+                event_key=dedup_event_key,
             )
             raise
         return 202, {"accepted": True}
 
+    def _build_dedup_event_key(
+        self,
+        *,
+        payload: Mapping[str, object],
+        headers: Mapping[str, str],
+        body: bytes,
+    ) -> str:
+        stable_id = _extract_partyflow_event_identifier(payload)
+        if stable_id is not None:
+            return "event:" + hashlib.sha256(stable_id.encode("utf-8")).hexdigest()
+        timestamp = headers.get("x-partyflow-timestamp", "").strip()
+        material = timestamp.encode("utf-8") + b":" + body
+        return "signed-payload:" + hashlib.sha256(material).hexdigest()
     async def _bootstrap_identity(self) -> None:
         """Resolve signing secret and bot identity before the service starts."""
 
@@ -439,7 +446,7 @@ class PartyFlowWebhookService:
     def _build_ingress_event(
         self,
         *,
-        delivery_id: str,
+        dedup_event_key: str,
         payload: Mapping[str, object],
     ) -> ChannelIngressEvent | None:
         event_type = str(payload.get("event_type") or "").strip().upper()
@@ -511,7 +518,7 @@ class PartyFlowWebhookService:
             peer_id=conversation_id,
             thread_id=thread_id,
             user_id=author_id,
-            event_key=delivery_id,
+            event_key=dedup_event_key,
             message_id=message_id,
             text=rendered_text,
             observed_at=occurred_at,
@@ -657,6 +664,32 @@ def _extract_identifier(
             return candidate
     return None
 
+
+def _extract_partyflow_event_identifier(payload: Mapping[str, object]) -> str | None:
+    """Return a stable PartyFlow event/message identifier from signed payload fields."""
+
+    data_raw = payload.get("data")
+    data = data_raw if isinstance(data_raw, Mapping) else {}
+    candidates: tuple[object, ...] = (
+        payload.get("event_id"),
+        data.get("event_id"),
+        data.get("message_id"),
+        payload.get("message_id"),
+    )
+    for candidate in candidates:
+        value = _coerce_optional_str(candidate)
+        if value is not None:
+            return _normalize_partyflow_identifier(value)
+    return None
+
+
+def _normalize_partyflow_identifier(value: str) -> str:
+    """Normalize identifiers so UUID-like values dedupe independent of casing."""
+
+    lowered = value.lower()
+    with contextlib.suppress(ValueError):
+        return str(UUID(lowered))
+    return value
 
 def _extract_mentions(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
