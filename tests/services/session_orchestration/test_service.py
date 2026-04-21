@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from pathlib import Path
+import sqlite3
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.db.session import session_scope
 from afkbot.models.chat_session_turn_queue import ChatSessionTurnQueueItem
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -249,3 +253,133 @@ def test_session_queue_poll_delay_uses_capped_backoff() -> None:
     assert _session_queue_poll_delay(3) == pytest.approx(0.4)
     assert _session_queue_poll_delay(4) == pytest.approx(0.5)
     assert _session_queue_poll_delay(8) == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_retries_transient_sqlite_lock_during_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queue release should retry transient SQLite lock errors instead of crashing chat."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_release_retry.db",
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    release_calls = {"count": 0}
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        await ChatSessionRepository(session).create(session_id="s-release", profile_id="default")
+
+    original_release = ChatSessionTurnQueueRepository.release
+
+    async def _flaky_release(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        queue_item_id: int,
+        owner_token: str,
+    ) -> None:
+        release_calls["count"] += 1
+        if release_calls["count"] == 1:
+            raise OperationalError(
+                "DELETE FROM chat_session_turn_queue WHERE id = ? AND owner_token = ?",
+                (queue_item_id, owner_token),
+                sqlite3.OperationalError("database is locked"),
+            )
+        await original_release(
+            self,
+            queue_item_id=queue_item_id,
+            owner_token=owner_token,
+        )
+
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "release", _flaky_release)
+
+    orchestrator = SessionOrchestrator(
+        settings=settings,
+        session_factory=factory,
+        turn_runner_factory=lambda session, _profile_id: _ObservedRunner(
+            session,
+            started=[],
+            first_started=first_started,
+            release_first=release_first,
+        ),
+    )
+
+    try:
+        result = await orchestrator.run_turn(
+            profile_id="default",
+            session_id="s-release",
+            message="single",
+            source="chat",
+        )
+        assert result.envelope.message == "done:single"
+        assert release_calls["count"] >= 2
+        async with session_scope(factory) as session:
+            rows = (await session.execute(select(ChatSessionTurnQueueItem))).scalars().all()
+            assert rows == []
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_wait_loop_throttles_stale_queue_sweeps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waiting for queue admission should not execute stale cleanup on every poll tick."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_stale_sweep.db",
+    )
+    release_stale_calls = {"count": 0}
+
+    async def _count_release_stale(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        older_than,
+        profile_id: str,
+        session_id: str,
+    ) -> int:
+        _ = self, older_than, profile_id, session_id
+        release_stale_calls["count"] += 1
+        return 0
+
+    async def _never_mark_running(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        queue_item_id: int,
+        profile_id: str,
+        session_id: str,
+        owner_token: str,
+        touched_at,
+    ) -> bool:
+        _ = self, queue_item_id, profile_id, session_id, owner_token, touched_at
+        return False
+
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "release_stale", _count_release_stale)
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "try_mark_running", _never_mark_running)
+
+    orchestrator = SessionOrchestrator(settings=settings, session_factory=factory)
+    waiter = asyncio.create_task(
+        orchestrator._wait_until_marker_is_running(
+            session_factory=factory,
+            queue_item_id=1,
+            profile_id="default",
+            session_id="s-stale",
+            owner_token="owner",
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.26)
+    finally:
+        waiter.cancel()
+        with suppress(asyncio.CancelledError):
+            await waiter
+        await engine.dispose()
+
+    assert release_stale_calls["count"] == 1

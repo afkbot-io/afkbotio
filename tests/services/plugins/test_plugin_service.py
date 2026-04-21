@@ -7,6 +7,8 @@ import io
 import json
 from pathlib import Path
 import tarfile
+import threading
+import time
 
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.plugins import PluginServiceError, get_plugin_service, scaffold_plugin
@@ -249,6 +251,87 @@ def test_plugin_service_update_reinstalls_from_saved_source(tmp_path: Path) -> N
     assert updated.enabled is False
     assert updated.source_ref == str(source_root.resolve(strict=False))
     assert "demo plugin updated" in installed_index.read_text(encoding="utf-8")
+
+
+def test_plugin_service_concurrent_runtime_loads_do_not_break_package_import(tmp_path: Path) -> None:
+    """Concurrent runtime loads should not reset one plugin package out from under another import."""
+
+    source_root = tmp_path / "demo-plugin-src"
+    _write_demo_plugin(source_root)
+    manifest_path = source_root / ".afkbot-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["plugin_id"] = "race"
+    manifest["name"] = "Race Plugin"
+    manifest["entrypoint"] = "afkbot_plugin_race.plugin:register"
+    manifest["mounts"]["api_prefix"] = "/v1/plugins/race"
+    manifest["mounts"]["web_prefix"] = "/plugins/race"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
+    package_root = source_root / "python"
+    (package_root / "afkbot_plugin_demo").rename(package_root / "afkbot_plugin_race")
+    plugin_path = package_root / "afkbot_plugin_race/plugin.py"
+    plugin_path.write_text(
+        plugin_path.read_text(encoding="utf-8").replace("demo", "race"),
+        encoding="utf-8",
+    )
+
+    settings = Settings(root_dir=tmp_path)
+    service = get_plugin_service(settings)
+    installed = service.install(source=str(source_root))
+    installed_root = settings.root_dir / installed.install_path
+    imported_package_dir = installed_root / "python" / "afkbot_plugin_race"
+    started_marker = imported_package_dir / ".started"
+    continue_marker = imported_package_dir / ".continue"
+    imported_package_dir.joinpath("__init__.py").write_text(
+        """
+from __future__ import annotations
+
+from pathlib import Path
+import time
+
+package_dir = Path(__file__).resolve().parent
+started_marker = package_dir / ".started"
+continue_marker = package_dir / ".continue"
+started_marker.write_text("started", encoding="utf-8")
+deadline = time.monotonic() + 5.0
+while not continue_marker.exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError("timed out waiting for plugin import gate")
+    time.sleep(0.01)
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors: list[BaseException] = []
+    snapshots = []
+
+    def _load_runtime() -> None:
+        try:
+            snapshots.append(service.load_runtime_snapshot())
+        except BaseException as exc:  # pragma: no cover - failure path asserted below
+            errors.append(exc)
+
+    first = threading.Thread(target=_load_runtime, name="plugin-load-1")
+    second = threading.Thread(target=_load_runtime, name="plugin-load-2")
+
+    first.start()
+    deadline = time.monotonic() + 2.0
+    while not started_marker.exists():
+        if time.monotonic() >= deadline:
+            raise AssertionError("plugin import did not reach package gate in time")
+        time.sleep(0.01)
+
+    second.start()
+    time.sleep(0.1)
+    continue_marker.write_text("go", encoding="utf-8")
+    first.join(timeout=5.0)
+    second.join(timeout=5.0)
+
+    assert first.is_alive() is False
+    assert second.is_alive() is False
+    assert errors == []
+    assert len(snapshots) == 2
 
 
 def test_plugin_service_installs_from_github_archive_source(tmp_path: Path, monkeypatch) -> None:
