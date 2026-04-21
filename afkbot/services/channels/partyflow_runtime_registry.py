@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
+from typing import Protocol
 
 from afkbot.settings import Settings
 
 _REGISTRIES_BY_ROOT: dict[str, "PartyFlowWebhookRuntimeRegistry"] = {}
+
+
+class PartyFlowWebhookRuntime(Protocol):
+    """Minimal runtime contract needed by the FastAPI webhook route."""
+
+    async def handle_webhook(
+        self,
+        *,
+        headers: Mapping[str, str],
+        body: bytes,
+    ) -> tuple[int, dict[str, object]]: ...
 
 
 class PartyFlowWebhookRuntimeRegistry:
@@ -14,9 +27,9 @@ class PartyFlowWebhookRuntimeRegistry:
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._services: dict[str, object] = {}
+        self._services: dict[str, PartyFlowWebhookRuntime] = {}
 
-    async def register(self, *, endpoint_id: str, service: object) -> None:
+    async def register(self, *, endpoint_id: str, service: PartyFlowWebhookRuntime) -> None:
         """Register one live PartyFlow runtime for webhook dispatch."""
 
         normalized = endpoint_id.strip().lower()
@@ -25,7 +38,12 @@ class PartyFlowWebhookRuntimeRegistry:
         async with self._lock:
             self._services[normalized] = service
 
-    async def unregister(self, *, endpoint_id: str, service: object | None = None) -> None:
+    async def unregister(
+        self,
+        *,
+        endpoint_id: str,
+        service: PartyFlowWebhookRuntime | None = None,
+    ) -> None:
         """Remove one live PartyFlow runtime when present."""
 
         normalized = endpoint_id.strip().lower()
@@ -39,7 +57,7 @@ class PartyFlowWebhookRuntimeRegistry:
                 return
             self._services.pop(normalized, None)
 
-    def get(self, endpoint_id: str) -> object | None:
+    def get(self, endpoint_id: str) -> PartyFlowWebhookRuntime | None:
         """Return the registered runtime service for one endpoint id when present."""
 
         normalized = endpoint_id.strip().lower()

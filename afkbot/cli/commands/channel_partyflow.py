@@ -64,6 +64,7 @@ from afkbot.services.channels.tool_profiles import (
     CHANNEL_TOOL_PROFILE_HELP,
     CHANNEL_TOOL_PROFILE_VALUES,
 )
+from afkbot.services.profile_runtime import ProfileDetails, run_profile_service_sync
 from afkbot.settings import Settings, get_settings
 
 _PARTYFLOW_INGRESS_MODES = ("webhook",)
@@ -372,10 +373,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     interactive=True,
                     lang=prompt_language,
                 )
-            saved = run_channel_endpoint_service_sync(
-                settings,
-                lambda service: service.create(endpoint),
-            )
+            saved = _create_partyflow_endpoint(settings=settings, endpoint=endpoint)
             if base_inputs.create_binding:
                 put_matching_binding(
                     settings=settings,
@@ -737,40 +735,38 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     else None
                 ),
             )
-            saved = run_channel_endpoint_service_sync(
-                settings,
-                lambda service: service.update(
-                    PartyFlowWebhookEndpointConfig(
-                        endpoint_id=current.endpoint_id,
-                        profile_id=resolved_profile_id,
-                        credential_profile_key=resolve_channel_text(
-                            value=credential_profile_key,
-                            interactive=False,
-                            prompt_en="Credential profile",
-                            prompt_ru="Credential profile",
-                            default=current.credential_profile_key or current.endpoint_id,
-                            lang=prompt_language,
-                            normalize_lower=True,
-                        ),
-                        account_id=resolve_channel_text(
-                            value=account_id,
-                            interactive=False,
-                            prompt_en="Account id",
-                            prompt_ru="Account id",
-                            default=current.account_id,
-                            lang=prompt_language,
-                            normalize_lower=True,
-                        ),
-                        enabled=current.enabled,
-                        ingress_mode=current.ingress_mode,
-                        trigger_mode=resolved_trigger_mode,  # type: ignore[arg-type]
-                        trigger_keywords=resolved_trigger_keywords,
-                        include_context=resolved_include_context,
-                        context_size=resolved_context_size,
-                        reply_mode=resolved_reply_mode,  # type: ignore[arg-type]
-                        tool_profile=resolved_tool_profile,
-                        ingress_batch=resolved_ingress_batch,
-                    )
+            saved = _update_partyflow_endpoint(
+                settings=settings,
+                endpoint=PartyFlowWebhookEndpointConfig(
+                    endpoint_id=current.endpoint_id,
+                    profile_id=resolved_profile_id,
+                    credential_profile_key=resolve_channel_text(
+                        value=credential_profile_key,
+                        interactive=False,
+                        prompt_en="Credential profile",
+                        prompt_ru="Credential profile",
+                        default=current.credential_profile_key or current.endpoint_id,
+                        lang=prompt_language,
+                        normalize_lower=True,
+                    ),
+                    account_id=resolve_channel_text(
+                        value=account_id,
+                        interactive=False,
+                        prompt_en="Account id",
+                        prompt_ru="Account id",
+                        default=current.account_id,
+                        lang=prompt_language,
+                        normalize_lower=True,
+                    ),
+                    enabled=current.enabled,
+                    ingress_mode=current.ingress_mode,
+                    trigger_mode=resolved_trigger_mode,  # type: ignore[arg-type]
+                    trigger_keywords=resolved_trigger_keywords,
+                    include_context=resolved_include_context,
+                    context_size=resolved_context_size,
+                    reply_mode=resolved_reply_mode,  # type: ignore[arg-type]
+                    tool_profile=resolved_tool_profile,
+                    ingress_batch=resolved_ingress_batch,
                 ),
             )
             if sync_binding:
@@ -1010,10 +1006,32 @@ def _load_partyflow_endpoint(
     return PartyFlowWebhookEndpointConfig.model_validate(endpoint.model_dump())
 
 
-def _load_profile(*, settings: Settings, profile_id: str):
-    from afkbot.services.profile_runtime import run_profile_service_sync
-
+def _load_profile(*, settings: Settings, profile_id: str) -> ProfileDetails:
     return run_profile_service_sync(settings, lambda service: service.get(profile_id=profile_id))
+
+
+def _create_partyflow_endpoint(
+    *,
+    settings: Settings,
+    endpoint: PartyFlowWebhookEndpointConfig,
+) -> PartyFlowWebhookEndpointConfig:
+    created = run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(endpoint),
+    )
+    return PartyFlowWebhookEndpointConfig.model_validate(created.model_dump())
+
+
+def _update_partyflow_endpoint(
+    *,
+    settings: Settings,
+    endpoint: PartyFlowWebhookEndpointConfig,
+) -> PartyFlowWebhookEndpointConfig:
+    updated = run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.update(endpoint),
+    )
+    return PartyFlowWebhookEndpointConfig.model_validate(updated.model_dump())
 
 
 def _set_partyflow_enabled(*, channel_id: str, enabled: bool) -> None:

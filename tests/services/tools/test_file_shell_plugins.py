@@ -193,16 +193,26 @@ async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_pa
     assert tool is not None
 
     python_bin = shlex.quote(sys.executable)
+    first_start_path = tmp_path / "job-first-start.txt"
+    second_start_path = tmp_path / "job-second-start.txt"
     params = tool.parse_params(
         {
             "jobs": [
                 {
                     "kind": "bash",
-                    "cmd": f"{python_bin} -c \"import time; time.sleep(0.25); print('first')\"",
+                    "cmd": (
+                        f"{python_bin} -c \"import pathlib,time; "
+                        f"pathlib.Path(r'{first_start_path}').write_text(str(time.monotonic())); "
+                        "time.sleep(0.25); print('first')\""
+                    ),
                 },
                 {
                     "kind": "bash",
-                    "cmd": f"{python_bin} -c \"import time; time.sleep(0.25); print('second')\"",
+                    "cmd": (
+                        f"{python_bin} -c \"import pathlib,time; "
+                        f"pathlib.Path(r'{second_start_path}').write_text(str(time.monotonic())); "
+                        "time.sleep(0.25); print('second')\""
+                    ),
                 },
             ],
             "timeout_sec": 2,
@@ -216,7 +226,10 @@ async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_pa
 
     assert result.ok is True
     assert result.payload["completed"] == 2
-    assert elapsed < 0.65
+    first_started = float(first_start_path.read_text(encoding="utf-8"))
+    second_started = float(second_start_path.read_text(encoding="utf-8"))
+    assert abs(first_started - second_started) < 0.25
+    assert elapsed < 1.5
     outputs = [
         str(item["payload"]["stdout"]).strip()
         for item in result.payload["results"]

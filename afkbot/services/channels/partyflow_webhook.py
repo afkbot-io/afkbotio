@@ -147,7 +147,7 @@ class PartyFlowWebhookService:
     async def handle_webhook(
         self,
         *,
-        headers: dict[str, str],
+        headers: Mapping[str, str],
         body: bytes,
     ) -> tuple[int, dict[str, object]]:
         """Verify and enqueue one PartyFlow outgoing webhook delivery."""

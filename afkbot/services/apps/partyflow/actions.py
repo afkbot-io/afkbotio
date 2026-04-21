@@ -107,60 +107,60 @@ async def run_partyflow_action(
     )
     try:
         if normalized_action == "get_me":
-            payload = _GetMeParams.model_validate(params)
+            get_me_params = _GetMeParams.model_validate(params)
             token = await resolve_credential_value(
                 settings=settings,
                 context=call_context,
-                credential_slug=payload.token_credential_name,
+                credential_slug=get_me_params.token_credential_name,
             )
             await ensure_host_allowed(
                 settings=settings,
                 context=call_context,
-                host=_host_from_base_url(payload.base_url),
+                host=_host_from_base_url(get_me_params.base_url),
             )
             result = await _get_me(
-                base_url=payload.base_url,
+                base_url=get_me_params.base_url,
                 token=token,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=result)
         if normalized_action == "join_conversation":
-            payload = _JoinConversationParams.model_validate(params)
+            join_params = _JoinConversationParams.model_validate(params)
             token = await resolve_credential_value(
                 settings=settings,
                 context=call_context,
-                credential_slug=payload.token_credential_name,
+                credential_slug=join_params.token_credential_name,
             )
             await ensure_host_allowed(
                 settings=settings,
                 context=call_context,
-                host=_host_from_base_url(payload.base_url),
+                host=_host_from_base_url(join_params.base_url),
             )
             result = await _join_conversation(
-                base_url=payload.base_url,
+                base_url=join_params.base_url,
                 token=token,
-                conversation_id=payload.conversation_id,
+                conversation_id=join_params.conversation_id,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=result)
         if normalized_action == "send_message":
-            payload = _SendMessageParams.model_validate(params)
+            send_params = _SendMessageParams.model_validate(params)
             token = await resolve_credential_value(
                 settings=settings,
                 context=call_context,
-                credential_slug=payload.token_credential_name,
+                credential_slug=send_params.token_credential_name,
             )
             await ensure_host_allowed(
                 settings=settings,
                 context=call_context,
-                host=_host_from_base_url(payload.base_url),
+                host=_host_from_base_url(send_params.base_url),
             )
             result = await _send_message(
-                base_url=payload.base_url,
+                base_url=send_params.base_url,
                 token=token,
-                conversation_id=payload.conversation_id,
-                content=payload.content,
-                thread_id=payload.thread_id,
+                conversation_id=send_params.conversation_id,
+                content=send_params.content,
+                thread_id=send_params.thread_id,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=result)
@@ -170,7 +170,10 @@ async def run_partyflow_action(
         )
     except ValidationError as exc:
         return build_app_params_validation_error(
-            app_name="partyflow", action=normalized_action, exc=exc
+            app_name="partyflow",
+            action=normalized_action,
+            model=_model_for_action(normalized_action),
+            exc=exc,
         )
     except CredentialsServiceError as exc:
         error_code, reason, metadata = credentials_error_result(exc=exc, context=call_context)
@@ -197,3 +200,7 @@ def _host_from_base_url(value: str) -> str:
     if not host:
         raise ValueError("PartyFlow base_url must include a valid host")
     return host
+
+
+def _model_for_action(action: str) -> type[BaseModel]:
+    return _ACTION_PARAMS_MODELS.get(action, _GetMeParams)

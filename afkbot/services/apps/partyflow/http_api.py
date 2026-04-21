@@ -72,7 +72,7 @@ async def _send_message(
     thread_id: str | None,
     timeout_sec: int,
 ) -> dict[str, object]:
-    body = {
+    body: dict[str, object] = {
         "conversation_id": conversation_id,
         "content": content,
     }
@@ -176,12 +176,12 @@ def _http_error(exc: HTTPError) -> PartyFlowApiError:
     except Exception:
         raw = b""
     try:
-        payload = json.loads(raw.decode("utf-8")) if raw else {}
+        parsed_payload: object = json.loads(raw.decode("utf-8")) if raw else {}
     except (UnicodeDecodeError, json.JSONDecodeError):
-        payload = {}
-    metadata = {"http_status": exc.code}
-    if isinstance(payload, dict):
-        metadata["response"] = {str(key): value for key, value in payload.items()}
+        parsed_payload = {}
+    metadata: dict[str, object] = {"http_status": exc.code}
+    if isinstance(parsed_payload, dict):
+        metadata["response"] = {str(key): value for key, value in parsed_payload.items()}
     reason = f"PartyFlow HTTP {exc.code}: {exc.reason}"
     error_code = "app_run_failed"
     if exc.code == 401:

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
@@ -29,6 +30,8 @@ _SESSION_QUEUE_POLL_SEC = 0.05
 _SESSION_QUEUE_MAX_POLL_SEC = 0.5
 _SESSION_QUEUE_HEARTBEAT_SEC = 15.0
 _SESSION_QUEUE_WAIT_TIMEOUT_SEC = 86_400.0
+_SESSION_QUEUE_RELEASE_RETRY_ATTEMPTS = 6
+_SESSION_QUEUE_RELEASE_RETRY_INITIAL_DELAY_SEC = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,11 +285,22 @@ class SessionOrchestrator:
         queue_item_id: int,
         owner_token: str,
     ) -> None:
-        async with session_scope(session_factory) as db:
-            await ChatSessionTurnQueueRepository(db).release(
-                queue_item_id=queue_item_id,
-                owner_token=owner_token,
-            )
+        delay_sec = _SESSION_QUEUE_RELEASE_RETRY_INITIAL_DELAY_SEC
+        for attempt in range(_SESSION_QUEUE_RELEASE_RETRY_ATTEMPTS):
+            try:
+                async with session_scope(session_factory) as db:
+                    await ChatSessionTurnQueueRepository(db).release(
+                        queue_item_id=queue_item_id,
+                        owner_token=owner_token,
+                    )
+                return
+            except OperationalError as exc:
+                if attempt + 1 >= _SESSION_QUEUE_RELEASE_RETRY_ATTEMPTS or not _is_sqlite_lock_error(
+                    exc
+                ):
+                    raise
+                await asyncio.sleep(delay_sec)
+                delay_sec = min(delay_sec * 2, 0.25)
 
     async def _execute_locked_turn(
         self,
@@ -504,3 +518,7 @@ def _session_queue_poll_delay(attempt: int) -> float:
     if attempt <= 0:
         return _SESSION_QUEUE_POLL_SEC
     return float(min(_SESSION_QUEUE_MAX_POLL_SEC, _SESSION_QUEUE_POLL_SEC * (2**attempt)))
+
+
+def _is_sqlite_lock_error(exc: OperationalError) -> bool:
+    return "database is locked" in str(exc).lower()
