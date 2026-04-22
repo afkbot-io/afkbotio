@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
+from threading import Lock, get_ident
 from typing import Iterator
 
 try:  # pragma: no cover - import branch depends on platform
@@ -30,16 +31,21 @@ class ChatSessionTerminalLockedError(RuntimeError):
         self.session_id = session_id
 
 
+@dataclass(frozen=True)
+class _ActiveSessionLock:
+    fd: int
+    depth: int
+    owner_thread_id: int
+
+
 class ChatSessionTerminalLock:
-    """Non-blocking process lock keyed by `(profile_id, session_id)`."""
+    """Coordinate in-process and cross-process ownership for one chat session."""
 
     def __init__(self, *, root_dir: Path) -> None:
-        self._root_dir = root_dir.resolve()
-        self._lock_dir = self._root_dir / ".locks" / "chat_sessions"
+        self._lock_dir = root_dir / ".afk" / "session_locks"
         self._lock_dir.mkdir(parents=True, exist_ok=True)
         self._index_lock = Lock()
-        self._held_keys: set[tuple[str, str]] = set()
-        self._held_fds: dict[tuple[str, str], int] = {}
+        self._active_by_key: dict[tuple[str, str], _ActiveSessionLock] = {}
 
     @contextmanager
     def acquire(self, *, profile_id: str, session_id: str) -> Iterator[None]:
@@ -54,16 +60,35 @@ class ChatSessionTerminalLock:
 
     def _acquire_nowait(self, *, key: tuple[str, str]) -> None:
         with self._index_lock:
-            if key in self._held_keys:
-                raise ChatSessionTerminalLockedError(profile_id=key[0], session_id=key[1])
+            active = self._active_by_key.get(key)
+            if active is not None:
+                if active.owner_thread_id != get_ident():
+                    raise ChatSessionTerminalLockedError(profile_id=key[0], session_id=key[1])
+                self._active_by_key[key] = _ActiveSessionLock(
+                    fd=active.fd,
+                    depth=active.depth + 1,
+                    owner_thread_id=active.owner_thread_id,
+                )
+                return
+
             lock_fd = self._acquire_process_lock(key=key)
-            self._held_keys.add(key)
-            self._held_fds[key] = lock_fd
+            self._active_by_key[key] = _ActiveSessionLock(fd=lock_fd, depth=1, owner_thread_id=get_ident())
 
     def _release(self, *, key: tuple[str, str]) -> None:
+        fd: int | None = None
         with self._index_lock:
-            self._held_keys.discard(key)
-            fd = self._held_fds.pop(key, None)
+            active = self._active_by_key.get(key)
+            if active is None:
+                return
+            if active.depth > 1:
+                self._active_by_key[key] = _ActiveSessionLock(
+                    fd=active.fd,
+                    depth=active.depth - 1,
+                    owner_thread_id=active.owner_thread_id,
+                )
+                return
+            fd = active.fd
+            self._active_by_key.pop(key, None)
         if fd is not None:
             _release_process_lock(fd)
 
