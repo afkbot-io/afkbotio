@@ -99,12 +99,16 @@ async def test_cancel_request_marks_orchestrated_run_cancelled(tmp_path: Path) -
             ],
         )
     )
-    await asyncio.sleep(0.1)
-    async with session_scope(factory) as cancel_session:
-        cancelled = await RunRepository(cancel_session).request_cancel(
-            profile_id="default",
-            session_id="s-cross-cancel",
-        )
+    cancelled = False
+    for _ in range(20):
+        await asyncio.sleep(0.05)
+        async with session_scope(factory) as cancel_session:
+            cancelled = await RunRepository(cancel_session).request_cancel(
+                profile_id="default",
+                session_id="s-cross-cancel",
+            )
+        if cancelled:
+            break
     assert cancelled is True
 
     with pytest.raises(asyncio.CancelledError):

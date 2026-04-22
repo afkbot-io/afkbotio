@@ -8,7 +8,11 @@ from afkbot.cli.commands.chat_planning_runtime import (
     confirm_chat_plan_execution,
     render_captured_plan,
 )
-from afkbot.cli.commands.chat_session_runtime import _run_repl_turn, run_single_turn
+from afkbot.cli.commands.chat_session_runtime import (
+    _run_repl_turn,
+    _invoke_run_repl_transport,
+    run_single_turn,
+)
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
 from afkbot.services.chat_session.session_state import ChatReplSessionState
@@ -204,3 +208,50 @@ def test_run_single_turn_auto_executes_after_plan_without_waiting_for_second_pro
         monkeypatch.undo()
 
     assert captured_callbacks["confirm_plan_execution"] is None
+
+
+def test_invoke_run_repl_transport_tolerates_older_runtime_signature() -> None:
+    """Compatibility wrapper should not crash when installed transport lacks new kwargs."""
+
+    captured: dict[str, object] = {}
+    monkeypatch = MonkeyPatch()
+
+    def _legacy_transport(
+        *,
+        profile_id: str,
+        session_id: str,
+        run_turn,
+        get_browser_session_manager,
+        get_settings,
+        planning_mode,
+        thinking_level,
+    ) -> None:
+        captured.update(
+            profile_id=profile_id,
+            session_id=session_id,
+            run_turn=run_turn,
+            get_browser_session_manager=get_browser_session_manager,
+            get_settings=get_settings,
+            planning_mode=planning_mode,
+            thinking_level=thinking_level,
+        )
+
+    monkeypatch.setattr("afkbot.cli.commands.chat_session_runtime.run_repl_transport", _legacy_transport)
+
+    try:
+        _invoke_run_repl_transport(
+            profile_id="default",
+            session_id="cli:default:incident-room",
+            session_label="incident-room",
+            run_turn=lambda *_args, **_kwargs: None,
+            get_browser_session_manager=lambda: object(),
+            get_settings=lambda: object(),
+            planning_mode="auto",
+            thinking_level=None,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert captured["profile_id"] == "default"
+    assert captured["session_id"] == "cli:default:incident-room"
+    assert captured["planning_mode"] == "auto"

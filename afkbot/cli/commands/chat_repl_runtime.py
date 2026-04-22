@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable, Coroutine
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import typer
 
@@ -42,6 +43,7 @@ RunReplTurnFn = Callable[
     [str, Callable[[ProgressEvent], None], ChatReplSessionState, ChatTurnInteractiveOptions],
     Coroutine[Any, Any, ChatTurnOutcome],
 ]
+RefreshCatalogFn = Callable[[], Coroutine[Any, Any, None]]
 
 
 class _InterruptNotifiableUX(Protocol):
@@ -109,7 +111,7 @@ def run_repl_transport(
                     ux.stop_progress,
                 )
 
-                _run_repl_sequential(
+                _invoke_repl_sequential(
                     runner=runner,
                     ux=ux,
                     profile_id=profile_id,
@@ -123,7 +125,7 @@ def run_repl_transport(
                 )
             else:
                 runner.run(
-                    run_fullscreen_chat_workspace_session(
+                    _build_fullscreen_chat_workspace_session(
                         profile_id=profile_id,
                         session_id=session_id,
                         run_turn=run_turn,
@@ -269,6 +271,77 @@ def _build_repl_interrupt_notifier(ux: _InterruptNotifiableUX) -> Callable[[], N
         typer.echo("  Interrupt received. Cancelling current turn. Press Ctrl-C again to exit.")
 
     return _notify
+
+
+def _invoke_repl_sequential(
+    *,
+    runner: asyncio.Runner,
+    ux: InteractiveChatUX,
+    profile_id: str,
+    session_id: str,
+    session_label: str | None,
+    run_turn: RunReplTurnFn,
+    repl_state: ChatReplSessionState,
+    progress_sink: Callable[[ProgressEvent], None],
+    refresh_catalog: RefreshCatalogFn,
+    startup_assistant_message: str | None,
+) -> None:
+    """Call the sequential REPL runtime compatibly across adjacent versions."""
+
+    kwargs: dict[str, object] = {
+        "runner": runner,
+        "ux": ux,
+        "profile_id": profile_id,
+        "session_id": session_id,
+        "session_label": session_label,
+        "run_turn": run_turn,
+        "repl_state": repl_state,
+        "progress_sink": progress_sink,
+        "refresh_catalog": refresh_catalog,
+        "startup_assistant_message": startup_assistant_message,
+    }
+    signature = inspect.signature(_run_repl_sequential)
+    invoke = cast(Callable[..., None], _run_repl_sequential)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        invoke(**kwargs)
+        return
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    invoke(**filtered_kwargs)
+
+
+def _build_fullscreen_chat_workspace_session(
+    *,
+    profile_id: str,
+    session_id: str,
+    run_turn: RunReplTurnFn,
+    repl_state: ChatReplSessionState,
+    catalog_getter: Callable[[], Any],
+    refresh_catalog: RefreshCatalogFn,
+    startup_assistant_message: str | None,
+) -> Coroutine[Any, Any, None]:
+    """Build fullscreen REPL coroutine using only supported installed kwargs."""
+
+    kwargs: dict[str, object] = {
+        "profile_id": profile_id,
+        "session_id": session_id,
+        "run_turn": run_turn,
+        "repl_state": repl_state,
+        "catalog_getter": catalog_getter,
+        "refresh_catalog": refresh_catalog,
+        "startup_assistant_message": startup_assistant_message,
+    }
+    signature = inspect.signature(run_fullscreen_chat_workspace_session)
+    invoke = cast(Callable[..., Coroutine[Any, Any, None]], run_fullscreen_chat_workspace_session)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return invoke(**kwargs)
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    return invoke(**filtered_kwargs)
 
 
 def _render_repl_session_banner(

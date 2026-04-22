@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
+from typing import Any, cast
 
 import typer
 
@@ -166,7 +168,7 @@ def run_repl(
             serialized_turn_runner_factory=serialized_turn_runner_factory,
         )
 
-    run_repl_transport(
+    _invoke_run_repl_transport(
         profile_id=profile_id,
         session_id=session_id,
         session_label=session_label,
@@ -249,3 +251,41 @@ def _supports_interactive_confirm() -> bool:
     """Return whether this CLI turn can safely prompt the user for a follow-up choice."""
 
     return bool(supports_interactive_tty())
+
+
+def _invoke_run_repl_transport(
+    *,
+    profile_id: str,
+    session_id: str,
+    session_label: str | None,
+    run_turn: Callable[
+        [str, Callable[[ProgressEvent], None], ChatReplSessionState, ChatTurnInteractiveOptions],
+        Any,
+    ],
+    get_browser_session_manager: Callable[[], BrowserSessionManager],
+    get_settings: Callable[[], Settings],
+    planning_mode: ChatPlanningMode,
+    thinking_level: ThinkingLevel | None,
+) -> None:
+    """Call `run_repl_transport` compatibly across adjacent CLI runtime versions."""
+
+    kwargs: dict[str, object] = {
+        "profile_id": profile_id,
+        "session_id": session_id,
+        "session_label": session_label,
+        "run_turn": run_turn,
+        "get_browser_session_manager": get_browser_session_manager,
+        "get_settings": get_settings,
+        "planning_mode": planning_mode,
+        "thinking_level": thinking_level,
+    }
+    signature = inspect.signature(run_repl_transport)
+    invoke = cast(Callable[..., None], run_repl_transport)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        invoke(**kwargs)
+        return
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    invoke(**filtered_kwargs)
