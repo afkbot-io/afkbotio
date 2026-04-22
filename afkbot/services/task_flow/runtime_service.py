@@ -38,7 +38,7 @@ from afkbot.services.task_flow.message_factory import (
     compose_task_message,
     task_session_id,
 )
-from afkbot.services.task_flow.runtime_target import build_task_flow_runtime_target
+from afkbot.services.task_flow.runtime_target import TaskFlowRuntimeTarget, build_task_flow_runtime_target
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
 
@@ -499,7 +499,7 @@ class TaskFlowRuntimeService:
                 error_text=error_text,
             )
 
-    async def _build_runtime_target(self, claimed: ClaimedTaskExecution):
+    async def _build_runtime_target(self, claimed: ClaimedTaskExecution) -> TaskFlowRuntimeTarget:
         runtime_target = build_task_flow_runtime_target(
             execution_profile_id=claimed.execution_profile_id,
             session_id=claimed.session_id,
@@ -970,11 +970,12 @@ def build_taskflow_subagent_runtime_session_runner(
         profile_id=profile_id,
         runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
     )
-    return build_subagent_session_orchestrator(
+    orchestrator = build_subagent_session_orchestrator(
         session_factory,
         loop_settings=loop_settings,
         runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
     )
+    return orchestrator
 
 
 def _default_session_runner_factory(

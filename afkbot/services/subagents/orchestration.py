@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -11,6 +11,9 @@ from afkbot.services.subagents.runtime_policy import (
     SubagentRuntimePolicy,
 )
 from afkbot.settings import Settings
+
+if TYPE_CHECKING:
+    from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 
 
 def resolve_subagent_loop_settings(
@@ -36,7 +39,7 @@ def build_subagent_session_orchestrator(
     *,
     loop_settings: Settings,
     runtime_policy: SubagentRuntimePolicy = DEFAULT_SUBAGENT_RUNTIME_POLICY,
-):
+) -> SessionOrchestrator:
     """Build the canonical SessionOrchestrator used by all subagent executions."""
 
     from afkbot.services.agent_loop.runtime_factory import build_agent_loop_from_settings

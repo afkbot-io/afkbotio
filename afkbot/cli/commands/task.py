@@ -997,7 +997,7 @@ def _resolve_review_actor_inputs(
         (actor_profile_id is not None and actor_profile_id.strip())
         or (actor_subagent_name is not None and actor_subagent_name.strip())
     )
-    effective_actor_type = actor_type
+    effective_actor_type: str | None = actor_type
     if (
         structured_actor_present
         and actor_type == "human"

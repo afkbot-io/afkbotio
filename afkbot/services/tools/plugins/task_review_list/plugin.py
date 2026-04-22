@@ -56,6 +56,11 @@ class TaskReviewListTool(ToolBase):
                 owner_profile_id=payload.actor_profile_id,
                 owner_subagent_name=payload.actor_subagent_name,
             )
+            if resolved_actor_type is None or resolved_actor_ref is None:
+                return ToolResult.error(
+                    error_code="invalid_actor",
+                    reason="actor_type and actor_ref must be provided together",
+                )
             items = await service.list_review_tasks(
                 profile_id=target_profile_id,
                 actor_type=resolved_actor_type,
