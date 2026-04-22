@@ -147,6 +147,30 @@ def test_start_supports_structured_taskflow_owner_selector(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_start_rejects_invalid_taskflow_profile(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Invalid --taskflow-profile should surface as deterministic CLI usage error."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "--runtime-port",
+            "19000",
+            "--api-port",
+            "19001",
+            "--taskflow-profile",
+            "invalid profile",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid profile id: invalid profile" in result.stderr
+    get_settings.cache_clear()
+
+
 def test_start_runtime_port_override_updates_default_api_port(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """When only runtime port is overridden, API default should follow runtime+1."""
 

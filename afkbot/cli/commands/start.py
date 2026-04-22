@@ -21,6 +21,7 @@ from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManagerError,
     ChannelRuntimeStartReport,
 )
+from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.runtime_ports import (
     find_available_runtime_port,
     is_runtime_port_pair_available,
@@ -167,7 +168,10 @@ def run_start_command(
     if taskflow_profile is not None or resolved_taskflow_owner_ref is not None:
         updated_settings = resolved_settings.model_dump()
         if taskflow_profile is not None:
-            updated_settings["taskflow_runtime_profile_id"] = taskflow_profile
+            try:
+                updated_settings["taskflow_runtime_profile_id"] = validate_profile_id(taskflow_profile)
+            except InvalidProfileIdError as exc:
+                raise_usage_error(str(exc))
         if resolved_taskflow_owner_ref is not None:
             updated_settings["taskflow_runtime_owner_ref"] = resolved_taskflow_owner_ref
         resolved_settings = Settings(
