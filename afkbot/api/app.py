@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="AFKBOT API",
-        version=load_cli_version_info(root_dir=settings.root_dir).version,
+        version=load_cli_version_info(root_dir=settings.app_dir).version,
         lifespan=_lifespan,
     )
     app.add_middleware(

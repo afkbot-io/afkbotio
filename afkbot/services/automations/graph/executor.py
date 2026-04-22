@@ -705,8 +705,12 @@ class TaskCreateNodeAdapter:
             "flow_id",
             "owner_type",
             "owner_ref",
+            "owner_profile_id",
+            "owner_subagent_name",
             "reviewer_type",
             "reviewer_ref",
+            "reviewer_profile_id",
+            "reviewer_subagent_name",
         ):
             value = (
                 _config_direct_optional_text(invocation, field=config_field)
@@ -906,6 +910,7 @@ class ToolRunNodeAdapter:
                 explicit_subagent_requests=set(),
                 allow_confirmation_markers=False,
                 runtime_metadata=ctx.runtime_metadata,
+                trusted_runtime_context=None,
                 allowed_tool_names=set(_AUTOMATION_GRAPH_ALLOWED_TOOL_NAMES),
             )
         except Exception as exc:

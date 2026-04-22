@@ -255,6 +255,7 @@ async def build_human_inbox_payload(
 async def list_stale_task_claims_payload(
     *,
     profile_id: str,
+    owner_ref: str | None = None,
     limit: int | None = None,
 ) -> str:
     """List stale Task Flow claims for one profile."""
@@ -266,7 +267,11 @@ async def list_stale_task_claims_payload(
     try:
         await _ensure_profile_exists(session_factory, profile_id)
         service = get_task_flow_service(settings)
-        items = await service.list_stale_task_claims(profile_id=profile_id, limit=limit)
+        items = await service.list_stale_task_claims(
+            profile_id=profile_id,
+            owner_ref=owner_ref,
+            limit=limit,
+        )
         return json.dumps(
             {"stale_task_claims": [item.model_dump(mode="json") for item in items]},
             ensure_ascii=True,
@@ -280,6 +285,7 @@ async def list_stale_task_claims_payload(
 async def sweep_stale_task_claims_payload(
     *,
     profile_id: str,
+    owner_ref: str | None = None,
     limit: int | None = None,
 ) -> str:
     """Force one maintenance sweep for stale Task Flow claims in one profile."""
@@ -300,12 +306,18 @@ async def sweep_stale_task_claims_payload(
             worker_id="taskflow-cli-maintenance",
             limit=effective_limit,
             profile_id=profile_id,
+            owner_ref=owner_ref,
         )
         service = get_task_flow_service(settings)
-        remaining = await service.list_stale_task_claims(profile_id=profile_id, limit=effective_limit)
+        remaining = await service.list_stale_task_claims(
+            profile_id=profile_id,
+            owner_ref=owner_ref,
+            limit=effective_limit,
+        )
         metadata = TaskMaintenanceSweepMetadata(
             generated_at=datetime.now(timezone.utc),
             profile_id=profile_id,
+            owner_ref=owner_ref,
             limit=effective_limit,
             repaired_count=released_count,
             remaining_count=len(remaining),

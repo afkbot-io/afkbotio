@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.cli.commands.chat_update_notices import _should_prompt_for_update, handle_chat_update_notice
 from afkbot.services.update_runtime import UpdateAvailability, UpdateResult
 from afkbot.settings import get_settings
+from afkbot.version import load_cli_version_info
+
+_PACKAGE_VERSION = load_cli_version_info(root_dir=Path(__file__).resolve().parents[2]).version
+_PACKAGE_TARGET_ID = f"package:afkbotio:{_PACKAGE_VERSION}"
+_PACKAGE_TARGET_LABEL = f"afkbotio {_PACKAGE_VERSION}"
 
 
 def _prepare_settings(tmp_path, monkeypatch):
@@ -25,8 +31,8 @@ def test_handle_chat_update_notice_persists_skip_choice(tmp_path, monkeypatch) -
     availability = UpdateAvailability(
         install_mode="uv-tool",
         current_version="afk 1.0.0",
-        target_id="package:afkbotio:1.4.4",
-        target_label="afkbotio 1.4.4",
+        target_id=_PACKAGE_TARGET_ID,
+        target_label=_PACKAGE_TARGET_LABEL,
         details=(),
     )
 
@@ -59,8 +65,8 @@ def test_handle_chat_update_notice_persists_remind_week_choice(tmp_path, monkeyp
     availability = UpdateAvailability(
         install_mode="uv-tool",
         current_version="afk 1.0.0",
-        target_id="package:afkbotio:1.4.4",
-        target_label="afkbotio 1.4.4",
+        target_id=_PACKAGE_TARGET_ID,
+        target_label=_PACKAGE_TARGET_LABEL,
         details=(),
     )
 
@@ -209,15 +215,15 @@ def test_should_prompt_for_update_ignores_legacy_target_only_state() -> None:
 
     assert _should_prompt_for_update(
         runtime_config={
-            "update_notice_remind_target": "package:afkbotio:1.4.4",
-            "update_notice_skip_target": "package:afkbotio:1.4.4",
+            "update_notice_remind_target": _PACKAGE_TARGET_ID,
+            "update_notice_skip_target": _PACKAGE_TARGET_ID,
             "update_notice_remind_until": future.isoformat(),
         },
     ) is False
     assert _should_prompt_for_update(
         runtime_config={
-            "update_notice_remind_target": "package:afkbotio:1.4.4",
-            "update_notice_skip_target": "package:afkbotio:1.4.4",
+            "update_notice_remind_target": _PACKAGE_TARGET_ID,
+            "update_notice_skip_target": _PACKAGE_TARGET_ID,
         },
     ) is True
 

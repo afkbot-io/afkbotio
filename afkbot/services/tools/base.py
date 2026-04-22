@@ -30,6 +30,7 @@ class ToolContext:
     run_id: int
     actor: Literal["main", "subagent"] = "main"
     runtime_metadata: dict[str, object] | None = None
+    trusted_runtime_context: dict[str, object] | None = None
     progress_callback: ToolProgressCallback | None = None
 
 

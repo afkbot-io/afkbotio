@@ -26,6 +26,18 @@ from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory
 
 
+def _write_profile_subagent(
+    *,
+    settings: Settings,
+    profile_id: str,
+    subagent_name: str,
+    markdown: str,
+) -> None:
+    path = settings.profiles_dir / profile_id / "subagents" / f"{subagent_name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown, encoding="utf-8")
+
+
 @dataclass
 class _ObservedCall:
     profile_id: str
@@ -722,8 +734,14 @@ async def test_taskflow_runtime_throttles_background_maintenance_between_claim_a
     )
     maintenance_calls: list[str] = []
 
-    async def _fake_sweep(*, worker_id: str, limit: int = 25, profile_id: str | None = None) -> int:
-        _ = limit, profile_id
+    async def _fake_sweep(
+        *,
+        worker_id: str,
+        limit: int = 25,
+        profile_id: str | None = None,
+        owner_ref: str | None = None,
+    ) -> int:
+        _ = limit, profile_id, owner_ref
         maintenance_calls.append(worker_id)
         return 0
 
@@ -771,8 +789,14 @@ async def test_taskflow_runtime_throttles_runtime_history_pruning_between_claim_
     maintenance_calls: list[str] = []
     prune_calls: list[dict[str, object]] = []
 
-    async def _fake_sweep(*, worker_id: str, limit: int = 25, profile_id: str | None = None) -> int:
-        _ = limit, profile_id
+    async def _fake_sweep(
+        *,
+        worker_id: str,
+        limit: int = 25,
+        profile_id: str | None = None,
+        owner_ref: str | None = None,
+    ) -> int:
+        _ = limit, profile_id, owner_ref
         maintenance_calls.append(worker_id)
         return 0
 
@@ -986,6 +1010,117 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
         await engine.dispose()
 
 
+async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path) -> None:
+    """Maintenance sweep should optionally repair stale claims only for one executor owner ref."""
+
+    db_name = "taskflow_runtime_owner_ref_sweep.db"
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nFocus on stale research work.",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nFocus on stale review work.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        researcher_task = await service.create_task(
+            profile_id="default",
+            title="Researcher stale task",
+            description="Repair only the researcher stale claim.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+        )
+        reviewer_task = await service.create_task(
+            profile_id="default",
+            title="Reviewer stale task",
+            description="Leave the reviewer stale claim untouched.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+        )
+        stale_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            for task_id, claim_token, claimed_by in (
+                (researcher_task.id, "stale-researcher-claim", "taskflow-runtime:researcher"),
+                (reviewer_task.id, "stale-reviewer-claim", "taskflow-runtime:reviewer"),
+            ):
+                claimed = await repo.claim_next_runnable_task(
+                    now_utc=stale_now,
+                    lease_until=stale_now - timedelta(minutes=5),
+                    claim_token=claim_token,
+                    claimed_by=claimed_by,
+                )
+                assert claimed is not None
+                task_run = await repo.create_task_run(
+                    task_id=task_id,
+                    attempt=claimed.current_attempt + 1,
+                    owner_type=claimed.owner_type,
+                    owner_ref=claimed.owner_ref,
+                    execution_mode="detached",
+                    status="running",
+                    session_id=f"taskflow:{task_id}",
+                    run_id=None,
+                    worker_id=claimed_by,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                attached = await repo.attach_task_run(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    task_run_id=task_run.id,
+                    session_id=f"taskflow:{task_id}",
+                )
+                assert attached is True
+                started = await repo.mark_task_started(
+                    task_id=task_id,
+                    claim_token=claim_token,
+                    started_at=stale_now - timedelta(minutes=10),
+                )
+                assert started is True
+
+        released_count = await runtime.sweep_expired_claims(
+            worker_id="taskflow-cli-maintenance",
+            profile_id="default",
+            owner_ref="analyst:researcher",
+            limit=10,
+        )
+
+        assert released_count == 1
+        researcher_after = await service.get_task(profile_id="default", task_id=researcher_task.id)
+        reviewer_after = await service.get_task(profile_id="default", task_id=reviewer_task.id)
+        assert researcher_after.status == "todo"
+        assert reviewer_after.status == "running"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplicates_clear(
     tmp_path: Path,
 ) -> None:
@@ -1153,6 +1288,197 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
         await engine.dispose()
 
 
+async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path) -> None:
+    """Detached runtime profile filter should claim work only from the configured backlog profile."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_profile_filter.db",
+        profile_ids=("default", "ops", "analyst"),
+    )
+    service = TaskFlowService(factory)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+        settings=Settings(taskflow_runtime_profile_id="ops", llm_max_iterations=10),
+    )
+    try:
+        skipped = await service.create_task(
+            profile_id="default",
+            title="Skipped backlog task",
+            description="This task should stay untouched in the default backlog.",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        allowed = await service.create_task(
+            profile_id="ops",
+            title="Allowed ops task",
+            description="This task should run because the runtime is pinned to the ops backlog.",
+            owner_type="ai_profile",
+            owner_ref="analyst",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(
+            worker_id="taskflow-runtime:profile-filtered"
+        )
+
+        assert processed is True
+        assert len(observed_calls) == 1
+        assert observed_calls[0].task_id == allowed.id
+        assert observed_calls[0].task_profile_id == "ops"
+        skipped_after = await service.get_task(profile_id="default", task_id=skipped.id)
+        allowed_after = await service.get_task(profile_id="ops", task_id=allowed.id)
+        assert skipped_after.status == "todo"
+        assert allowed_after.status == "completed"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime owner_ref filter should allow targeting one concrete ai_subagent executor."""
+
+    db_name = "taskflow_runtime_owner_ref_subagent_filter.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        taskflow_runtime_owner_ref="analyst:researcher",
+        llm_max_iterations=10,
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nFocus on research work.",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nFocus on review work.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+        settings=settings,
+    )
+    try:
+        allowed = await service.create_task(
+            profile_id="default",
+            title="Allowed researcher task",
+            description="Execute only on the configured researcher subagent.",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        skipped = await service.create_task(
+            profile_id="default",
+            title="Skipped reviewer task",
+            description="This should wait because runtime is pinned to a different subagent.",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(
+            worker_id="taskflow-runtime:subagent-filtered"
+        )
+
+        assert processed is True
+        assert len(observed_calls) == 1
+        assert observed_calls[0].task_id == allowed.id
+        assert observed_calls[0].profile_id == "analyst"
+        allowed_after = await service.get_task(profile_id="default", task_id=allowed.id)
+        skipped_after = await service.get_task(profile_id="default", task_id=skipped.id)
+        assert allowed_after.status == "completed"
+        assert skipped_after.status == "todo"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
+    tmp_path: Path,
+) -> None:
+    """Detached runtime should execute ai_subagent work on the host profile with subagent prompt."""
+
+    db_name = "taskflow_runtime_ai_subagent_overlay.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        llm_max_iterations=10,
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nSubagent marker: deep-brief.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+        settings=settings,
+    )
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Subagent runtime task",
+            description="Execute this as the analyst researcher subagent.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:subagent")
+
+        assert processed is True
+        assert observed_calls[0].task_id == task.id
+        assert observed_calls[0].profile_id == "analyst"
+        assert observed_calls[0].prompt_overlay is not None
+        assert "Subagent: researcher" in observed_calls[0].prompt_overlay
+        assert "Subagent marker: deep-brief." in observed_calls[0].prompt_overlay
+        assert "Task Flow execution context." in observed_calls[0].prompt_overlay
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
     tmp_path: Path,
 ) -> None:
@@ -1225,6 +1551,101 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         assert third_claim is None
 
         waiting = await service.get_task(profile_id="default", task_id=analyst_second.id)
+        assert waiting.status == "todo"
+    finally:
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
+    tmp_path: Path,
+) -> None:
+    """Detached scheduling should enforce one active task per ai_subagent executor."""
+
+    db_name = "taskflow_runtime_per_subagent_limit.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        llm_max_iterations=10,
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nFocus on research tasks.",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nFocus on review tasks.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        researcher_first = await service.create_task(
+            profile_id="default",
+            title="Researcher high priority",
+            description="Take the highest-priority researcher task first.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+            priority=90,
+        )
+        researcher_second = await service.create_task(
+            profile_id="default",
+            title="Researcher second task",
+            description="This should wait until the researcher subagent is free again.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+            priority=80,
+        )
+        reviewer_task = await service.create_task(
+            profile_id="default",
+            title="Reviewer task",
+            description="This can run while the researcher subagent is busy.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+            priority=70,
+        )
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-subagent-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-subagent-2",
+                claimed_by="taskflow-runtime:1",
+            )
+            third_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-subagent-none",
+                claimed_by="taskflow-runtime:2",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == researcher_first.id
+        assert second_claim is not None
+        assert second_claim.id == reviewer_task.id
+        assert third_claim is None
+
+        waiting = await service.get_task(profile_id="default", task_id=researcher_second.id)
         assert waiting.status == "todo"
     finally:
         await engine.dispose()
@@ -1827,6 +2248,10 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "task.comment.add" in overrides.prompt_overlay
     assert "task.delegate" in overrides.prompt_overlay
     assert "execution plan" in overrides.prompt_overlay
-    assert "another ai_profile agent" in overrides.prompt_overlay
+    assert "another AI executor (ai_profile or ai_subagent)" in overrides.prompt_overlay
+    assert "task.list, task.board, task.stale.list, or task.stale.sweep" in overrides.prompt_overlay
+    assert "owner_profile_id plus optional owner_subagent_name" in overrides.prompt_overlay
+    assert "task.review.list" in overrides.prompt_overlay
+    assert "actor_profile_id plus optional actor_subagent_name" in overrides.prompt_overlay
     assert "task.dependency.add" in overrides.prompt_overlay
     assert "retry_after_sec" in overrides.prompt_overlay

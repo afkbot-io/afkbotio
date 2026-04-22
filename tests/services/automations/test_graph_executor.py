@@ -9,6 +9,7 @@ import pytest
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
+from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.automations import AutomationsServiceError
 from afkbot.services.automations.graph import executor as graph_executor_module
 from afkbot.services.automations.graph.contracts import (
@@ -34,6 +35,12 @@ def _prepare_core_researcher(root_dir: Path) -> None:
     path = root_dir / "afkbot/subagents/researcher.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("# researcher", encoding="utf-8")
+
+
+def _prepare_profile_subagent(root_dir: Path, *, profile_id: str, subagent_name: str) -> None:
+    path = root_dir / "profiles" / profile_id / "subagents" / f"{subagent_name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {subagent_name}", encoding="utf-8")
 
 
 class _GraphPersistingRunner(SubagentRunner):
@@ -1282,6 +1289,147 @@ async def test_graph_executor_task_create_node_creates_task(tmp_path: Path) -> N
         assert set(task_payload["labels"]) == {"automation", "graph"}
         assert create_task.effects[0].effect_kind == "task.create"
         assert create_task.effects[0].metadata["task_id"] == task_payload["id"]
+    finally:
+        await engine.dispose()
+
+
+async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
+    tmp_path: Path,
+) -> None:
+    """Graph runtime should create Task Flow items assigned directly to one ai_subagent."""
+
+    _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-task-create-subagent",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=created.id,
+            spec=AutomationGraphSpec(
+                name="task-create-subagent-flow",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="create_task",
+                        name="Create Task",
+                        node_kind="task",
+                        node_type="task.create",
+                        config={
+                            "title": "Process researcher webhook",
+                            "description_path": "default.event_id",
+                            "owner_type": "ai_subagent",
+                            "owner_ref": "analyst:researcher",
+                            "labels": ["automation", "subagent"],
+                        },
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "create_task"}],
+            ),
+        )
+
+        assert created.webhook is not None
+        assert created.webhook.webhook_token is not None
+        await service.trigger_webhook(
+            profile_id="default",
+            token=created.webhook.webhook_token,
+            payload={"event_id": "evt-task-create-subagent"},
+        )
+
+        run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
+        trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
+        create_task = next(item for item in trace.nodes if item.node_key == "create_task")
+        assert run.status == "succeeded"
+        assert create_task.status == "succeeded"
+        assert create_task.output is not None
+        task_payload = create_task.output["default"]["task"]
+        assert task_payload["title"] == "Process researcher webhook"
+        assert task_payload["description"] == "evt-task-create-subagent"
+        assert task_payload["owner_type"] == "ai_subagent"
+        assert task_payload["owner_ref"] == "analyst:researcher"
+        assert set(task_payload["labels"]) == {"automation", "subagent"}
+    finally:
+        await engine.dispose()
+
+
+async def test_graph_executor_task_create_node_supports_structured_ai_subagent_assignment(
+    tmp_path: Path,
+) -> None:
+    """Graph runtime should accept structured ai_subagent owner inputs without manual owner_ref."""
+
+    _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("analyst")
+
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-task-create-structured-subagent",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=created.id,
+            spec=AutomationGraphSpec(
+                name="task-create-structured-subagent-flow",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="create_task",
+                        name="Create Task",
+                        node_kind="task",
+                        node_type="task.create",
+                        config={
+                            "title": "Process structured researcher webhook",
+                            "description_path": "default.event_id",
+                            "owner_profile_id": "analyst",
+                            "owner_subagent_name": "researcher",
+                            "labels": ["automation", "subagent"],
+                        },
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "create_task"}],
+            ),
+        )
+
+        assert created.webhook is not None
+        assert created.webhook.webhook_token is not None
+        await service.trigger_webhook(
+            profile_id="default",
+            token=created.webhook.webhook_token,
+            payload={"event_id": "evt-task-create-structured-subagent"},
+        )
+
+        run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
+        trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
+        create_task = next(item for item in trace.nodes if item.node_key == "create_task")
+        assert run.status == "succeeded"
+        assert create_task.status == "succeeded"
+        assert create_task.output is not None
+        task_payload = create_task.output["default"]["task"]
+        assert task_payload["title"] == "Process structured researcher webhook"
+        assert task_payload["description"] == "evt-task-create-structured-subagent"
+        assert task_payload["owner_type"] == "ai_subagent"
+        assert task_payload["owner_ref"] == "analyst:researcher"
     finally:
         await engine.dispose()
 

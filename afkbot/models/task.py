@@ -23,9 +23,12 @@ class Task(Base, TimestampMixin):
         Index(
             "ux_task_active_ai_owner",
             "profile_id",
+            "owner_type",
             "owner_ref",
             unique=True,
-            postgresql_where=text("owner_type = 'ai_profile' AND status IN ('claimed', 'running')"),
+            postgresql_where=text(
+                "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+            ),
         ).ddl_if(dialect="postgresql"),
     )
 

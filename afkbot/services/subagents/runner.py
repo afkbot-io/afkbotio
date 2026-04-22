@@ -14,6 +14,10 @@ from afkbot.db.session import session_scope
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.subagent_task_repo import SubagentTaskRepository
 from afkbot.settings import Settings
+from afkbot.services.subagents.orchestration import (
+    build_subagent_session_orchestrator,
+    resolve_subagent_loop_settings,
+)
 from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY, SubagentRuntimePolicy
 
 _CANCEL_POLL_SEC = 0.2
@@ -63,33 +67,18 @@ class SubagentRunner:
         """Execute subagent prompt through isolated child-agent runtime."""
 
         from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-        from afkbot.services.agent_loop.runtime_factory import (
-            build_agent_loop_from_settings,
-            resolve_profile_settings,
-        )
-        from afkbot.services.session_orchestration import SessionOrchestrator
 
-        effective_settings = resolve_profile_settings(
+        loop_settings = resolve_subagent_loop_settings(
             settings=self._settings,
             profile_id=profile_id,
-            ensure_layout=True,
+            runtime_policy=self._runtime_policy,
         )
-        loop_settings = self._runtime_policy.build_child_settings(effective_settings)
         self._ensure_llm_is_configured(settings=loop_settings)
         child_session_id = self._runtime_policy.build_child_session_id(task_id=task_id)
-
-        def _build_child_runner(loop_session: AsyncSession, child_profile_id: str) -> Any:
-            return build_agent_loop_from_settings(
-                loop_session,
-                settings=loop_settings,
-                actor=self._runtime_policy.actor,
-                profile_id=child_profile_id,
-            )
-
-        runner = SessionOrchestrator(
-            settings=loop_settings,
-            session_factory=session_factory,
-            turn_runner_factory=_build_child_runner,
+        runner = build_subagent_session_orchestrator(
+            session_factory,
+            loop_settings=loop_settings,
+            runtime_policy=self._runtime_policy,
         )
         turn_task = asyncio.create_task(
             runner.run_turn(

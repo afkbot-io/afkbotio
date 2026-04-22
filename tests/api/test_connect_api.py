@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
@@ -12,6 +14,9 @@ from afkbot.services.connect import (
     ConnectRefreshResult,
     ConnectServiceError,
 )
+from afkbot.version import load_cli_version_info
+
+_APP_VERSION = load_cli_version_info(root_dir=Path(__file__).resolve().parents[2]).version
 
 
 def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> None:
@@ -28,7 +33,7 @@ def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> N
         _ = access_ttl_sec, refresh_ttl_sec
         assert claim_token == "claim-1"
         assert claim_pin == "2468"
-        assert client == ConnectClientMetadata(platform="desktop", app_version="1.4.4")
+        assert client == ConnectClientMetadata(platform="desktop", app_version=_APP_VERSION)
         return ConnectClaimResult(
             access_token="acc-1",
             refresh_token="ref-1",
@@ -49,7 +54,7 @@ def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> N
                 "claim_pin": "2468",
                 "client": {
                     "platform": "desktop",
-                    "app_version": "1.4.4",
+                    "app_version": _APP_VERSION,
                 },
             },
         )
@@ -65,6 +70,13 @@ def test_connect_claim_route_delegates_to_service(monkeypatch: MonkeyPatch) -> N
         "profile_id": "default",
         "session_id": "desktop-session",
     }
+
+
+def test_create_app_uses_cli_version_for_openapi_metadata() -> None:
+    """API version should stay aligned with the package version used by update checks."""
+
+    app = create_app()
+    assert app.version == _APP_VERSION
 
 
 def test_connect_refresh_route_delegates_to_service(monkeypatch: MonkeyPatch) -> None:

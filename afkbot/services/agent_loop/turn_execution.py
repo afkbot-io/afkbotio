@@ -276,6 +276,11 @@ class TurnExecutionRuntime:
                     runtime_metadata=(
                         None if effective_overrides is None else effective_overrides.runtime_metadata
                     ),
+                    trusted_runtime_context=(
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.trusted_runtime_context
+                    ),
                     allowed_tool_names=effective_allowed_tool_names,
                     approved_tool_names=(
                         None
