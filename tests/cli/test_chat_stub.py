@@ -23,6 +23,7 @@ from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResu
 from afkbot.services.channel_routing.runtime_target import RuntimeTarget
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
+from afkbot.services.chat_session.terminal_lock import ChatSessionTerminalLock
 from afkbot.services.agent_loop.turn_runtime import run_once_result
 from afkbot.settings import Settings, get_settings
 from tests.cli._rendering import invoke_plain_help, strip_ansi
@@ -275,6 +276,40 @@ def test_chat_cli_rejects_profile_mismatch_for_existing_raw_session(
     assert second.exit_code == 2
     assert (
         "session 'shared' belongs to profile 'default', requested 'smoke'" in second.stderr
+    )
+
+
+def test_chat_cli_reports_platform_without_terminal_lock(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive chat should return usage error when lock layer is unavailable."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    original_acquire_process_lock = ChatSessionTerminalLock._acquire_process_lock
+
+    def _raising_acquire_process_lock(self, *, key: tuple[str, str]) -> int:
+        _profile_id, session_id = key
+        if session_id.startswith("cli:"):
+            raise RuntimeError("Terminal session lock is unavailable on this platform.")
+        return original_acquire_process_lock(self, key=key)
+
+    monkeypatch.setattr(
+        ChatSessionTerminalLock,
+        "_acquire_process_lock",
+        _raising_acquire_process_lock,
+    )
+
+    result = runner.invoke(app, ["chat", "incident-room"])
+
+    assert result.exit_code == 2
+    assert (
+        "Interactive terminal chat session locking is unavailable on this platform." in result.stderr
+    )
+    assert (
+        "Use --message for one-shot chat or run on a platform with fcntl support." in result.stderr
     )
 
 

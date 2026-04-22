@@ -275,6 +275,13 @@ def register(app: typer.Typer) -> None:
                 )
         except ChatSessionTerminalLockedError as exc:
             raise_usage_error(exc.reason)
+        except RuntimeError as exc:
+            if str(exc) == "Terminal session lock is unavailable on this platform.":
+                raise_usage_error(
+                    "Interactive terminal chat session locking is unavailable on this platform. "
+                    "Use --message for one-shot chat or run on a platform with fcntl support."
+                )
+            raise
 
 
 def _resolve_chat_invocation_settings(

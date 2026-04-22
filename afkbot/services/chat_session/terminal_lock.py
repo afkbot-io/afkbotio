@@ -68,6 +68,9 @@ class ChatSessionTerminalLock:
             _release_process_lock(fd)
 
     def _acquire_process_lock(self, *, key: tuple[str, str]) -> int:
+        if fcntl is None:
+            raise RuntimeError("Terminal session lock is unavailable on this platform.")
+
         profile_id, session_id = key
         lock_path = self._lock_dir / _lock_file_name(profile_id=profile_id, session_id=session_id)
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)

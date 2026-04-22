@@ -43,6 +43,71 @@ def test_chat_session_terminal_lock_rejects_concurrent_same_process_acquire(tmp_
         pass
 
 
+def test_chat_session_terminal_lock_duplicate_acquire_keeps_cross_process_lock(tmp_path: Path) -> None:
+    """Duplicate acquire failure inside one process must not release active process lock."""
+
+    script = """
+import sys
+from pathlib import Path
+from afkbot.services.chat_session.terminal_lock import ChatSessionTerminalLock, ChatSessionTerminalLockedError
+
+root_dir = Path(sys.argv[1])
+ready_file = Path(sys.argv[2])
+lock = ChatSessionTerminalLock(root_dir=root_dir)
+
+with lock.acquire(profile_id="default", session_id="cli:default:incident-room"):
+    try:
+        with lock.acquire(profile_id="default", session_id="cli:default:incident-room"):
+            raise SystemExit(11)
+    except ChatSessionTerminalLockedError:
+        pass
+    ready_file.write_text("ready", encoding="utf-8")
+    try:
+        input()
+    except EOFError:
+        pass
+"""
+
+    ready_file = tmp_path / "chat-session-lock-duplicate.signal"
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", script, str(tmp_path), str(ready_file)],
+        cwd=str(Path(__file__).resolve().parents[4]),
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = 3.0
+        while not ready_file.exists():
+            return_code = proc.poll()
+            if return_code is not None:
+                stderr_output = ""
+                if proc.stderr is not None:
+                    stderr_output = proc.stderr.read()
+                pytest.fail(
+                    "Child process exited before duplicate-acquire lock handshake "
+                    f"(returncode={return_code}, stderr={stderr_output!r})"
+                )
+            deadline -= 0.05
+            if deadline <= 0:
+                pytest.fail("Timed out waiting for duplicate-acquire lock handshake")
+            Event().wait(0.05)
+
+        lock = ChatSessionTerminalLock(root_dir=tmp_path)
+        with pytest.raises(ChatSessionTerminalLockedError, match="incident-room"):
+            with lock.acquire(profile_id="default", session_id="cli:default:incident-room"):
+                pass
+    finally:
+        if proc.stdin is not None and proc.poll() is None:
+            proc.stdin.write("\n")
+            proc.stdin.flush()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 def test_chat_session_terminal_lock_rejects_cross_process_acquire(tmp_path: Path) -> None:
     """Another process must not be able to open the same chat session concurrently."""
 
