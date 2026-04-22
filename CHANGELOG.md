@@ -4,9 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-04-22
+
+### Changed
+
+- `afk chat` now treats unnamed interactive launches as fresh sessions by default, shows the active session id in the chat UI, and keeps explicit named sessions reusable without silently reusing the last anonymous transcript.
+- Interactive chat runtime calls now tolerate adjacent-version REPL/runtime signature drift during upgrades, reducing mixed-binary failures while shells, prompt sessions, or installed tool entrypoints are temporarily out of sync.
+
 ### Fixed
 
-- Task Flow task creation now converts legacy `task` / `task_event` schema mismatches into an explicit compatibility error with upgrade guidance instead of bubbling a generic storage-backed 500.
+- Explicit Task Flow task creation now converts legacy `task` / `task_event` schema mismatches into a structured compatibility error with upgrade guidance instead of bubbling a generic storage-backed 500.
+- `afk chat` rejects opening the same explicit session from multiple terminals at once, while still allowing independent anonymous sessions to run in parallel.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.5`.
 
 ## [1.4.2] - 2026-04-21
 
