@@ -13,7 +13,7 @@ from afkbot.services.subagents.runtime_policy import (
 from afkbot.settings import Settings
 
 if TYPE_CHECKING:
-    from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
+    from afkbot.services.session_orchestration import SessionOrchestrator
 
 
 def resolve_subagent_loop_settings(
