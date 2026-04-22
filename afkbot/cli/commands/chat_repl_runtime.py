@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable, Coroutine
 from typing import Any, Protocol
 
@@ -109,7 +110,7 @@ def run_repl_transport(
                     ux.stop_progress,
                 )
 
-                _run_repl_sequential(
+                _invoke_repl_sequential(
                     runner=runner,
                     ux=ux,
                     profile_id=profile_id,
@@ -123,7 +124,7 @@ def run_repl_transport(
                 )
             else:
                 runner.run(
-                    run_fullscreen_chat_workspace_session(
+                    _build_fullscreen_chat_workspace_session(
                         profile_id=profile_id,
                         session_id=session_id,
                         run_turn=run_turn,
@@ -269,6 +270,33 @@ def _build_repl_interrupt_notifier(ux: _InterruptNotifiableUX) -> Callable[[], N
         typer.echo("  Interrupt received. Cancelling current turn. Press Ctrl-C again to exit.")
 
     return _notify
+
+
+def _invoke_repl_sequential(**kwargs: object) -> None:
+    """Call the sequential REPL runtime compatibly across adjacent versions."""
+
+    signature = inspect.signature(_run_repl_sequential)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        _run_repl_sequential(**kwargs)
+        return
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    _run_repl_sequential(**filtered_kwargs)
+
+
+def _build_fullscreen_chat_workspace_session(**kwargs: object):
+    """Build fullscreen REPL coroutine using only supported installed kwargs."""
+
+    signature = inspect.signature(run_fullscreen_chat_workspace_session)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        return run_fullscreen_chat_workspace_session(**kwargs)
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    return run_fullscreen_chat_workspace_session(**filtered_kwargs)
 
 
 def _render_repl_session_banner(

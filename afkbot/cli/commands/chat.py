@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
@@ -262,7 +263,7 @@ def register(app: typer.Typer) -> None:
                     return
                 if json_output:
                     raise_usage_error("--json is only supported with --message")
-                run_repl(
+                _invoke_run_repl(
                     profile_id=target.profile_id,
                     session_id=target.session_id,
                     session_label=target.session_label,
@@ -300,6 +301,20 @@ def _resolve_chat_invocation_settings(
     if not updates:
         return settings
     return settings.model_copy(update=updates)
+
+
+def _invoke_run_repl(**kwargs: object) -> None:
+    """Call `run_repl` with only the kwargs supported by the installed runtime."""
+
+    signature = inspect.signature(run_repl)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        run_repl(**kwargs)
+        return
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    run_repl(**filtered_kwargs)
 
 def _chat_default_llm_budget_updates(settings: Settings) -> dict[str, object]:
     """Cap inherited long-running defaults for foreground chat turns."""

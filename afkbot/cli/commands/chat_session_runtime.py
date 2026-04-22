@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 
 import typer
@@ -166,7 +167,7 @@ def run_repl(
             serialized_turn_runner_factory=serialized_turn_runner_factory,
         )
 
-    run_repl_transport(
+    _invoke_run_repl_transport(
         profile_id=profile_id,
         session_id=session_id,
         session_label=session_label,
@@ -249,3 +250,17 @@ def _supports_interactive_confirm() -> bool:
     """Return whether this CLI turn can safely prompt the user for a follow-up choice."""
 
     return bool(supports_interactive_tty())
+
+
+def _invoke_run_repl_transport(**kwargs: object) -> None:
+    """Call `run_repl_transport` compatibly across adjacent CLI runtime versions."""
+
+    signature = inspect.signature(run_repl_transport)
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        run_repl_transport(**kwargs)
+        return
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    run_repl_transport(**filtered_kwargs)
