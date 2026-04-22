@@ -20,6 +20,7 @@ from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
     MAX_LLM_REQUEST_TIMEOUT_SEC,
 )
+from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 
 
 def _package_root() -> Path:
@@ -256,6 +257,7 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_runtime_profile_id: str | None = None
     taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = False
     taskflow_strict_team_profile_ids: bool = False
@@ -452,6 +454,21 @@ class Settings(BaseSettings):
             normalized = value.strip()
             return normalized or None
         return value
+
+    @field_validator("taskflow_runtime_profile_id", mode="before")
+    @classmethod
+    def _normalize_taskflow_runtime_profile_id(cls, value: object) -> str | None:
+        """Normalize optional detached runtime backlog profile filter."""
+
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return validate_profile_id(text)
+        except InvalidProfileIdError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("taskflow_runtime_owner_ref", mode="before")
     @classmethod

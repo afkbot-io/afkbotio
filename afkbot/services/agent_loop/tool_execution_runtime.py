@@ -92,6 +92,7 @@ class ToolExecutionRuntime:
         explicit_subagent_requests: set[str] | None,
         allow_confirmation_markers: bool,
         runtime_metadata: dict[str, object] | None = None,
+        trusted_runtime_context: dict[str, object] | None = None,
         allowed_tool_names: set[str] | None = None,
         approved_tool_names: set[str] | None = None,
         approval_required_tool_names: set[str] | None = None,
@@ -104,6 +105,7 @@ class ToolExecutionRuntime:
             run_id=run_id,
             actor=self._actor,
             runtime_metadata=runtime_metadata,
+            trusted_runtime_context=trusted_runtime_context,
         )
         results: list[ToolResult] = []
         explicit_skills = {

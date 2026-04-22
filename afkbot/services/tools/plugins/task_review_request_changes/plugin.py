@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
+from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
@@ -24,6 +25,8 @@ class TaskReviewRequestChangesParams(ToolParameters):
     actor_ref: str | None = Field(default=None, max_length=255)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
+    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
+    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     reason_code: str = Field(default="review_changes_requested", min_length=1, max_length=64)
 
 
@@ -63,6 +66,13 @@ class TaskReviewRequestChangesTool(ToolBase):
             return scope_error
         try:
             service = get_task_flow_service(self._settings)
+            resolved_owner_type, resolved_owner_ref = resolve_task_owner_inputs(
+                field_prefix="owner",
+                owner_type=payload.owner_type,
+                owner_ref=payload.owner_ref,
+                owner_profile_id=payload.owner_profile_id,
+                owner_subagent_name=payload.owner_subagent_name,
+            )
             item = await service.request_review_changes(
                 profile_id=target_profile_id,
                 task_id=payload.task_id,
@@ -70,11 +80,13 @@ class TaskReviewRequestChangesTool(ToolBase):
                 actor_type=actor.actor_type,
                 actor_ref=actor.actor_ref,
                 actor_session_id=actor.actor_session_id,
-                owner_type=payload.owner_type,
-                owner_ref=payload.owner_ref,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
                 reason_code=payload.reason_code,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
+        except TaskOwnerInputError as exc:
+            return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
 

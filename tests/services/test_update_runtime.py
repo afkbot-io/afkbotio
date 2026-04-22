@@ -32,6 +32,9 @@ from afkbot.services.update_runtime import (
 )
 from afkbot.services.update_runtime import UpdateRuntimeError, run_update
 from afkbot.settings import get_settings
+from afkbot.version import load_cli_version_info
+
+_PACKAGE_VERSION = load_cli_version_info(root_dir=Path(__file__).resolve().parents[2]).version
 
 
 def _prepare_settings(tmp_path: Path, monkeypatch: MonkeyPatch) -> object:
@@ -845,7 +848,7 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.4.2",
+        lambda install_source: _PACKAGE_VERSION,
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
@@ -1025,7 +1028,7 @@ def test_inspect_available_update_uses_package_source_without_metadata(
     settings = _prepare_settings(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.4.2",
+        lambda install_source: _PACKAGE_VERSION,
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.load_cli_version_info",
@@ -1048,8 +1051,8 @@ def test_inspect_available_update_uses_package_source_without_metadata(
 
     assert availability is not None
     assert availability.install_mode == "uv-tool"
-    assert availability.target_id == "package:afkbotio:1.4.2"
-    assert availability.target_label == "afkbotio 1.4.2"
+    assert availability.target_id == f"package:afkbotio:{_PACKAGE_VERSION}"
+    assert availability.target_label == f"afkbotio {_PACKAGE_VERSION}"
 
 
 def test_inspect_available_update_ignores_uv_tool_http_404(

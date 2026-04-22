@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import datetime
 
+from click.core import ParameterSource
 import typer
 
 from afkbot.services.task_flow.cli_service import (
@@ -33,6 +34,7 @@ from afkbot.services.task_flow.cli_service import (
     update_task_payload,
 )
 from afkbot.services.task_flow.human_ref import resolve_local_human_ref
+from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.settings import get_settings
 
 
@@ -67,18 +69,35 @@ def register(app: typer.Typer) -> None:
         status: list[str] = typer.Option([], "--status", help="Optional task status filter."),
         owner_type: str | None = typer.Option(None, "--owner-type", help="Owner type filter."),
         owner_ref: str | None = typer.Option(None, "--owner-ref", help="Owner ref filter."),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured owner profile filter. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured owner subagent filter inside --owner-profile.",
+        ),
         flow_id: str | None = typer.Option(None, "--flow-id", help="Task flow filter."),
         limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
     ) -> None:
         """List tasks for one profile."""
 
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
         typer.echo(
             asyncio.run(
                 list_tasks_payload(
                     profile_id=_resolve_profile(ctx, profile),
                     statuses=tuple(status),
-                    owner_type=owner_type,
-                    owner_ref=owner_ref,
+                    owner_type=resolved_owner_type,
+                    owner_ref=resolved_owner_ref,
                     flow_id=flow_id,
                     limit=limit,
                 )
@@ -92,6 +111,16 @@ def register(app: typer.Typer) -> None:
         flow_id: str | None = typer.Option(None, "--flow-id", help="Optional task flow filter."),
         owner_type: str | None = typer.Option(None, "--owner-type", help="Owner type filter."),
         owner_ref: str | None = typer.Option(None, "--owner-ref", help="Owner ref filter."),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured owner profile filter. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured owner subagent filter inside --owner-profile.",
+        ),
         label: list[str] = typer.Option([], "--label", help="Repeatable label filter."),
         limit_per_column: int = typer.Option(
             20,
@@ -102,13 +131,20 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Show one Task Flow board projection."""
 
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
         typer.echo(
             asyncio.run(
                 build_board_payload(
                     profile_id=_resolve_profile(ctx, profile),
                     flow_id=flow_id,
-                    owner_type=owner_type,
-                    owner_ref=owner_ref,
+                    owner_type=resolved_owner_type,
+                    owner_ref=resolved_owner_ref,
                     labels=tuple(label),
                     limit_per_column=limit_per_column,
                 )
@@ -169,14 +205,37 @@ def register(app: typer.Typer) -> None:
     def list_stale_task_claims(
         ctx: typer.Context,
         profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        owner_ref: str | None = typer.Option(
+            None,
+            "--owner-ref",
+            help="Optional AI executor owner ref filter, for example `analyst` or `analyst:researcher`.",
+        ),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured AI executor profile filter. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured AI executor subagent filter inside --owner-profile.",
+        ),
         limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
     ) -> None:
         """List stale claimed/running Task Flow tasks for one profile."""
 
+        _, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=None,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
         typer.echo(
             asyncio.run(
                 list_stale_task_claims_payload(
                     profile_id=_resolve_profile(ctx, profile),
+                    owner_ref=resolved_owner_ref,
                     limit=limit,
                 )
             )
@@ -186,6 +245,21 @@ def register(app: typer.Typer) -> None:
     def sweep_stale_task_claims(
         ctx: typer.Context,
         profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        owner_ref: str | None = typer.Option(
+            None,
+            "--owner-ref",
+            help="Optional AI executor owner ref filter, for example `analyst` or `analyst:researcher`.",
+        ),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured AI executor profile filter. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured AI executor subagent filter inside --owner-profile.",
+        ),
         limit: int | None = typer.Option(
             None,
             "--limit",
@@ -195,10 +269,18 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Force one maintenance sweep for stale claimed/running Task Flow tasks."""
 
+        _, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=None,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
         typer.echo(
             asyncio.run(
                 sweep_stale_task_claims_payload(
                     profile_id=_resolve_profile(ctx, profile),
+                    owner_ref=resolved_owner_ref,
                     limit=limit,
                 )
             )
@@ -214,18 +296,35 @@ def register(app: typer.Typer) -> None:
             "--actor-ref",
             help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
         ),
+        actor_profile: str | None = typer.Option(
+            None,
+            "--actor-profile",
+            help="Structured reviewer profile selector. Without --actor-subagent this targets the orchestrator profile directly.",
+        ),
+        actor_subagent: str | None = typer.Option(
+            None,
+            "--actor-subagent",
+            help="Structured reviewer subagent selector inside --actor-profile.",
+        ),
         flow_id: str | None = typer.Option(None, "--flow-id", help="Optional task flow filter."),
         label: list[str] = typer.Option([], "--label", help="Repeatable label filter."),
         limit: int | None = typer.Option(None, "--limit", min=1, help="Maximum rows to return."),
     ) -> None:
         """List review queue tasks for one reviewer inbox."""
 
+        resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            actor_profile_id=actor_profile,
+            actor_subagent_name=actor_subagent,
+        )
         typer.echo(
             asyncio.run(
                 list_review_tasks_payload(
                     profile_id=_resolve_profile(ctx, profile),
-                    actor_type=actor_type,
-                    actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
+                    actor_type=resolved_actor_type,
+                    actor_ref=resolved_actor_ref,
                     flow_id=flow_id,
                     labels=tuple(label),
                     limit=limit,
@@ -244,15 +343,32 @@ def register(app: typer.Typer) -> None:
             "--actor-ref",
             help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
         ),
+        actor_profile: str | None = typer.Option(
+            None,
+            "--actor-profile",
+            help="Structured reviewer profile selector. Without --actor-subagent this targets the orchestrator profile directly.",
+        ),
+        actor_subagent: str | None = typer.Option(
+            None,
+            "--actor-subagent",
+            help="Structured reviewer subagent selector inside --actor-profile.",
+        ),
     ) -> None:
         """Approve one task currently in review."""
 
+        resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            actor_profile_id=actor_profile,
+            actor_subagent_name=actor_subagent,
+        )
         payload = asyncio.run(
             approve_review_task_payload(
                 profile_id=_resolve_profile(ctx, profile),
                 task_id=task_id,
-                actor_type=actor_type,
-                actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
+                actor_type=resolved_actor_type,
+                actor_ref=resolved_actor_ref,
             )
         )
         typer.echo(payload)
@@ -270,6 +386,16 @@ def register(app: typer.Typer) -> None:
             "--actor-ref",
             help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
         ),
+        actor_profile: str | None = typer.Option(
+            None,
+            "--actor-profile",
+            help="Structured reviewer profile selector. Without --actor-subagent this targets the orchestrator profile directly.",
+        ),
+        actor_subagent: str | None = typer.Option(
+            None,
+            "--actor-subagent",
+            help="Structured reviewer subagent selector inside --actor-profile.",
+        ),
         owner_type: str | None = typer.Option(
             None,
             "--owner-type",
@@ -280,6 +406,16 @@ def register(app: typer.Typer) -> None:
             "--owner-ref",
             help="Optional owner ref reassignment while returning the task for changes.",
         ),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured owner profile reassignment. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured owner subagent reassignment inside --owner-profile.",
+        ),
         reason_code: str = typer.Option(
             "review_changes_requested",
             "--reason-code",
@@ -288,15 +424,29 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Request changes for one review task and move it back to blocked."""
 
+        resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+            ctx=ctx,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            actor_profile_id=actor_profile,
+            actor_subagent_name=actor_subagent,
+        )
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
         payload = asyncio.run(
             request_review_changes_payload(
                 profile_id=_resolve_profile(ctx, profile),
                 task_id=task_id,
                 reason_text=reason_text,
-                actor_type=actor_type,
-                actor_ref=_resolve_review_actor_ref(actor_type=actor_type, actor_ref=actor_ref),
-                owner_type=owner_type,
-                owner_ref=owner_ref,
+                actor_type=resolved_actor_type,
+                actor_ref=resolved_actor_ref,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
                 reason_code=reason_code,
             )
         )
@@ -346,6 +496,16 @@ def register(app: typer.Typer) -> None:
         due_at: datetime | None = typer.Option(None, "--due-at", help="Optional ISO due time."),
         owner_type: str | None = typer.Option(None, "--owner-type", help="Task owner type."),
         owner_ref: str | None = typer.Option(None, "--owner-ref", help="Task owner ref."),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured task owner profile. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured task owner subagent inside --owner-profile.",
+        ),
         reviewer_type: str | None = typer.Option(
             None,
             "--reviewer-type",
@@ -355,6 +515,16 @@ def register(app: typer.Typer) -> None:
             None,
             "--reviewer-ref",
             help="Optional reviewer owner ref.",
+        ),
+        reviewer_profile: str | None = typer.Option(
+            None,
+            "--reviewer-profile",
+            help="Structured reviewer profile. Without --reviewer-subagent this targets the orchestrator profile directly.",
+        ),
+        reviewer_subagent: str | None = typer.Option(
+            None,
+            "--reviewer-subagent",
+            help="Structured reviewer subagent inside --reviewer-profile.",
         ),
         label: list[str] = typer.Option([], "--label", help="Repeatable task label."),
         requires_review: bool = typer.Option(
@@ -374,6 +544,20 @@ def register(app: typer.Typer) -> None:
             description=description,
             prompt=prompt,
         )
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
+        resolved_reviewer_type, resolved_reviewer_ref = _resolve_cli_owner_inputs(
+            field_prefix="reviewer",
+            owner_type=reviewer_type,
+            owner_ref=reviewer_ref,
+            owner_profile_id=reviewer_profile,
+            owner_subagent_name=reviewer_subagent,
+        )
         payload = asyncio.run(
             create_task_payload(
                 profile_id=_resolve_profile(ctx, profile),
@@ -385,10 +569,10 @@ def register(app: typer.Typer) -> None:
                 flow_id=flow_id,
                 priority=priority,
                 due_at=due_at,
-                owner_type=owner_type,
-                owner_ref=owner_ref,
-                reviewer_type=reviewer_type,
-                reviewer_ref=reviewer_ref,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+                reviewer_type=resolved_reviewer_type,
+                reviewer_ref=resolved_reviewer_ref,
                 labels=tuple(label),
                 requires_review=requires_review,
                 depends_on_task_ids=tuple(depends_on),
@@ -413,6 +597,16 @@ def register(app: typer.Typer) -> None:
         due_at: datetime | None = typer.Option(None, "--due-at", help="Updated ISO due time."),
         owner_type: str | None = typer.Option(None, "--owner-type", help="Updated owner type."),
         owner_ref: str | None = typer.Option(None, "--owner-ref", help="Updated owner ref."),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured updated owner profile. Without --owner-subagent this targets the orchestrator profile directly.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured updated owner subagent inside --owner-profile.",
+        ),
         reviewer_type: str | None = typer.Option(
             None,
             "--reviewer-type",
@@ -422,6 +616,16 @@ def register(app: typer.Typer) -> None:
             None,
             "--reviewer-ref",
             help="Updated reviewer ref.",
+        ),
+        reviewer_profile: str | None = typer.Option(
+            None,
+            "--reviewer-profile",
+            help="Structured updated reviewer profile. Without --reviewer-subagent this targets the orchestrator profile directly.",
+        ),
+        reviewer_subagent: str | None = typer.Option(
+            None,
+            "--reviewer-subagent",
+            help="Structured updated reviewer subagent inside --reviewer-profile.",
         ),
         label: list[str] | None = typer.Option(
             None,
@@ -446,6 +650,20 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Update one task fields."""
 
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
+        resolved_reviewer_type, resolved_reviewer_ref = _resolve_cli_owner_inputs(
+            field_prefix="reviewer",
+            owner_type=reviewer_type,
+            owner_ref=reviewer_ref,
+            owner_profile_id=reviewer_profile,
+            owner_subagent_name=reviewer_subagent,
+        )
         payload = asyncio.run(
             update_task_payload(
                 profile_id=_resolve_profile(ctx, profile),
@@ -455,10 +673,10 @@ def register(app: typer.Typer) -> None:
                 status=status,
                 priority=priority,
                 due_at=due_at,
-                owner_type=owner_type,
-                owner_ref=owner_ref,
-                reviewer_type=reviewer_type,
-                reviewer_ref=reviewer_ref,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+                reviewer_type=resolved_reviewer_type,
+                reviewer_ref=resolved_reviewer_ref,
                 requires_review=requires_review,
                 labels=(tuple(label) if label is not None else None),
                 blocked_reason_code=blocked_reason_code,
@@ -685,10 +903,27 @@ def register(app: typer.Typer) -> None:
             "--default-owner-ref",
             help="Default owner ref for tasks in this flow.",
         ),
+        default_owner_profile: str | None = typer.Option(
+            None,
+            "--default-owner-profile",
+            help="Structured default owner profile. Without --default-owner-subagent this targets the orchestrator profile directly.",
+        ),
+        default_owner_subagent: str | None = typer.Option(
+            None,
+            "--default-owner-subagent",
+            help="Structured default owner subagent inside --default-owner-profile.",
+        ),
         label: list[str] = typer.Option([], "--label", help="Repeatable task flow label."),
     ) -> None:
         """Create one task flow container."""
 
+        resolved_default_owner_type, resolved_default_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="default_owner",
+            owner_type=default_owner_type,
+            owner_ref=default_owner_ref,
+            owner_profile_id=default_owner_profile,
+            owner_subagent_name=default_owner_subagent,
+        )
         payload = asyncio.run(
             create_flow_payload(
                 profile_id=_resolve_profile(ctx, profile),
@@ -696,8 +931,8 @@ def register(app: typer.Typer) -> None:
                 description=description,
                 created_by_type="human",
                 created_by_ref=resolve_local_human_ref(get_settings()),
-                default_owner_type=default_owner_type,
-                default_owner_ref=default_owner_ref,
+                default_owner_type=resolved_default_owner_type,
+                default_owner_ref=resolved_default_owner_ref,
                 labels=tuple(label),
             )
         )
@@ -723,14 +958,76 @@ def _exit_on_error_payload(payload: str) -> None:
         raise typer.Exit(code=1)
 
 
-def _resolve_review_actor_ref(*, actor_type: str, actor_ref: str | None) -> str:
-    """Resolve reviewer actor ref for CLI review surfaces."""
+def _resolve_cli_owner_inputs(
+    *,
+    field_prefix: str,
+    owner_type: str | None,
+    owner_ref: str | None,
+    owner_profile_id: str | None,
+    owner_subagent_name: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve raw or structured CLI owner inputs into one normalized type/ref pair."""
 
-    if actor_ref is not None and actor_ref.strip():
-        return actor_ref
-    if actor_type != "human":
+    try:
+        return resolve_task_owner_inputs(
+            field_prefix=field_prefix,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile_id,
+            owner_subagent_name=owner_subagent_name,
+        )
+    except TaskOwnerInputError as exc:
+        raise typer.BadParameter(
+            exc.reason,
+            param_hint=f"--{field_prefix.replace('_', '-')}-profile",
+        ) from None
+
+
+def _resolve_review_actor_inputs(
+    *,
+    ctx: typer.Context,
+    actor_type: str,
+    actor_ref: str | None,
+    actor_profile_id: str | None,
+    actor_subagent_name: str | None,
+) -> tuple[str, str]:
+    """Resolve reviewer actor selector for CLI review surfaces."""
+
+    structured_actor_present = bool(
+        (actor_profile_id is not None and actor_profile_id.strip())
+        or (actor_subagent_name is not None and actor_subagent_name.strip())
+    )
+    effective_actor_type: str | None = actor_type
+    if (
+        structured_actor_present
+        and actor_type == "human"
+        and actor_ref is None
+        and not _option_was_explicit(ctx, "actor_type")
+    ):
+        effective_actor_type = None
+    resolved_type, resolved_ref = _resolve_cli_owner_inputs(
+        field_prefix="actor",
+        owner_type=effective_actor_type,
+        owner_ref=actor_ref,
+        owner_profile_id=actor_profile_id,
+        owner_subagent_name=actor_subagent_name,
+    )
+    if resolved_type is None and resolved_ref is None:
+        return "human", resolve_local_human_ref(get_settings())
+    if resolved_type == "human" and resolved_ref is None:
+        return "human", resolve_local_human_ref(get_settings())
+    if resolved_type is None or resolved_ref is None:
         raise typer.BadParameter("--actor-ref is required unless --actor-type=human")
-    return resolve_local_human_ref(get_settings())
+    return resolved_type, resolved_ref
+
+
+def _option_was_explicit(ctx: typer.Context, param_name: str) -> bool:
+    """Return whether one Typer/Click option came from user input instead of the default."""
+
+    getter = getattr(ctx, "get_parameter_source", None)
+    if getter is None:
+        return False
+    return getter(param_name) is not ParameterSource.DEFAULT
 
 
 def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:

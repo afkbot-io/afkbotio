@@ -19,6 +19,7 @@ from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
 from afkbot.models.task_notification_cursor import TaskNotificationCursor
 from afkbot.models.task_run import TaskRun
+from afkbot.services.task_flow.ai_executors import AI_EXECUTOR_OWNER_TYPES
 
 _UNSET = object()
 _NO_FLOW_BUCKET = "__taskflow_no_flow__"
@@ -234,6 +235,7 @@ class TaskFlowRepository:
         self,
         *,
         profile_id: str,
+        owner_type: str,
         owner_ref: str,
         exclude_task_id: str | None = None,
     ) -> bool:
@@ -241,7 +243,7 @@ class TaskFlowRepository:
 
         conditions = [
             Task.profile_id == profile_id,
-            Task.owner_type == "ai_profile",
+            Task.owner_type == owner_type,
             Task.owner_ref == owner_ref,
             Task.status.in_(("claimed", "running")),
         ]
@@ -831,6 +833,7 @@ class TaskFlowRepository:
         lease_until: datetime,
         claim_token: str,
         claimed_by: str,
+        profile_id: str | None = None,
         owner_ref: str | None = None,
     ) -> Task | None:
         """Atomically claim one runnable AI-owned task."""
@@ -840,7 +843,7 @@ class TaskFlowRepository:
             select(active_task.id)
             .where(
                 active_task.profile_id == Task.profile_id,
-                active_task.owner_type == "ai_profile",
+                active_task.owner_type == Task.owner_type,
                 active_task.owner_ref == Task.owner_ref,
                 active_task.status.in_(("claimed", "running")),
             )
@@ -857,12 +860,13 @@ class TaskFlowRepository:
                 Task.ready_at.label("ready_at"),
                 Task.created_at.label("created_at"),
                 func.row_number().over(
-                    partition_by=(Task.profile_id, Task.owner_ref),
+                    partition_by=(Task.profile_id, Task.owner_type, Task.owner_ref),
                     order_by=_task_claim_base_ordering(Task),
                 ).label("owner_rank"),
             )
             .where(
-                Task.owner_type == "ai_profile",
+                Task.profile_id == profile_id if profile_id is not None else true(),
+                Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
                 Task.owner_ref == owner_ref if owner_ref is not None else true(),
                 or_(
                     and_(
@@ -890,7 +894,8 @@ class TaskFlowRepository:
                 func.count(Task.id).label("active_flow_task_count"),
             )
             .where(
-                Task.owner_type == "ai_profile",
+                Task.profile_id == profile_id if profile_id is not None else true(),
+                Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
                 Task.status.in_(("claimed", "running")),
             )
             .group_by(Task.profile_id, func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)))
@@ -904,6 +909,7 @@ class TaskFlowRepository:
         eligible_statement = (
             select(
                 runnable_candidates.c.id,
+                Task.owner_type.label("owner_type"),
                 Task.owner_ref.label("owner_ref"),
             )
             .select_from(
@@ -933,12 +939,13 @@ class TaskFlowRepository:
             if candidate_row is None:
                 return None
             candidate_task_id = str(candidate_row.id)
+            candidate_owner_type = str(candidate_row.owner_type)
             candidate_owner_ref = str(candidate_row.owner_ref)
             statement = (
                 update(Task)
                 .where(
                     Task.id == candidate_task_id,
-                    Task.owner_type == "ai_profile",
+                    Task.owner_type == candidate_owner_type,
                     Task.owner_ref == candidate_owner_ref,
                     or_(
                         and_(
@@ -985,12 +992,13 @@ class TaskFlowRepository:
         *,
         now_utc: datetime,
         profile_id: str | None = None,
+        owner_ref: str | None = None,
         limit: int | None = None,
     ) -> list[Task]:
         """Return AI-owned claimed/running tasks whose lease has expired."""
 
         conditions = [
-            Task.owner_type == "ai_profile",
+            Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
             Task.status.in_(("claimed", "running")),
             Task.claim_token.is_not(None),
             Task.lease_until.is_not(None),
@@ -998,10 +1006,38 @@ class TaskFlowRepository:
         ]
         if profile_id is not None:
             conditions.append(Task.profile_id == profile_id)
+        if owner_ref is not None:
+            conditions.append(Task.owner_ref == owner_ref)
         statement: Select[tuple[Task]] = (
             select(Task)
             .where(*conditions)
             .order_by(Task.lease_until.asc(), Task.updated_at.asc(), Task.created_at.asc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def list_ai_plan_tasks(
+        self,
+        *,
+        profile_id: str | None = None,
+        owner_ref: str | None = None,
+        limit: int | None = None,
+    ) -> list[Task]:
+        """Return AI-owned PLAN tasks, optionally scoped to one backlog profile or owner."""
+
+        conditions = [
+            Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
+            Task.status == "plan",
+        ]
+        if profile_id is not None:
+            conditions.append(Task.profile_id == profile_id)
+        if owner_ref is not None:
+            conditions.append(Task.owner_ref == owner_ref)
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(*conditions)
+            .order_by(Task.updated_at.asc(), Task.created_at.asc())
         )
         if limit is not None:
             statement = statement.limit(limit)
