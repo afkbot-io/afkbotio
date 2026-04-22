@@ -2261,14 +2261,21 @@ async def test_task_flow_create_plugin_supports_structured_ai_profile_default_ow
         await engine.dispose()
 
 
-async def test_task_create_plugin_rejects_conflicting_raw_and_structured_subagent_owner_inputs(
+async def test_task_create_plugin_accepts_equivalent_raw_and_structured_subagent_owner_inputs(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.create should fail closed when raw owner_ref conflicts with structured subagent inputs."""
+    """task.create should accept migration-period duplicate owner selectors when equivalent."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="default",
+            subagent_name="reviewer",
+            markdown="# Reviewer\nReview-only subagent.",
+        )
+
         create_tool = registry.get("task.create")
         assert create_tool is not None
 
@@ -2276,20 +2283,54 @@ async def test_task_create_plugin_rejects_conflicting_raw_and_structured_subagen
             ToolContext(profile_id="default", session_id="s-task", run_id=37),
             create_tool.parse_params(
                 {
-                    "title": "Conflicting owner selector",
-                    "description": "Do not allow ambiguous owner routing.",
+                    "title": "Equivalent owner selectors",
+                    "description": "Accept equivalent raw and structured selectors during migration.",
                     "owner_type": "ai_subagent",
-                    "owner_ref": "papercliper:reviewer",
-                    "owner_profile_id": "analyst",
+                    "owner_ref": " default:Reviewer ",
+                    "owner_profile_id": "default",
+                    "owner_subagent_name": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert result.ok is True
+        task_payload = result.payload["task"]
+        assert task_payload["owner_type"] == "ai_subagent"
+        assert task_payload["owner_ref"] == "default:reviewer"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_create_plugin_rejects_mismatched_raw_and_structured_subagent_owner_inputs(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """task.create should reject duplicate owner selectors when raw and structured values diverge."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        result = await create_tool.execute(
+            ToolContext(profile_id="default", session_id="s-task", run_id=38),
+            create_tool.parse_params(
+                {
+                    "title": "Mismatched owner selectors",
+                    "description": "Reject conflicting raw and structured selectors.",
+                    "owner_type": "ai_subagent",
+                    "owner_ref": "default:reviewer",
+                    "owner_profile_id": "default",
                     "owner_subagent_name": "researcher",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
             ),
         )
-
         assert result.ok is False
         assert result.error_code == "invalid_owner_ref"
+        assert "conflicts with" in (result.reason or "")
     finally:
         await engine.dispose()
 

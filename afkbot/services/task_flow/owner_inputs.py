@@ -7,6 +7,7 @@ from afkbot.services.task_flow.ai_executors import (
     AI_PROFILE_OWNER_TYPE,
     AI_SUBAGENT_OWNER_TYPE,
     build_ai_subagent_owner_ref,
+    parse_ai_subagent_owner_ref,
 )
 
 
@@ -43,20 +44,21 @@ def resolve_task_owner_inputs(
     )
     if not structured_present:
         return normalized_type, normalized_ref
-    if normalized_ref is not None:
-        raise TaskOwnerInputError(
-            error_code="invalid_owner_ref",
-            reason=(
-                f"{field_prefix}_ref cannot be combined with "
-                f"{field_prefix}_profile_id/{field_prefix}_subagent_name"
-            ),
-        )
     if normalized_profile_id is None:
         raise TaskOwnerInputError(
             error_code="invalid_owner_ref",
             reason=f"{field_prefix}_profile_id is required when {field_prefix}_subagent_name is set",
         )
+
     if normalized_subagent_name is None:
+        if normalized_ref is not None:
+            raise TaskOwnerInputError(
+                error_code="invalid_owner_ref",
+                reason=(
+                    f"{field_prefix}_ref cannot be combined with "
+                    f"{field_prefix}_profile_id/{field_prefix}_subagent_name"
+                ),
+            )
         if normalized_type is not None and normalized_type != AI_PROFILE_OWNER_TYPE:
             raise TaskOwnerInputError(
                 error_code="invalid_owner_type",
@@ -70,6 +72,7 @@ def resolve_task_owner_inputs(
                 reason=str(exc),
             ) from exc
         return AI_PROFILE_OWNER_TYPE, normalized_profile_id
+
     if normalized_type is not None and normalized_type != AI_SUBAGENT_OWNER_TYPE:
         raise TaskOwnerInputError(
             error_code="invalid_owner_type",
@@ -78,8 +81,9 @@ def resolve_task_owner_inputs(
                 f"require {field_prefix}_type=ai_subagent"
             ),
         )
+
     try:
-        normalized_ref = build_ai_subagent_owner_ref(
+        normalized_structured_ref = build_ai_subagent_owner_ref(
             profile_id=normalized_profile_id,
             subagent_name=normalized_subagent_name,
         )
@@ -88,7 +92,29 @@ def resolve_task_owner_inputs(
             error_code="invalid_owner_ref",
             reason=str(exc),
         ) from exc
-    return AI_SUBAGENT_OWNER_TYPE, normalized_ref
+
+    if normalized_ref is None:
+        return AI_SUBAGENT_OWNER_TYPE, normalized_structured_ref
+
+    parsed_raw_ref = parse_ai_subagent_owner_ref(normalized_ref)
+    if parsed_raw_ref is None:
+        raise TaskOwnerInputError(
+            error_code="invalid_owner_ref",
+            reason=(
+                f"{field_prefix}_ref must be one canonical "
+                "`<profile_id>:<subagent_name>` value"
+            ),
+        )
+    normalized_raw_ref = f"{parsed_raw_ref[0]}:{parsed_raw_ref[1]}"
+    if normalized_raw_ref != normalized_structured_ref:
+        raise TaskOwnerInputError(
+            error_code="invalid_owner_ref",
+            reason=(
+                f"{field_prefix}_ref conflicts with "
+                f"{field_prefix}_profile_id/{field_prefix}_subagent_name"
+            ),
+        )
+    return AI_SUBAGENT_OWNER_TYPE, normalized_structured_ref
 
 
 def _normalize_optional_text(value: str | None) -> str | None:

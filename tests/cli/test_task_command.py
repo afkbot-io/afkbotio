@@ -153,8 +153,51 @@ def test_task_create_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
     assert captured["reviewer_ref"] == "analyst"
 
 
-def test_task_create_rejects_conflicting_raw_and_structured_owner_inputs(monkeypatch) -> None:
-    """Create should fail early on ambiguous raw+structured owner selectors."""
+def test_task_create_accepts_equivalent_raw_and_structured_owner_inputs(monkeypatch) -> None:
+    """Create should accept migration-period duplicate owner selectors when equivalent."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    captured: dict[str, object] = {}
+
+    async def _fake_create_task_payload(**kwargs):
+        captured.update(kwargs)
+        return '{"task":{"id":"task_1"}}'
+
+    monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
+    monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "--title",
+            "Equivalent",
+            "--description",
+            "Allow equivalent selectors.",
+            "--owner-type",
+            "ai_subagent",
+            "--owner-ref",
+            " default:Reviewer ",
+            "--owner-profile",
+            "default",
+            "--owner-subagent",
+            "reviewer",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["owner_type"] == "ai_subagent"
+    assert captured["owner_ref"] == "default:reviewer"
+
+
+def test_task_create_rejects_mismatched_raw_and_structured_owner_inputs(monkeypatch) -> None:
+    """Create should fail early when raw and structured owner selectors diverge."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -175,17 +218,21 @@ def test_task_create_rejects_conflicting_raw_and_structured_owner_inputs(monkeyp
             "--title",
             "Conflict",
             "--description",
-            "Do not accept ambiguous owner selectors.",
+            "Do not accept conflicting owner selectors.",
+            "--owner-type",
+            "ai_subagent",
             "--owner-ref",
-            "analyst",
+            "papercliper:reviewer",
             "--owner-profile",
-            "papercliper",
+            "analyst",
+            "--owner-subagent",
+            "researcher",
         ],
     )
 
     assert result.exit_code != 0
     output = _strip_ansi(result.stdout + (result.stderr or ""))
-    assert "cannot be combined" in output
+    assert "conflicts with" in output
 
 
 def test_task_update_supports_structured_owner_and_reviewer_inputs(monkeypatch) -> None:
