@@ -1,162 +1,51 @@
-# AFKBOT
+<p align="center">
+  <img src="docs/assets/readme-preview.png" alt="AFKBOT preview" width="1100" />
+</p>
 
-AFKBOT is a source-available local AI runtime and CLI for chat-driven workflows,
-tool calling, automations, and profile-scoped agent environments.
+<h1 align="center">AFKBOT</h1>
 
-Documentation lives at [afkbot.io/docs](https://afkbot.io/docs). The project site is [afkbot.io](https://afkbot.io).
-Use the docs site for setup, configuration, MCP, automations, and command reference.
+<p align="center">
+  Local AI runtime and CLI for chat, durable task orchestration, browser automation,
+  plugins, MCP, channels, and profile-scoped subagents.
+</p>
 
-## What AFKBOT does
+<p align="center">
+  <a href="https://afkbot.io">Site</a> ·
+  <a href="https://afkbot.io/docs">Docs</a> ·
+  <a href="LICENSE">License</a> ·
+  <a href="TRADEMARKS.md">Trademarks</a>
+</p>
 
-- Runs local chat sessions with tool access, planning, and configurable reasoning.
-- Supports multiple LLM providers in setup/profile runtime (`openrouter`, `openai`, `claude`, `moonshot`, `deepseek`, `xai`, `qwen`, and `custom`).
-- Provides a CLI-first workflow for setup, chat, health checks, and runtime control.
-- Supports profile-scoped configuration, secrets, permissions, and tool exposure.
-- Includes browser, web, app, MCP, automation, and channel integration surfaces.
-- Exposes a local runtime and API layer for longer-running workflows.
+## What AFKBOT is
 
-## Runtime Model
+AFKBOT is a source-available local agent platform. You can run it from the terminal,
+keep work inside chat, fan out to subagents, or move long-running work into Task Flow
+with durable tasks, dependencies, and review steps.
 
-AFKBOT uses one session-oriented execution model across chat, API, automations,
-Task Flow workers, and child subagents.
+Use AFKBOT when you want:
 
-- One active turn runs at a time for each `(profile_id, session_id)`.
-- If you send another message while a turn is still running, the next message is
-  queued and starts after the current turn releases the session slot.
-- `afk chat` planning modes control whether the agent starts with a read-only
-  planning pass before execution:
-  - `off`: execute immediately
-  - `auto`: use plan-first for complex requests
-  - `on`: always show a plan first, then execute
-- A public `plan -> execute` flow runs inside the same serialized session slot,
-  so execution starts automatically after planning unless you explicitly asked
-  for only a plan.
-- Inside one turn, the agent can fan out independent work in parallel with
-  `session.job.run`, wait for every child job to finish, and then return one
-  final answer.
-- Subagents and Task Flow runs use separate child sessions, so they do not steal
-  the parent chat session slot.
+- local chat with tools and configurable reasoning
+- profile-scoped skills, subagents, permissions, and secrets
+- browser, MCP, app, webhook, channel, and automation surfaces
+- durable background work instead of one large chat turn
 
-## Choosing the Execution Path
+For the full command reference and setup details, use [afkbot.io/docs](https://afkbot.io/docs).
 
-Use this mental model:
+## Install AFKBOT
 
-| Path | Use it when | Wait for the answer now? | Durable state? | Typical outcome |
-| --- | --- | --- | --- | --- |
-| `Chat turn` | The work fits in one bounded conversation turn | Yes | No | Plan, inspect files, run tools, answer in chat |
-| `session.job.run` + subagents | You want parallel work inside the current turn | Yes | No | Fan out independent bash or subagent jobs, wait for all, merge results |
-| `Task Flow` | The work is long-running, needs dependencies, review, handoff, or a backlog trail | Not necessarily | Yes | Create durable tasks, run them in background, inspect task runs and comments later |
-
-Command examples below use the installed `afk` binary. If you are working from a source checkout without installing AFKBOT into your shell yet, run the same commands with `uv run`, for example `uv run afk doctor`.
-
-Subagents are profile-local runtime assets, not global assistant personas. List
-the subagents that the current AFKBOT profile can actually run with:
-
-```bash
-afk subagent list --profile default
-```
-
-## Chat And Planning
-
-`afk chat` is the main orchestrator. It decides whether to stay in one turn,
-fan out parallel jobs, or create durable Task Flow work.
-
-Planning mode examples:
-
-```bash
-afk chat --plan off
-afk chat --plan auto
-afk chat --plan on
-```
-
-Behavior:
-
-- `off`: the turn executes immediately.
-- `auto`: the runtime may do a read-only planning pass for multi-step work.
-- `on`: the runtime always shows a plan first and then executes in the same
-  request.
-- If you explicitly ask only for a plan, AFKBOT returns the plan and stops
-  without starting execution.
-
-## License Model
-
-- AFKBOT source code is available under the `Sustainable Use License 1.0`.
-- Personal use, non-commercial use, and internal business use are allowed.
-- Forking and modifying AFKBOT are allowed, but redistribution must stay free of charge and non-commercial.
-- You may not sell AFKBOT, sell copies of AFKBOT, resell the source code, or offer AFKBOT as a paid hosted or white-label service without separate permission.
-- The repository license does not grant any trademark rights to the AFKBOT name, logo, or branding.
-
-## Requirements
-
-- Python 3.12 or newer for manual source installs
-- `uv` recommended for local development
-- SQLite is the default runtime database for AFKBOT
-- The hosted installers bootstrap `uv`, install AFKBOT as an isolated uv tool, and keep runtime state outside the app source tree
-
-## Install
-
-Hosted installer for macOS/Linux:
+### Linux and macOS
 
 ```bash
 curl -fsSL https://afkbot.io/install.sh | bash
-# open a new terminal after install
-afk setup
-afk doctor
-afk chat
 ```
 
-Hosted installer for Windows PowerShell:
+### Windows PowerShell
 
 ```powershell
 powershell -c "irm https://afkbot.io/install.ps1 | iex"
-# open a new terminal after install
-afk setup
-afk doctor
-afk chat
 ```
 
-Local installer from a source checkout:
-
-```bash
-bash scripts/install.sh --repo-url "file://$PWD"
-# open a new terminal after install
-afk setup
-afk doctor
-afk chat
-```
-
-Common installer flags:
-
-```bash
-# installer and setup prompts in Russian
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --lang ru
-
-# install from a specific Git ref
-curl -fsSL https://afkbot.io/install.sh | bash -s -- --git-ref v1.4.2
-
-# install from a local checkout
-bash scripts/install.sh --repo-url "file://$PWD"
-
-# show actions without mutating the machine
-bash scripts/install.sh --dry-run
-
-# skip bootstrap-only setup seeding during install
-bash scripts/install.sh --skip-setup
-```
-
-What the installer does:
-
-- bootstraps `uv` into the user-local bin directory if needed
-- installs AFKBOT as an isolated `uv tool`
-- updates shell integration so `afk` is available in new terminals
-- seeds the runtime root with bootstrap-only setup metadata
-- remembers the install source so `afk update` can refresh the same source later
-
-The installer is idempotent. Rerun it to refresh the installed tool in place, or use `afk update`.
-
-## First Run
-
-For normal usage, the first-run flow is:
+After install, open a new terminal and run:
 
 ```bash
 afk setup
@@ -164,360 +53,224 @@ afk doctor
 afk chat
 ```
 
-- `afk setup` configures the default profile, provider, policy, locale, and runtime defaults
-- `afk setup` also asks whether `afk chat` should check for AFKBOT updates before opening chat
-- `afk doctor` prints the effective runtime/chat ports and checks local readiness
-- `afk chat` is the main entrypoint for real work
+The hosted installer bootstraps `uv`, installs AFKBOT as an isolated tool, and keeps
+runtime state outside the source tree.
 
-Setup and profile policy directly control the tool surface that the runtime can
-use. In practice:
+## Install from a source checkout
 
-- enable `Shell` if you want the agent to run shell commands or parallel bash
-  jobs through `session.job.run`
-- enable `Subagents` if you want the agent to run profile-local subagents
-- enable `Task Flow` if you want durable backlog tasks, dependencies, review,
-  and background execution
-- enable `MCP`, `Browser`, `HTTP`, `Apps`, and other capability groups only for
-  the surfaces you actually want exposed to the profile
-
-Useful first-run checks:
-
-```bash
-afk doctor
-afk profile show default
-afk subagent list --profile default
-afk task board --profile default
-```
-
-`afk profile show default` lets you confirm the effective runtime policy and
-capabilities. `afk subagent list --profile default` shows the actual subagent
-names that this profile can run.
-
-If update notices are enabled in setup, interactive `afk chat` checks for a newer AFKBOT build before opening the session and asks:
-
-- `Yes`
-- `No`
-- `Remind in a week`
-
-`No` continues into chat immediately and does not save a permanent skip. `Remind in a week` suppresses all update prompts for seven days. If you disable update notices in setup, chat will not ask at startup.
-
-The runtime chooses and persists a non-default local port automatically for fresh installs, so use `afk doctor` when you need the actual `runtime_port` or `api_port`.
-
-Manual local source setup with `uv`:
+Manual source installs require Python 3.12+ and `uv`.
 
 ```bash
 uv sync --extra dev
-afk setup
-afk doctor
-afk chat
+uv run afk setup
+uv run afk doctor
+uv run afk chat
 ```
 
-If the checkout is not installed into your shell PATH, run the same commands with `uv run afk ...` from the repository root.
-
-Manual local source setup with `pip`:
+If you want a shell-installed `afk` binary directly from the checkout:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-afk setup
-afk doctor
-afk chat
+bash scripts/install.sh --repo-url "file://$PWD"
 ```
 
-## Local Runtime
+## Main features
 
-AFKBOT uses one local SQLite database by default for runtime state, semantic memory, and chat metadata:
+| Feature | What it is | First commands |
+| --- | --- | --- |
+| Profiles | Isolated runtime agents with their own model, policy, secrets, skills, subagents, channels, and memory. | `afk profile add work`, `afk profile show work`, `afk profile list` |
+| Skills | Profile-local markdown instructions the agent can load and use while working. | `afk skill set research-helper --from-file ./research-helper.md`, `afk skill list --profile default` |
+| Subagents | Specialized child workers under one profile, each with its own descriptor and prompt. | `afk subagent set reviewer --from-file ./reviewer.md`, `afk subagent list --profile default` |
+| Task Flow | Durable tasks, flows, dependencies, review queues, and background execution. | `afk task flow-create --profile default --title "Website launch"`, `afk task board --profile default` |
+| Automations | Scheduled or webhook-triggered work that runs in the background. | `afk automation create ...`, `afk automation list --profile default` |
+| Channels | External transports that route messages into a profile. | `afk channel telegram add`, `afk channel telethon add`, `afk channel list` |
+| Browser | Local browser runtime for `browser.control`. | `afk browser install`, `afk browser status` |
+| Plugins | Optional platform extensions such as AFKBOT UI. | `afk plugin install`, `afk plugin list` |
+| MCP | Remote MCP servers connected to a profile. | `afk mcp connect https://example.com/mcp --profile default`, `afk mcp list --profile default` |
+| Memory | Scoped semantic memory for profile, chat, thread, and user-in-chat contexts. | `afk memory list --profile default`, `afk memory search "topic" --profile default` |
+
+## Common setup flows
+
+### Create a new profile
+
+Use a profile when you want a separate agent with its own provider, model, permissions,
+skills, subagents, channels, and memory.
 
 ```bash
-export AFKBOT_DB_URL='sqlite+aiosqlite:///./afkbot.db'
+afk profile add work
+afk profile show work
+afk profile list
 ```
 
-Start the local runtime/API:
+`afk setup` creates or reconfigures the default profile. `afk profile add` is for
+additional profiles such as `work`, `support`, or `research`.
+
+### Create a skill
+
+Skills are reusable markdown playbooks that the profile can load during work.
 
 ```bash
-afk start
-afk doctor
-# doctor prints the effective runtime_port and api_port for this install
+afk skill set research-helper --from-file ./research-helper.md
+afk skill list --profile default
+afk skill show research-helper --profile default
 ```
 
-`afk start` launches the local runtime stack, including API routes, automation
-delivery, and Task Flow background workers.
-
-Webhook trigger example:
+To install a community or GitHub-hosted skill instead of writing one locally:
 
 ```bash
-curl -X POST http://127.0.0.1:<runtime_port>/v1/automations/<profile_id>/webhook/<token> \
-  -H 'Content-Type: application/json' \
-  -d '{"event_id":"manual-test-1"}'
+afk skill marketplace search "review"
+afk skill marketplace install default --skill <skill-name>
 ```
 
-Useful commands:
+### Create a subagent
+
+Subagents are profile-local specialists. They are usually invoked from `afk chat`,
+Task Flow, or orchestrated runtime flows.
 
 ```bash
-afk version
-afk doctor
-afk setup
-afk chat --message "Summarize this project"
+afk subagent set reviewer --from-file ./reviewer.md
+afk subagent list --profile default
+afk subagent show reviewer --profile default
+```
+
+If you need a direct persisted subagent run from CLI:
+
+```bash
+afk subagent run --profile default --name reviewer --session cli-demo --prompt "Review this plan"
+```
+
+### Start Task Flow
+
+Use Task Flow when the work should survive the current chat turn, have dependencies,
+or go through review.
+
+```bash
+afk task flow-create --profile default --title "Website launch"
+afk task create --profile default --title "Draft landing copy" --prompt "Write first landing page draft"
+afk task board --profile default
+```
+
+### Create an automation
+
+Automations run prompts on a schedule or from a webhook. They are executed by the
+local runtime, so keep `afk start` running.
+
+Cron example:
+
+```bash
+afk automation create \
+  --profile default \
+  --name "Daily digest" \
+  --prompt "Summarize open work and propose the next action." \
+  --trigger cron \
+  --cron-expr "0 9 * * 1-5" \
+  --timezone Europe/Moscow
+
 afk automation list --profile default
-afk plugin list
-afk mcp list
-afk profile show default
-afk update
 ```
 
-## Chat Examples
-
-Paste prompts like these into `afk chat`.
-
-Parallel work inside one turn:
-
-```text
-Do one session.job.run call.
-Run 2 bash jobs in parallel:
-1) sleep 5 && echo FIRST
-2) sleep 5 && echo SECOND
-Wait for both and summarize the result.
-```
-
-Parallel profile-local subagents inside one turn:
-
-```text
-Do one session.job.run call.
-Run 2 subagent jobs in parallel:
-1) subagent_name=poet-10-lines, prompt="Write 10 lines about orchestration"
-2) subagent_name=ui-reviewer, prompt="Review: button text has low contrast"
-Wait for both and merge the results.
-```
-
-Durable work as Task Flow instead of one large chat turn:
-
-```text
-Break this project into durable Task Flow work:
-- create a flow
-- create the tasks
-- add dependencies
-- assign AI-owned tasks to the default profile
-- leave me with the task ids and next review points
-```
-
-Rule of thumb:
-
-- keep work in one chat turn when you want the answer now
-- use `session.job.run` when the current turn contains independent parallel work
-- use `Task Flow` when the work must survive the current chat session and keep a
-  durable execution trail
-
-## Plugins
-
-AFKBOT supports installable embedded plugins that extend the local platform with:
-
-- API routers
-- static web apps
-- tool factories
-- skill directories
-- app registrars
-- optional startup and shutdown hooks
-
-Current curated plugins:
-
-- `afkbotui`: unified AFKBOT web workspace for automations today and future operator surfaces
-
-Typical operator flow:
+Webhook example:
 
 ```bash
-afk plugin list
-afk plugin install
-afk plugin inspect afkbotui
-afk plugin config-get afkbotui
-afk plugin update afkbotui
+afk automation create --profile default --name "Inbound event" --prompt "Process webhook payload." --trigger webhook
 ```
 
-`afk plugin install` now works as a small wizard:
+### Add a channel
 
-- it shows curated plugins that are not installed yet
-- today the curated list contains only `afkbotui`
-- the last option is a custom GitHub source, where you can paste a GitHub URL or `github:owner/repo@ref`
+Channels connect outside conversations to a selected profile.
 
-You can still install directly without the wizard:
+Telegram bot polling:
+
+```bash
+afk channel telegram add
+afk channel telegram status
+```
+
+Telethon user account:
+
+```bash
+afk channel telethon add
+afk channel telethon authorize <channel_id>
+afk channel telethon status
+```
+
+Overview:
+
+```bash
+afk channel list
+```
+
+## Install browser runtime
+
+To enable `browser.control`, install the active browser backend:
+
+```bash
+afk browser install
+afk browser status
+```
+
+Default backend:
+
+- `playwright_chromium` for the easiest local setup
+
+Good option for Linux servers:
+
+```bash
+afk browser backend lightpanda_cdp
+afk browser cdp-url http://127.0.0.1:9222
+afk browser install
+```
+
+## Install a plugin
+
+AFKBOT supports embedded plugins. The default curated path is the AFKBOT UI plugin.
+
+Interactive install:
+
+```bash
+afk plugin install
+```
+
+Direct install from GitHub:
 
 ```bash
 afk plugin install github:afkbot-io/afkbotuiplugin@main
 ```
 
-Direct `afk plugin install <source>` also still accepts a local path when you want to install a plugin from a checkout on disk.
-
-The current curated external plugin is AFKBOT UI. Today it provides the web workspace for automations and is intended to expand into the main operator surface for Task Flow, subagents, MCP, AI settings, and profile management. The older kanban-specific example is no longer the curated plugin path. After installation and `afk start`, it mounts:
-
-- API: `/v1/plugins/afkbotui/...`
-- UI: `/plugins/afkbotui`
-
-Plugin install state lives under the AFKBOT runtime root in `/plugins/...` and is treated as local machine state, not repository content.
-
-## Browser UI Auth
-
-AFKBOT can now protect browser plugin UIs and their plugin API routes with one
-operator password managed at the core runtime level.
-
-- Configure it with `afk auth setup` or `afk auth create`.
-- Inspect or update the policy with `afk auth status`, `afk auth update`, and
-  `afk auth rotate-password`.
-- Disable it with `afk auth disable`.
-- Protection applies only to plugin surfaces that opt in through
-  `auth.operator_required` or are explicitly listed with `--protected-plugin-id`.
-- Protected browser surfaces redirect to `/auth/login`, and only the matching
-  protected plugin API routes return `401` until the operator session is
-  established.
-- Protection follows each plugin's declared API and web mount prefixes, so
-  custom prefixes such as `/internal/...` or `/ui/...` are covered too.
-- Password hashes and cookie keys live in encrypted runtime secrets, not inside
-  plugin packages or plugin config JSON.
-
-## Channels Quickstart
-
-AFKBOT can attach chat transports to a profile for inbound routing and operator workflows.
-Use the docs site for the full command reference; the examples below cover the common setup paths.
-
-Telegram bot polling channel:
+Useful follow-up commands:
 
 ```bash
-# guided wizard; omit channel_id to let AFKBOT suggest one
-afk channel telegram add
-
-# fully explicit example
-afk channel telegram add support-bot --profile default --credential-profile support-bot
-afk channel telegram status
-afk channel telegram show support-bot
+afk plugin list
+afk plugin inspect afkbotui
+afk start
 ```
 
-Telethon user-account channel:
+## Daily commands
 
-```bash
-# guided wizard; omit channel_id to let AFKBOT suggest one
-afk channel telethon add
+| Command | What it does |
+| --- | --- |
+| `afk chat` | Start interactive chat or run one turn with `--message` |
+| `afk start` | Start the local runtime, API, automations, and workers |
+| `afk task board --profile default` | Open the Task Flow backlog for a profile |
+| `afk subagent list --profile default` | Show subagents available to the profile |
+| `afk mcp list --profile default` | Show saved MCP servers for a profile |
+| `afk update` | Update the installed AFKBOT build |
 
-# fully explicit example
-afk channel telethon add personal-user --profile default --credential-profile personal-user
-afk channel telethon status --probe
-afk channel telethon show personal-user
-```
+## Core model
 
-Notes:
+Keep the mental model simple:
 
-- Interactive channel setup explains required credentials inline: Telegram bot token comes from `@BotFather`; Telethon `api_id` and `api_hash` come from `my.telegram.org`.
-- If you skip the Telethon session string during setup, finish login later with `afk channel telethon authorize <channel_id>`.
-- Interactive prompt language follows this order: explicit `--lang` or `--ru`, then the project's saved `prompt_language`, then the current system locale.
-
-## MCP Quickstart
-
-AFKBOT supports profile-local MCP configuration plus runtime MCP tool discovery.
-
-Manual CLI flow:
-
-```bash
-# connect one MCP endpoint URL to the default profile
-afk mcp connect https://example.com/mcp --profile default --secret-ref mcp_example_token
-
-# inspect the saved config
-afk mcp get example --profile default
-
-# validate effective MCP files for the profile
-afk mcp validate --profile default
-
-# list all saved MCP servers, including disabled entries
-afk mcp list --profile default --show-disabled
-```
-
-You can still use the explicit form:
-
-```bash
-afk mcp add --profile default --url https://example.com/mcp --secret-ref mcp_example_token
-```
-
-Chat-driven flow:
-
-```text
-Connect this MCP endpoint to my default profile: https://example.com/mcp
-Show me what was saved and validate it.
-```
-
-Notes:
-
-- Use the actual MCP endpoint URL, not a generic product homepage.
-- `afk mcp` and `mcp.profile.*` manage profile config.
-- `mcp.tools.list` and `mcp.tools.call` are the runtime bridge used after a compatible remote MCP server is configured and exposed.
-- If the MCP server needs auth, store only refs in MCP config such as `secret_refs` or `env_refs`; do not hardcode plaintext secrets into MCP JSON.
-
-Managed-install maintenance:
-
-```bash
-afk update
-bash scripts/uninstall.sh --yes
-```
-
-```powershell
-afk update
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1 -Yes
-```
-
-Hosted installers use `uv tool install` under the hood. Advanced equivalents:
-
-```bash
-uv tool install --python 3.12 --reinstall https://github.com/afkbot-io/afkbotio/archive/main.tar.gz
-afk update
-uv tool uninstall afkbotio
-```
-
-## Configuration
-
-- Environment-based configuration examples live in [`.env.example`](https://github.com/afkbot-io/afkbotio/blob/main/.env.example).
-- Setup/provider selection supports OpenRouter, OpenAI, Claude, Moonshot (Kimi), DeepSeek, xAI, Qwen, and custom OpenAI-compatible endpoints.
-- Runtime secrets should be configured through `afk setup`, `afk profile`, or credential commands, not committed into the repository.
-- Manual source setups use a local SQLite database and a local AFKBOT runtime.
-- New installs create the current SQLite schema directly; no legacy migration chain is required.
-- Full setup guidance and user documentation are published at [afkbot.io/docs](https://afkbot.io/docs).
-
-## Development
-
-Install the development environment and run the standard checks:
-
-```bash
-uv sync --extra dev
-uv run ruff check afkbot tests
-uv run mypy afkbot tests
-uv run pytest -q
-```
-
-## PyPI Release
-
-The project builds clean Python distributions and passes `twine check`:
-
-```bash
-uv build
-uvx twine check dist/*
-```
-
-For a safe dry run, upload to TestPyPI first:
-
-```bash
-uvx twine upload --repository testpypi dist/*
-```
-
-This repository also includes a GitHub Actions publish workflow prepared for trusted publishing:
-
-- `workflow_dispatch`: builds distributions, runs `twine check`, and publishes to `testpypi`
-- `push` on `v*` tags: verifies the tag matches `project.version`, builds distributions, runs `twine check`, attaches them to the GitHub release, and publishes to `pypi`
-
-Before using the workflow, create matching trusted publishing environments in PyPI:
-
-- `testpypi` for `https://test.pypi.org/p/afkbotio`
-- `pypi` for `https://pypi.org/project/afkbotio/`
+- `afk chat` for work you want done now
+- subagents for specialized work under the current profile
+- `Task Flow` for durable tasks, dependencies, handoffs, and review
+- `afk start` when you want the local runtime stack running continuously
 
 ## License
 
-AFKBOT is distributed under the `Sustainable Use License 1.0`.
+AFKBOT is source-available under the `Sustainable Use License 1.0`.
 
-- See [`LICENSE`](https://github.com/afkbot-io/afkbotio/blob/main/LICENSE) for the full license text.
-- See [`LICENSE_FAQ.md`](https://github.com/afkbot-io/afkbotio/blob/main/LICENSE_FAQ.md) for practical allowed/not-allowed examples.
-- See [`COMMERCIAL_LICENSE.md`](https://github.com/afkbot-io/afkbotio/blob/main/COMMERCIAL_LICENSE.md) for commercial-use guidance.
-- See [`TRADEMARKS.md`](https://github.com/afkbot-io/afkbotio/blob/main/TRADEMARKS.md) for brand and name usage rules.
+- personal, non-commercial, and internal business use are allowed
+- modifying and forking are allowed
+- selling AFKBOT, reselling copies, or offering it as a paid hosted or white-label service requires separate permission
+- the repository does not grant trademark rights to the AFKBOT name or branding
+
+See [LICENSE](LICENSE), [LICENSE_FAQ.md](LICENSE_FAQ.md), [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md), and [TRADEMARKS.md](TRADEMARKS.md) for the full terms.
