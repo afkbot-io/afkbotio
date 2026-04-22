@@ -66,6 +66,56 @@ class _ObservedRunner:
         )
 
 
+class _ParallelObservedRunner:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        started_sessions: list[str],
+        started_lock: asyncio.Lock,
+        all_started: asyncio.Event,
+        release_all: asyncio.Event,
+        expected_count: int,
+    ) -> None:
+        self._session = session
+        self._started_sessions = started_sessions
+        self._started_lock = started_lock
+        self._all_started = all_started
+        self._release_all = release_all
+        self._expected_count = expected_count
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        **_unused: object,
+    ) -> TurnResult:
+        sessions = ChatSessionRepository(self._session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        run = await RunRepository(self._session).create_run(
+            session_id=session_id,
+            profile_id=profile_id,
+            status="running",
+        )
+        await self._session.commit()
+        async with self._started_lock:
+            self._started_sessions.append(session_id)
+            if len(self._started_sessions) >= self._expected_count:
+                self._all_started.set()
+        await self._release_all.wait()
+        run.status = "completed"
+        await self._session.flush()
+        return TurnResult(
+            run_id=run.id,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message=f"done:{message}"),
+        )
+
+
 @pytest.mark.asyncio
 async def test_session_orchestrator_serializes_different_messages_for_same_session(
     tmp_path: Path,
@@ -241,6 +291,80 @@ async def test_session_orchestrator_turn_lease_serializes_internal_concurrent_ca
             assert second.envelope.message == "done:second"
             assert started == ["first", "second"]
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_allows_parallel_turns_for_different_sessions(
+    tmp_path: Path,
+) -> None:
+    """Independent chat sessions should not serialize each other through the SQLite queue."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_parallel_sessions.db",
+    )
+    started_sessions: list[str] = []
+    started_lock = asyncio.Lock()
+    all_started = asyncio.Event()
+    release_all = asyncio.Event()
+    session_ids = ("s-parallel-a", "s-parallel-b", "s-parallel-c")
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    orchestrators = [
+        SessionOrchestrator(
+            settings=settings,
+            turn_runner_factory=lambda session, _profile_id: _ParallelObservedRunner(
+                session,
+                started_sessions=started_sessions,
+                started_lock=started_lock,
+                all_started=all_started,
+                release_all=release_all,
+                expected_count=len(session_ids),
+            ),
+        )
+        for _ in session_ids
+    ]
+
+    tasks = [
+        asyncio.create_task(
+            orchestrator.run_turn(
+                profile_id="default",
+                session_id=session_id,
+                message=session_id,
+                source="chat",
+            )
+        )
+        for orchestrator, session_id in zip(orchestrators, session_ids, strict=True)
+    ]
+
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=2.0)
+        async with session_scope(factory) as session:
+            running_rows = (
+                await session.execute(
+                    select(ChatSessionTurnQueueItem).where(
+                        ChatSessionTurnQueueItem.status == "running"
+                    )
+                )
+            ).scalars().all()
+            assert {row.session_id for row in running_rows} == set(session_ids)
+        release_all.set()
+        results = await asyncio.gather(*tasks)
+        assert {result.session_id for result in results} == set(session_ids)
+        assert {result.envelope.message for result in results} == {
+            "done:s-parallel-a",
+            "done:s-parallel-b",
+            "done:s-parallel-c",
+        }
+        async with session_scope(factory) as session:
+            rows = (await session.execute(select(ChatSessionTurnQueueItem))).scalars().all()
+            assert rows == []
+    finally:
+        release_all.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await engine.dispose()
 
 

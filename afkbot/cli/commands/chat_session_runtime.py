@@ -139,6 +139,7 @@ def run_repl(
     *,
     profile_id: str,
     session_id: str,
+    session_label: str | None,
     run_turn_with_secure_resolution: RunTurnWithSecureResolution,
     get_browser_session_manager: Callable[[], BrowserSessionManager],
     get_settings: Callable[[], Settings],
@@ -168,6 +169,7 @@ def run_repl(
     run_repl_transport(
         profile_id=profile_id,
         session_id=session_id,
+        session_label=session_label,
         run_turn=_run_turn,
         get_browser_session_manager=get_browser_session_manager,
         get_settings=get_settings,

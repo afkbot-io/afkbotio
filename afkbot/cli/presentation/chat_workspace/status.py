@@ -29,6 +29,8 @@ def status_text_for_chat_workspace(state: ChatReplSessionState) -> str:
 
     return (
         "Chat session controls\n"
+        f"- session_id: {state.session_id or 'unset'}\n"
+        f"- session_label: {state.session_label or state.session_id or 'unset'}\n"
         f"- planning_mode: {state.planning_mode}\n"
         f"- thinking_level: {state.thinking_level or 'default'}\n"
         f"- default_planning_mode: {state.default_planning_mode}\n"

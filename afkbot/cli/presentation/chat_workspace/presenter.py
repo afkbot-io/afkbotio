@@ -11,6 +11,7 @@ from afkbot.cli.presentation.chat_workspace.layout import ChatWorkspaceSurfaceSt
 from afkbot.cli.presentation.chat_workspace.toolbar import (
     build_chat_workspace_footer,
     build_chat_workspace_status_line,
+    build_chat_workspace_session_line,
     build_chat_workspace_queue_lines,
 )
 from afkbot.cli.presentation.chat_workspace.transcript import (
@@ -46,8 +47,13 @@ def build_chat_workspace_surface_state(
         state,
         status_marker=status_marker,
     )
+    session_line = build_chat_workspace_session_line(state)
     return ChatWorkspaceSurfaceState(
-        status_lines=((status_line,) if status_line else ()),
+        status_lines=tuple(
+            line
+            for line in (session_line, status_line)
+            if line
+        ),
         queue_lines=build_chat_workspace_queue_lines(state),
     )
 
