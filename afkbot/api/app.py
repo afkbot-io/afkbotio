@@ -20,6 +20,7 @@ from afkbot.services.agent_loop.api_runtime import (
 )
 from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import get_settings
+from afkbot.version import load_cli_version_info
 
 
 def create_app() -> FastAPI:
@@ -43,7 +44,11 @@ def create_app() -> FastAPI:
             finally:
                 await shutdown_api_runtime()
 
-    app = FastAPI(title="AFKBOT API", version="1.4.2", lifespan=_lifespan)
+    app = FastAPI(
+        title="AFKBOT API",
+        version=load_cli_version_info(root_dir=settings.root_dir).version,
+        lifespan=_lifespan,
+    )
     app.add_middleware(
         PluginUIAuthMiddleware,
         settings=settings,
