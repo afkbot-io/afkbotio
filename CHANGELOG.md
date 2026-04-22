@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Task Flow task creation now converts legacy `task` / `task_event` schema mismatches into an explicit compatibility error with upgrade guidance instead of bubbling a generic storage-backed 500.
+
 ## [1.4.2] - 2026-04-21
 
 ### Changed

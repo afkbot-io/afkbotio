@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Literal, TypeVar, cast, overload
 from uuid import uuid4
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema
@@ -107,6 +107,11 @@ _PLAN_AI_OWNER_ERROR_CODE = "task_plan_requires_human_owner"
 _PLAN_AI_OWNER_REASON = "PLAN status is human-only; assign a human owner or move task to Todo"
 _MAX_TASK_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _MAX_TASK_ATTACHMENT_BASE64_BYTES = ((_MAX_TASK_ATTACHMENT_BYTES + 2) // 3) * 4
+_TASK_FLOW_MIN_COMPATIBLE_VERSION = "1.4.2"
+_TASK_FLOW_SCHEMA_INCOMPATIBLE_REASON = (
+    "Task Flow schema/runtime is incompatible with this request. "
+    f"AFKBOT >= {_TASK_FLOW_MIN_COMPATIBLE_VERSION} and `afk upgrade apply` are required."
+)
 TValue = TypeVar("TValue")
 _TASK_FIELD_UNSET = object()
 TASK_FLOW_FIELD_UNSET = _TASK_FIELD_UNSET
@@ -548,7 +553,23 @@ class TaskFlowService:
             )
             return await _build_task_metadata(repo, row, settings=self._settings)
 
-        return await self._with_repo(_op)
+        try:
+            return await self._with_repo(_op)
+        except IntegrityError as exc:
+            if _is_active_ai_owner_integrity_error(exc):
+                raise TaskFlowServiceError(
+                    error_code="task_owner_conflict",
+                    reason="Only one active AI-owned task may exist for the same owner in a profile",
+                ) from exc
+            compatibility_error = _build_task_flow_schema_compatibility_error(exc)
+            if compatibility_error is not None:
+                raise compatibility_error from exc
+            raise
+        except (OperationalError, ProgrammingError) as exc:
+            compatibility_error = _build_task_flow_schema_compatibility_error(exc)
+            if compatibility_error is not None:
+                raise compatibility_error from exc
+            raise
 
     async def get_task(self, *, profile_id: str, task_id: str) -> TaskMetadata:
         """Get one task by id."""
@@ -3362,6 +3383,60 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         and "owner_ref" in message
         and "profile_id" in message
     )
+
+
+def _build_task_flow_schema_compatibility_error(
+    exc: IntegrityError | OperationalError | ProgrammingError,
+) -> TaskFlowServiceError | None:
+    """Return one structured compatibility error for legacy Task Flow schemas."""
+
+    message = _task_flow_storage_error_message(exc)
+    schema_markers = (
+        "no such column",
+        "has no column named",
+        "unknown column",
+        "undefined column",
+        "no such table",
+        "undefined table",
+    )
+    if not any(marker in message for marker in schema_markers):
+        return None
+    task_flow_markers = (
+        "task",
+        "task_event",
+        "task_run",
+        "flow_id",
+        "reviewer_type",
+        "reviewer_ref",
+        "requires_review",
+        "blocked_reason_code",
+        "blocked_reason_text",
+        "started_at",
+        "last_session_profile_id",
+        "details_json",
+    )
+    if not any(marker in message for marker in task_flow_markers):
+        return None
+    return TaskFlowServiceError(
+        error_code="task_flow_schema_incompatible",
+        reason=_TASK_FLOW_SCHEMA_INCOMPATIBLE_REASON,
+    )
+
+
+def _task_flow_storage_error_message(
+    exc: IntegrityError | OperationalError | ProgrammingError,
+) -> str:
+    """Flatten one storage exception into a lowercase diagnostic string."""
+
+    return " ".join(
+        str(part).strip()
+        for part in (
+            getattr(exc, "statement", None),
+            getattr(exc, "orig", None),
+            exc,
+        )
+        if part is not None
+    ).lower()
 
 
 def _to_task_event_metadata(row: TaskEvent) -> TaskEventMetadata:
