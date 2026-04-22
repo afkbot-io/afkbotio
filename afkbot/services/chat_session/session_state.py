@@ -22,6 +22,8 @@ class ChatReplSessionState:
     thinking_level: ThinkingLevel | None
     default_planning_mode: ChatPlanningMode
     default_thinking_level: ThinkingLevel | None
+    session_id: str = ""
+    session_label: str | None = None
     queued_messages: int = 0
     active_turn: bool = False
     active_turn_started_at: float | None = None

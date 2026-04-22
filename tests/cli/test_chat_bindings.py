@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Thread
 
 from pytest import MonkeyPatch
 from typer.testing import CliRunner
@@ -191,3 +192,93 @@ def test_chat_cli_checks_update_notice_before_one_shot_turn(
 
     assert result.exit_code == 0
     assert captured == {}
+
+
+def test_chat_cli_binding_resolved_session_rejects_second_terminal(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Binding-resolved sessions should also fail fast on duplicate terminal opens."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    _add_profile(runner, "sales", "Sales")
+
+    binding_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "binding",
+            "set",
+            "telegram-sales",
+            "--transport",
+            "telegram",
+            "--profile-id",
+            "sales",
+            "--session-policy",
+            "per-thread",
+            "--peer-id",
+            "42",
+        ],
+    )
+    assert binding_result.exit_code == 0
+
+    entered = Event()
+    release = Event()
+    first_result: dict[str, object] = {}
+
+    def _blocking_run_single_turn(**_kwargs) -> None:  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(timeout=5.0)
+
+    monkeypatch.setattr(module, "run_single_turn", _blocking_run_single_turn)
+
+    def _run_first_terminal() -> None:
+        first_result["result"] = runner.invoke(
+            app,
+            [
+                "chat",
+                "--message",
+                "hello",
+                "--resolve-binding",
+                "--transport",
+                "telegram",
+                "--peer-id",
+                "42",
+                "--thread-id",
+                "9001",
+            ],
+        )
+
+    first_terminal = Thread(target=_run_first_terminal)
+    first_terminal.start()
+    assert entered.wait(timeout=1.0)
+
+    second = runner.invoke(
+        app,
+        [
+            "chat",
+            "--message",
+            "hello",
+            "--resolve-binding",
+            "--transport",
+            "telegram",
+            "--peer-id",
+            "42",
+            "--thread-id",
+            "9001",
+        ],
+    )
+
+    release.set()
+    first_terminal.join(timeout=5.0)
+
+    assert not first_terminal.is_alive()
+    assert first_result["result"].exit_code == 0
+    assert second.exit_code == 2
+    assert (
+        "Chat session 'profile:sales:chat:42:thread:9001' is already open in another terminal"
+        in second.stderr
+    )

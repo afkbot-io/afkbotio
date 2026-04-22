@@ -80,3 +80,29 @@ async def test_session_service_handles_concurrent_create(tmp_path: Path) -> None
         assert len(rows) == 1
 
     await engine.dispose()
+
+
+async def test_session_service_preserves_initial_title_for_existing_session(tmp_path: Path) -> None:
+    """The first explicit session title should persist across later attaches."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'sessions_title.db'}", root_dir=tmp_path
+    )
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+
+    async with session_scope(factory) as session:
+        service = SessionService(session)
+
+        first = await service.get_or_create("s-title", "default", title="incident-room")
+        second = await service.get_or_create("s-title", "default", title="other-room")
+
+        row = await session.get(ChatSession, "s-title")
+
+        assert first == "s-title"
+        assert second == "s-title"
+        assert row is not None
+        assert row.title == "incident-room"
+
+    await engine.dispose()

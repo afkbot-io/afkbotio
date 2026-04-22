@@ -54,6 +54,7 @@ def run_repl_transport(
     *,
     profile_id: str,
     session_id: str,
+    session_label: str | None = None,
     run_turn: RunReplTurnFn,
     get_browser_session_manager: Callable[[], BrowserSessionManager],
     get_settings: Callable[[], Settings],
@@ -69,6 +70,8 @@ def run_repl_transport(
             thinking_level=thinking_level,
             default_planning_mode=planning_mode,
             default_thinking_level=thinking_level,
+            session_id=session_id,
+            session_label=session_label,
         )
         catalog_store = build_chat_workspace_catalog_store(
             runner=runner,
@@ -111,6 +114,7 @@ def run_repl_transport(
                     ux=ux,
                     profile_id=profile_id,
                     session_id=session_id,
+                    session_label=session_label,
                     run_turn=run_turn,
                     repl_state=repl_state,
                     progress_sink=_sequential_progress_sink,
@@ -145,6 +149,7 @@ def _run_repl_sequential(
     ux: InteractiveChatUX,
     profile_id: str,
     session_id: str,
+    session_label: str | None = None,
     run_turn: RunReplTurnFn,
     repl_state: ChatReplSessionState,
     progress_sink: Callable[[ProgressEvent], None],
@@ -154,6 +159,12 @@ def _run_repl_sequential(
     """Run the sequential REPL path for non-interactive stdin/stdout."""
 
     turn_queue = ChatReplTurnQueue()
+    session_banner = _render_repl_session_banner(
+        session_id=session_id,
+        session_label=session_label,
+    )
+    if session_banner is not None:
+        typer.echo(session_banner)
     if startup_assistant_message:
         rendered_notice = render_startup_assistant_message(
             message=startup_assistant_message,
@@ -258,6 +269,22 @@ def _build_repl_interrupt_notifier(ux: _InterruptNotifiableUX) -> Callable[[], N
         typer.echo("  Interrupt received. Cancelling current turn. Press Ctrl-C again to exit.")
 
     return _notify
+
+
+def _render_repl_session_banner(
+    *,
+    session_id: str,
+    session_label: str | None,
+) -> str | None:
+    """Return one startup line that exposes the current chat session identity."""
+
+    normalized_session_id = str(session_id).strip()
+    if not normalized_session_id:
+        return None
+    normalized_label = str(session_label or "").strip()
+    if normalized_label and normalized_label != normalized_session_id:
+        return f"Session: {normalized_label} · id={normalized_session_id}"
+    return f"Session: {normalized_session_id}"
 
 
 async def _load_task_startup_assistant_message(
