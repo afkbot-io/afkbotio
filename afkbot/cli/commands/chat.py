@@ -7,6 +7,7 @@ import inspect
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, nullcontext
 from pathlib import Path
+from typing import cast
 
 import typer
 
@@ -24,7 +25,7 @@ from afkbot.cli.commands.chat_secure_flow import (
 )
 from afkbot.cli.commands.chat_target import build_cli_runtime_overrides, resolve_cli_chat_target
 from afkbot.cli.commands.chat_session_runtime import run_repl, run_single_turn
-from afkbot.services.browser_sessions import get_browser_session_manager
+from afkbot.services.browser_sessions import BrowserSessionManager, get_browser_session_manager
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.runtime_factory import resolve_profile_settings
@@ -46,6 +47,7 @@ from afkbot.services.chat_session.terminal_lock import (
     ChatSessionTerminalLockedError,
     get_chat_session_terminal_lock,
 )
+from afkbot.services.chat_session.turn_flow import SerializedTurnRunnerFactory
 from afkbot.services.tools.base import ToolCall
 from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_REQUEST_TIMEOUT_SEC,
@@ -303,18 +305,41 @@ def _resolve_chat_invocation_settings(
     return settings.model_copy(update=updates)
 
 
-def _invoke_run_repl(**kwargs: object) -> None:
+def _invoke_run_repl(
+    *,
+    profile_id: str,
+    session_id: str,
+    session_label: str | None,
+    run_turn_with_secure_resolution: RunTurnWithSecureResolution,
+    get_browser_session_manager: Callable[[], BrowserSessionManager],
+    get_settings: Callable[[], Settings],
+    planning_mode: str,
+    thinking_level: str | None,
+    serialized_turn_runner_factory: SerializedTurnRunnerFactory | None,
+) -> None:
     """Call `run_repl` with only the kwargs supported by the installed runtime."""
 
+    kwargs: dict[str, object] = {
+        "profile_id": profile_id,
+        "session_id": session_id,
+        "session_label": session_label,
+        "run_turn_with_secure_resolution": run_turn_with_secure_resolution,
+        "get_browser_session_manager": get_browser_session_manager,
+        "get_settings": get_settings,
+        "planning_mode": planning_mode,
+        "thinking_level": thinking_level,
+        "serialized_turn_runner_factory": serialized_turn_runner_factory,
+    }
     signature = inspect.signature(run_repl)
+    invoke = cast(Callable[..., None], run_repl)
     if any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     ):
-        run_repl(**kwargs)
+        invoke(**kwargs)
         return
     filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
-    run_repl(**filtered_kwargs)
+    invoke(**filtered_kwargs)
 
 def _chat_default_llm_budget_updates(settings: Settings) -> dict[str, object]:
     """Cap inherited long-running defaults for foreground chat turns."""
