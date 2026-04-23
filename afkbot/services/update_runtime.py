@@ -60,6 +60,7 @@ class UpdateResult:
     runtime_restarted: bool
     maintenance_applied: bool
     details: tuple[str, ...]
+    source_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,9 @@ def format_update_success_for_language(
     """Render short human-readable update summary for one prompt language."""
 
     normalized_lang = _normalize_update_language(lang)
+    source_status = getattr(result, "source_status", None) or (
+        "updated" if result.source_updated else "already_up_to_date"
+    )
     lines = [
         "Обновление AFKBOT завершено." if normalized_lang == "ru" else "AFKBOT update complete."
     ]
@@ -148,11 +152,23 @@ def format_update_success_for_language(
     )
     lines.append(
         "Источник: обновлён"
-        if (normalized_lang == "ru" and result.source_updated)
+        if (normalized_lang == "ru" and source_status == "updated")
         else (
             "Источник: уже актуален"
-            if normalized_lang == "ru"
-            else ("Source: updated" if result.source_updated else "Source: already up to date")
+            if (normalized_lang == "ru" and source_status == "already_up_to_date")
+            else (
+                "Источник: статус не подтверждён"
+                if normalized_lang == "ru"
+                else (
+                    "Source: updated"
+                    if source_status == "updated"
+                    else (
+                        "Source: already up to date"
+                        if source_status == "already_up_to_date"
+                        else "Source: version status unverified"
+                    )
+                )
+            )
         )
     )
     lines.append(
@@ -338,6 +354,7 @@ def _run_host_update(*, settings: Settings) -> UpdateResult:
     return UpdateResult(
         install_mode="host",
         source_updated=source_updated,
+        source_status="updated" if source_updated else "already_up_to_date",
         runtime_restarted=runtime_restarted,
         maintenance_applied=True,
         details=tuple(detail for detail in details if detail),
@@ -403,6 +420,7 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
     return UpdateResult(
         install_mode="managed",
         source_updated=True,
+        source_status="updated",
         runtime_restarted=runtime_restarted,
         maintenance_applied=True,
         details=tuple(detail for detail in details if detail),
@@ -431,6 +449,12 @@ def _run_installer_source_update(
     """Replay one installer-style uv tool install and then apply maintenance."""
 
     uv_executable = _resolve_uv_executable()
+    resolved_target = resolve_install_source_target(install_source)
+    afk_executable_before = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+    installed_version_before = _read_afk_executable_version(
+        executable=afk_executable_before,
+        settings=settings,
+    )
     install_command = build_uv_tool_install_command(
         uv_executable=uv_executable,
         install_source=install_source,
@@ -442,6 +466,10 @@ def _run_installer_source_update(
     )
     shell_updated = _update_uv_tool_shell_integration(uv_executable=uv_executable)
     afk_executable = _resolve_uv_tool_afk_executable(uv_executable=uv_executable)
+    installed_version_after = _read_afk_executable_version(
+        executable=afk_executable,
+        settings=settings,
+    )
     _run_bootstrap_only_setup(
         executable=afk_executable,
         settings=settings,
@@ -462,11 +490,19 @@ def _run_installer_source_update(
         )
         doctor_ran = True
 
+    source_status, version_details = _summarize_installer_version_change(
+        install_source=install_source,
+        installed_version_before=installed_version_before,
+        installed_version_after=installed_version_after,
+        resolved_target=resolved_target,
+    )
+    source_updated = source_status == "updated"
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
         f"Tool source mode: {install_source.mode}",
         f"Tool source: {install_source.spec}",
         f"Tool executable: {afk_executable}",
+        *version_details,
         ("Shell integration: refreshed" if shell_updated else "Shell integration: unchanged"),
         "Bootstrap setup: refreshed",
         "Doctor: skipped until `afk setup` completes" if not doctor_ran else "",
@@ -481,7 +517,8 @@ def _run_installer_source_update(
     ]
     return UpdateResult(
         install_mode="uv-tool",
-        source_updated=True,
+        source_updated=source_updated,
+        source_status=source_status,
         runtime_restarted=runtime_restarted,
         maintenance_applied=True,
         details=tuple(detail for detail in details if detail),
@@ -661,6 +698,71 @@ def _update_uv_tool_shell_integration(*, uv_executable: Path) -> bool:
 
     result = _run_command([str(uv_executable), "tool", "update-shell"])
     return result.returncode == 0
+
+
+def _read_afk_executable_version(*, executable: Path, settings: Settings) -> str | None:
+    """Return one installed AFKBOT semantic version from the target executable."""
+
+    cwd = _ensure_runtime_command_cwd(settings.root_dir)
+    result = _run_command([str(executable), "version"], cwd=cwd)
+    if result.returncode != 0:
+        return None
+    line = next((item.strip() for item in result.stdout.splitlines() if item.strip()), "")
+    if not line.startswith("afk "):
+        return None
+    rendered = line.removeprefix("afk ").strip()
+    if not rendered:
+        return None
+    return rendered.split(" ", 1)[0].split("(", 1)[0].strip() or None
+
+
+def _summarize_installer_version_change(
+    *,
+    install_source: InstallSource,
+    installed_version_before: str | None,
+    installed_version_after: str | None,
+    resolved_target: str | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Return whether the installer really updated AFKBOT plus operator-facing detail lines."""
+
+    details: list[str] = []
+    if installed_version_before:
+        details.append(f"Installed version before: {installed_version_before}")
+    else:
+        details.append("Installed version before: unknown")
+    if resolved_target:
+        target_label = (
+            f"Latest package version: {resolved_target}"
+            if install_source.mode == "package"
+            else f"Resolved source target: {resolved_target}"
+        )
+        details.append(target_label)
+    if installed_version_after:
+        details.append(f"Installed version after: {installed_version_after}")
+    else:
+        details.append("Installed version after: unknown")
+
+    source_updated = bool(
+        installed_version_before
+        and installed_version_after
+        and installed_version_before != installed_version_after
+    )
+    if source_updated:
+        details.append("New version installed")
+        return "updated", tuple(details)
+
+    if installed_version_after and resolved_target and installed_version_after == resolved_target:
+        details.append("Already on the newest available version")
+        return "already_up_to_date", tuple(details)
+    if (
+        installed_version_before
+        and installed_version_after
+        and installed_version_before == installed_version_after
+    ):
+        details.append("No newer version was installed")
+        return "already_up_to_date", tuple(details)
+    details.append("Version change could not be verified")
+    return "unverified", tuple(details)
 
 
 def _run_bootstrap_only_setup(
@@ -998,12 +1100,28 @@ def _localize_update_detail(detail: str, *, lang: str) -> str:
         return f"Источник tool: {detail.removeprefix('Tool source: ')}"
     if detail.startswith("Tool executable: "):
         return f"Исполняемый файл tool: {detail.removeprefix('Tool executable: ')}"
+    if detail.startswith("Installed version before: "):
+        return f"Версия до обновления: {detail.removeprefix('Installed version before: ')}"
+    if detail.startswith("Installed version after: "):
+        return f"Версия после обновления: {detail.removeprefix('Installed version after: ')}"
+    if detail.startswith("Latest package version: "):
+        return f"Последняя версия пакета: {detail.removeprefix('Latest package version: ')}"
+    if detail.startswith("Resolved source target: "):
+        return f"Разрешённая цель источника: {detail.removeprefix('Resolved source target: ')}"
     if detail == "Shell integration: refreshed":
         return "Интеграция shell: обновлена"
     if detail == "Shell integration: unchanged":
         return "Интеграция shell: без изменений"
     if detail == "Bootstrap setup: refreshed":
         return "Bootstrap-настройка: обновлена"
+    if detail == "New version installed":
+        return "Установлена новая версия"
+    if detail == "Already on the newest available version":
+        return "Уже установлена последняя доступная версия"
+    if detail == "No newer version was installed":
+        return "Новая версия не была установлена"
+    if detail == "Version change could not be verified":
+        return "Не удалось подтвердить изменение версии"
     return detail
 
 

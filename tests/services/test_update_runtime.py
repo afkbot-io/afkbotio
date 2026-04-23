@@ -23,6 +23,7 @@ from afkbot.services.managed_install import (
 )
 from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.services.update_runtime import (
+    UpdateResult,
     _build_noninteractive_git_env,
     _run_afk_executable_with_env,
     _resolve_uv_tool_afk_executable,
@@ -565,6 +566,7 @@ def test_run_update_upgrades_uv_tool_install(
     commands: list[list[str]] = []
     shell_commands: list[list[str]] = []
     bootstrap_calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
+    version_reads = iter(("afk 1.0.0\n", f"afk {_PACKAGE_VERSION}\n"))
 
     def _fake_run_checked(
         command: list[str],
@@ -587,6 +589,8 @@ def test_run_update_upgrades_uv_tool_install(
         env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         del cwd, timeout_sec, env
+        if command == [str(afk_executable), "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout=next(version_reads), stderr="")
         shell_commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -792,6 +796,7 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
     commands: list[list[str]] = []
     shell_commands: list[list[str]] = []
     bootstrap_calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
+    version_reads = iter(("afk 1.0.0\n", f"afk {_PACKAGE_VERSION}\n"))
 
     def _fake_run_checked(
         command: list[str],
@@ -814,6 +819,8 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         del cwd, timeout_sec, env
+        if command == [str(afk_executable), "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout=next(version_reads), stderr="")
         shell_commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -851,6 +858,18 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         lambda install_source: _PACKAGE_VERSION,
     )
     monkeypatch.setattr(
+        "afkbot.services.update_runtime.load_cli_version_info",
+        lambda root_dir=None: type(
+            "_Version",
+            (),
+            {
+                "version": "1.0.0",
+                "git_sha": None,
+                "render": lambda self: "afk 1.0.0",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
         lambda settings: False,
     )
@@ -858,6 +877,7 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
     result = run_update(settings)
 
     assert result.install_mode == "uv-tool"
+    assert result.source_updated is True
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [
         str(afk_executable),
@@ -867,6 +887,10 @@ def test_run_update_skips_doctor_for_uv_tool_install_before_setup(
         "--no-daemon",
     ] not in commands
     assert "Doctor: skipped until `afk setup` completes" in result.details
+    assert "Installed version before: 1.0.0" in result.details
+    assert f"Latest package version: {_PACKAGE_VERSION}" in result.details
+    assert f"Installed version after: {_PACKAGE_VERSION}" in result.details
+    assert "New version installed" in result.details
     assert len(bootstrap_calls) == 1
     assert [str(uv_executable), "tool", "update-shell"] in shell_commands
 
@@ -912,6 +936,221 @@ def test_inspect_available_update_uses_saved_installer_target_without_git_metada
     assert availability is not None
     assert availability.install_mode == "uv-tool"
     assert availability.target_id == "github:afkbot-io/afkbotio@main:newsha654321"
+
+
+def test_run_update_uv_tool_reports_when_no_newer_version_was_installed(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """uv-tool update should not claim success when reinstall keeps the same version."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+
+    commands: list[list[str]] = []
+    version_reads = iter(("afk 1.4.4\n", "afk 1.4.4\n"))
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback, timeout_sec, env
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        if command == [str(afk_executable), "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout=next(version_reads), stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        lambda *, executable, settings, args, env: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "1.4.5",
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime.setup_is_complete", lambda settings: False)
+
+    result = run_update(settings)
+
+    assert result.source_updated is False
+    assert "Installed version before: 1.4.4" in result.details
+    assert "Latest package version: 1.4.5" in result.details
+    assert "Installed version after: 1.4.4" in result.details
+    assert "No newer version was installed" in result.details
+    assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
+
+
+def test_run_update_uv_tool_reports_new_version_when_installed_version_changes(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """uv-tool update should report the new installed version when the package really changes."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+
+    version_reads = iter(("afk 1.4.4\n", "afk 1.4.5\n"))
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback, timeout_sec, env
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        if command == [str(afk_executable), "version"]:
+            return subprocess.CompletedProcess(command, 0, stdout=next(version_reads), stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        lambda *, executable, settings, args, env: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "1.4.5",
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime.setup_is_complete", lambda settings: False)
+
+    result = run_update(settings)
+
+    assert result.source_updated is True
+    assert "Installed version before: 1.4.4" in result.details
+    assert "Installed version after: 1.4.5" in result.details
+    assert "New version installed" in result.details
+
+
+def test_run_update_uv_tool_reports_unverified_version_state_when_detection_fails(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """uv-tool update should say when version change could not be confirmed."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True, exist_ok=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback, timeout_sec, env
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        lambda *, executable, settings, args, env: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "1.4.5",
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime.setup_is_complete", lambda settings: False)
+
+    result = run_update(settings)
+
+    assert result.source_updated is False
+    assert result.source_status == "unverified"
+    assert "Installed version before: unknown" in result.details
+    assert "Latest package version: 1.4.5" in result.details
+    assert "Installed version after: unknown" in result.details
+    assert "Version change could not be verified" in result.details
 
 
 def test_inspect_available_update_ignores_host_git_fetch_timeout(
@@ -1114,6 +1353,25 @@ def test_format_update_success_for_language_renders_russian_copy() -> None:
     assert "Git-ветка: main" in rendered
     assert "Состояние runtime: ok" in rendered
     assert "перезапустите вручную через `afk start`" in rendered
+
+
+def test_format_update_success_for_language_renders_unverified_source_status() -> None:
+    """Update output should not claim success when version verification is unavailable."""
+
+    rendered = format_update_success_for_language(
+        result=UpdateResult(
+            install_mode="uv-tool",
+            source_updated=False,
+            runtime_restarted=False,
+            maintenance_applied=True,
+            details=("Version change could not be verified",),
+            source_status="unverified",
+        ),
+        lang="en",
+    )
+
+    assert "Source: version status unverified" in rendered
+    assert "Version change could not be verified" in rendered
 
 
 def test_project_declares_packaging_runtime_dependency() -> None:
