@@ -19,6 +19,7 @@ class ToolCall(BaseModel):
 
     name: str = Field(min_length=1)
     params: dict[str, object] = Field(default_factory=dict)
+    call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

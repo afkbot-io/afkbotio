@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/readme-preview.png" alt="AFKBOT preview" width="1100" />
-</p>
-
 <h1 align="center">AFKBOT</h1>
 
 <p align="center">

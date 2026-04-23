@@ -56,7 +56,8 @@ def extract_resume_tool_call(envelope: ActionEnvelope) -> ToolCall | None:
     if not isinstance(raw_params, dict):
         raw_params = {}
     params = {str(key): value for key, value in raw_params.items()}
-    return ToolCall(name=tool_name, params=params)
+    call_id = str(patch.get("tool_call_id") or "").strip() or None
+    return ToolCall(name=tool_name, params=params, call_id=call_id)
 
 
 def apply_profile_name_to_resume_call(*, tool_call: ToolCall, profile_name: str) -> ToolCall:
@@ -74,7 +75,7 @@ def apply_profile_name_to_resume_call(*, tool_call: ToolCall, profile_name: str)
         return tool_call
     params = dict(tool_call.params)
     params["profile_name"] = normalized_profile
-    return ToolCall(name=tool_call.name, params=params)
+    return ToolCall(name=tool_call.name, params=params, call_id=tool_call.call_id)
 
 
 def apply_approval_to_resume_call(
@@ -89,7 +90,7 @@ def apply_approval_to_resume_call(
     normalized_question_id = str(question_id or "").strip()
     if normalized_question_id:
         params[CONFIRM_QID_PARAM] = normalized_question_id
-    return ToolCall(name=tool_call.name, params=params)
+    return ToolCall(name=tool_call.name, params=params, call_id=tool_call.call_id)
 
 
 def build_secure_resume_message(envelope: ActionEnvelope) -> str:

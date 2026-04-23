@@ -28,6 +28,7 @@ def test_build_approval_envelope_strips_internal_confirmation_markers() -> None:
                 CONFIRM_ACK_PARAM: True,
                 CONFIRM_QID_PARAM: "approval:old",
             },
+            call_id="call_bash_1",
         )
     ]
     tool_results = [
@@ -46,6 +47,7 @@ def test_build_approval_envelope_strips_internal_confirmation_markers() -> None:
     assert envelope.spec_patch == {
         "tool_name": "bash.exec",
         "tool_params": {"cmd": "rm -rf tmp/data.txt", "cwd": "."},
+        "tool_call_id": "call_bash_1",
         "approval_mode": "strict",
         "approval_reason": "need confirmation",
     }
@@ -63,6 +65,7 @@ def test_build_secure_envelope_disables_resume_for_secure_submit_errors() -> Non
                 "credential_name": "telegram_token",
                 "profile_name": "ops",
             },
+            call_id="call_credentials_1",
         )
     ]
     tool_results = [
@@ -81,6 +84,7 @@ def test_build_secure_envelope_disables_resume_for_secure_submit_errors() -> Non
     assert envelope.spec_patch is not None
     assert envelope.spec_patch["tool_name"] == ""
     assert envelope.spec_patch["tool_params"] is None
+    assert envelope.spec_patch["tool_call_id"] == "call_credentials_1"
     assert envelope.spec_patch["integration_name"] == "telegram"
     assert envelope.spec_patch["credential_name"] == "telegram_token"
     assert envelope.spec_patch["credential_profile_key"] == "ops"
@@ -100,6 +104,7 @@ def test_build_profile_selection_envelope_uses_ask_question_instead_of_secure_pr
                 "action": "get_me",
                 "params": {},
             },
+            call_id="call_app_1",
         )
     ]
     tool_results = [
@@ -128,6 +133,7 @@ def test_build_profile_selection_envelope_uses_ask_question_instead_of_secure_pr
             "action": "get_me",
             "params": {},
         },
+        "tool_call_id": "call_app_1",
         "integration_name": "telegram",
         "credential_name": "telegram_token",
         "available_profile_keys": ["work", "personal"],
@@ -148,6 +154,7 @@ def test_build_profile_selection_envelope_handles_single_available_profile() -> 
                 "params": {},
                 "credential_profile_key": "ops",
             },
+            call_id="call_http_1",
         )
     ]
     tool_results = [
@@ -180,6 +187,7 @@ def test_build_profile_selection_envelope_handles_single_available_profile() -> 
             "params": {},
             "credential_profile_key": "ops",
         },
+        "tool_call_id": "call_http_1",
         "integration_name": "http",
         "credential_name": "api_key",
         "available_profile_keys": ["default"],
@@ -195,6 +203,7 @@ def test_build_tool_not_allowed_envelope_asks_for_explicit_execution() -> None:
         ToolCall(
             name="bash.exec",
             params={"cmd": "ls -la", "cwd": "."},
+            call_id="call_bash_2",
         )
     ]
     tool_results = [
@@ -217,6 +226,7 @@ def test_build_tool_not_allowed_envelope_asks_for_explicit_execution() -> None:
         "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
         "tool_name": "bash.exec",
         "tool_params": {"cmd": "ls -la", "cwd": "."},
+        "tool_call_id": "call_bash_2",
         "tool_not_allowed_reason": "Tool not available in current turn: bash.exec",
         "error_code": "tool_not_allowed_in_turn",
     }

@@ -72,7 +72,7 @@ def test_interactive_chat_skips_setup_thinking_event(monkeypatch) -> None:
 
     # Assert
     assert after_setup == before
-    assert "[iter 1] thinking..." in stream.getvalue()
+    assert "[iter 1] model running" in stream.getvalue()
 
 
 def test_interactive_chat_keeps_one_live_tool_panel_with_latest_ten_lines(monkeypatch) -> None:
