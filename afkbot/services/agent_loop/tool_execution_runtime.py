@@ -37,9 +37,9 @@ class _PreparedToolExecution:
     ctx: ToolContext
     execution_name: str
     sanitized_name: str
-    call_id: str | None
     guarded_call: ToolCall
     parallel_execution_safe: bool
+    call_id: str | None = None
 
 
 class ToolExecutionRuntime:

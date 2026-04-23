@@ -52,7 +52,7 @@ class ProgressEvent(BaseModel):
     stage: CanonicalProgressStage
     iteration: int | None = Field(default=None, ge=0)
     tool_name: str | None = None
-    call_id: str | None = None
+    call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     event_type: str = Field(min_length=1)
     payload: dict[str, object] = Field(default_factory=dict)
     _tool_call_params: dict[str, object] | None = PrivateAttr(default=None)
