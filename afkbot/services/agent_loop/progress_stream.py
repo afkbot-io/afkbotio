@@ -52,6 +52,7 @@ class ProgressEvent(BaseModel):
     stage: CanonicalProgressStage
     iteration: int | None = Field(default=None, ge=0)
     tool_name: str | None = None
+    call_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     event_type: str = Field(min_length=1)
     payload: dict[str, object] = Field(default_factory=dict)
     _tool_call_params: dict[str, object] | None = PrivateAttr(default=None)
@@ -167,6 +168,7 @@ class ProgressStream:
             stage=stage,
             iteration=cls._resolve_iteration(payload),
             tool_name=cls._resolve_tool_name(event_type=event.event_type, payload=payload),
+            call_id=cls._resolve_call_id(payload),
             event_type=event.event_type,
             payload=payload,
         )
@@ -256,6 +258,14 @@ class ProgressStream:
             return None
 
         normalized = raw_name.strip()
+        return normalized or None
+
+    @staticmethod
+    def _resolve_call_id(payload: dict[str, object]) -> str | None:
+        raw_call_id = payload.get("call_id")
+        if not isinstance(raw_call_id, str):
+            return None
+        normalized = raw_call_id.strip()
         return normalized or None
 
     @staticmethod

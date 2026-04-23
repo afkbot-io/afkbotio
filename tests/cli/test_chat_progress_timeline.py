@@ -88,6 +88,64 @@ def test_timeline_keeps_tool_progress_inside_existing_tool_group() -> None:
     assert progress_frame.detail_line == "stdout | three"
 
 
+def test_timeline_correlates_parallel_tool_results_by_call_id() -> None:
+    """Parallel tool results should keep the group assigned to their original call."""
+
+    state = ProgressTimelineState()
+    first_call = ProgressEvent(
+        event_id=30,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="file.search",
+        call_id="call_search_1",
+        event_type="tool.call",
+    )
+    second_call = ProgressEvent(
+        event_id=31,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="file.search",
+        call_id="call_search_2",
+        event_type="tool.call",
+    )
+    second_result = ProgressEvent(
+        event_id=32,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="file.search",
+        call_id="call_search_2",
+        event_type="tool.result",
+    )
+    second_result.attach_tool_details(tool_result={"ok": True, "payload": {"count": 0}})
+    first_result = ProgressEvent(
+        event_id=33,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="file.search",
+        call_id="call_search_1",
+        event_type="tool.result",
+    )
+    first_result.attach_tool_details(tool_result={"ok": True, "payload": {"count": 2}})
+
+    state, first_call_frame = reduce_progress_event(state, first_call)
+    state, second_call_frame = reduce_progress_event(state, second_call)
+    state, second_result_frame = reduce_progress_event(state, second_result)
+    _, first_result_frame = reduce_progress_event(state, first_result)
+
+    assert first_call_frame is not None
+    assert second_call_frame is not None
+    assert second_result_frame is not None
+    assert first_result_frame is not None
+    assert first_call_frame.status_line == "[iter 1] [#1] ● calling tool: file.search"
+    assert second_call_frame.status_line == "[iter 1] [#2] ● calling tool: file.search"
+    assert second_result_frame.status_line == "[iter 1] [#2] ● tool completed: file.search"
+    assert first_result_frame.status_line == "[iter 1] [#1] ● tool completed: file.search"
+
+
 def test_timeline_keeps_live_tool_result_and_resume_call_in_same_group() -> None:
     """Interactive live-session updates should not close the tool group before the final result."""
 
@@ -229,7 +287,7 @@ def test_timeline_renders_llm_tick_as_status_line_not_spinner() -> None:
     _, frame = reduce_progress_event(state, event)
     assert frame is not None
     assert frame.spinner_label is None
-    assert frame.status_line == "[iter 1] thinking..."
+    assert frame.status_line == "[iter 1] model running"
     assert frame.detail_line == "llm=tick elapsed=3s"
 
 

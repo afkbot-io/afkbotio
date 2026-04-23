@@ -104,6 +104,7 @@ class SecurityGuard:
         log_call = ToolCall(
             name=call.name,
             params={str(key): item for key, item in redacted_params.items()},
+            call_id=call.call_id,
         )
         if secure_fields:
             for field_name in secure_fields:

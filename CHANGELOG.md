@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-04-23
+
+### Changed
+
+- Chat progress output now reports clearer model lifecycle states such as queued, started, running, and timed out instead of repeating generic `thinking...` lines for low-level LLM events.
+- Repository-local `docs/` content has been removed from the source tree, and bundled references were cleaned up so checkout layout stays focused on runtime code and tests.
+
+### Fixed
+
+- Parallel tool progress/result rows now preserve stable call grouping by provider `call_id`, preventing unrelated tool results from collapsing under the same progress marker.
+- Approval/profile-resume flows now preserve the original tool `call_id`, so resumed tool execution keeps the same progress correlation and transcript linkage as the original call.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.6`.
+
 ## [1.4.5] - 2026-04-22
 
 ### Changed

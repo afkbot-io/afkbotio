@@ -39,6 +39,7 @@ class _PreparedToolExecution:
     sanitized_name: str
     guarded_call: ToolCall
     parallel_execution_safe: bool
+    call_id: str | None = None
 
 
 class ToolExecutionRuntime:
@@ -135,6 +136,7 @@ class ToolExecutionRuntime:
                     run_id=run_id,
                     session_id=session_id,
                     sanitized_name=prepared.sanitized_name,
+                    call_id=prepared.call_id,
                     result=result,
                 )
                 results.append(result)
@@ -153,17 +155,28 @@ class ToolExecutionRuntime:
             execution_params["profile_id"] = profile_id
             execution_params["profile_key"] = profile_id
             guarded = self._security_guard.guard_tool_call(
-                call=ToolCall(name=execution_name, params=execution_params),
+                call=ToolCall(
+                    name=execution_name,
+                    params=execution_params,
+                    call_id=tool_call.call_id,
+                ),
             )
             sanitized_name = self._sanitize(guarded.log_call.name)
+            sanitized_call_id = (guarded.log_call.call_id or "").strip() or None
             sanitized_params = self._to_params_dict(self._sanitize_value(guarded.log_call.params))
+            tool_call_payload: dict[str, object] = {
+                "name": sanitized_name,
+                "params": sanitized_params,
+            }
+            if sanitized_call_id is not None:
+                tool_call_payload["call_id"] = sanitized_call_id
             await self._log_event(
                 run_id=run_id,
                 session_id=session_id,
                 event_type="tool.call",
                 payload=self._tool_log_payload(
                     tool_name=sanitized_name,
-                    payload={"name": sanitized_name, "params": sanitized_params},
+                    payload=tool_call_payload,
                 ),
             )
             tool_ctx = replace(
@@ -172,6 +185,7 @@ class ToolExecutionRuntime:
                     run_id=run_id,
                     session_id=session_id,
                     tool_name=sanitized_name,
+                    call_id=sanitized_call_id,
                 ),
             )
             prepared_or_result = await self._prepare_single_tool_call(
@@ -183,6 +197,7 @@ class ToolExecutionRuntime:
                 execution_name=execution_name,
                 execution_params=execution_params,
                 guarded_call=guarded.execution_call,
+                call_id=sanitized_call_id,
                 guarded_allowed=guarded.allow,
                 guarded_error_code=guarded.error_code,
                 guarded_reason=guarded.blocked_reason,
@@ -202,6 +217,7 @@ class ToolExecutionRuntime:
                     run_id=run_id,
                     session_id=session_id,
                     sanitized_name=sanitized_name,
+                    call_id=sanitized_call_id,
                     result=prepared_or_result,
                 )
                 results.append(prepared_or_result)
@@ -215,6 +231,7 @@ class ToolExecutionRuntime:
                         ctx=replace(prepared_or_result.ctx, progress_callback=None),
                         execution_name=prepared_or_result.execution_name,
                         sanitized_name=prepared_or_result.sanitized_name,
+                        call_id=sanitized_call_id,
                         guarded_call=prepared_or_result.guarded_call,
                         parallel_execution_safe=True,
                     )
@@ -227,6 +244,7 @@ class ToolExecutionRuntime:
                 run_id=run_id,
                 session_id=session_id,
                 sanitized_name=sanitized_name,
+                call_id=sanitized_call_id,
                 result=result,
             )
             results.append(result)
@@ -309,6 +327,7 @@ class ToolExecutionRuntime:
         execution_name: str,
         execution_params: dict[str, object],
         guarded_call: ToolCall,
+        call_id: str | None,
         guarded_allowed: bool,
         guarded_error_code: str | None,
         guarded_reason: str | None,
@@ -422,6 +441,7 @@ class ToolExecutionRuntime:
             ctx=ctx,
             execution_name=execution_name,
             sanitized_name=sanitized_name,
+            call_id=call_id,
             guarded_call=guarded_call,
             parallel_execution_safe=bool(
                 tool is not None and getattr(tool, "parallel_execution_safe", False)
@@ -545,20 +565,24 @@ class ToolExecutionRuntime:
         run_id: int,
         session_id: str,
         sanitized_name: str,
+        call_id: str | None,
         result: ToolResult,
     ) -> None:
         """Persist one sanitized tool result event."""
 
+        tool_result_payload: dict[str, object] = {
+            "name": sanitized_name,
+            "result": self._sanitize_value(result.model_dump()),
+        }
+        if call_id is not None:
+            tool_result_payload["call_id"] = call_id
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
             event_type="tool.result",
             payload=self._tool_log_payload(
                 tool_name=sanitized_name,
-                payload={
-                    "name": sanitized_name,
-                    "result": self._sanitize_value(result.model_dump()),
-                },
+                payload=tool_result_payload,
             ),
         )
 
@@ -573,27 +597,37 @@ class ToolExecutionRuntime:
         """Execute internal helper tool call with standard tool call/result logs."""
 
         sanitized_name = self._sanitize(tool_call.name)
+        sanitized_call_id = (tool_call.call_id or "").strip() or None
         sanitized_params = self._to_params_dict(self._sanitize_value(tool_call.params))
+        tool_call_payload: dict[str, object] = {
+            "name": sanitized_name,
+            "params": sanitized_params,
+        }
+        if sanitized_call_id is not None:
+            tool_call_payload["call_id"] = sanitized_call_id
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
             event_type="tool.call",
             payload=self._tool_log_payload(
                 tool_name=sanitized_name,
-                payload={"name": sanitized_name, "params": sanitized_params},
+                payload=tool_call_payload,
             ),
         )
         result = await self.execute_tool_call(tool_call=tool_call, ctx=ctx)
+        tool_result_payload: dict[str, object] = {
+            "name": sanitized_name,
+            "result": self._sanitize_value(result.model_dump()),
+        }
+        if sanitized_call_id is not None:
+            tool_result_payload["call_id"] = sanitized_call_id
         await self._log_event(
             run_id=run_id,
             session_id=session_id,
             event_type="tool.result",
             payload=self._tool_log_payload(
                 tool_name=sanitized_name,
-                payload={
-                    "name": sanitized_name,
-                    "result": self._sanitize_value(result.model_dump()),
-                },
+                payload=tool_result_payload,
             ),
         )
         return result
@@ -604,20 +638,24 @@ class ToolExecutionRuntime:
         run_id: int,
         session_id: str,
         tool_name: str,
+        call_id: str | None,
     ) -> Callable[[dict[str, object]], Awaitable[None]]:
         """Build one sanitized progress logger for the currently running tool call."""
 
         async def _emit(payload: dict[str, object]) -> None:
+            tool_progress_payload: dict[str, object] = {
+                "name": tool_name,
+                "progress": self._sanitize_value(payload),
+            }
+            if call_id is not None:
+                tool_progress_payload["call_id"] = call_id
             await self._log_event(
                 run_id=run_id,
                 session_id=session_id,
                 event_type="tool.progress",
                 payload=self._tool_log_payload(
                     tool_name=tool_name,
-                    payload={
-                        "name": tool_name,
-                        "progress": self._sanitize_value(payload),
-                    },
+                    payload=tool_progress_payload,
                 ),
             )
 

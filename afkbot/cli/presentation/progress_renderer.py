@@ -56,6 +56,9 @@ def render_progress_event(event: RenderEvent) -> str:
 
     match event.stage:
         case "thinking":
+            llm_status = _render_llm_status_line(event)
+            if llm_status is not None:
+                return llm_status
             return "thinking..."
         case "planning":
             return "planning..."
@@ -271,6 +274,21 @@ def _render_llm_call_details(event: ProgressEvent) -> str | None:
     if not parts:
         return None
     return " ".join(parts)
+
+
+def _render_llm_status_line(event: RenderEvent) -> str | None:
+    if not event.event_type.startswith("llm.call."):
+        return None
+    status = event.event_type.removeprefix("llm.call.").strip()
+    return {
+        "queued": "model queued",
+        "start": "model started",
+        "tick": "model running",
+        "retry": "model retrying",
+        "done": "model responded",
+        "timeout": "model timed out",
+        "error": "model failed",
+    }.get(status)
 
 
 def _render_compaction_details(event: ProgressEvent) -> str | None:

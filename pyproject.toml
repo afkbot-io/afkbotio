@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "afkbotio"
-version = "1.4.5"
+version = "1.4.6"
 description = "Source-available local AI runtime and CLI for AFKBOT"
 readme = "README.md"
 requires-python = ">=3.12"

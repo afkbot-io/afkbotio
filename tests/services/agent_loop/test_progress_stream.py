@@ -333,6 +333,7 @@ async def test_progress_stream_attaches_tool_call_and_result_details(tmp_path: P
                 event_type="tool.call",
                 payload={
                     "name": "bash.exec",
+                    "call_id": "call_bash_1",
                     "params": {"cmd": "pwd", "cwd": ".", "timeout_sec": 15},
                 },
             )
@@ -342,6 +343,7 @@ async def test_progress_stream_attaches_tool_call_and_result_details(tmp_path: P
                 event_type="tool.result",
                 payload={
                     "name": "bash.exec",
+                    "call_id": "call_bash_1",
                     "result": {"ok": True, "payload": {"exit_code": 0, "stdout": "/repo"}},
                 },
             )
@@ -355,15 +357,19 @@ async def test_progress_stream_attaches_tool_call_and_result_details(tmp_path: P
             assert len(events) == 2
             assert events[0].payload == {
                 "name": "bash.exec",
+                "call_id": "call_bash_1",
                 "params": {"cmd": "pwd", "cwd": ".", "timeout_sec": 15},
             }
+            assert events[0].call_id == "call_bash_1"
             assert events[0].tool_call_params == {"cmd": "pwd", "cwd": ".", "timeout_sec": 15}
             assert events[0].tool_result is None
             assert events[1].tool_call_params is None
             assert events[1].payload == {
                 "name": "bash.exec",
+                "call_id": "call_bash_1",
                 "result": {"ok": True, "payload": {"exit_code": 0, "stdout": "/repo"}},
             }
+            assert events[1].call_id == "call_bash_1"
             assert events[1].tool_result == {"ok": True, "payload": {"exit_code": 0, "stdout": "/repo"}}
     finally:
         await engine.dispose()

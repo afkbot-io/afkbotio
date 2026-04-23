@@ -174,6 +174,7 @@ class LLMIterationRuntime:
                 ToolCall(
                     name=call.name,
                     params=self._to_params_dict(call.params),
+                    call_id=call.call_id,
                 )
                 for call in normalized_calls
             ]
