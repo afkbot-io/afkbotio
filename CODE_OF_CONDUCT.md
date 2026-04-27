@@ -32,5 +32,6 @@ issues, and other contributions that violate this code of conduct.
 
 ## Reporting
 
-Report serious violations privately through the security contact listed in
-[`SECURITY.md`](SECURITY.md).
+Report serious violations privately to the project maintainer through the
+official AFKBOT channels listed at [afkbot.io](https://afkbot.io). Security
+vulnerabilities should still follow the process in [`SECURITY.md`](SECURITY.md).

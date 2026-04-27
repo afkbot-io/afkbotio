@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from afkbot.api.app import create_app
+from afkbot.services.error_logging import component_log_path, configure_error_file_logging
 from afkbot.services.connect import ConnectAccessTokenContext
 from afkbot.services.channel_routing import (
     ChannelRoutingDiagnostics,
@@ -25,6 +26,7 @@ from afkbot.services.health import (
     DoctorRoutingReport,
     TelegramPollingEndpointReport,
 )
+from afkbot.settings import Settings
 
 
 def _allow_health_auth(monkeypatch: MonkeyPatch) -> None:
@@ -57,6 +59,54 @@ def test_api_health_and_ready_routes() -> None:
     assert health.json() == {"status": "ok", "service": "afkbot-api"}
     assert ready.status_code == 200
     assert ready.json() == {"status": "ready"}
+
+
+def test_api_unhandled_exception_logs_500_context(tmp_path, monkeypatch: MonkeyPatch) -> None:
+    """Unhandled request exceptions should produce an operator-readable file log."""
+
+    settings = Settings(root_dir=tmp_path)
+    monkeypatch.setattr("afkbot.api.app.get_settings", lambda: settings)
+    app = create_app()
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("api password=secret")
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/boom")
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["detail"] == "Internal server error"
+    assert payload["request_id"]
+    contents = component_log_path(settings, "api").read_text(encoding="utf-8")
+    assert "Unhandled API exception" in contents
+    assert "method=GET" in contents
+    assert "path=/boom" in contents
+    assert "RuntimeError: api password=[REDACTED]" in contents
+    assert "secret" not in contents
+
+
+def test_create_app_does_not_add_package_api_log_handler(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """API app creation should not redirect process-wide runtime logs into api logs."""
+
+    settings = Settings(root_dir=tmp_path)
+    monkeypatch.setattr("afkbot.api.app.get_settings", lambda: settings)
+    configure_error_file_logging(settings=settings, component="runtime")
+
+    create_app()
+
+    import logging
+
+    logging.getLogger("afkbot.tests.api_component_isolation").error("runtime only")
+
+    runtime_contents = component_log_path(settings, "runtime").read_text(encoding="utf-8")
+    assert "runtime only" in runtime_contents
+    assert not component_log_path(settings, "api").exists()
 
 
 def test_health_routes_require_auth() -> None:

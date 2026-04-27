@@ -15,10 +15,12 @@ from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 from afkbot.services.agent_loop.tool_invocation_gates import ToolInvocationGuards
+from afkbot.services.error_logging import log_exception, redact_log_text
 from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.tools.base import ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParametersValidationError
 from afkbot.services.tools.registry import ToolRegistry
+from afkbot.settings import get_settings
 
 AsyncLogEvent = Callable[..., Awaitable[None]]
 AsyncCancelCheck = Callable[..., Awaitable[None]]
@@ -311,9 +313,24 @@ class ToolExecutionRuntime:
                 reason=f"Tool timed out after {params.timeout_sec} seconds",
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
+            log_exception(
+                settings=get_settings(),
+                component="tools",
+                message="Unhandled tool execution exception",
+                exc=exc,
+                context={
+                    "tool_name": tool_call.name,
+                    "call_id": tool_call.call_id or "",
+                    "profile_id": ctx.profile_id,
+                    "session_id": ctx.session_id,
+                    "run_id": ctx.run_id,
+                },
+            )
             return ToolResult.error(
                 error_code="tool_execution_failed",
-                reason=f"{exc.__class__.__name__}: {exc}",
+                reason=redact_log_text(
+                    f"{exc.__class__.__name__}: tool execution failed. Run `afk logs` to find the diagnostic log path."
+                ),
             )
 
     async def _prepare_single_tool_call(

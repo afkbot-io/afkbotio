@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-04-27
+
+### Added
+
+- Persistent bounded diagnostic error logs under the runtime `logs/` directory, with `afk logs` commands for locating, listing, tailing, and cleaning log files.
+- README preview artwork sourced from the AFKBOT web project.
+
+### Changed
+
+- License explainer docs are slimmer: `LICENSE_FAQ.md` is the single human-readable commercial-use summary, and the duplicate `COMMERCIAL_LICENSE.md` file was removed.
+- Local-only `docs/`, `plans/`, and root `AGENTS.md` / `agents.md` files are ignored by git.
+
+### Fixed
+
+- Unhandled API, CLI, runtime, and tool execution exceptions now write redacted traceback context to operator-readable files instead of only surfacing as generic 500/tool failures.
+- Code of Conduct reporting no longer points conduct reports at the security vulnerability mailbox.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.7`.
+
 ## [1.4.6] - 2026-04-23
 
 ### Changed

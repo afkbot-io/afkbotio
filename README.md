@@ -12,6 +12,10 @@
   <a href="TRADEMARKS.md">Trademarks</a>
 </p>
 
+<p align="center">
+  <img src="assets/github-preview.png" alt="AFKBOT preview" width="100%">
+</p>
+
 ## What AFKBOT is
 
 AFKBOT is a source-available local agent platform. You can run it from the terminal,
@@ -249,6 +253,7 @@ afk start
 | `afk task board --profile default` | Open the Task Flow backlog for a profile |
 | `afk subagent list --profile default` | Show subagents available to the profile |
 | `afk mcp list --profile default` | Show saved MCP servers for a profile |
+| `afk logs` | Show diagnostic error log files and their path |
 | `afk update` | Update the installed AFKBOT build |
 
 ## Core model
@@ -269,4 +274,4 @@ AFKBOT is source-available under the `Sustainable Use License 1.0`.
 - selling AFKBOT, reselling copies, or offering it as a paid hosted or white-label service requires separate permission
 - the repository does not grant trademark rights to the AFKBOT name or branding
 
-See [LICENSE](LICENSE), [LICENSE_FAQ.md](LICENSE_FAQ.md), [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md), and [TRADEMARKS.md](TRADEMARKS.md) for the full terms.
+See [LICENSE](LICENSE), [LICENSE_FAQ.md](LICENSE_FAQ.md), and [TRADEMARKS.md](TRADEMARKS.md) for the full terms.
