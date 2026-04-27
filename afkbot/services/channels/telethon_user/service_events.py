@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.telethon_user.normalization import (
     TelethonInboundMessage,
     build_telethon_inbound_text,
@@ -30,6 +31,20 @@ async def on_new_message(service: TelethonUserService, *, event: object) -> None
         await service._buffer_watched_event(watched_event)
     inbound = await service._normalize_event(event)
     if inbound is None:
+        return
+    if not is_channel_message_allowed(
+        policy=service._endpoint.access_policy,
+        chat_kind=inbound.chat_kind,
+        peer_id=inbound.chat_id,
+        user_id=inbound.user_id,
+    ):
+        service.logger.warning(
+            "telethon_user_access_denied account_id=%s peer_id=%s user_id=%s chat_kind=%s",
+            service._endpoint.account_id,
+            inbound.chat_id,
+            inbound.user_id,
+            inbound.chat_kind,
+        )
         return
     queued_event = service.queued_event_cls(
         event_key=inbound.event_key,

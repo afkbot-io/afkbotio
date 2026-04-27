@@ -9,6 +9,7 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_text,
 )
 from afkbot.cli.commands.channel_shared import (
+    collect_channel_access_policy_inputs,
     merge_ingress_batch_config,
     merge_reply_humanization_config,
     normalize_channel_tool_profile,
@@ -65,6 +66,12 @@ def update_telethon_channel(
     credential_profile_key: str | None,
     account_id: str | None,
     reply_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     reply_blocked_chat_patterns: str | None,
     reply_allowed_chat_patterns: str | None,
@@ -119,6 +126,12 @@ def update_telethon_channel(
             credential_profile_key,
             account_id,
             reply_mode,
+            private_policy,
+            allow_from,
+            group_policy,
+            groups,
+            group_allow_from,
+            outbound_allow_to,
             tool_profile,
             reply_blocked_chat_patterns,
             reply_allowed_chat_patterns,
@@ -186,6 +199,22 @@ def update_telethon_channel(
         )
         if interactive
         else normalize_channel_tool_profile(tool_profile or current.tool_profile)
+    )
+    resolved_access_policy = collect_channel_access_policy_inputs(
+        interactive=interactive,
+        lang=prompt_language,
+        private_policy=private_policy,
+        allow_from=allow_from,
+        group_policy=group_policy,
+        groups=groups,
+        group_allow_from=group_allow_from,
+        outbound_allow_to=outbound_allow_to,
+        private_policy_default=current.access_policy.private_policy,
+        allow_from_default=current.access_policy.allow_from,
+        group_policy_default=current.access_policy.group_policy,
+        groups_default=current.access_policy.groups,
+        group_allow_from_default=current.access_policy.group_allow_from,
+        outbound_allow_to_default=current.access_policy.outbound_allow_to,
     )
     resolved_group_invocation_mode = (
         normalize_telethon_group_invocation_mode(
@@ -572,6 +601,7 @@ def update_telethon_channel(
         account_id=account_id,
         reply_mode=resolved_reply_mode,
         tool_profile=resolved_tool_profile,
+        access_policy=resolved_access_policy,
         reply_blocked_chat_patterns=reply_blocked_chat_patterns,
         reply_allowed_chat_patterns=reply_allowed_chat_patterns,
         group_invocation_mode=resolved_group_invocation_mode,

@@ -18,7 +18,8 @@ from afkbot.cli.commands.channel_shared import (
     build_ingress_batch_config,
     build_reply_humanization_config,
     collect_channel_add_base_inputs,
-    put_matching_binding,
+    collect_channel_access_policy_inputs,
+    put_access_policy_bindings,
     render_channel_add_intro,
     should_collect_channel_add_interactively,
 )
@@ -51,6 +52,12 @@ def run_telegram_add(
     account_id: str | None,
     enabled: bool | None,
     group_trigger_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     ingress_batch_enabled: bool | None,
     ingress_debounce_ms: int | None,
@@ -116,6 +123,16 @@ def run_telegram_add(
                 detail_en="Choose when group and supergroup messages are allowed to trigger the bot: on mentions, replies, or every message.",
                 detail_ru="Выберите, когда сообщения в группах и супергруппах могут запускать бота: по mentions, по reply или на каждое сообщение.",
             )
+        )
+        access_policy = collect_channel_access_policy_inputs(
+            interactive=interactive,
+            lang=prompt_language,
+            private_policy=private_policy,
+            allow_from=allow_from,
+            group_policy=group_policy,
+            groups=groups,
+            group_allow_from=group_allow_from,
+            outbound_allow_to=outbound_allow_to,
         )
         resolved_ingress_enabled = resolve_channel_bool(
             value=ingress_batch_enabled,
@@ -232,6 +249,7 @@ def run_telegram_add(
             enabled=base_inputs.enabled,
             group_trigger_mode=resolved_group_trigger_mode,
             tool_profile=base_inputs.tool_profile,
+            access_policy=access_policy,
             ingress_batch=resolved_ingress_batch,
             reply_humanization=resolved_reply_humanization,
         )
@@ -244,10 +262,11 @@ def run_telegram_add(
                 lang=prompt_language,
             )
         saved = runtime.create_endpoint(endpoint)
+        binding_count = 0
         if base_inputs.create_binding:
-            put_matching_binding(
+            binding_count = put_access_policy_bindings(
                 settings=runtime.settings,
-                binding_id=saved.endpoint_id,
+                endpoint_id=saved.endpoint_id,
                 transport="telegram",
                 profile_id=saved.profile_id,
                 session_policy=base_inputs.session_policy,
@@ -255,6 +274,7 @@ def run_telegram_add(
                 enabled=saved.enabled,
                 account_id=saved.account_id,
                 prompt_overlay=prompt_overlay,
+                access_policy=saved.access_policy,
             )
     except Exception as exc:
         runtime.raise_error(exc)
@@ -273,7 +293,7 @@ def run_telegram_add(
         f"enabled={saved.enabled})."
     )
     if base_inputs.create_binding:
-        typer.echo(f"Matching binding `{saved.endpoint_id}` was also created/updated.")
+        typer.echo(f"Matching bindings created/updated: {binding_count}.")
     runtime.reload_notice(runtime.settings)
 
 

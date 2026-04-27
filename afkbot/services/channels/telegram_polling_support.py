@@ -160,6 +160,21 @@ def _render_attachment_summary(message: dict[str, object]) -> str | None:
     photo_payload = message.get("photo")
     if isinstance(photo_payload, list) and photo_payload:
         parts.append("photo attached")
+    sticker_payload = message.get("sticker")
+    if isinstance(sticker_payload, dict):
+        parts.append(_describe_sticker_payload(sticker_payload))
+    animation_payload = message.get("animation")
+    if isinstance(animation_payload, dict):
+        parts.append(_describe_media_payload("animation", animation_payload))
+    for payload_key, label in (
+        ("video", "video"),
+        ("audio", "audio"),
+        ("voice", "voice"),
+        ("video_note", "video note"),
+    ):
+        payload = message.get(payload_key)
+        if isinstance(payload, dict):
+            parts.append(_describe_media_payload(label, payload))
     document_payload = message.get("document")
     if isinstance(document_payload, dict):
         parts.append(_describe_document_payload(document_payload))
@@ -169,19 +184,46 @@ def _render_attachment_summary(message: dict[str, object]) -> str | None:
 
 
 def _describe_document_payload(document_payload: dict[str, object]) -> str:
-    file_name = document_payload.get("file_name")
-    mime_type = document_payload.get("mime_type")
-    file_size = document_payload.get("file_size")
+    return _describe_media_payload("document", document_payload, fallback="document attached")
+
+
+def _describe_sticker_payload(sticker_payload: dict[str, object]) -> str:
+    details: list[str] = []
+    emoji = sticker_payload.get("emoji")
+    set_name = sticker_payload.get("set_name")
+    if isinstance(emoji, str) and emoji.strip():
+        details.append(emoji.strip())
+    if isinstance(set_name, str) and set_name.strip():
+        details.append(set_name.strip())
+    if bool(sticker_payload.get("is_animated")):
+        details.append("animated")
+    if bool(sticker_payload.get("is_video")):
+        details.append("video")
+    return "sticker: " + ", ".join(details) if details else "sticker attached"
+
+
+def _describe_media_payload(
+    label: str,
+    media_payload: dict[str, object],
+    *,
+    fallback: str | None = None,
+) -> str:
+    file_name = media_payload.get("file_name")
+    mime_type = media_payload.get("mime_type")
+    file_size = media_payload.get("file_size")
+    duration = media_payload.get("duration")
     details: list[str] = []
     if isinstance(file_name, str) and file_name.strip():
         details.append(file_name.strip())
+    if isinstance(duration, int) and duration > 0:
+        details.append(f"{duration}s")
     if isinstance(mime_type, str) and mime_type.strip():
         details.append(mime_type.strip())
     if isinstance(file_size, int) and file_size > 0:
         details.append(f"{file_size} bytes")
     if details:
-        return "document: " + ", ".join(details)
-    return "document attached"
+        return f"{label}: " + ", ".join(details)
+    return fallback or f"{label} attached"
 
 
 def _compose_inbound_text(*, text: str, attachment_summary: str | None) -> str:

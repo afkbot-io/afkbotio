@@ -185,6 +185,16 @@ afk channel telegram add
 afk channel telegram status
 ```
 
+Private/group allowlists can be configured in the wizard or with flags:
+
+```bash
+afk channel telegram add owner-bot \
+  --private-policy allowlist --allow-from 123456789 \
+  --group-policy allowlist --groups -1001234567890 --group-allow-from 123456789 \
+  --outbound-allow-to 123456789 \
+  --binding
+```
+
 Telethon user account:
 
 ```bash
@@ -192,6 +202,10 @@ afk channel telethon add
 afk channel telethon authorize <channel_id>
 afk channel telethon status
 ```
+
+The same access flags are available for Telethon userbot channels. Inside an allowed
+profile, the agent can send explicit outbound channel messages with `channel.send`;
+safe channel tool profiles allow that tool while still blocking broad `app.run`.
 
 Overview:
 

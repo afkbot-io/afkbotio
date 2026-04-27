@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-27
+
+### Added
+
+- Telegram Bot API and Telethon channel wizards now include bilingual private-chat, group-chat, sender allowlist, and outbound target allowlist settings.
+- `channel.send` is available as a profile-scoped tool for explicit outbound channel replies, with channel-level outbound allowlist enforcement.
+- Inbound Telegram media summaries now describe richer attachments such as stickers, GIF/animation, video, audio, voice, photo, and document payloads for the model.
+
+### Changed
+
+- Channel matching bindings can now be generated from access policies, producing scoped direct-chat and group/user binding rules instead of only a broad endpoint binding.
+- Safe channel tool profiles now allow `channel.send` while still blocking broad `app.run` access on user-facing channels.
+- Release metadata and lockfile package metadata are aligned to `1.5.0`.
+
 ## [1.4.7] - 2026-04-27
 
 ### Added

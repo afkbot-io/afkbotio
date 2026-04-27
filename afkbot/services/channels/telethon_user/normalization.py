@@ -117,23 +117,45 @@ def render_telethon_attachment_summary(*, event: object) -> str | None:
     parts: list[str] = []
     if getattr(message, "photo", None) is not None:
         parts.append("photo attached")
+    if bool(getattr(message, "sticker", False)):
+        parts.append(_describe_telethon_sticker(getattr(message, "file", None)))
+    if bool(getattr(message, "gif", False)):
+        parts.append("animation/GIF attached")
+    if bool(getattr(message, "video", False)):
+        parts.append("video attached")
+    if bool(getattr(message, "audio", False)):
+        parts.append("audio attached")
+    if bool(getattr(message, "voice", False)):
+        parts.append("voice message attached")
+    if bool(getattr(message, "round", False)):
+        parts.append("video note attached")
     file_payload = getattr(message, "file", None)
     document_payload = getattr(message, "document", None)
     if file_payload is not None or document_payload is not None:
-        details: list[str] = []
-        file_name = getattr(file_payload, "name", None)
-        mime_type = getattr(file_payload, "mime_type", None)
-        file_size = getattr(file_payload, "size", None)
-        if isinstance(file_name, str) and file_name.strip():
-            details.append(file_name.strip())
-        if isinstance(mime_type, str) and mime_type.strip():
-            details.append(mime_type.strip())
-        if isinstance(file_size, int) and file_size > 0:
-            details.append(f"{file_size} bytes")
-        if details:
-            parts.append("document: " + ", ".join(details))
-        else:
-            parts.append("document attached")
+        parts.append(_describe_telethon_file(file_payload))
     if not parts:
         return None
     return "Incoming Telegram attachments:\n" + "\n".join(f"- {item}" for item in parts)
+
+
+def _describe_telethon_sticker(file_payload: object | None) -> str:
+    emoji = getattr(file_payload, "emoji", None)
+    if isinstance(emoji, str) and emoji.strip():
+        return f"sticker: {emoji.strip()}"
+    return "sticker attached"
+
+
+def _describe_telethon_file(file_payload: object | None) -> str:
+    details: list[str] = []
+    file_name = getattr(file_payload, "name", None)
+    mime_type = getattr(file_payload, "mime_type", None)
+    file_size = getattr(file_payload, "size", None)
+    if isinstance(file_name, str) and file_name.strip():
+        details.append(file_name.strip())
+    if isinstance(mime_type, str) and mime_type.strip():
+        details.append(mime_type.strip())
+    if isinstance(file_size, int) and file_size > 0:
+        details.append(f"{file_size} bytes")
+    if details:
+        return "document: " + ", ".join(details)
+    return "document attached"

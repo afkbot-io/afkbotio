@@ -19,10 +19,13 @@ from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.services.channel_routing import ChannelBindingRule
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channel_routing.service import (
+    ChannelBindingService,
     ChannelBindingServiceError,
     run_channel_binding_service_sync,
 )
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessMode,
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     ChannelReplyHumanizationConfig,
 )
@@ -56,6 +59,9 @@ class ResolvedBindingUpdateInputs:
     session_policy: SessionPolicy
     priority: int
     prompt_overlay: str | None
+
+
+CHANNEL_ACCESS_MODES: tuple[str, ...] = ("open", "allowlist", "disabled")
 
 
 def should_collect_channel_add_interactively(
@@ -227,12 +233,12 @@ def collect_channel_add_base_inputs(
             detail_en=(
                 "This narrows what the agent may do in this channel. "
                 "`inherit` keeps the profile ceiling, `chat_minimal` is reply-only, "
-                "`messaging_safe` allows safe memory/app actions, and `support_readonly` adds read-only file work."
+                "`messaging_safe` allows safe memory/channel-send actions, and `support_readonly` adds read-only file work."
             ),
             detail_ru=(
                 "Это сужает набор действий агента именно в этом канале. "
                 "`inherit` оставляет потолок профиля, `chat_minimal` — только ответы, "
-                "`messaging_safe` — безопасные memory/app действия, `support_readonly` — ещё и read-only работу с файлами."
+                "`messaging_safe` — безопасные memory/channel-send действия, `support_readonly` — ещё и read-only работу с файлами."
             ),
         )
     )
@@ -365,6 +371,331 @@ def put_matching_binding(
                 prompt_overlay=prompt_overlay,
             )
         ),
+    )
+
+
+def collect_channel_access_policy_inputs(
+    *,
+    interactive: bool,
+    lang: PromptLanguage,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None = None,
+    private_policy_default: ChannelAccessMode = "open",
+    allow_from_default: tuple[str, ...] = (),
+    group_policy_default: ChannelAccessMode = "open",
+    groups_default: tuple[str, ...] = (),
+    group_allow_from_default: tuple[str, ...] = (),
+    outbound_allow_to_default: tuple[str, ...] = (),
+) -> ChannelAccessPolicy:
+    """Collect OpenClaw-style access controls shared by Telegram transports."""
+
+    normalized_allow_from = (
+        split_channel_access_list(allow_from) if allow_from is not None else allow_from_default
+    )
+    normalized_groups = split_channel_access_list(groups) if groups is not None else groups_default
+    normalized_group_allow_from = (
+        split_channel_access_list(group_allow_from)
+        if group_allow_from is not None
+        else group_allow_from_default
+    )
+    normalized_outbound_allow_to = (
+        split_channel_access_list(outbound_allow_to)
+        if outbound_allow_to is not None
+        else outbound_allow_to_default
+    )
+    private_policy_value = private_policy
+    if private_policy_value is None and not interactive and private_policy_default == "open" and allow_from is not None:
+        private_policy_value = "allowlist" if normalized_allow_from else None
+    group_policy_value = group_policy
+    if group_policy_value is None and not interactive and group_policy_default == "open":
+        if groups is not None or group_allow_from is not None:
+            group_policy_value = "allowlist" if normalized_groups or normalized_group_allow_from else None
+    resolved_private_policy = cast(
+        ChannelAccessMode,
+        resolve_channel_choice(
+            value=private_policy_value,
+            interactive=interactive,
+            prompt_en="Private chat access",
+            prompt_ru="Доступ в личных чатах",
+            default=private_policy_default,
+            allowed=CHANNEL_ACCESS_MODES,
+            lang=lang,
+            detail_en=(
+                "`open` allows any private sender that passes routing, `allowlist` limits DMs to user ids, "
+                "`disabled` rejects private chats."
+            ),
+            detail_ru=(
+                "`open` разрешает личные сообщения от любого отправителя, который проходит routing, "
+                "`allowlist` ограничивает DM списком user id, `disabled` отключает личные чаты."
+            ),
+        ),
+    )
+    if resolved_private_policy == "allowlist" and (interactive or not normalized_allow_from):
+        normalized_allow_from = split_channel_access_list(
+            resolve_channel_text(
+                value=allow_from if allow_from is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed private sender ids",
+                prompt_ru="Разрешённые id отправителей в личных чатах",
+                default=", ".join(normalized_allow_from) if normalized_allow_from else None,
+                lang=lang,
+                detail_en="Comma-separated Telegram user ids allowed to write to this channel in private chats.",
+                detail_ru="Telegram user id через запятую, которым разрешено писать этому каналу в личных чатах.",
+            )
+        )
+    resolved_group_policy = cast(
+        ChannelAccessMode,
+        resolve_channel_choice(
+            value=group_policy_value,
+            interactive=interactive,
+            prompt_en="Group access",
+            prompt_ru="Доступ в группах",
+            default=group_policy_default,
+            allowed=CHANNEL_ACCESS_MODES,
+            lang=lang,
+            detail_en=(
+                "`open` allows groups that pass the trigger mode, `allowlist` limits allowed group ids and senders, "
+                "`disabled` rejects group chats."
+            ),
+            detail_ru=(
+                "`open` разрешает группы, которые проходят trigger mode, `allowlist` ограничивает id групп и отправителей, "
+                "`disabled` отключает групповые чаты."
+            ),
+        ),
+    )
+    if resolved_group_policy == "allowlist" and (interactive or not normalized_groups):
+        normalized_groups = split_channel_access_list(
+            resolve_channel_text(
+                value=groups if groups is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed group ids",
+                prompt_ru="Разрешённые id групп",
+                default=", ".join(normalized_groups) if normalized_groups else None,
+                lang=lang,
+                detail_en="Comma-separated Telegram group or supergroup ids, for example -1001234567890.",
+                detail_ru="Telegram group/supergroup id через запятую, например -1001234567890.",
+            )
+        )
+    if resolved_group_policy == "allowlist" and (
+        interactive or not (normalized_group_allow_from or normalized_allow_from)
+    ):
+        normalized_group_allow_from = split_channel_access_list(
+            resolve_channel_text(
+                value=group_allow_from if group_allow_from is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed group sender ids",
+                prompt_ru="Разрешённые id отправителей в группах",
+                default=(
+                    ", ".join(normalized_group_allow_from or normalized_allow_from)
+                    if normalized_group_allow_from or normalized_allow_from
+                    else None
+                ),
+                lang=lang,
+                detail_en="Comma-separated Telegram user ids allowed to trigger the bot inside allowed groups.",
+                detail_ru="Telegram user id через запятую, которым разрешено запускать бота в разрешённых группах.",
+            )
+        )
+    return ChannelAccessPolicy(
+        private_policy=resolved_private_policy,
+        allow_from=normalized_allow_from,
+        group_policy=resolved_group_policy,
+        groups=normalized_groups,
+        group_allow_from=normalized_group_allow_from,
+        outbound_allow_to=normalized_outbound_allow_to,
+    )
+
+
+def split_channel_access_list(value: str | None) -> tuple[str, ...]:
+    """Split comma-separated channel access ids while preserving Telegram signs."""
+
+    if value is None:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return tuple(normalized)
+
+
+def put_access_policy_bindings(
+    *,
+    settings: Settings,
+    endpoint_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    prompt_overlay: str | None,
+    access_policy: ChannelAccessPolicy,
+    replace_existing: bool = False,
+) -> int:
+    """Create scoped bindings from access policy and return how many were created."""
+
+    if replace_existing:
+        run_channel_binding_service_sync(
+            settings,
+            lambda service: _delete_existing_access_policy_bindings(
+                service=service,
+                endpoint_id=endpoint_id,
+                transport=transport,
+            ),
+        )
+    rules = build_access_policy_binding_rules(
+        endpoint_id=endpoint_id,
+        transport=transport,
+        profile_id=profile_id,
+        session_policy=session_policy,
+        priority=priority,
+        enabled=enabled,
+        account_id=account_id,
+        prompt_overlay=prompt_overlay,
+        access_policy=access_policy,
+    )
+    for rule in rules:
+        async def _put_rule(service: ChannelBindingService, rule: ChannelBindingRule = rule) -> ChannelBindingRule:
+            return await service.put(rule)
+
+        run_channel_binding_service_sync(settings, _put_rule)
+    return len(rules)
+
+
+async def _delete_existing_access_policy_bindings(
+    *,
+    service: ChannelBindingService,
+    endpoint_id: str,
+    transport: str,
+) -> None:
+    existing = await service.list(transport=transport)
+    for rule in existing:
+        if rule.binding_id == endpoint_id or rule.binding_id.startswith(f"{endpoint_id}:"):
+            try:
+                await service.delete(binding_id=rule.binding_id)
+            except ChannelBindingServiceError as exc:
+                if exc.error_code != "channel_binding_not_found":
+                    raise
+
+
+def build_access_policy_binding_rules(
+    *,
+    endpoint_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    prompt_overlay: str | None,
+    access_policy: ChannelAccessPolicy,
+) -> tuple[ChannelBindingRule, ...]:
+    """Project one endpoint access policy into concrete routing rules."""
+
+    rules: list[ChannelBindingRule] = []
+    if access_policy.private_policy == "allowlist":
+        for sender_id in access_policy.allow_from:
+            if sender_id == "*":
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=f"{endpoint_id}:dm:any",
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=None,
+                        user_id=None,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+            else:
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=f"{endpoint_id}:dm:{sender_id}",
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=sender_id,
+                        user_id=sender_id,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+    if access_policy.group_policy == "allowlist":
+        sender_ids = access_policy.group_allow_from or access_policy.allow_from
+        for group_id in access_policy.groups:
+            for sender_id in sender_ids:
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=(
+                            f"{endpoint_id}:group:{group_id}:user:{sender_id}"
+                            if sender_id != "*"
+                            else f"{endpoint_id}:group:{group_id}:any"
+                        ),
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=None if group_id == "*" else group_id,
+                        user_id=None if sender_id == "*" else sender_id,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+    if access_policy.private_policy == "open" or access_policy.group_policy == "open":
+        rules.append(
+            _build_access_binding_rule(
+                binding_id=endpoint_id,
+                transport=transport,
+                profile_id=profile_id,
+                session_policy=session_policy,
+                priority=priority,
+                enabled=enabled,
+                account_id=account_id,
+                peer_id=None,
+                user_id=None,
+                prompt_overlay=prompt_overlay,
+            )
+        )
+    return tuple(rules)
+
+
+def _build_access_binding_rule(
+    *,
+    binding_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    peer_id: str | None,
+    user_id: str | None,
+    prompt_overlay: str | None,
+) -> ChannelBindingRule:
+    return ChannelBindingRule(
+        binding_id=binding_id,
+        transport=transport,
+        profile_id=profile_id,
+        session_policy=session_policy,
+        priority=priority,
+        enabled=enabled,
+        account_id=account_id,
+        peer_id=peer_id,
+        user_id=user_id,
+        prompt_overlay=prompt_overlay,
     )
 
 

@@ -88,6 +88,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "diffs_render",
         "bash_exec",
         "browser_control",
+        "channel_send",
         "debug_echo",
         "http_request",
         "web_search",

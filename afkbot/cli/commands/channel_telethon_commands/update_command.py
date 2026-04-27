@@ -38,6 +38,38 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
             "--reply-mode",
             help="Outbound reply mode: disabled, same_chat.",
         ),
+        private_policy: str | None = typer.Option(
+            None,
+            "--private-policy",
+            help="Private chat access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        allow_from: str | None = typer.Option(
+            None,
+            "--allow-from",
+            help="Comma-separated Telegram user ids allowed in private allowlist mode.",
+        ),
+        group_policy: str | None = typer.Option(
+            None,
+            "--group-policy",
+            help="Group access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        groups: str | None = typer.Option(
+            None,
+            "--groups",
+            help="Comma-separated Telegram group/supergroup ids allowed in group allowlist mode.",
+        ),
+        group_allow_from: str | None = typer.Option(
+            None,
+            "--group-allow-from",
+            help="Comma-separated Telegram user ids allowed to trigger the userbot in allowed groups.",
+        ),
+        outbound_allow_to: str | None = typer.Option(
+            None,
+            "--outbound-allow-to",
+            help="Comma-separated chat ids this endpoint may send outbound messages to.",
+        ),
         tool_profile: str | None = typer.Option(
             None,
             "--tool-profile",
@@ -241,6 +273,12 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
                 credential_profile_key=credential_profile_key,
                 account_id=account_id,
                 reply_mode=reply_mode,
+                private_policy=private_policy,
+                allow_from=allow_from,
+                group_policy=group_policy,
+                groups=groups,
+                group_allow_from=group_allow_from,
+                outbound_allow_to=outbound_allow_to,
                 tool_profile=tool_profile,
                 reply_blocked_chat_patterns=reply_blocked_chat_patterns,
                 reply_allowed_chat_patterns=reply_allowed_chat_patterns,
@@ -298,7 +336,7 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
             f"enabled={saved.enabled})."
         )
         if sync_binding:
-            typer.echo(f"Matching binding `{saved.endpoint_id}` was also updated.")
+            typer.echo(f"Matching bindings for `{saved.endpoint_id}` were also updated.")
         reload_legacy_managed_runtime_notice(settings)
 
 
