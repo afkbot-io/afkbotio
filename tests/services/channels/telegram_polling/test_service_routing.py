@@ -8,6 +8,7 @@ import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.endpoint_contracts import ChannelAccessPolicy
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
 from afkbot.services.channels.telegram_polling import TelegramPollingService
 from afkbot.settings import Settings
@@ -124,6 +125,62 @@ async def test_telegram_polling_all_messages_mode_processes_group_chat_without_m
     assert captured[0]["message"] == "hello everyone"
     assert len(delivery.calls) == 1
     assert delivery.calls[0]["text"] == "handled"
+
+
+async def test_telegram_polling_access_policy_drops_unlisted_private_sender(
+    tmp_path: Path,
+) -> None:
+    """Endpoint access policy should block unlisted DMs before routing into AgentLoop."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telegram_private_allowlist.db'}",
+    )
+    await seed_profile_and_binding(settings)
+    app_runtime = FakeAppRuntime(
+        updates=[
+            {
+                "update_id": 57,
+                "message": {
+                    "message_id": 9,
+                    "from": {"id": 67890, "is_bot": False},
+                    "chat": {"id": 67890, "type": "private"},
+                    "text": "run taskflow",
+                },
+            }
+        ]
+    )
+    delivery = FakeDeliveryService()
+    captured: list[dict[str, object]] = []
+
+    async def _fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        captured.append(dict(kwargs))
+        return TurnResult(
+            run_id=94,
+            profile_id=str(kwargs["profile_id"]),
+            session_id=str(kwargs["session_id"]),
+            envelope=ActionEnvelope(action="finalize", message="should not send"),
+        )
+
+    service = TelegramPollingService(
+        settings,
+        endpoint=endpoint(
+            access_policy=ChannelAccessPolicy(
+                private_policy="allowlist",
+                allow_from=("12345",),
+            )
+        ),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        app_runtime=app_runtime,
+        channel_delivery_service=delivery,  # type: ignore[arg-type]
+        run_chat_turn_fn=_fake_run_chat_turn,
+    )
+
+    processed = await service.poll_once()
+
+    assert processed == 1
+    assert captured == []
+    assert delivery.calls == []
 
 
 async def test_telegram_polling_strips_bot_mention_and_uses_thread_session(
