@@ -28,6 +28,7 @@ from afkbot.services.runtime_ports import (
     probe_runtime_stack,
     resolve_default_runtime_port,
 )
+from afkbot.services.error_logging import configure_error_file_logging, log_exception
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
@@ -155,6 +156,7 @@ def run_start_command(
     """Run the full AFKBOT stack with one shared CLI/runtime implementation."""
 
     resolved_settings = settings or get_settings()
+    configure_error_file_logging(settings=resolved_settings, component="runtime")
     try:
         _, resolved_taskflow_owner_ref = resolve_task_owner_inputs(
             field_prefix="owner",
@@ -253,7 +255,23 @@ def run_start_command(
             )
         )
     except RuntimeError as exc:
+        log_exception(
+            settings=resolved_settings,
+            component="runtime",
+            message="Runtime startup failed",
+            exc=exc,
+            context={"host": resolved_host, "runtime_port": resolved_runtime_port, "api_port": resolved_api_port},
+        )
         raise_usage_error(f"Runtime startup failed: {exc}")
+    except Exception as exc:
+        log_exception(
+            settings=resolved_settings,
+            component="runtime",
+            message="Unhandled runtime exception",
+            exc=exc,
+            context={"host": resolved_host, "runtime_port": resolved_runtime_port, "api_port": resolved_api_port},
+        )
+        raise
     except KeyboardInterrupt:
         typer.echo("\nShutting down...")
 

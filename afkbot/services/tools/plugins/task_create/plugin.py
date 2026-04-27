@@ -12,6 +12,7 @@ from afkbot.services.task_flow import (
     get_task_flow_service,
 )
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
+from afkbot.services.error_logging import log_exception
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
@@ -160,6 +161,18 @@ class TaskCreateTool(ToolBase):
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
+        except Exception as exc:
+            log_exception(
+                settings=self._settings,
+                component="taskflow",
+                message="Unhandled task.create tool exception",
+                exc=exc,
+                context={"profile_id": target_profile_id, "session_id": ctx.session_id},
+            )
+            return ToolResult.error(
+                error_code="task_create_failed",
+                reason="Task creation failed. Run `afk logs` to find the diagnostic log path.",
+            )
 
 
 def create_tool(settings: Settings) -> ToolBase:

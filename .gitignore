@@ -42,10 +42,13 @@ site/
 output/
 bin/
 target/
+docs/
 plans/
 docs_web/
 # Local-only release helper retained outside the public repo surface.
 scripts/release.sh
+/AGENTS.md
+/agents.md
 profiles/
 tmp/
 .ipynb_checkpoints/

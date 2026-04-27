@@ -16,6 +16,7 @@ from afkbot.services.task_flow import (
     TaskMaintenanceSweepMetadata,
     get_task_flow_service,
 )
+from afkbot.services.error_logging import log_exception
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.settings import get_settings
 
@@ -120,10 +121,11 @@ async def create_task_payload(
     """Create one task and return deterministic JSON payload."""
 
     settings = get_settings()
-    engine = create_engine(settings)
-    session_factory = create_session_factory(engine)
-    await create_schema(engine)
+    engine = None
     try:
+        engine = create_engine(settings)
+        session_factory = create_session_factory(engine)
+        await create_schema(engine)
         await _ensure_profile_exists(session_factory, profile_id)
         service = get_task_flow_service(settings)
         item = await service.create_task(
@@ -149,8 +151,21 @@ async def create_task_payload(
         return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
+    except Exception as exc:
+        log_exception(
+            settings=settings,
+            component="taskflow",
+            message="Unhandled task create CLI exception",
+            exc=exc,
+            context={"profile_id": profile_id},
+        )
+        return _error_json(
+            error_code="task_create_failed",
+            reason="Task creation failed. Run `afk logs` to find the diagnostic log path.",
+        )
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
 
 
 async def list_tasks_payload(

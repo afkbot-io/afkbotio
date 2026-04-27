@@ -2,8 +2,10 @@
 
 AFKBOT uses the `Sustainable Use License 1.0`.
 
-This means the repository is source-available and free to use, but it is not an
-OSI open-source license.
+This means the repository is source-available under a limited-use license. It
+allows personal, non-commercial, and internal business use, but it is not an OSI
+open-source license and it does not allow commercial redistribution or hosted
+productization of AFKBOT itself without separate written permission.
 
 ## Allowed
 
@@ -31,5 +33,8 @@ The AFKBOT source license does not grant trademark rights. See
 
 ## Commercial Rights
 
-If you need rights beyond the repository license, see
-[`COMMERCIAL_LICENSE.md`](COMMERCIAL_LICENSE.md).
+If you need rights beyond the repository license, contact the project maintainer
+through the official AFKBOT channels listed at [afkbot.io](https://afkbot.io).
+Paid consulting, integration, migration, customization, or support work around
+AFKBOT is generally allowed when you are not selling AFKBOT itself or selling
+access to AFKBOT as a product, hosted service, or white-label offering.
