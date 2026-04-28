@@ -801,7 +801,7 @@ def read_secret_file(path: Path, *, lang: PromptLanguage = PromptLanguage.EN) ->
             msg(
                 lang,
                 en=f"Credential file is empty: {path}",
-                ru=f"Файл с credential пустой: {path}",
+                ru=f"Файл с учётными данными пустой: {path}",
             )
         )
     return value
@@ -828,7 +828,7 @@ def resolve_credentials_master_keys(
             msg(
                 lang,
                 en="Generated an encryption key for stored credentials.",
-                ru="Сгенерирован ключ шифрования для сохранённых credentials.",
+                ru="Сгенерирован ключ шифрования для сохранённых учётных данных.",
             )
         )
     return generated

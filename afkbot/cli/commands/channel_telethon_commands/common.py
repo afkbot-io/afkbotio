@@ -11,6 +11,12 @@ from afkbot.services.channels.endpoint_contracts import (
 )
 
 TELETHON_REPLY_MODES = ("disabled", "same_chat")
+TELETHON_REPLY_MODE_LABEL_OVERRIDES = {
+    "disabled": (
+        "disabled - read incoming messages only, do not send replies",
+        "disabled - только читать входящие сообщения, не отправлять ответы",
+    ),
+}
 TELETHON_GROUP_INVOCATION_MODES = (
     "reply_or_command",
     "reply_only",
@@ -45,6 +51,7 @@ def split_csv_patterns(raw: str | None) -> tuple[str, ...]:
 
 __all__ = [
     "TELETHON_GROUP_INVOCATION_MODES",
+    "TELETHON_REPLY_MODE_LABEL_OVERRIDES",
     "TELETHON_REPLY_MODES",
     "normalize_telethon_group_invocation_mode",
     "normalize_telethon_reply_mode",

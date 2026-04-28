@@ -64,20 +64,20 @@ def resolve_channel_credential_action(
     return cast(
         ChannelCredentialAction,
         _select_labeled_option(
-        title=msg(lang, en=f"{app_label_en}: Credentials", ru=f"{app_label_ru}: Credentials"),
+        title=msg(lang, en=f"{app_label_en}: Credentials", ru=f"{app_label_ru}: Учётные данные"),
         text=msg(
             lang,
             en="Credentials for this channel already exist. Keep them or update them now?",
-            ru="Для этого канала credentials уже существуют. Оставить их или обновить сейчас?",
+            ru="Учётные данные для этого канала уже существуют. Оставить их или обновить сейчас?",
         ),
         options=(
             (
                 "keep",
-                msg(lang, en="Keep current credentials", ru="Оставить текущие credentials"),
+                msg(lang, en="Keep current credentials", ru="Оставить текущие учётные данные"),
             ),
             (
                 "update",
-                msg(lang, en="Update credentials now", ru="Обновить credentials сейчас"),
+                msg(lang, en="Update credentials now", ru="Обновить учётные данные сейчас"),
             ),
         ),
         default="keep",
@@ -116,7 +116,7 @@ def configure_telegram_channel_credentials(
         msg(
             lang,
             en=f"Credential profile key for this channel will be `{credential_profile_key}`.",
-            ru=f"Для этого канала будет использован credential profile `{credential_profile_key}`.",
+            ru=f"Для этого канала будет использован профиль учётных данных `{credential_profile_key}`.",
         )
     )
     typer.echo(
@@ -127,7 +127,7 @@ def configure_telegram_channel_credentials(
                 "Get the token from @BotFather (`/newbot` for a new bot or `/token` for an existing one)."
             ),
             ru=(
-                "Если credentials Telegram-бота ещё не настроены, этот мастер сохранит их сейчас. "
+                "Если учётные данные Telegram-бота ещё не настроены, этот мастер сохранит их сейчас. "
                 "Токен можно получить у @BotFather (`/newbot` для нового бота или `/token` для существующего)."
             ),
         )
@@ -135,26 +135,32 @@ def configure_telegram_channel_credentials(
     typer.echo(
         msg(
             lang,
-            en="Optional default chat id examples: private chat `123456789`, groups/channels often start with `-100...`.",
-            ru="Примеры необязательного chat id по умолчанию: личный чат `123456789`, у групп и каналов id часто начинается с `-100...`.",
+            en=(
+                "Optional default chat id examples: private chat `123456789`, groups/channels often start "
+                "with `-100...`. Leave it blank if this channel is only for inbound polling."
+            ),
+            ru=(
+                "Примеры необязательного chat id по умолчанию: личный чат `123456789`, у групп и каналов id "
+                "часто начинается с `-100...`. Оставьте пустым, если канал нужен только для входящих сообщений."
+            ),
         )
     )
     token = resolve_channel_secret(
         value=None,
         interactive=interactive,
         prompt_en="Telegram bot token",
-        prompt_ru="Telegram bot token",
+        prompt_ru="Токен Telegram-бота",
         lang=lang,
         existing_configured=_TELEGRAM_TOKEN in existing,
         required=True,
-        detail_en="Paste the BotFather token that this channel should use to poll and send messages.",
-        detail_ru="Вставьте BotFather token, который этот канал должен использовать для polling и отправки сообщений.",
+        detail_en="Paste the BotFather token that this channel should use to receive and send bot messages.",
+        detail_ru="Вставьте токен BotFather, который этот канал будет использовать для получения и отправки сообщений.",
     )
     default_chat_id = resolve_channel_secret(
         value=None,
         interactive=interactive,
         prompt_en="Default Telegram chat id",
-        prompt_ru="Default Telegram chat id",
+        prompt_ru="Telegram chat id по умолчанию",
         lang=lang,
         existing_configured=_TELEGRAM_CHAT_ID in existing,
         required=False,
@@ -218,7 +224,7 @@ def configure_telethon_channel_credentials(
         msg(
             lang,
             en=f"Credential profile key for this channel will be `{credential_profile_key}`.",
-            ru=f"Для этого канала будет использован credential profile `{credential_profile_key}`.",
+            ru=f"Для этого канала будет использован профиль учётных данных `{credential_profile_key}`.",
         )
     )
     typer.echo(
@@ -229,7 +235,7 @@ def configure_telethon_channel_credentials(
                 "Open my.telegram.org -> API development tools and copy the API id and API hash."
             ),
             ru=(
-                "Понадобятся Telegram API credentials для user-аккаунта. "
+                "Понадобятся Telegram API-учётные данные для user-аккаунта. "
                 "Откройте my.telegram.org -> API development tools и скопируйте API id и API hash."
             ),
         )

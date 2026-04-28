@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import typer
 
-from afkbot.cli.presentation.inline_select import confirm_space, select_option_dialog
+from afkbot.cli.presentation.inline_select import confirm_space, run_inline_single_select
 from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg
 from afkbot.cli.presentation.prompt_i18n import no_label, single_hint, yes_label
 
@@ -70,22 +72,24 @@ def resolve_channel_choice(
     lang: PromptLanguage,
     detail_en: str | None = None,
     detail_ru: str | None = None,
+    label_overrides: Mapping[str, tuple[str, str]] | None = None,
 ) -> str:
     """Resolve one normalized channel choice field."""
 
     if value is not None:
         resolved = value.strip().lower()
     elif interactive:
-        resolved = select_option_dialog(
+        resolved = _select_channel_option(
             title=msg(lang, en=prompt_en, ru=prompt_ru),
             text=msg(
                 lang,
                 en=detail_en or f"Select {prompt_en.lower()}.",
                 ru=detail_ru or f"Выберите значение для «{prompt_ru}».",
             ),
-            options=list(allowed),
+            allowed=allowed,
             default=default,
-            hint_text=single_hint(lang),
+            lang=lang,
+            label_overrides=label_overrides,
         ).strip().lower()
     else:
         resolved = default.strip().lower()
@@ -97,8 +101,127 @@ def resolve_channel_choice(
                 en=f"{prompt_en} must be one of: {allowed_text}",
                 ru=f"{prompt_ru} должен быть одним из: {allowed_text}",
             )
-        )
+    )
     return resolved
+
+
+def _select_channel_option(
+    *,
+    title: str,
+    text: str,
+    allowed: tuple[str, ...],
+    default: str,
+    lang: PromptLanguage,
+    label_overrides: Mapping[str, tuple[str, str]] | None = None,
+) -> str:
+    """Render a channel choice with human labels while returning the stable config value."""
+
+    selected = run_inline_single_select(
+        title=title,
+        text=text,
+        options=[
+            (
+                item,
+                _channel_choice_label(item, lang=lang, label_overrides=label_overrides),
+            )
+            for item in allowed
+        ],
+        default_value=default,
+        hint_text=single_hint(lang),
+    )
+    return str(selected).strip() if selected else default
+
+
+def _channel_choice_label(
+    value: str,
+    *,
+    lang: PromptLanguage,
+    label_overrides: Mapping[str, tuple[str, str]] | None = None,
+) -> str:
+    """Return beginner-friendly labels for stable channel config values."""
+
+    if label_overrides is not None and value in label_overrides:
+        override = label_overrides[value]
+        return override[1] if lang == PromptLanguage.RU else override[0]
+
+    labels: dict[str, tuple[str, str]] = {
+        "inherit": (
+            "inherit - use the profile's full tool ceiling for this channel",
+            "inherit - использовать полный потолок прав профиля в этом канале",
+        ),
+        "chat_minimal": (
+            "chat_minimal - replies only, no tools exposed to the channel",
+            "chat_minimal - только ответы, без инструментов в канале",
+        ),
+        "messaging_safe": (
+            "messaging_safe - replies, channel.send, and safe memory tools",
+            "messaging_safe - ответы, channel.send и безопасная работа с памятью",
+        ),
+        "support_readonly": (
+            "support_readonly - messaging_safe plus read-only file search/read",
+            "support_readonly - messaging_safe плюс чтение и поиск по файлам",
+        ),
+        "main": (
+            "main - one shared conversation for the whole binding",
+            "main - одна общая беседа для всей привязки",
+        ),
+        "per-chat": (
+            "per-chat - separate conversation for each Telegram chat",
+            "per-chat - отдельная беседа для каждого Telegram-чата",
+        ),
+        "per-thread": (
+            "per-thread - separate conversation for each group topic/thread",
+            "per-thread - отдельная беседа для каждой темы или треда группы",
+        ),
+        "per-user-in-group": (
+            "per-user-in-group - separate conversation per user inside groups",
+            "per-user-in-group - отдельная беседа для каждого пользователя в группе",
+        ),
+        "open": (
+            "open - allow this chat type unless another rule blocks it",
+            "open - разрешить этот тип чата, если другая проверка не блокирует",
+        ),
+        "allowlist": (
+            "allowlist - allow only the IDs you enter in the next question",
+            "allowlist - разрешить только ID, которые вы введёте дальше",
+        ),
+        "disabled": (
+            "disabled - reject this chat type completely",
+            "disabled - полностью запретить этот тип чата",
+        ),
+        "mention_or_reply": (
+            "mention_or_reply - trigger in groups on bot mentions or replies",
+            "mention_or_reply - в группах запускать по упоминанию бота или ответу на него",
+        ),
+        "reply_only": (
+            "reply_only - trigger only when someone replies to the bot/user account",
+            "reply_only - запускать только когда отвечают боту или user-аккаунту",
+        ),
+        "mention_only": (
+            "mention_only - trigger in groups only on bot mentions",
+            "mention_only - в группах запускать только по упоминанию бота",
+        ),
+        "all_messages": (
+            "all_messages - process every allowed group message",
+            "all_messages - обрабатывать каждое разрешённое сообщение в группе",
+        ),
+        "same_chat": (
+            "same_chat - send replies back to the same Telegram chat",
+            "same_chat - отправлять ответы обратно в тот же Telegram-чат",
+        ),
+        "reply_or_command": (
+            "reply_or_command - trigger on replies to the account or command prefix",
+            "reply_or_command - запускать по ответу аккаунту или по командному префиксу",
+        ),
+        "command_only": (
+            "command_only - trigger only on command-prefix messages",
+            "command_only - запускать только по сообщениям с командным префиксом",
+        ),
+    }
+    label = labels.get(value)
+    if label is None:
+        return value
+    return label[1] if lang == PromptLanguage.RU else label[0]
 
 
 def resolve_channel_bool(

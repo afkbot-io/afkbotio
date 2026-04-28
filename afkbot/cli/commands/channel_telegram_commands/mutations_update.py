@@ -133,6 +133,14 @@ def run_telegram_update(
                     default=current.group_trigger_mode,
                     allowed=TELEGRAM_GROUP_TRIGGER_MODES,
                     lang=prompt_language,
+                    detail_en=(
+                        "Choose which messages in groups may start an agent turn. This is checked after the "
+                        "group access policy, so allowlists still apply."
+                    ),
+                    detail_ru=(
+                        "Выберите, какие сообщения в группах могут запускать ход агента. Эта проверка выполняется "
+                        "после политики доступа к группам, поэтому allowlist всё равно действует."
+                    ),
                 )
             )
             if interactive
@@ -148,6 +156,14 @@ def run_telegram_update(
                     default=current.tool_profile,
                     allowed=CHANNEL_TOOL_PROFILE_VALUES,
                     lang=prompt_language,
+                    detail_en=(
+                        "Choose the tool set visible from this channel. This cannot grant more than the profile "
+                        "allows; it only narrows the profile ceiling."
+                    ),
+                    detail_ru=(
+                        "Выберите набор инструментов, видимый из этого канала. Это не может дать больше прав, "
+                        "чем разрешает профиль; настройка только сужает потолок профиля."
+                    ),
                 )
             )
             if interactive
@@ -162,6 +178,7 @@ def run_telegram_update(
             groups=groups,
             group_allow_from=group_allow_from,
             outbound_allow_to=outbound_allow_to,
+            tool_profile=resolved_tool_profile,
             private_policy_default=current.access_policy.private_policy,
             allow_from_default=current.access_policy.allow_from,
             group_policy_default=current.access_policy.group_policy,
@@ -173,10 +190,18 @@ def run_telegram_update(
             resolve_channel_bool(
                 value=None,
                 interactive=True,
-                prompt_en="Enable ingress batching?",
-                prompt_ru="Включить batching входящих сообщений?",
+                prompt_en="Merge message bursts before replying?",
+                prompt_ru="Объединять всплески сообщений перед ответом?",
                 default=current.ingress_batch.enabled,
                 lang=prompt_language,
+                detail_en=(
+                    "When enabled, AFKBOT waits briefly after new messages and sends one combined prompt "
+                    "to the agent."
+                ),
+                detail_ru=(
+                    "Если включить, AFKBOT коротко ждёт после новых сообщений и отправляет агенту один "
+                    "объединённый запрос."
+                ),
             )
             if interactive
             else (current.ingress_batch.enabled if ingress_batch_enabled is None else ingress_batch_enabled)
@@ -188,8 +213,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None,
                     interactive=True,
-                    prompt_en="Ingress debounce (ms)",
-                    prompt_ru="Ingress debounce (мс)",
+                    prompt_en="Quiet window before merge (ms)",
+                    prompt_ru="Окно тишины перед объединением (мс)",
                     default=current.ingress_batch.debounce_ms,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
@@ -200,8 +225,8 @@ def run_telegram_update(
                     resolve_channel_int(
                         value=ingress_debounce_ms,
                         interactive=False,
-                        prompt_en="Ingress debounce (ms)",
-                        prompt_ru="Ingress debounce (мс)",
+                        prompt_en="Quiet window before merge (ms)",
+                        prompt_ru="Окно тишины перед объединением (мс)",
                         default=current.ingress_batch.debounce_ms,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
@@ -215,8 +240,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None,
                     interactive=True,
-                    prompt_en="Ingress cooldown (sec)",
-                    prompt_ru="Ingress cooldown (сек)",
+                    prompt_en="Pause after each merged turn (sec)",
+                    prompt_ru="Пауза после каждого объединённого хода (сек)",
                     default=current.ingress_batch.cooldown_sec,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
@@ -227,8 +252,8 @@ def run_telegram_update(
                     resolve_channel_int(
                         value=ingress_cooldown_sec,
                         interactive=False,
-                        prompt_en="Ingress cooldown (sec)",
-                        prompt_ru="Ingress cooldown (сек)",
+                        prompt_en="Pause after each merged turn (sec)",
+                        prompt_ru="Пауза после каждого объединённого хода (сек)",
                         default=current.ingress_batch.cooldown_sec,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
@@ -242,8 +267,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None,
                     interactive=True,
-                    prompt_en="Ingress max batch size",
-                    prompt_ru="Максимальный размер ingress batch",
+                    prompt_en="Maximum messages per merged turn",
+                    prompt_ru="Максимум сообщений в одном объединённом ходе",
                     default=current.ingress_batch.max_batch_size,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
@@ -254,8 +279,8 @@ def run_telegram_update(
                     resolve_channel_int(
                         value=ingress_max_batch_size,
                         interactive=False,
-                        prompt_en="Ingress max batch size",
-                        prompt_ru="Максимальный размер ingress batch",
+                        prompt_en="Maximum messages per merged turn",
+                        prompt_ru="Максимум сообщений в одном объединённом ходе",
                         default=current.ingress_batch.max_batch_size,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
@@ -269,8 +294,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None,
                     interactive=True,
-                    prompt_en="Ingress max buffer chars",
-                    prompt_ru="Максимальный размер ingress buffer в символах",
+                    prompt_en="Maximum merged text size (chars)",
+                    prompt_ru="Максимальный размер объединённого текста (символы)",
                     default=current.ingress_batch.max_buffer_chars,
                     lang=prompt_language,
                     min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -281,8 +306,8 @@ def run_telegram_update(
                     resolve_channel_int(
                         value=ingress_max_buffer_chars,
                         interactive=False,
-                        prompt_en="Ingress max buffer chars",
-                        prompt_ru="Максимальный размер ingress buffer в символах",
+                        prompt_en="Maximum merged text size (chars)",
+                        prompt_ru="Максимальный размер объединённого текста (символы)",
                         default=current.ingress_batch.max_buffer_chars,
                         lang=prompt_language,
                         min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -297,10 +322,12 @@ def run_telegram_update(
             resolve_channel_bool(
                 value=None,
                 interactive=True,
-                prompt_en="Enable humanized replies?",
-                prompt_ru="Включить humanized replies?",
+                prompt_en="Make replies look more natural?",
+                prompt_ru="Делать ответы более похожими на живую переписку?",
                 default=current.reply_humanization.enabled,
                 lang=prompt_language,
+                detail_en="Show typing indicators and add small delays before replies.",
+                detail_ru="Показывать индикатор печати и добавлять небольшие задержки перед ответами.",
             )
             if interactive
             else (current.reply_humanization.enabled if humanize_replies is None else humanize_replies)
@@ -312,8 +339,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None if interactive else humanize_min_delay_ms,
                     interactive=interactive,
-                    prompt_en="Humanized min delay (ms)",
-                    prompt_ru="Минимальная задержка humanized replies (мс)",
+                    prompt_en="Minimum reply delay (ms)",
+                    prompt_ru="Минимальная задержка ответа (мс)",
                     default=current.reply_humanization.min_delay_ms,
                     lang=prompt_language,
                     min_value=CHANNEL_REPLY_HUMANIZATION_MIN_DELAY_MS_MIN,
@@ -326,8 +353,8 @@ def run_telegram_update(
                 resolve_channel_int(
                     value=None if interactive else humanize_max_delay_ms,
                     interactive=interactive,
-                    prompt_en="Humanized max delay (ms)",
-                    prompt_ru="Максимальная задержка humanized replies (мс)",
+                    prompt_en="Maximum reply delay (ms)",
+                    prompt_ru="Максимальная задержка ответа (мс)",
                     default=current.reply_humanization.max_delay_ms,
                     lang=prompt_language,
                     min_value=CHANNEL_REPLY_HUMANIZATION_MAX_DELAY_MS_MIN,
@@ -358,7 +385,7 @@ def run_telegram_update(
                 value=credential_profile_key,
                 interactive=False,
                 prompt_en="Credential profile",
-                prompt_ru="Credential profile",
+                prompt_ru="Профиль учётных данных",
                 default=current.credential_profile_key or current.endpoint_id,
                 lang=prompt_language,
                 normalize_lower=True,
@@ -367,7 +394,7 @@ def run_telegram_update(
                 value=account_id,
                 interactive=False,
                 prompt_en="Account id",
-                prompt_ru="Account id",
+                prompt_ru="ID аккаунта",
                 default=current.account_id,
                 lang=prompt_language,
                 normalize_lower=True,

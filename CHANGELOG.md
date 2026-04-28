@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-04-28
+
+### Changed
+
+- Channel, MCP, browser, setup, provider, and plugin wizards now use clearer bilingual copy with beginner-friendly option descriptions while still saving stable raw config values.
+- Telegram Bot API and Telethon channel setup now explains private 1:1 bots, group allowlists, routing bindings, session grouping, and safe channel tool-profile choices more directly.
+- The interactive channel wizard now surfaces outbound `channel.send` target restrictions for profiles that expose outbound channel messaging.
+
+### Fixed
+
+- Telethon reply mode `disabled` is now described as read-only/no-reply mode instead of being confused with access-policy `disabled`.
+- Package update checks no longer offer an update from the current version to the same version when a stale saved installer target is present.
+- Release metadata and lockfile package metadata are aligned to `1.5.1`.
+
 ## [1.5.0] - 2026-04-27
 
 ### Added

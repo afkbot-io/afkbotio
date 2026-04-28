@@ -27,11 +27,17 @@ def prompt_browser_backend(
     choices = browser_backend_choices()
     default_backend = default if default in choices else choices[0]
     selected = run_inline_single_select(
-        title=msg(lang, en="Browser: Runtime backend", ru="Браузер: Runtime backend"),
+        title=msg(lang, en="Browser: Runtime backend", ru="Браузер: Способ запуска"),
         text=msg(
             lang,
-            en="Select the browser runtime backend used by browser.control.",
-            ru="Выберите браузерный backend, который использует browser.control.",
+            en=(
+                "Select how `browser.control` will drive a browser. Use local Chromium for easiest setup; "
+                "use CDP when a server or container already exposes a browser endpoint."
+            ),
+            ru=(
+                "Выберите, как `browser.control` будет управлять браузером. Локальный Chromium проще для "
+                "локальной настройки; CDP подходит, если сервер или контейнер уже предоставляет адрес подключения."
+            ),
         ),
         options=[
             (
@@ -53,7 +59,7 @@ def prompt_browser_backend(
                 msg(
                     lang,
                     en=f"Browser backend ({options})",
-                    ru=f"Браузерный backend ({options})",
+                    ru=f"Способ запуска браузера ({options})",
                 ),
                 default=default_backend,
             )
@@ -64,7 +70,7 @@ def prompt_browser_backend(
             msg(
                 lang,
                 en=f"Invalid browser backend: choose one of {options}.",
-                ru=f"Некорректный backend браузера: выберите один из {options}.",
+                ru=f"Некорректный способ запуска браузера: выберите один из {options}.",
             )
         )
 
@@ -82,7 +88,7 @@ def prompt_browser_cdp_url(
     while True:
         value = str(
             typer.prompt(
-                msg(lang, en="Browser CDP URL", ru="Browser CDP URL"),
+                msg(lang, en="Browser CDP URL", ru="URL подключения к браузеру (CDP)"),
                 default=suggested,
             )
         ).strip()
@@ -92,7 +98,7 @@ def prompt_browser_cdp_url(
             msg(
                 lang,
                 en="Browser CDP URL cannot be empty.",
-                ru="Browser CDP URL не может быть пустым.",
+                ru="URL подключения к браузеру (CDP) не может быть пустым.",
             )
         )
 
@@ -104,7 +110,7 @@ def _backend_summary(backend: BrowserBackendId, *, lang: PromptLanguage) -> str:
         return msg(
             lang,
             en="best for headless servers, connects to an external CDP browser",
-            ru="лучше для headless серверов, подключается к внешнему CDP-браузеру",
+            ru="лучше для серверов без GUI, подключается к внешнему CDP-браузеру",
         )
     return msg(
         lang,

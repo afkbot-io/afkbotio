@@ -127,7 +127,7 @@ def render_setup_success(
             msg(
                 prompt_language,
                 en=f"Public runtime URL: {public_runtime_url}",
-                ru=f"Публичный runtime URL: {public_runtime_url}",
+                ru=f"Публичный URL службы AFKBOT: {public_runtime_url}",
             )
         )
     if isinstance(public_chat_api_url, str) and public_chat_api_url.strip():
@@ -135,7 +135,7 @@ def render_setup_success(
             msg(
                 prompt_language,
                 en=f"Public chat/api URL: {public_chat_api_url}",
-                ru=f"Публичный chat/api URL: {public_chat_api_url}",
+                ru=f"Публичный URL чата/API: {public_chat_api_url}",
             )
         )
         echo(
@@ -150,7 +150,7 @@ def render_setup_success(
             msg(
                 prompt_language,
                 en=f"Nginx config: {nginx_config_path}",
-                ru=f"Конфиг nginx: {nginx_config_path}",
+                ru=f"Конфигурация nginx: {nginx_config_path}",
             )
         )
 

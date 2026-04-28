@@ -412,7 +412,7 @@ def test_channel_telegram_add_uses_russian_locale_for_intro(
     )
 
     assert result.exit_code == 0
-    assert "Настройка Telegram Bot API канала" in result.stdout
+    assert "Настройка канала Telegram Bot API" in result.stdout
     assert "Нажмите Enter, чтобы принять `telegram-" in result.stdout
 
 
@@ -452,7 +452,7 @@ def test_channel_telegram_add_prefers_project_prompt_language_over_system_locale
     )
 
     assert result.exit_code == 0
-    assert "Настройка Telegram Bot API канала" in result.stdout
+    assert "Настройка канала Telegram Bot API" in result.stdout
 
 def test_channel_telegram_add_rejects_ingress_values_below_contract_bounds(
     tmp_path: Path,
@@ -500,4 +500,4 @@ def test_channel_telegram_add_rejects_ingress_values_below_contract_bounds(
 
     assert result.exit_code != 0
     combined = result.stdout + result.stderr
-    assert "Ingress debounce (ms) must be >= 100" in combined
+    assert "Quiet window before merge (ms) must be >= 100" in combined
