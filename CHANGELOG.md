@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-04-28
+
+### Fixed
+
+- Task Flow runtime schema upkeep now migrates legacy `task.prompt` data into canonical `task.description` rows before hot-path runtime indexes are applied.
+- Legacy task migrations now preserve an existing non-empty `description` when both `description` and `prompt` columns are present, falling back to `prompt` only for blank descriptions.
+- Release metadata and lockfile package metadata are aligned to `1.5.2`.
+
 ## [1.5.1] - 2026-04-28
 
 ### Changed
