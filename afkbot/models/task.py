@@ -17,6 +17,7 @@ class Task(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_task_profile_status", "profile_id", "status"),
         Index("ix_task_profile_owner_status", "profile_id", "owner_type", "owner_ref", "status"),
+        Index("ix_task_profile_claim_owner_status", "profile_id", "claim_owner_type", "claim_owner_ref", "status"),
         Index("ix_task_profile_flow", "profile_id", "flow_id"),
         Index("ix_task_due_at", "due_at"),
         Index("ix_task_lease_until", "lease_until"),
@@ -28,6 +29,16 @@ class Task(Base, TimestampMixin):
             unique=True,
             postgresql_where=text(
                 "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+            ),
+        ).ddl_if(dialect="postgresql"),
+        Index(
+            "ux_task_active_ai_claim_owner",
+            "profile_id",
+            "claim_owner_type",
+            "claim_owner_ref",
+            unique=True,
+            postgresql_where=text(
+                "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
             ),
         ).ddl_if(dialect="postgresql"),
     )
@@ -58,6 +69,9 @@ class Task(Base, TimestampMixin):
     blocked_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     blocked_reason_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    claim_owner_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    claim_owner_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    claim_source_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)

@@ -666,6 +666,55 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         await engine.dispose()
 
 
+async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_owner(tmp_path: Path) -> None:
+    """Review claim fallback should treat empty reviewer fields like missing reviewer fields."""
+
+    db_name = "task_flow_review_blank_reviewer_claim.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="default",
+        subagent_name="researcher",
+        markdown="# Researcher\nHandle owner fallback review claims.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Owner fallback AI review claim",
+            description="A review task with blank reviewer fields should still be claimable by the AI owner.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="default:researcher",
+            reviewer_type="",
+            reviewer_ref="",
+        )
+        await service.update_task(profile_id="default", task_id=task.id, status="review")
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claim_now = datetime.now(timezone.utc)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-review-owner-fallback",
+                claimed_by="taskflow-runtime:reviewer",
+            )
+
+        assert claimed is not None
+        assert claimed.id == task.id
+        assert claimed.claim_owner_type == "ai_subagent"
+        assert claimed.claim_owner_ref == "default:researcher"
+        assert claimed.claim_source_status == "review"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dependents(
     tmp_path: Path,
 ) -> None:
@@ -812,13 +861,26 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
             task_id=changes_task.id,
             actor_type="subagent",
             actor_ref="papercliper:reviewer",
-            owner_type="subagent",
-            owner_ref="papercliper:reviewer",
             reason_text="Route this back to the reviewer specialist.",
         )
         assert changed.status == "blocked"
         assert changed.owner_type == "ai_subagent"
         assert changed.owner_ref == "papercliper:reviewer"
+        assert changed.ready_at is not None
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claim_now = datetime.now(timezone.utc)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-review-changes",
+                claimed_by="taskflow-runtime:reviewer",
+            )
+        assert claimed is not None
+        assert claimed.id == changes_task.id
+        assert claimed.claim_owner_type == "ai_subagent"
+        assert claimed.claim_owner_ref == "papercliper:reviewer"
     finally:
         await engine.dispose()
 

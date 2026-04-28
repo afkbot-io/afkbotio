@@ -67,6 +67,9 @@ class ClaimedTaskExecution:
     attachments: tuple[TaskMessageAttachment, ...]
     owner_type: str
     owner_ref: str
+    executor_type: str
+    executor_ref: str
+    source_status: str
     source_type: str
     source_ref: str | None
     priority: int
@@ -176,7 +179,8 @@ class TaskFlowRuntimeService:
                     task_id=row.id,
                     claim_token=claim_token,
                     now_utc=now_utc,
-                    ready_at=now_utc,
+                    ready_at=None if _claim_release_status(row) == "review" else now_utc,
+                    status=_claim_release_status(row),
                     error_code=_LEASE_EXPIRED_ERROR_CODE,
                     error_text=_LEASE_EXPIRED_ERROR_TEXT,
                 )
@@ -379,11 +383,14 @@ class TaskFlowRuntimeService:
                     session_id = task_session_id(task_id=row.id)
                     next_attempt = row.current_attempt + 1
                     execution_profile_id = _resolve_execution_profile_id(row)
+                    executor_type = str(row.claim_owner_type or row.owner_type or "").strip()
+                    executor_ref = str(row.claim_owner_ref or row.owner_ref or "").strip()
+                    source_status = str(row.claim_source_status or row.status or "").strip()
                     task_run = await repo.create_task_run(
                         task_id=row.id,
                         attempt=next_attempt,
-                        owner_type=row.owner_type,
-                        owner_ref=row.owner_ref,
+                        owner_type=executor_type,
+                        owner_ref=executor_ref,
                         execution_mode="detached",
                         status="claimed",
                         session_id=session_id,
@@ -421,6 +428,9 @@ class TaskFlowRuntimeService:
                         ),
                         owner_type=row.owner_type,
                         owner_ref=row.owner_ref,
+                        executor_type=executor_type,
+                        executor_ref=executor_ref,
+                        source_status=source_status,
                         source_type=row.source_type,
                         source_ref=row.source_ref,
                         priority=row.priority,
@@ -507,6 +517,9 @@ class TaskFlowRuntimeService:
             task_profile_id=claimed.task_profile_id,
             owner_type=claimed.owner_type,
             owner_ref=claimed.owner_ref,
+            executor_type=claimed.executor_type,
+            executor_ref=claimed.executor_ref,
+            source_status=claimed.source_status,
             flow_id=claimed.flow_id,
             source_type=claimed.source_type,
             source_ref=claimed.source_ref,
@@ -515,9 +528,9 @@ class TaskFlowRuntimeService:
             requires_review=claimed.requires_review,
             labels=claimed.labels,
         )
-        if claimed.owner_type != AI_SUBAGENT_OWNER_TYPE:
+        if claimed.executor_type != AI_SUBAGENT_OWNER_TYPE:
             return runtime_target
-        parsed = parse_ai_subagent_owner_ref(claimed.owner_ref)
+        parsed = parse_ai_subagent_owner_ref(claimed.executor_ref)
         if parsed is None:
             raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
         host_profile_id, subagent_name = parsed
@@ -549,9 +562,9 @@ class TaskFlowRuntimeService:
     ) -> SessionTurnRunner:
         if self._session_runner_factory_override is not None:
             return self._session_runner_factory_override(session_factory, claimed.execution_profile_id)
-        if claimed.owner_type != AI_SUBAGENT_OWNER_TYPE:
+        if claimed.executor_type != AI_SUBAGENT_OWNER_TYPE:
             return self._session_runner_factory(session_factory, claimed.execution_profile_id)
-        parsed = parse_ai_subagent_owner_ref(claimed.owner_ref)
+        parsed = parse_ai_subagent_owner_ref(claimed.executor_ref)
         if parsed is None:
             raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
         _host_profile_id, subagent_name = parsed
@@ -697,10 +710,12 @@ class TaskFlowRuntimeService:
         finished_at = datetime.now(timezone.utc)
         async with session_scope(session_factory) as session:
             repo = TaskFlowRepository(session)
+            release_status = _claim_release_status(claimed)
             await repo.release_task_claim(
                 task_id=claimed.task_id,
                 claim_token=claimed.claim_token,
-                ready_at=finished_at,
+                ready_at=None if release_status == "review" else finished_at,
+                status=release_status,
                 error_code=error_code,
                 error_text=error_text,
             )
@@ -866,6 +881,13 @@ class TaskFlowRuntimeService:
                 run_id=result.run_id,
             )
 
+        if claimed.source_status == "review":
+            return TaskExecutionOutcome(
+                status="review",
+                summary=_trim_text(envelope.message, limit=4000),
+                run_id=result.run_id,
+            )
+
         return TaskExecutionOutcome(
             status="review" if claimed.requires_review else "completed",
             summary=_trim_text(envelope.message, limit=4000),
@@ -990,8 +1012,8 @@ def _default_session_runner_factory(
 
 def _resolve_execution_profile_id(row: object) -> str:
     return resolve_ai_executor_profile_id(
-        owner_type=str(getattr(row, "owner_type", "") or "").strip().lower(),
-        owner_ref=str(getattr(row, "owner_ref", "") or "").strip(),
+        owner_type=str(getattr(row, "claim_owner_type", None) or getattr(row, "owner_type", "") or "").strip().lower(),
+        owner_ref=str(getattr(row, "claim_owner_ref", None) or getattr(row, "owner_ref", "") or "").strip(),
         task_profile_id=str(getattr(row, "profile_id", "") or "").strip(),
     )
 
@@ -1156,9 +1178,9 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         )
         if part is not None
     ).lower()
-    return "ux_task_active_ai_owner" in message or (
+    return "ux_task_active_ai_owner" in message or "ux_task_active_ai_claim_owner" in message or (
         ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
-        and "owner_ref" in message
+        and ("owner_ref" in message or "claim_owner_ref" in message)
         and "profile_id" in message
     )
 
@@ -1194,6 +1216,14 @@ def _runtime_profile_id(settings: Settings) -> str | None:
 
 def _runtime_owner_ref(settings: Settings) -> str | None:
     return settings.taskflow_runtime_owner_ref
+
+
+def _claim_release_status(row: object) -> str:
+    source_status = str(getattr(row, "source_status", None) or getattr(row, "claim_source_status", "") or "").strip()
+    if source_status == "review":
+        return "review"
+    return "todo"
+
 
 def _runtime_fallback_comment_type(status: str) -> str:
     if status == "review":
