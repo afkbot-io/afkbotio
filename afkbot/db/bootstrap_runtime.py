@@ -115,6 +115,7 @@ def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> No
 def _upgrade_task_runtime_schema(conn: Connection) -> None:
     """Apply only Task Flow runtime upkeep needed on execution hot paths."""
 
+    _ensure_task_description_column(conn)
     _ensure_task_runtime_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
