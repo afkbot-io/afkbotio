@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
+from afkbot.services.task_flow.ai_executors import normalize_task_owner_type
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -47,7 +48,7 @@ class TaskReviewRequestChangesTool(ToolBase):
             else TaskReviewRequestChangesParams.model_validate(params)
         )
         actor = resolve_task_tool_actor(ctx)
-        explicit_actor_type = str(payload.actor_type or "").strip() or None
+        explicit_actor_type = normalize_task_owner_type(payload.actor_type)
         explicit_actor_ref = str(payload.actor_ref or "").strip() or None
         if (explicit_actor_type is not None or explicit_actor_ref is not None) and (
             explicit_actor_type != actor.actor_type or explicit_actor_ref != actor.actor_ref

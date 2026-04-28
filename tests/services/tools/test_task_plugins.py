@@ -3039,6 +3039,111 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
         await engine.dispose()
 
 
+async def test_task_review_tools_accept_subagent_actor_alias_for_current_runtime(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Review action tools should treat actor_type=subagent as the current ai_subagent actor."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        factory = create_session_factory(engine)
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_profile_subagent(
+            settings=settings,
+            profile_id="papercliper",
+            subagent_name="reviewer",
+            markdown="# Reviewer\nReview-only subagent.",
+        )
+        service = get_task_flow_service(settings)
+        approval_task = await service.create_task(
+            profile_id="default",
+            title="Approve as subagent alias",
+            description="Approve this task from the detached reviewer runtime.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_subagent",
+            reviewer_ref="papercliper:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=approval_task.id, status="review")
+        changes_task = await service.create_task(
+            profile_id="default",
+            title="Request changes as subagent alias",
+            description="Request changes from the detached reviewer runtime.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="papercliper:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=changes_task.id, status="review")
+
+        runtime_context = {
+            "taskflow_detached_runtime": {
+                "owner_type": "ai_subagent",
+                "owner_ref": "papercliper:reviewer",
+            },
+        }
+        ctx = ToolContext(
+            profile_id="papercliper",
+            session_id="taskflow:reviewer-alias",
+            run_id=6,
+            runtime_metadata={
+                "taskflow": {
+                    "task_id": approval_task.id,
+                    "task_profile_id": "default",
+                },
+            },
+            trusted_runtime_context=runtime_context,
+        )
+        review_approve_tool = registry.get("task.review.approve")
+        review_request_changes_tool = registry.get("task.review.request_changes")
+        assert review_approve_tool is not None
+        assert review_request_changes_tool is not None
+
+        approve_result = await review_approve_tool.execute(
+            ctx,
+            review_approve_tool.parse_params(
+                {
+                    "task_id": approval_task.id,
+                    "actor_type": "subagent",
+                    "actor_ref": "papercliper:reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert approve_result.ok is True
+        assert approve_result.payload["task"]["status"] == "completed"
+
+        request_changes_result = await review_request_changes_tool.execute(
+            ctx,
+            review_request_changes_tool.parse_params(
+                {
+                    "task_id": changes_task.id,
+                    "actor_type": "subagent",
+                    "actor_ref": "papercliper:reviewer",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                    "reason_text": "Add the missing details.",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert request_changes_result.ok is True
+        changed_task = request_changes_result.payload["task"]
+        assert changed_task["status"] == "blocked"
+        assert changed_task["owner_type"] == "ai_profile"
+        assert changed_task["owner_ref"] == "default"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_review_list_supports_structured_ai_subagent_actor(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

@@ -748,6 +748,81 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         await engine.dispose()
 
 
+async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_path: Path) -> None:
+    """Review inbox, approval, and changes should accept public actor_type=subagent."""
+
+    db_name = "task_flow_review_subagent_actor_alias.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="papercliper",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nReview specialist.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "papercliper"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        approval_task = await service.create_task(
+            profile_id="default",
+            title="Subagent review approval",
+            description="Approve this through the public subagent alias.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_subagent",
+            reviewer_ref="papercliper:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=approval_task.id, status="review")
+
+        inbox = await service.list_review_tasks(
+            profile_id="default",
+            actor_type="subagent",
+            actor_ref="papercliper:reviewer",
+        )
+        assert [item.id for item in inbox] == [approval_task.id]
+
+        approved = await service.approve_review_task(
+            profile_id="default",
+            task_id=approval_task.id,
+            actor_type="subagent",
+            actor_ref="papercliper:reviewer",
+        )
+        assert approved.status == "completed"
+
+        changes_task = await service.create_task(
+            profile_id="default",
+            title="Subagent review changes",
+            description="Request changes through the public subagent alias.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="papercliper:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=changes_task.id, status="review")
+
+        changed = await service.request_review_changes(
+            profile_id="default",
+            task_id=changes_task.id,
+            actor_type="subagent",
+            actor_ref="papercliper:reviewer",
+            owner_type="subagent",
+            owner_ref="papercliper:reviewer",
+            reason_text="Route this back to the reviewer specialist.",
+        )
+        assert changed.status == "blocked"
+        assert changed.owner_type == "ai_subagent"
+        assert changed.owner_ref == "papercliper:reviewer"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_request_review_changes_respects_team_roster(
     tmp_path: Path,
 ) -> None:

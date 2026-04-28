@@ -1086,7 +1086,7 @@ class TaskFlowService:
     ) -> list[TaskMetadata]:
         """List review-queue tasks for one reviewer/actor inbox."""
 
-        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_type = normalize_task_owner_type(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         _validate_actor_pair(
             actor_type=normalized_actor_type,
@@ -1141,7 +1141,7 @@ class TaskFlowService:
     ) -> TaskMetadata:
         """Approve one review task and transition it into completed."""
 
-        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_type = normalize_task_owner_type(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
@@ -1234,7 +1234,7 @@ class TaskFlowService:
 
         normalized_reason_text = _normalize_required_text(reason_text, field_name="reason_text")
         normalized_reason_code = _normalize_required_text(reason_code, field_name="reason_code")
-        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_type = normalize_task_owner_type(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
