@@ -7,6 +7,7 @@ from afkbot.services.task_flow.ai_executors import (
     AI_PROFILE_OWNER_TYPE,
     AI_SUBAGENT_OWNER_TYPE,
     build_ai_subagent_owner_ref,
+    normalize_task_owner_type,
     parse_ai_subagent_owner_ref,
 )
 
@@ -35,7 +36,7 @@ def resolve_task_owner_inputs(
     - `<field>_profile_id` plus `<field>_subagent_name` for one `ai_subagent` target.
     """
 
-    normalized_type = _normalize_optional_text(owner_type)
+    normalized_type = normalize_task_owner_type(owner_type)
     normalized_ref = _normalize_optional_text(owner_ref)
     normalized_profile_id = _normalize_optional_text(owner_profile_id)
     normalized_subagent_name = _normalize_optional_text(owner_subagent_name)

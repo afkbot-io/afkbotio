@@ -7,13 +7,25 @@ from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_i
 
 AI_PROFILE_OWNER_TYPE = "ai_profile"
 AI_SUBAGENT_OWNER_TYPE = "ai_subagent"
+AI_SUBAGENT_OWNER_TYPE_ALIAS = "subagent"
 AI_EXECUTOR_OWNER_TYPES = frozenset((AI_PROFILE_OWNER_TYPE, AI_SUBAGENT_OWNER_TYPE))
+
+
+def normalize_task_owner_type(owner_type: str | None) -> str | None:
+    """Normalize public owner type aliases to the canonical persisted values."""
+
+    normalized = str(owner_type or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized == AI_SUBAGENT_OWNER_TYPE_ALIAS:
+        return AI_SUBAGENT_OWNER_TYPE
+    return normalized
 
 
 def is_ai_executor_owner_type(owner_type: str | None) -> bool:
     """Return whether one owner/actor type executes work through the detached AI runtime."""
 
-    normalized = str(owner_type or "").strip().lower()
+    normalized = normalize_task_owner_type(owner_type)
     return normalized in AI_EXECUTOR_OWNER_TYPES
 
 
@@ -50,7 +62,7 @@ def resolve_ai_executor_profile_id(
 ) -> str:
     """Resolve the profile that should host execution for one AI executor owner."""
 
-    normalized_owner_type = str(owner_type or "").strip().lower()
+    normalized_owner_type = normalize_task_owner_type(owner_type)
     normalized_owner_ref = str(owner_ref or "").strip()
     if normalized_owner_type == AI_PROFILE_OWNER_TYPE and normalized_owner_ref:
         return normalized_owner_ref
