@@ -44,7 +44,7 @@ def prompt_plugin_install_source(
             msg(
                 lang,
                 en="Custom GitHub URL or github:owner/repo@ref",
-                ru="Своя ссылка GitHub или github:owner/repo@ref",
+                ru="Свой GitHub URL или github:owner/repo@ref",
             ),
         )
     )
@@ -79,8 +79,14 @@ def prompt_update_notices_enabled(
     return confirm_space(
         question=msg(
             lang,
-            en="Prompt to install AFKBOT updates when `afk chat` starts and a new update is available?",
-            ru="Предлагать установить обновление AFKBOT при старте `afk chat`, когда доступна новая версия?",
+            en=(
+                "When `afk chat` starts and AFKBOT sees a newer version, ask whether to install it before "
+                "opening the chat?"
+            ),
+            ru=(
+                "Когда `afk chat` стартует и AFKBOT видит новую версию, спрашивать, установить ли её "
+                "перед открытием чата?"
+            ),
         ),
         default=default,
         title=msg(lang, en="Setup: Update prompts", ru="Настройка: Подсказки об обновлениях"),
@@ -124,12 +130,14 @@ def _plugin_install_prompt_text(
         en=(
             f"Installed plugins: {installed_count} ({installed_summary or 'none'}).\n\n"
             "Choose one plugin to install. The list shows known plugins that are not "
-            "installed yet, plus a custom GitHub source option."
+            "installed yet, plus a custom GitHub source option. Plugins can add skills, commands, "
+            "or integrations to the local profile environment."
         ),
         ru=(
             f"Уже установлено плагинов: {installed_count} ({installed_summary or 'нет'}).\n\n"
             "Выберите плагин для установки. В списке показаны известные плагины, "
-            "которые ещё не установлены, и отдельный пункт для собственного GitHub-источника."
+            "которые ещё не установлены, и отдельный пункт для собственного GitHub-источника. "
+            "Плагины могут добавлять навыки, команды или интеграции в локальное окружение профиля."
         ),
     )
 

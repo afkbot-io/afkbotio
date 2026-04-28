@@ -449,7 +449,7 @@ def collect_setup_config(
         runtime_host_resolved = resolve_text(
             value=runtime_host,
             interactive=interactive,
-            prompt=msg(lang, en="Runtime host", ru="Хост runtime"),
+            prompt=msg(lang, en="Runtime host", ru="Адрес локальной службы AFKBOT"),
             default=defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host),
             lang=lang,
         )
@@ -462,7 +462,7 @@ def collect_setup_config(
         runtime_port_resolved = resolve_port(
             value=runtime_port,
             interactive=interactive,
-            prompt=msg(lang, en="Runtime port", ru="Порт runtime"),
+            prompt=msg(lang, en="Runtime port", ru="Порт локальной службы AFKBOT"),
             default=runtime_port_default,
             lang=lang,
         )

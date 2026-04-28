@@ -486,7 +486,7 @@ def test_channel_telegram_ingress_cli_validation_matches_endpoint_bounds(
     )
 
     assert add_result.exit_code == 2
-    assert "Ingress debounce (ms) must be >= 100" in add_result.stderr
+    assert "Quiet window before merge (ms) must be >= 100" in add_result.stderr
 
     created = runner.invoke(
         app,
@@ -517,7 +517,7 @@ def test_channel_telegram_ingress_cli_validation_matches_endpoint_bounds(
     )
 
     assert update_result.exit_code == 2
-    assert "Ingress max buffer chars must be >= 256" in update_result.stderr
+    assert "Maximum merged text size (chars) must be >= 256" in update_result.stderr
 
 def test_channel_telegram_humanization_update_validates_scripted_values(
     tmp_path: Path,

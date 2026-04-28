@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.cli.presentation import browser_prompts
+from afkbot.cli.presentation.browser_prompts import prompt_browser_backend, prompt_browser_cdp_url
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.services.browser_runtime import BrowserRuntimeInstallResult, BrowserRuntimeStatus
 from afkbot.services.lightpanda_runtime import LightpandaManagedStatus, LightpandaRunResult
 from afkbot.settings import get_settings
@@ -65,6 +69,51 @@ def test_browser_install_json_success(monkeypatch) -> None:  # type: ignore[no-u
     assert payload["ok"] is True
     assert payload["package_installed"] is True
     assert payload["browser_installed"] is True
+
+
+def test_browser_cdp_prompt_uses_plain_russian_label(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Russian browser wizard copy should explain CDP URL without raw English heading."""
+
+    prompts: list[str] = []
+    monkeypatch.setattr(browser_prompts.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(browser_prompts.sys, "stdout", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(
+        browser_prompts.typer,
+        "prompt",
+        lambda prompt, **kwargs: prompts.append(prompt) or kwargs["default"],
+    )
+
+    assert (
+        prompt_browser_cdp_url(
+            default="http://127.0.0.1:9222",
+            lang=PromptLanguage.RU,
+        )
+        == "http://127.0.0.1:9222"
+    )
+    assert prompts == ["URL подключения к браузеру (CDP)"]
+
+
+def test_browser_backend_prompt_uses_plain_russian_description(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Russian browser backend wizard copy should avoid mixed raw English phrases."""
+
+    captured: dict[str, object] = {}
+
+    def _fake_select(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return str(kwargs["default_value"])
+
+    monkeypatch.setattr(browser_prompts, "run_inline_single_select", _fake_select)
+
+    assert (
+        prompt_browser_backend(
+            default="playwright_chromium",
+            lang=PromptLanguage.RU,
+        )
+        == "playwright_chromium"
+    )
+    assert "Локальный Chromium" in str(captured["text"])
+    assert "Local Chromium" not in str(captured["text"])
+    assert "browser endpoint" not in str(captured["text"])
 
 
 def test_browser_install_cancelled_before_changes(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -109,7 +109,7 @@ def register(app: typer.Typer) -> None:
                 title=msg(
                     lang,
                     en="Browser: Install runtime",
-                    ru="Браузер: Установка runtime",
+                    ru="Браузер: Установка среды",
                 ),
                 default=False,
                 lang=lang,
@@ -119,8 +119,8 @@ def register(app: typer.Typer) -> None:
                     msg(
                         lang,
                         en="Browser install cancelled.",
-                        ru="Установка браузерного runtime отменена.",
-                )
+                        ru="Установка браузерной среды отменена.",
+                    )
                 )
                 raise typer.Exit(code=0)
 

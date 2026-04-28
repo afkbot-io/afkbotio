@@ -40,24 +40,30 @@ def prompt_policy_setup_mode(
         title=msg(lang, en="Setup: Security setup", ru="Настройка: Безопасность"),
         text=msg(
             lang,
-            en="Choose the quick recommended safety setup or review permissions yourself.",
-            ru="Выберите быстрый рекомендуемый вариант безопасности или настройте права вручную.",
+            en=(
+                "Choose whether AFKBOT should apply safe defaults now or walk you through every permission. "
+                "You can still edit the profile later."
+            ),
+            ru=(
+                "Выберите: применить безопасные настройки сразу или пройти каждое разрешение вручную. "
+                "Профиль можно изменить позже."
+            ),
         ),
         options=[
             (
                 "recommended",
                 msg(
                     lang,
-                    en="Recommended: safe defaults",
-                    ru="Рекомендуется: безопасные настройки",
+                    en="Recommended - safe defaults, fastest setup",
+                    ru="Рекомендуется - безопасные настройки, самый быстрый путь",
                 ),
             ),
             (
                 "custom",
                 msg(
                     lang,
-                    en="Custom: review each permission",
-                    ru="Вручную: проверить каждое право",
+                    en="Custom - review each permission",
+                    ru="Вручную - проверить каждое разрешение",
                 ),
             ),
         ],
@@ -72,8 +78,14 @@ def prompt_policy_enabled(*, default: bool, lang: PromptLanguage = PromptLanguag
     return confirm_space(
         question=msg(
             lang,
-            en="Enable safety limits now? Recommended.",
-            ru="Включить ограничения безопасности сейчас? Рекомендуется.",
+            en=(
+                "Enable safety limits for this profile? Recommended. Without them, the profile policy will not "
+                "block risky tool categories."
+            ),
+            ru=(
+                "Включить ограничения безопасности для этого профиля? Рекомендуется. Без них политика профиля "
+                "не будет блокировать рискованные категории инструментов."
+            ),
         ),
         default=default,
         title=msg(lang, en="Setup: Security enforcement", ru="Настройка: Применение ограничений"),
@@ -91,32 +103,32 @@ def prompt_policy_preset(*, default: str, lang: PromptLanguage = PromptLanguage.
         title=msg(lang, en="Setup: Security level", ru="Настройка: Уровень безопасности"),
         text=msg(
             lang,
-            en="Choose how often AFKBOT should ask before risky actions.",
-            ru="Выберите, как часто AFKBOT должен спрашивать подтверждение перед рискованными действиями.",
+            en="Choose how cautious AFKBOT should be before mutating or critical actions.",
+            ru="Выберите, насколько осторожно AFKBOT должен вести себя перед изменениями и критичными действиями.",
         ),
         options=[
             (
                 "simple",
                 msg(
                     lang,
-                    en="Simple: move fast, almost no confirmations",
-                    ru="Лёгкий: быстрее работать, почти без подтверждений",
+                    en="simple - move fast, minimal confirmations",
+                    ru="simple - быстрее работать, минимум подтверждений",
                 ),
             ),
             (
                 "medium",
                 msg(
                     lang,
-                    en="Medium: confirm dangerous file changes",
-                    ru="Средний: подтверждать опасные изменения файлов",
+                    en="medium - confirm dangerous file changes",
+                    ru="medium - подтверждать опасные изменения файлов",
                 ),
             ),
             (
                 "strict",
                 msg(
                     lang,
-                    en="Strict: confirm every critical action",
-                    ru="Строгий: подтверждать каждое критичное действие",
+                    en="strict - confirm every critical action",
+                    ru="strict - подтверждать каждое критичное действие",
                 ),
             ),
         ],
@@ -176,8 +188,14 @@ def prompt_policy_capabilities(
         title=msg(lang, en="Setup: Capabilities", ru="Настройка: Возможности"),
         text=msg(
             lang,
-            en="Choose what the agent is allowed to do.",
-            ru="Выберите, что агенту разрешено делать.",
+            en=(
+                "Choose broad tool categories this profile may use. Channels can narrow this later, but cannot "
+                "grant a capability that is disabled here."
+            ),
+            ru=(
+                "Выберите крупные категории инструментов, которые может использовать профиль. Каналы смогут "
+                "позже сузить этот список, но не смогут включить то, что запрещено здесь."
+            ),
         ),
         options=options,
         default_values=resolved_defaults,
@@ -194,28 +212,28 @@ def prompt_policy_network_mode(
     """Prompt one network access mode for interactive security wizard."""
 
     options = [
-        ("unrestricted", msg(lang, en="Full network access", ru="Полный сетевой доступ")),
+        ("unrestricted", msg(lang, en="unrestricted - any network host", ru="unrestricted - любой сетевой хост")),
         (
             "recommended",
-            msg(lang, en="Recommended hosts only", ru="Только рекомендованные хосты"),
+            msg(lang, en="recommended - only known provider/service hosts", ru="recommended - только известные хосты провайдеров и сервисов"),
         ),
     ]
     if allow_custom:
         options.append(
             (
                 "custom",
-                msg(lang, en="Keep current custom hosts", ru="Оставить текущие custom-хосты"),
+                msg(lang, en="custom - keep current custom host list", ru="custom - оставить текущий список хостов"),
             )
         )
     options.append(
-        ("deny_all", msg(lang, en="Block all network access", ru="Запретить весь сетевой доступ"))
+        ("deny_all", msg(lang, en="deny_all - block network tools", ru="deny_all - запретить сетевые инструменты"))
     )
     return select_value_dialog(
         title=msg(lang, en="Setup: Network access", ru="Настройка: Доступ к сети"),
         text=msg(
             lang,
-            en="Choose how much network access the agent should have.",
-            ru="Выберите, какой сетевой доступ должен быть у агента.",
+            en="Choose which external hosts this profile may reach through network tools.",
+            ru="Выберите, к каким внешним хостам этот профиль может обращаться через сетевые инструменты.",
         ),
         options=options,
         default=default if default in {"unrestricted", "recommended", "custom", "deny_all"} else "recommended",
@@ -238,9 +256,12 @@ def prompt_policy_file_access_mode(
             ru="Выберите, может ли агент читать или менять локальные файлы.",
         ),
         options=[
-            ("none", msg(lang, en="No file tools", ru="Без файловых инструментов")),
-            ("read_only", msg(lang, en="Read only", ru="Только чтение")),
-            ("read_write", msg(lang, en="Read, write, and edit", ru="Чтение, запись и редактирование")),
+            ("none", msg(lang, en="none - no file tools", ru="none - без файловых инструментов")),
+            ("read_only", msg(lang, en="read_only - read and search files", ru="read_only - читать и искать файлы")),
+            (
+                "read_write",
+                msg(lang, en="read_write - read, write, and edit files", ru="read_write - читать, создавать и менять файлы"),
+            ),
         ],
         default=default if default in {"none", "read_only", "read_write"} else "read_write",
         lang=lang,
@@ -258,26 +279,26 @@ def prompt_policy_workspace_scope_mode(
     options = [
         (
             "profile_only",
-            msg(lang, en="Profile workspace only", ru="Только папка профиля"),
+            msg(lang, en="profile_only - profile files only", ru="profile_only - только файлы профиля"),
         ),
         (
             "project_only",
-            msg(lang, en="Project workspace only", ru="Только папка проекта"),
+            msg(lang, en="project_only - current project only", ru="project_only - только текущий проект"),
         ),
         (
             "profile_and_project",
-            msg(lang, en="Profile + project workspaces", ru="Папка профиля + папка проекта"),
+            msg(lang, en="profile_and_project - profile plus project", ru="profile_and_project - профиль плюс проект"),
         ),
         (
             "full_system",
-            msg(lang, en="All local files", ru="Все локальные файлы"),
+            msg(lang, en="full_system - all local files", ru="full_system - все локальные файлы"),
         ),
     ]
     if allow_custom:
         options.append(
             (
                 "custom",
-                msg(lang, en="Keep current custom paths", ru="Оставить текущие custom-пути"),
+                msg(lang, en="custom - keep current custom paths", ru="custom - оставить текущие пути"),
             )
         )
     resolved_default = default if default in {item[0] for item in options} else "profile_only"
@@ -285,8 +306,13 @@ def prompt_policy_workspace_scope_mode(
         title=msg(lang, en="Setup: Workspace scope", ru="Настройка: Область файлового доступа"),
         text=msg(
             lang,
-            en="Choose which folders the agent should treat as its working area by default.",
-            ru="Выберите, какие папки агент должен считать своей рабочей областью по умолчанию.",
+            en=(
+                "Choose which folders file tools may touch by default. This combines with the file access mode above."
+            ),
+            ru=(
+                "Выберите, какие папки файловые инструменты могут затрагивать по умолчанию. Это работает вместе "
+                "с режимом доступа к файлам выше."
+            ),
         ),
         options=options,
         default=resolved_default,

@@ -75,7 +75,7 @@ def test_channel_telethon_update_rejects_ingress_values_below_contract_bounds(
     # Assert
     assert result.exit_code != 0
     combined = result.stdout + result.stderr
-    assert "Ingress max buffer chars must be >= 256" in combined
+    assert "Maximum merged text size (chars) must be >= 256" in combined
 
 
 def test_channel_telethon_update_preserves_unspecified_fields_and_root_list_show(
@@ -467,10 +467,10 @@ def test_channel_telethon_ingress_cli_validation_matches_endpoint_bounds(
 
     # Assert
     assert add_result.exit_code == 2
-    assert "Ingress debounce (ms) must be >= 100" in add_result.stderr
+    assert "Quiet window before merge (ms) must be >= 100" in add_result.stderr
     assert created.exit_code == 0
     assert update_result.exit_code == 2
-    assert "Ingress max buffer chars must be >= 256" in update_result.stderr
+    assert "Maximum merged text size (chars) must be >= 256" in update_result.stderr
 
 
 def test_channel_telethon_package_export_registers_tree() -> None:

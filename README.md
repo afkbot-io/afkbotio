@@ -176,7 +176,9 @@ afk automation create --profile default --name "Inbound event" --prompt "Process
 
 ### Add a channel
 
-Channels connect outside conversations to a selected profile.
+Channels connect outside conversations to a selected profile. The profile still owns the
+agent persona, memory, skills, and maximum permissions; channel settings narrow how that
+profile is exposed through one transport.
 
 Telegram bot polling:
 
@@ -185,7 +187,23 @@ afk channel telegram add
 afk channel telegram status
 ```
 
-Private/group allowlists can be configured in the wizard or with flags:
+For a private 1:1 bot, use the interactive wizard and choose:
+
+- `Private chat access`: `allowlist`
+- `Allowed private sender ids`: your Telegram numeric user id
+- `Group access`: `disabled` if the bot should never work in groups
+- `Channel tool profile`: `messaging_safe` for chat plus memory/send, or `support_readonly`
+  when the bot may also read/search project files
+- `Restrict channel.send outbound targets`: `Yes`
+- `Allowed outbound chat/user ids`: the same Telegram user id or group id that the agent may message
+- `Create matching routing binding`: `Yes`
+- `Binding session policy`: `per-chat`
+
+For groups, prefer `Group access: allowlist`, enter the allowed group ids, and enter the
+allowed sender user ids. Use `per-thread` for topic-based groups and `per-user-in-group`
+when each group member needs a separate conversation context.
+
+The same settings can be passed as flags:
 
 ```bash
 afk channel telegram add owner-bot \
@@ -205,7 +223,16 @@ afk channel telethon status
 
 The same access flags are available for Telethon userbot channels. Inside an allowed
 profile, the agent can send explicit outbound channel messages with `channel.send`;
-safe channel tool profiles allow that tool while still blocking broad `app.run`.
+safe channel tool profiles allow that tool while still blocking broad `app.run`. If
+the wizard `Restrict channel.send outbound targets` step or `--outbound-allow-to`
+is configured, `channel.send` can only target those peer ids.
+
+Useful channel tool-profile presets:
+
+- `chat_minimal`: reply only, no tools exposed from the channel
+- `messaging_safe`: reply plus `channel.send` and safe memory tools
+- `support_readonly`: `messaging_safe` plus read-only file list/read/search and diff render
+- `inherit`: use the profile ceiling directly; reserve this for fully trusted channels
 
 Overview:
 

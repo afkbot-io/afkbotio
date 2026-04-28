@@ -437,7 +437,7 @@ def test_channel_telethon_add_interactive_accepts_generated_channel_id(
     )
 
     assert result.exit_code == 0
-    assert "Telethon user channel setup" in result.stdout
+    assert "Telethon user-account channel setup" in result.stdout
     assert "Press Enter there to accept `telethon-" in result.stdout
     channels = asyncio.run(get_channel_endpoint_service(settings).list(transport="telegram_user"))
     assert len(channels) == 1
@@ -483,7 +483,7 @@ def test_channel_telethon_add_uses_russian_locale_for_intro(
     )
 
     assert result.exit_code == 0
-    assert "Настройка Telethon user-канала" in result.stdout
+    assert "Настройка канала Telegram user-аккаунта через Telethon" in result.stdout
     assert "Нажмите Enter, чтобы принять `telethon-" in result.stdout
 
 
@@ -522,4 +522,4 @@ def test_channel_telethon_add_prefers_project_prompt_language_over_system_locale
     )
 
     assert result.exit_code == 0
-    assert "Настройка Telethon user-канала" in result.stdout
+    assert "Настройка канала Telegram user-аккаунта через Telethon" in result.stdout
