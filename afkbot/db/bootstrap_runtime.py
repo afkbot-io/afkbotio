@@ -212,11 +212,25 @@ def _ensure_task_runtime_columns(conn: Connection) -> None:
     if not columns:
         return
     missing_columns = {
+        "claim_owner_type": "ALTER TABLE task ADD COLUMN claim_owner_type VARCHAR(32)",
+        "claim_owner_ref": "ALTER TABLE task ADD COLUMN claim_owner_ref VARCHAR(255)",
+        "claim_source_status": "ALTER TABLE task ADD COLUMN claim_source_status VARCHAR(32)",
         "last_session_profile_id": "ALTER TABLE task ADD COLUMN last_session_profile_id VARCHAR(120)",
     }
     for column_name, ddl in missing_columns.items():
         if column_name not in columns:
             conn.execute(text(ddl))
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
+    conn.execute(
+        text(
+            "UPDATE task "
+            "SET claim_owner_type = owner_type, claim_owner_ref = owner_ref, claim_source_status = status "
+            "WHERE status IN ('claimed', 'running') "
+            "AND owner_type IN ('ai_profile', 'ai_subagent') "
+            "AND claim_owner_type IS NULL "
+            "AND claim_owner_ref IS NULL"
+        )
+    )
 
 
 def _ensure_run_indexes(conn: Connection) -> None:
@@ -245,7 +259,9 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
     if not columns:
         return
     duplicate_owner_scopes = _list_duplicate_active_ai_owner_scopes(conn)
+    duplicate_claim_scopes = _list_duplicate_active_ai_claim_owner_scopes(conn)
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
     predicate = "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
     if duplicate_owner_scopes:
         excluded_owner_scopes = " AND ".join(
@@ -264,6 +280,32 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
             "ON task (profile_id, owner_type, owner_ref) "
             f"WHERE {predicate}"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_task_profile_claim_owner_status "
+            "ON task (profile_id, claim_owner_type, claim_owner_ref, status)"
+        )
+    )
+    claim_predicate = "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+    if duplicate_claim_scopes:
+        excluded_claim_scopes = " AND ".join(
+            "NOT (profile_id = "
+            + _quote_sqlite_text_literal(profile_id)
+            + " AND claim_owner_type = "
+            + _quote_sqlite_text_literal(owner_type)
+            + " AND claim_owner_ref = "
+            + _quote_sqlite_text_literal(owner_ref)
+            + ")"
+            for profile_id, owner_type, owner_ref in duplicate_claim_scopes
+        )
+        claim_predicate = f"{claim_predicate} AND {excluded_claim_scopes}"
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_claim_owner "
+            "ON task (profile_id, claim_owner_type, claim_owner_ref) "
+            f"WHERE {claim_predicate}"
         )
     )
 
@@ -314,6 +356,32 @@ def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str,
             "GROUP BY profile_id, owner_type, owner_ref "
             "HAVING COUNT(*) > 1 "
             "ORDER BY profile_id ASC, owner_type ASC, owner_ref ASC"
+        )
+    ).fetchall()
+    scopes: list[tuple[str, str, str]] = []
+    for profile_id, owner_type, owner_ref in rows:
+        profile_text = str(profile_id or "").strip()
+        owner_type_text = str(owner_type or "").strip()
+        owner_text = str(owner_ref or "").strip()
+        if profile_text and owner_type_text and owner_text:
+            scopes.append((profile_text, owner_type_text, owner_text))
+    return tuple(scopes)
+
+
+def _list_duplicate_active_ai_claim_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
+    """Return active AI claim-owner scopes violating the one-active-task invariant."""
+
+    columns = _table_columns(conn, "task")
+    if not columns or "claim_owner_type" not in columns or "claim_owner_ref" not in columns:
+        return ()
+    rows = conn.execute(
+        text(
+            "SELECT profile_id, claim_owner_type, claim_owner_ref "
+            "FROM task "
+            "WHERE claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "GROUP BY profile_id, claim_owner_type, claim_owner_ref "
+            "HAVING COUNT(*) > 1 "
+            "ORDER BY profile_id ASC, claim_owner_type ASC, claim_owner_ref ASC"
         )
     ).fetchall()
     scopes: list[tuple[str, str, str]] = []

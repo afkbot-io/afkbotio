@@ -203,6 +203,32 @@ class _FakeLoop:
                 profile_id=profile_id,
                 envelope=ActionEnvelope(action="finalize", message="Delegated follow-up created"),
             )
+        if self._behavior == "approve_review":
+            assert isinstance(taskflow_payload, dict)
+            updated = await TaskFlowRepository(self._session).update_task(
+                profile_id=str(taskflow_payload.get("task_profile_id") or ""),
+                task_id=str(taskflow_payload.get("task_id") or ""),
+                status="completed",
+                blocked_reason_code=None,
+                blocked_reason_text=None,
+            )
+            assert updated is not None
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "Review approved.",
+                    "blocked_reason": None,
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(action="finalize", message="Review approved."),
+            )
         if self._behavior == "llm_timeout":
             await runlog.create_event(
                 run_id=run.id,
@@ -1479,6 +1505,185 @@ async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
         await engine.dispose()
 
 
+async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
+    tmp_path: Path,
+) -> None:
+    """Review tasks should be claimed by the assigned AI reviewer, not by the task owner."""
+
+    db_name = "taskflow_runtime_ai_subagent_review_claim.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        llm_max_iterations=10,
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nSubagent marker: review-queue.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="approve_review",
+            observed_calls=observed_calls,
+        ),
+        settings=settings,
+    )
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review human-owned draft",
+            description="Approve or request changes as the reviewer subagent.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=task.id, status="review")
+
+        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:reviewer")
+
+        assert processed is True
+        assert observed_calls[0].task_id == task.id
+        assert observed_calls[0].profile_id == "analyst"
+        assert observed_calls[0].prompt_overlay is not None
+        assert "Subagent: reviewer" in observed_calls[0].prompt_overlay
+        assert "Subagent marker: review-queue." in observed_calls[0].prompt_overlay
+        assert "source_status: review" in observed_calls[0].prompt_overlay
+        assert "executor: ai_subagent:analyst:reviewer" in observed_calls[0].prompt_overlay
+
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "completed"
+        assert updated.owner_type == "human"
+        assert updated.owner_ref == "cli_user:alice"
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            runs = await repo.list_task_runs(task_id=task.id, limit=1)
+        assert runs[0].owner_type == "ai_subagent"
+        assert runs[0].owner_ref == "analyst:reviewer"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
+    tmp_path: Path,
+) -> None:
+    """Detached scheduling should enforce reviewer concurrency for AI review claims."""
+
+    db_name = "taskflow_runtime_ai_review_claim_scope.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        llm_max_iterations=10,
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nFocus on reviews.",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="auditor",
+        markdown="# Auditor\nFocus on audits.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        first = await service.create_task(
+            profile_id="default",
+            title="First reviewer task",
+            description="This reviewer should claim first.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:reviewer",
+            priority=90,
+        )
+        second_same_reviewer = await service.create_task(
+            profile_id="default",
+            title="Second reviewer task",
+            description="This should wait for the same reviewer.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:reviewer",
+            priority=80,
+        )
+        auditor = await service.create_task(
+            profile_id="default",
+            title="Auditor review task",
+            description="This can claim while reviewer is busy.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:auditor",
+            priority=70,
+        )
+        for item in (first, second_same_reviewer, auditor):
+            await service.update_task(profile_id="default", task_id=item.id, status="review")
+
+        claim_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-reviewer-1",
+                claimed_by="taskflow-runtime:0",
+            )
+            second_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-auditor-1",
+                claimed_by="taskflow-runtime:1",
+            )
+            third_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-review-none",
+                claimed_by="taskflow-runtime:2",
+            )
+
+        assert first_claim is not None
+        assert first_claim.id == first.id
+        assert first_claim.claim_owner_type == "ai_subagent"
+        assert first_claim.claim_owner_ref == "analyst:reviewer"
+        assert first_claim.claim_source_status == "review"
+        assert second_claim is not None
+        assert second_claim.id == auditor.id
+        assert third_claim is None
+
+        waiting = await service.get_task(profile_id="default", task_id=second_same_reviewer.id)
+        assert waiting.status == "review"
+    finally:
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
     tmp_path: Path,
 ) -> None:
@@ -2225,6 +2430,9 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
         task_profile_id="default",
         owner_type="ai_profile",
         owner_ref="analyst",
+        executor_type="ai_profile",
+        executor_ref="analyst",
+        source_status="todo",
         flow_id="flow_demo",
         source_type="manual",
         source_ref="source_demo",

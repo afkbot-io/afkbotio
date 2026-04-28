@@ -1176,7 +1176,7 @@ class TaskFlowService:
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            if row.status != "review":
+            if not _task_is_review_actionable(row):
                 raise TaskFlowServiceError(
                     error_code="task_review_invalid_state",
                     reason="Task is not in review",
@@ -1277,7 +1277,7 @@ class TaskFlowService:
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            if row.status != "review":
+            if not _task_is_review_actionable(row):
                 raise TaskFlowServiceError(
                     error_code="task_review_invalid_state",
                     reason="Task is not in review",
@@ -1289,8 +1289,24 @@ class TaskFlowService:
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
                 )
-            effective_owner_type = normalized_owner_type or row.owner_type
-            effective_owner_ref = normalized_owner_ref or row.owner_ref
+            route_changes_to_reviewer = (
+                normalized_owner_type is None
+                and normalized_owner_ref is None
+                and normalized_actor_type is not None
+                and normalized_actor_ref is not None
+                and is_ai_executor_owner_type(normalized_actor_type)
+                and _task_matches_review_inbox(
+                    row=row,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
+            )
+            effective_owner_type = normalized_owner_type or (
+                normalized_actor_type if route_changes_to_reviewer else row.owner_type
+            )
+            effective_owner_ref = normalized_owner_ref or (
+                normalized_actor_ref if route_changes_to_reviewer else row.owner_ref
+            )
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
@@ -1311,8 +1327,14 @@ class TaskFlowService:
                 profile_id=profile_id,
                 task_id=row.id,
                 status="blocked",
-                owner_type=normalized_owner_type,
-                owner_ref=normalized_owner_ref,
+                owner_type=effective_owner_type,
+                owner_ref=effective_owner_ref,
+                ready_at=(
+                    datetime.now(timezone.utc)
+                    if is_ai_executor_owner_type(effective_owner_type)
+                    and normalized_reason_code != "dependency_wait"
+                    else None
+                ),
                 blocked_reason_code=normalized_reason_code,
                 blocked_reason_text=normalized_reason_text,
             )
@@ -3689,11 +3711,19 @@ def _task_matches_human_inbox(*, row: Task, owner_ref: str) -> bool:
 
 
 def _task_matches_review_inbox(*, row: Task, actor_type: str, actor_ref: str) -> bool:
-    if row.status != "review":
+    if not _task_is_review_actionable(row):
         return False
     if row.reviewer_type is not None and row.reviewer_ref is not None:
         return row.reviewer_type == actor_type and row.reviewer_ref == actor_ref
     return row.owner_type == actor_type and row.owner_ref == actor_ref
+
+
+def _task_is_review_actionable(row: Task) -> bool:
+    if row.status == "review":
+        return True
+    if row.status not in {"claimed", "running"}:
+        return False
+    return str(getattr(row, "claim_source_status", "") or "").strip() == "review"
 
 
 def _ensure_review_actor_matches_task(*, row: Task, actor_type: str, actor_ref: str) -> None:
