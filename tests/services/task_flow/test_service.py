@@ -215,6 +215,40 @@ async def test_task_flow_service_allows_assigning_task_to_ai_subagent(tmp_path: 
         await engine.dispose()
 
 
+async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: Path) -> None:
+    """Public owner_type=subagent should persist as canonical ai_subagent ownership."""
+
+    db_name = "task_flow_subagent_owner_alias.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nHandle research tasks directly.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Subagent alias task",
+            description="Assign this through the user-facing subagent alias.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="subagent",
+            owner_ref="analyst:researcher",
+        )
+
+        assert task.owner_type == "ai_subagent"
+        assert task.owner_ref == "analyst:researcher"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_summarizes_human_owned_tasks(tmp_path: Path) -> None:
     """Startup summaries should count visible human task states and cap the preview list."""
 

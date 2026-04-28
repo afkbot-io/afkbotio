@@ -38,6 +38,7 @@ from afkbot.services.subagents.loader import SubagentLoader
 from afkbot.services.task_flow.ai_executors import (
     AI_SUBAGENT_OWNER_TYPE,
     is_ai_executor_owner_type,
+    normalize_task_owner_type,
     parse_ai_subagent_owner_ref,
     resolve_ai_executor_profile_id,
 )
@@ -190,6 +191,8 @@ class TaskFlowService:
             if actor_session_id is not _TASK_FIELD_UNSET
             else None
         )
+        normalized_default_owner_type = normalize_task_owner_type(default_owner_type)
+        normalized_default_owner_ref = _normalize_optional_text(default_owner_ref)
         _validate_actor_pair(
             actor_type=normalized_created_by_type,
             actor_ref=normalized_created_by_ref,
@@ -204,8 +207,8 @@ class TaskFlowService:
             reason="Task flow creation requires an explicit actor identity",
         )
         _validate_owner_pair(
-            owner_type=default_owner_type,
-            owner_ref=default_owner_ref,
+            owner_type=normalized_default_owner_type,
+            owner_ref=normalized_default_owner_ref,
             allow_missing=True,
         )
         normalized_labels = _normalize_labels(labels)
@@ -230,8 +233,8 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
-                owner_type=_normalize_optional_text(default_owner_type),
-                owner_ref=_normalize_optional_text(default_owner_ref),
+                owner_type=normalized_default_owner_type,
+                owner_ref=normalized_default_owner_ref,
                 reviewer_type=None,
                 reviewer_ref=None,
             )
@@ -248,8 +251,8 @@ class TaskFlowService:
                 task_profile_id=profile_id,
                 actor_type=normalized_created_by_type,
                 actor_ref=normalized_created_by_ref,
-                owner_type=_normalize_optional_text(default_owner_type),
-                owner_ref=_normalize_optional_text(default_owner_ref),
+                owner_type=normalized_default_owner_type,
+                owner_ref=normalized_default_owner_ref,
             )
             row = await repo.create_flow(
                 flow_id=_new_identifier("flow"),
@@ -259,8 +262,8 @@ class TaskFlowService:
                 status="active",
                 created_by_type=normalized_created_by_type,
                 created_by_ref=normalized_created_by_ref,
-                default_owner_type=_normalize_optional_text(default_owner_type),
-                default_owner_ref=_normalize_optional_text(default_owner_ref),
+                default_owner_type=normalized_default_owner_type,
+                default_owner_ref=normalized_default_owner_ref,
                 labels_json=json.dumps(normalized_labels),
             )
             return _to_flow_metadata(row)
@@ -359,6 +362,9 @@ class TaskFlowService:
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         normalized_session_id = _normalize_optional_text(session_id)
         normalized_session_profile_id = _normalize_optional_text(session_profile_id)
+        normalized_requested_owner_type = normalize_task_owner_type(owner_type)
+        normalized_reviewer_type = normalize_task_owner_type(reviewer_type)
+        normalized_reviewer_ref = _normalize_optional_text(reviewer_ref)
         _validate_actor_pair(
             actor_type=normalized_created_by_type,
             actor_ref=normalized_created_by_ref,
@@ -390,7 +396,7 @@ class TaskFlowService:
                         reason="Task flow not found",
                     )
 
-            resolved_owner_type = _normalize_optional_text(owner_type) or _normalize_optional_text(
+            resolved_owner_type = normalized_requested_owner_type or normalize_task_owner_type(
                 flow.default_owner_type if flow is not None else None
             )
             resolved_owner_ref = _normalize_optional_text(owner_ref) or _normalize_optional_text(
@@ -402,8 +408,8 @@ class TaskFlowService:
                 resolved_owner_ref = profile_id
             _validate_owner_pair(owner_type=resolved_owner_type, owner_ref=resolved_owner_ref)
             _validate_owner_pair(
-                owner_type=reviewer_type,
-                owner_ref=reviewer_ref,
+                owner_type=normalized_reviewer_type,
+                owner_ref=normalized_reviewer_ref,
                 allow_missing=True,
             )
             _ensure_public_principal_identity(
@@ -433,8 +439,8 @@ class TaskFlowService:
                 settings=self._settings,
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
-                reviewer_type=_normalize_optional_text(reviewer_type),
-                reviewer_ref=_normalize_optional_text(reviewer_ref),
+                reviewer_type=normalized_reviewer_type,
+                reviewer_ref=normalized_reviewer_ref,
             )
             _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
@@ -499,8 +505,8 @@ class TaskFlowService:
                 ),
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
-                reviewer_type=_normalize_optional_text(reviewer_type),
-                reviewer_ref=_normalize_optional_text(reviewer_ref),
+                reviewer_type=normalized_reviewer_type,
+                reviewer_ref=normalized_reviewer_ref,
                 source_type=normalized_source_type,
                 source_ref=_normalize_optional_text(source_ref),
                 created_by_type=normalized_created_by_type,
@@ -542,8 +548,8 @@ class TaskFlowService:
                     "flow_id": normalized_flow_id,
                     "owner_type": resolved_owner_type,
                     "owner_ref": resolved_owner_ref,
-                    "reviewer_type": _normalize_optional_text(reviewer_type),
-                    "reviewer_ref": _normalize_optional_text(reviewer_ref),
+                    "reviewer_type": normalized_reviewer_type,
+                    "reviewer_ref": normalized_reviewer_ref,
                     "priority": priority,
                     "labels": list(normalized_labels),
                     "depends_on_task_ids": list(normalized_depends_on),
@@ -824,7 +830,7 @@ class TaskFlowService:
     ) -> TaskBoardMetadata:
         """Build one kanban-like backlog board for a Task Flow slice."""
 
-        normalized_owner_type = _normalize_optional_text(owner_type)
+        normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
         if normalized_owner_type is not None or normalized_owner_ref is not None:
             _validate_owner_pair(
@@ -1245,7 +1251,7 @@ class TaskFlowService:
             error_code="task_review_actor_required",
             reason="Requesting review changes requires an explicit actor identity",
         )
-        normalized_owner_type = _normalize_optional_text(owner_type)
+        normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
         if normalized_owner_type is not None or normalized_owner_ref is not None:
             _validate_owner_pair(
@@ -1538,10 +1544,12 @@ class TaskFlowService:
         """Create one delegated AI-owned task and optionally block the source task on it."""
 
         normalized_source_task_id = _normalize_required_text(source_task_id, field_name="source_task_id")
-        normalized_delegate_owner_type = _normalize_required_text(
-            delegated_owner_type,
-            field_name="delegated_owner_type",
-        )
+        normalized_delegate_owner_type = normalize_task_owner_type(delegated_owner_type)
+        if normalized_delegate_owner_type is None:
+            raise TaskFlowServiceError(
+                error_code="invalid_delegated_owner_type",
+                reason="delegated_owner_type is required",
+            )
         normalized_delegate_owner_ref = _normalize_required_text(
             delegated_owner_ref,
             field_name="delegated_owner_ref",
@@ -1826,7 +1834,7 @@ class TaskFlowService:
         """List tasks with optional filters."""
 
         normalized_statuses = _normalize_statuses(statuses)
-        normalized_owner_type = _normalize_optional_text(owner_type)
+        normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
         if normalized_owner_type is not None or normalized_owner_ref is not None:
             _validate_owner_pair(
@@ -1930,7 +1938,7 @@ class TaskFlowService:
                 error_code="task_dependency_wait_ready_at_conflict",
                 reason="dependency_wait blockers cannot schedule a timed revisit",
             )
-        normalized_owner_type = _normalize_optional_text(owner_type)
+        normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
         if normalized_owner_type is not None or normalized_owner_ref is not None:
             _validate_owner_pair(
@@ -1995,7 +2003,7 @@ class TaskFlowService:
             )
             effective_owner_type = normalized_owner_type or current_row.owner_type
             effective_owner_ref = normalized_owner_ref or current_row.owner_ref
-            effective_reviewer_type = _normalize_optional_text(reviewer_type)
+            effective_reviewer_type = normalize_task_owner_type(reviewer_type)
             effective_reviewer_ref = _normalize_optional_text(reviewer_ref)
             if reviewer_type is None and reviewer_ref is None:
                 effective_reviewer_type = current_row.reviewer_type
@@ -2107,7 +2115,7 @@ class TaskFlowService:
                     ready_at=ready_at if ready_at is not _TASK_FIELD_UNSET else _REPO_FIELD_UNSET,
                     owner_type=normalized_owner_type,
                     owner_ref=normalized_owner_ref,
-                    reviewer_type=_normalize_optional_text(reviewer_type),
+                    reviewer_type=normalize_task_owner_type(reviewer_type),
                     reviewer_ref=_normalize_optional_text(reviewer_ref),
                     requires_review=requires_review,
                     labels_json=(json.dumps(_normalize_labels(labels)) if labels is not None else None),
@@ -2515,7 +2523,7 @@ async def _ensure_task_principal_ref_exists(
 ) -> None:
     """Validate one task principal reference when it targets an AI executor."""
 
-    normalized_type = _normalize_optional_text(principal_type)
+    normalized_type = normalize_task_owner_type(principal_type)
     normalized_ref = _normalize_optional_text(principal_ref)
     if normalized_type == "ai_profile" and normalized_ref is not None:
         await _ensure_profile_exists(repo, normalized_ref)
@@ -2559,7 +2567,7 @@ async def _ensure_public_ai_principal_session(
 
     if settings is None or not bool(settings.taskflow_public_principal_required):
         return
-    normalized_actor_type = _normalize_optional_text(actor_type)
+    normalized_actor_type = normalize_task_owner_type(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     normalized_actor_session_id = (
         _normalize_optional_text(cast(str | None, actor_session_id))
@@ -2780,7 +2788,7 @@ def _validate_owner_pair(
     owner_ref: str | None,
     allow_missing: bool = False,
 ) -> None:
-    normalized_type = _normalize_optional_text(owner_type)
+    normalized_type = normalize_task_owner_type(owner_type)
     normalized_ref = _normalize_optional_text(owner_ref)
     if normalized_type is None and normalized_ref is None and allow_missing:
         return
@@ -2834,7 +2842,7 @@ def _validate_actor_pair(
 
 
 def _task_executor_profile_id(*, actor_type: str | None, actor_ref: str | None) -> str | None:
-    normalized_actor_type = _normalize_optional_text(actor_type)
+    normalized_actor_type = normalize_task_owner_type(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_actor_type == "ai_profile" and normalized_actor_ref is not None:
         return normalized_actor_ref
@@ -2915,7 +2923,7 @@ def _ensure_ai_owner_assignment_allowed(
 ) -> None:
     """Restrict AI ownership changes to the actor itself or configured backlog teammates."""
 
-    normalized_owner_type = _normalize_optional_text(owner_type)
+    normalized_owner_type = normalize_task_owner_type(owner_type)
     normalized_owner_ref = _normalize_optional_text(owner_ref)
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
