@@ -37,6 +37,7 @@ TELETHON_WATCHER_BUFFER_SIZE_MIN = 1
 TELETHON_WATCHER_BUFFER_SIZE_MAX = 5_000
 TELETHON_WATCHER_MESSAGE_CHARS_MIN = 32
 TELETHON_WATCHER_MESSAGE_CHARS_MAX = 4_000
+ChannelAccessMode = Literal["open", "allowlist", "disabled"]
 TelegramGroupTriggerMode = Literal["mention_or_reply", "reply_only", "mention_only", "all_messages"]
 TelethonReplyMode = Literal["same_chat", "disabled"]
 TelethonGroupInvocationMode = Literal["reply_or_command", "reply_only", "command_only", "all_messages"]
@@ -65,6 +66,70 @@ def _normalize_chat_pattern_values(value: object, *, error_label: str) -> tuple[
     return tuple(normalized)
 
 
+def _normalize_access_values(value: object, *, error_label: str) -> tuple[str, ...]:
+    """Normalize one persisted access allowlist value set."""
+
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw_values = tuple(item for item in value.split(","))
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw_values = tuple(str(item) for item in value)
+    else:
+        raise ValueError(f"{error_label} must be a list of strings")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return tuple(normalized)
+
+
+class ChannelAccessPolicy(BaseModel):
+    """Inbound and outbound access controls for one channel endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    private_policy: ChannelAccessMode = "open"
+    allow_from: tuple[str, ...] = ()
+    group_policy: ChannelAccessMode = "open"
+    groups: tuple[str, ...] = ()
+    group_allow_from: tuple[str, ...] = ()
+    outbound_allow_to: tuple[str, ...] = ()
+
+    @field_validator("private_policy", "group_policy", mode="before")
+    @classmethod
+    def _normalize_access_mode(cls, value: object) -> ChannelAccessMode:
+        if value is None:
+            return "open"
+        if not isinstance(value, str):
+            raise ValueError("access policy mode must be a string")
+        normalized = value.strip().lower()
+        if normalized not in {"open", "allowlist", "disabled"}:
+            raise ValueError("access policy mode must be one of: open, allowlist, disabled")
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("allow_from", "groups", "group_allow_from", "outbound_allow_to", mode="before")
+    @classmethod
+    def _normalize_allowlist(cls, value: object) -> tuple[str, ...]:
+        return _normalize_access_values(value, error_label="access allowlist")
+
+    @model_validator(mode="after")
+    def _validate_allowlists(self) -> "ChannelAccessPolicy":
+        if self.private_policy == "allowlist" and not self.allow_from:
+            raise ValueError("private allowlist requires at least one allow_from id")
+        if self.group_policy == "allowlist":
+            if not self.groups:
+                raise ValueError("group allowlist requires at least one group id")
+            effective_group_senders = self.group_allow_from or self.allow_from
+            if not effective_group_senders:
+                raise ValueError("group allowlist requires group_allow_from or allow_from ids")
+        return self
+
+
 def validate_channel_endpoint_id(raw: str) -> str:
     """Validate one stable channel endpoint id."""
 
@@ -90,6 +155,7 @@ class ChannelEndpointConfig(BaseModel):
     enabled: bool = True
     group_trigger_mode: str | None = None
     tool_profile: ChannelToolProfile = "inherit"
+    access_policy: ChannelAccessPolicy = Field(default_factory=ChannelAccessPolicy)
     config: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("endpoint_id", mode="before")
@@ -130,6 +196,17 @@ class ChannelEndpointConfig(BaseModel):
     @classmethod
     def _normalize_tool_profile(cls, value: object) -> ChannelToolProfile:
         return normalize_channel_tool_profile(value)
+
+    @field_validator("access_policy", mode="before")
+    @classmethod
+    def _normalize_access_policy(cls, value: object) -> ChannelAccessPolicy:
+        if value is None:
+            return ChannelAccessPolicy()
+        if isinstance(value, ChannelAccessPolicy):
+            return value
+        if not isinstance(value, Mapping):
+            raise ValueError("access_policy must be an object")
+        return ChannelAccessPolicy.model_validate(value)
 
     @field_validator("config", mode="before")
     @classmethod
@@ -317,6 +394,8 @@ class TelethonUserEndpointConfig(ChannelEndpointConfig):
         if isinstance(config, Mapping):
             if "tool_profile" not in payload and "tool_profile" in config:
                 payload["tool_profile"] = config["tool_profile"]
+            if "access_policy" not in payload and "access_policy" in config:
+                payload["access_policy"] = config["access_policy"]
             for key in (
                 "reply_mode",
                 "reply_blocked_chat_patterns",
@@ -353,6 +432,7 @@ class TelethonUserEndpointConfig(ChannelEndpointConfig):
 
         return {
             "tool_profile": self.tool_profile,
+            "access_policy": self.access_policy.model_dump(mode="python", exclude_none=True),
             "reply_mode": self.reply_mode,
             "reply_blocked_chat_patterns": self.reply_blocked_chat_patterns,
             "reply_allowed_chat_patterns": self.reply_allowed_chat_patterns,
@@ -385,6 +465,8 @@ class TelegramPollingEndpointConfig(ChannelEndpointConfig):
         if isinstance(config, Mapping):
             if "tool_profile" not in payload and "tool_profile" in config:
                 payload["tool_profile"] = config["tool_profile"]
+            if "access_policy" not in payload and "access_policy" in config:
+                payload["access_policy"] = config["access_policy"]
             if "ingress_batch" not in payload and "ingress_batch" in config:
                 payload["ingress_batch"] = config["ingress_batch"]
             if "reply_humanization" not in payload and "reply_humanization" in config:
@@ -396,6 +478,7 @@ class TelegramPollingEndpointConfig(ChannelEndpointConfig):
 
         return {
             "tool_profile": self.tool_profile,
+            "access_policy": self.access_policy.model_dump(mode="python", exclude_none=True),
             "ingress_batch": self.ingress_batch.model_dump(mode="python", exclude_none=True),
             "reply_humanization": self.reply_humanization.model_dump(mode="python", exclude_none=True),
         }

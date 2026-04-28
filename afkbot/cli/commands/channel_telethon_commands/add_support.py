@@ -19,7 +19,8 @@ from afkbot.cli.commands.channel_shared import (
     build_ingress_batch_config,
     build_reply_humanization_config,
     collect_channel_add_base_inputs,
-    put_matching_binding,
+    collect_channel_access_policy_inputs,
+    put_access_policy_bindings,
     render_channel_add_intro,
     should_collect_channel_add_interactively,
 )
@@ -83,6 +84,12 @@ def create_telethon_channel(
     account_id: str | None,
     enabled: bool | None,
     reply_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     reply_blocked_chat_patterns: str | None,
     reply_allowed_chat_patterns: str | None,
@@ -168,6 +175,16 @@ def create_telethon_channel(
             detail_en="Choose whether the user account should stay read-only in this channel or send replies back to the same chat.",
             detail_ru="Выберите, должен ли user-аккаунт только читать этот канал или ещё и отправлять ответы обратно в тот же чат.",
         )
+    )
+    access_policy = collect_channel_access_policy_inputs(
+        interactive=interactive,
+        lang=prompt_language,
+        private_policy=private_policy,
+        allow_from=allow_from,
+        group_policy=group_policy,
+        groups=groups,
+        group_allow_from=group_allow_from,
+        outbound_allow_to=outbound_allow_to,
     )
     resolved_group_invocation_mode = normalize_telethon_group_invocation_mode(
         resolve_channel_choice(
@@ -446,6 +463,7 @@ def create_telethon_channel(
         enabled=base_inputs.enabled,
         reply_mode=resolved_reply_mode,
         tool_profile=base_inputs.tool_profile,
+        access_policy=access_policy,
         reply_blocked_chat_patterns=split_csv_patterns(reply_blocked_chat_patterns),
         reply_allowed_chat_patterns=split_csv_patterns(reply_allowed_chat_patterns),
         group_invocation_mode=resolved_group_invocation_mode,
@@ -468,9 +486,9 @@ def create_telethon_channel(
         asyncio.run(get_legacy_channel_endpoint_service(settings).create(endpoint)).model_dump()
     )
     if base_inputs.create_binding:
-        put_matching_binding(
+        binding_count = put_access_policy_bindings(
             settings=settings,
-            binding_id=saved.endpoint_id,
+            endpoint_id=saved.endpoint_id,
             transport="telegram_user",
             profile_id=saved.profile_id,
             session_policy=base_inputs.session_policy,
@@ -478,7 +496,10 @@ def create_telethon_channel(
             enabled=saved.enabled,
             account_id=saved.account_id,
             prompt_overlay=prompt_overlay,
+            access_policy=saved.access_policy,
         )
+    else:
+        binding_count = 0
     binding_warning: str | None = None
     policy_warning: str | None = None
     try:
@@ -507,7 +528,7 @@ def create_telethon_channel(
             binding_warning = None
     return TelethonCreateResult(
         saved=saved,
-        binding_created=base_inputs.create_binding,
+        binding_created=base_inputs.create_binding and binding_count > 0,
         binding_warning=binding_warning,
         policy_warning=policy_warning,
     )

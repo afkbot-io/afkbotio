@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from afkbot.cli.main import app
 from afkbot.services.channel_routing.service import reset_channel_binding_services_async
+from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.services.channels.endpoint_service import (
     get_channel_endpoint_service,
     reset_channel_endpoint_services_async,
@@ -184,6 +185,84 @@ def test_channel_telethon_add_show_and_status(tmp_path: Path, monkeypatch: Monke
     assert "Telethon userbot endpoints: 1" in status.stdout
     assert "personal-user" in status.stdout
     assert "Live probe:" in status.stdout
+
+
+def test_channel_telethon_add_creates_allowlist_bindings_from_access_flags(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Telethon add should support the same scoped access controls as bot channels."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("memory",),
+            policy_network_allowlist=("*",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "telethon",
+            "add",
+            "owner-user",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "tg-user",
+            "--private-policy",
+            "allowlist",
+            "--allow-from",
+            "12345",
+            "--group-policy",
+            "allowlist",
+            "--groups",
+            "-100123",
+            "--group-allow-from",
+            "12345",
+            "--binding",
+        ],
+    )
+
+    assert result.exit_code == 0
+    shown = runner.invoke(app, ["channel", "telethon", "show", "owner-user"]).stdout
+    assert "- access.private_policy: allowlist" in shown
+    assert "- access.allow_from: 12345" in shown
+    assert "- access.group_policy: allowlist" in shown
+    assert "- access.groups: -100123" in shown
+    assert "- access.group_allow_from: 12345" in shown
+
+    bindings = run_channel_binding_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram_user", profile_id="default"),
+    )
+    binding_payloads = sorted(
+        (
+            item.binding_id,
+            item.account_id,
+            item.peer_id,
+            item.user_id,
+        )
+        for item in bindings
+    )
+    assert binding_payloads == [
+        ("owner-user:dm:12345", "owner-user", "12345", "12345"),
+        ("owner-user:group:-100123:user:12345", "owner-user", "-100123", "12345"),
+    ]
 
 def test_channel_telethon_add_warns_when_no_binding_keeps_existing_binding(
     tmp_path: Path,

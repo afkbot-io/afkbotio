@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from afkbot.cli.main import app
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.settings import get_settings
@@ -95,6 +96,85 @@ def test_channel_telegram_add_accepts_group_trigger_mode(tmp_path: Path, monkeyp
     assert "- reply_humanization.min_delay_ms: 900" in shown
     assert "- reply_humanization.max_delay_ms: 7000" in shown
     assert "- reply_humanization.chars_per_second: 14" in shown
+
+
+def test_channel_telegram_add_creates_allowlist_bindings_from_access_flags(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Telegram add should expose OpenClaw-style access controls without broad bindings."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("memory",),
+            policy_network_allowlist=("api.telegram.org",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "telegram",
+            "add",
+            "owner-bot",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "bot-main",
+            "--private-policy",
+            "allowlist",
+            "--allow-from",
+            "12345",
+            "--group-policy",
+            "allowlist",
+            "--groups",
+            "-100123",
+            "--group-allow-from",
+            "12345,67890",
+            "--binding",
+        ],
+    )
+
+    assert result.exit_code == 0
+    shown = runner.invoke(app, ["channel", "telegram", "show", "owner-bot"]).stdout
+    assert "- access.private_policy: allowlist" in shown
+    assert "- access.allow_from: 12345" in shown
+    assert "- access.group_policy: allowlist" in shown
+    assert "- access.groups: -100123" in shown
+    assert "- access.group_allow_from: 12345, 67890" in shown
+
+    bindings = run_channel_binding_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram", profile_id="default"),
+    )
+    binding_payloads = sorted(
+        (
+            item.binding_id,
+            item.account_id,
+            item.peer_id,
+            item.user_id,
+        )
+        for item in bindings
+    )
+    assert binding_payloads == [
+        ("owner-bot:dm:12345", "owner-bot", "12345", "12345"),
+        ("owner-bot:group:-100123:user:12345", "owner-bot", "-100123", "12345"),
+        ("owner-bot:group:-100123:user:67890", "owner-bot", "-100123", "67890"),
+    ]
 
 def test_channel_telegram_add_interactive_uses_profile_defaults(
     tmp_path: Path,

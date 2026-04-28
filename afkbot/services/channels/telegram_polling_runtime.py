@@ -13,6 +13,7 @@ from afkbot.services.channel_routing.runtime_target import (
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
@@ -93,6 +94,20 @@ class TelegramPollingRuntimeMixin:
     ) -> None:
         """Enqueue one normalized inbound Telegram message into the ingress coalescer."""
 
+        if not is_channel_message_allowed(
+            policy=self._endpoint.access_policy,
+            chat_kind=inbound.chat_type,
+            peer_id=inbound.chat_id,
+            user_id=inbound.user_id,
+        ):
+            _LOGGER.warning(
+                "telegram_polling_access_denied account_id=%s peer_id=%s user_id=%s chat_type=%s",
+                self._account_id,
+                inbound.chat_id,
+                inbound.user_id,
+                inbound.chat_type,
+            )
+            return
         await self._ingress_coalescer.enqueue(
             ChannelIngressEvent(
                 endpoint_id=self._endpoint.endpoint_id,

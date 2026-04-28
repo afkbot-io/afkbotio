@@ -8,6 +8,7 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.services.channels.endpoint_contracts import (
     TelegramPollingEndpointConfig,
 )
@@ -97,6 +98,99 @@ def test_channel_telegram_add_rejects_existing_endpoint_and_update_preserves_uns
     assert "- tool_profile: support_readonly" in shown
     assert "- ingress_batch.enabled: True" in shown
     assert "- ingress_batch.debounce_ms: 2200" in shown
+
+
+def test_channel_telegram_update_binding_replaces_old_account_rules(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Syncing access bindings should remove old endpoint rules even after account id changes."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.telegram.org",),
+        )
+    )
+    asyncio.run(
+        profile_service.create(
+            profile_id="ops",
+            name="Ops",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.telegram.org",),
+        )
+    )
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "telegram",
+            "add",
+            "support-bot",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "bot-main",
+            "--account-id",
+            "old-account",
+            "--binding",
+        ],
+    )
+    assert created.exit_code == 0
+
+    updated = runner.invoke(
+        app,
+        [
+            "channel",
+            "telegram",
+            "update",
+            "support-bot",
+            "--profile",
+            "ops",
+            "--account-id",
+            "new-account",
+            "--private-policy",
+            "allowlist",
+            "--allow-from",
+            "12345",
+            "--binding",
+        ],
+    )
+
+    assert updated.exit_code == 0
+    bindings = run_channel_binding_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram"),
+    )
+    assert sorted(
+        (item.binding_id, item.profile_id, item.account_id, item.peer_id, item.user_id)
+        for item in bindings
+    ) == [
+        ("support-bot", "ops", "new-account", None, None),
+        ("support-bot:dm:12345", "ops", "new-account", "12345", "12345")
+    ]
+
 
 def test_channel_telegram_update_interactive_uses_current_defaults(
     tmp_path: Path,

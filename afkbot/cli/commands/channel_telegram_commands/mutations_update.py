@@ -13,11 +13,12 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_text,
 )
 from afkbot.cli.commands.channel_shared import (
+    collect_channel_access_policy_inputs,
     load_channel_profile,
     merge_ingress_batch_config,
     merge_reply_humanization_config,
     normalize_channel_tool_profile,
-    put_matching_binding,
+    put_access_policy_bindings,
     resolve_binding_update_inputs,
     resolve_channel_update_profile_id,
     should_collect_channel_update_interactively,
@@ -57,6 +58,12 @@ def run_telegram_update(
     credential_profile_key: str | None,
     account_id: str | None,
     group_trigger_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     ingress_batch_enabled: bool | None,
     ingress_debounce_ms: int | None,
@@ -78,6 +85,7 @@ def run_telegram_update(
 ) -> None:
     """Update one Telegram polling endpoint without implicit upsert."""
 
+    binding_count = 0
     try:
         current = runtime.load_endpoint(channel_id)
         prompt_language = resolve_prompt_language(settings=runtime.settings, value=lang, ru=ru)
@@ -89,6 +97,12 @@ def run_telegram_update(
                 credential_profile_key,
                 account_id,
                 group_trigger_mode,
+                private_policy,
+                allow_from,
+                group_policy,
+                groups,
+                group_allow_from,
+                outbound_allow_to,
                 tool_profile,
                 ingress_batch_enabled,
                 ingress_debounce_ms,
@@ -138,6 +152,22 @@ def run_telegram_update(
             )
             if interactive
             else normalize_channel_tool_profile(tool_profile or current.tool_profile)
+        )
+        resolved_access_policy = collect_channel_access_policy_inputs(
+            interactive=interactive,
+            lang=prompt_language,
+            private_policy=private_policy,
+            allow_from=allow_from,
+            group_policy=group_policy,
+            groups=groups,
+            group_allow_from=group_allow_from,
+            outbound_allow_to=outbound_allow_to,
+            private_policy_default=current.access_policy.private_policy,
+            allow_from_default=current.access_policy.allow_from,
+            group_policy_default=current.access_policy.group_policy,
+            groups_default=current.access_policy.groups,
+            group_allow_from_default=current.access_policy.group_allow_from,
+            outbound_allow_to_default=current.access_policy.outbound_allow_to,
         )
         resolved_ingress_enabled = (
             resolve_channel_bool(
@@ -345,6 +375,7 @@ def run_telegram_update(
             enabled=current.enabled,
             group_trigger_mode=resolved_group_trigger_mode,
             tool_profile=resolved_tool_profile,
+            access_policy=resolved_access_policy,
             ingress_batch=resolved_ingress_batch,
             reply_humanization=resolved_reply_humanization,
         )
@@ -358,9 +389,9 @@ def run_telegram_update(
                 priority=priority,
                 prompt_overlay=prompt_overlay,
             )
-            put_matching_binding(
+            binding_count = put_access_policy_bindings(
                 settings=runtime.settings,
-                binding_id=saved.endpoint_id,
+                endpoint_id=saved.endpoint_id,
                 transport="telegram",
                 profile_id=saved.profile_id,
                 session_policy=resolved_binding_inputs.session_policy,
@@ -368,6 +399,8 @@ def run_telegram_update(
                 enabled=saved.enabled,
                 account_id=saved.account_id,
                 prompt_overlay=resolved_binding_inputs.prompt_overlay,
+                access_policy=saved.access_policy,
+                replace_existing=True,
             )
     except Exception as exc:
         runtime.raise_error(exc)
@@ -385,7 +418,7 @@ def run_telegram_update(
         f"humanize_replies={saved.reply_humanization.enabled}, enabled={saved.enabled})."
     )
     if sync_binding:
-        typer.echo(f"Matching binding `{saved.endpoint_id}` was also updated.")
+        typer.echo(f"Matching bindings updated: {binding_count}.")
     runtime.reload_notice(runtime.settings)
 
 
