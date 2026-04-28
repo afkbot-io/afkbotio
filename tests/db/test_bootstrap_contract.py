@@ -777,6 +777,80 @@ async def test_create_schema_backfills_task_description_from_legacy_prompt_colum
     await engine.dispose()
 
 
+async def test_create_schema_preserves_existing_description_over_legacy_prompt(
+    tmp_path: Path,
+) -> None:
+    """When both columns exist, migration should keep filled description and fallback only blanks."""
+
+    db_path = tmp_path / "legacy_task_description_precedence.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    prompt TEXT NOT NULL,
+                    description TEXT NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO task (id, profile_id, title, prompt, description)
+                VALUES
+                    ('task_keep_description', 'default', 'Keep description', 'Legacy prompt', 'Canonical description'),
+                    ('task_fill_blank', 'default', 'Fill blank', 'Fallback prompt', '')
+                """
+            )
+        )
+
+    await create_schema(engine)
+
+    async with engine.connect() as conn:
+        columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
+        }
+        rows = (
+            await conn.execute(text("SELECT id, description FROM task ORDER BY id"))
+        ).fetchall()
+
+    assert "prompt" not in columns
+    assert dict(rows) == {
+        "task_fill_blank": "Fallback prompt",
+        "task_keep_description": "Canonical description",
+    }
+    await engine.dispose()
+
+
 async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade(
     tmp_path: Path,
 ) -> None:
