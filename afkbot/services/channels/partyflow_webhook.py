@@ -772,7 +772,11 @@ def _extract_chat_kind(*, payload: Mapping[str, object], data: Mapping[str, obje
         or _coerce_optional_str(data.get("type"))
     )
     if raw_kind is None:
-        return None
+        # PartyFlow v1 MESSAGE_* webhook payloads identify a channel by
+        # conversation_id but do not include a conversation_type. The public Bot
+        # REST API currently supports group/team channel membership and does
+        # not support DMs, so missing kind is a channel/group event.
+        return "group"
     lowered = raw_kind.lower()
     if lowered in {"dm", "direct", "private"}:
         return "private"

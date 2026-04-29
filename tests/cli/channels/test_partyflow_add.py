@@ -81,7 +81,7 @@ def test_channel_partyflow_add_persists_webhook_shape(
     assert "- include_context: True" in shown
     assert "- context_size: 8" in shown
     assert "- reply_mode: same_conversation" in shown
-    assert "- access.private_policy: open" in shown
+    assert "- access.private_policy: disabled" in shown
     assert "- access.group_policy: open" in shown
     assert "- ingress_batch.enabled: True" in shown
     assert (

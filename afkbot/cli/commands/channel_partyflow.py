@@ -44,7 +44,7 @@ from afkbot.cli.commands.inspection_shared import (
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg
 from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
-from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channel_routing.service import (
@@ -319,6 +319,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 group_allow_from=group_allow_from,
                 outbound_allow_to=outbound_allow_to,
                 tool_profile=base_inputs.tool_profile,
+                private_policy_default="disabled",
             )
             resolved_include_context = resolve_channel_bool(
                 value=include_context,
@@ -1246,23 +1247,21 @@ def _render_access_policy_summary(endpoint: PartyFlowWebhookEndpointConfig) -> s
 
 
 def _delete_partyflow_bindings(*, settings: Settings, channel_id: str) -> bool:
-    rules = run_channel_binding_service_sync(
-        settings, lambda service: service.list(transport="partyflow")
-    )
-    removed = False
-    for rule in rules:
-        if rule.binding_id != channel_id and not rule.binding_id.startswith(f"{channel_id}:"):
-            continue
-        try:
-            run_channel_binding_service_sync(
-                settings,
-                lambda service, binding_id=rule.binding_id: service.delete(binding_id=binding_id),
-            )
-            removed = True
-        except ChannelBindingServiceError as exc:
-            if exc.error_code != "channel_binding_not_found":
-                raise
-    return removed
+    async def _delete_rules(service: ChannelBindingService) -> bool:
+        rules = await service.list(transport="partyflow")
+        removed = False
+        for rule in rules:
+            if rule.binding_id != channel_id and not rule.binding_id.startswith(f"{channel_id}:"):
+                continue
+            try:
+                await service.delete(binding_id=rule.binding_id)
+                removed = True
+            except ChannelBindingServiceError as exc:
+                if exc.error_code != "channel_binding_not_found":
+                    raise
+        return removed
+
+    return run_channel_binding_service_sync(settings, _delete_rules)
 
 
 async def _partyflow_status_payload(
@@ -1620,25 +1619,33 @@ def _set_partyflow_enabled(*, channel_id: str, enabled: bool) -> None:
             settings,
             lambda service: service.update(current.model_copy(update={"enabled": enabled})),
         )
-        bindings = run_channel_binding_service_sync(
+        run_channel_binding_service_sync(
             settings,
-            lambda service: service.list(transport="partyflow"),
+            lambda service: _sync_partyflow_binding_enabled(
+                service=service,
+                channel_id=channel_id,
+                enabled=enabled,
+            ),
         )
-        for binding in bindings:
-            if binding.binding_id != channel_id and not binding.binding_id.startswith(
-                f"{channel_id}:"
-            ):
-                continue
-            run_channel_binding_service_sync(
-                settings,
-                lambda service, binding=binding: service.put(
-                    ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
-                ),
-            )
     except Exception as exc:
         _raise_partyflow_cli_error(exc)
     typer.echo(f"PartyFlow channel `{updated.endpoint_id}` enabled={updated.enabled}.")
     reload_install_managed_runtime_notice(settings)
+
+
+async def _sync_partyflow_binding_enabled(
+    *,
+    service: ChannelBindingService,
+    channel_id: str,
+    enabled: bool,
+) -> None:
+    bindings = await service.list(transport="partyflow")
+    for binding in bindings:
+        if binding.binding_id != channel_id and not binding.binding_id.startswith(f"{channel_id}:"):
+            continue
+        await service.put(
+            ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
+        )
 
 
 def _raise_partyflow_cli_error(exc: Exception) -> None:

@@ -621,6 +621,151 @@ async def test_partyflow_webhook_applies_access_policy_before_agent_turn(
     assert calls == []
 
 
+async def test_partyflow_webhook_applies_group_policy_when_conversation_type_is_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PartyFlow message webhooks omit conversation_type, so channel policy must still apply."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_missing_kind.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        calls.append(dict(kwargs))
+        return TurnResult(
+            run_id=1,
+            session_id="session-1",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="ignored"),
+        )
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(
+            reply_mode="disabled",
+            access_policy=ChannelAccessPolicy(
+                private_policy="disabled",
+                group_policy="allowlist",
+                groups=("conv-1",),
+                group_allow_from=("user-allowed",),
+            ),
+        ),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-missing-kind",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-blocked",
+            "text": "@bot blocked",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-missing-kind",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}
+    assert calls == []
+
+
+async def test_partyflow_webhook_blocks_explicit_private_when_private_policy_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If PartyFlow later sends explicit private events, private access policy must gate them."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_private.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        calls.append(dict(kwargs))
+        return TurnResult(
+            run_id=1,
+            session_id="session-1",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="ignored"),
+        )
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(
+            reply_mode="disabled",
+            access_policy=ChannelAccessPolicy(
+                private_policy="disabled",
+                group_policy="open",
+            ),
+        ),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-private",
+        "conversation_id": "conv-private",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "@bot blocked private",
+            "mentions": ["bot-42"],
+            "conversation_type": "private",
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-private",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}
+    assert calls == []
+
+
 async def test_partyflow_webhook_rejects_old_replay_timestamps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
