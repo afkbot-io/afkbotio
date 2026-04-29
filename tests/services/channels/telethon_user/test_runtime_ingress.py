@@ -9,13 +9,18 @@ from types import SimpleNamespace
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.channels import ChannelOutboundAttachment, ChannelOutboundMessage
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
 from afkbot.services.channels.endpoint_contracts import ChannelIngressBatchConfig
 from afkbot.services.channels.ingress_coalescer import ChannelIngressBatch, ChannelIngressEvent
 from afkbot.services.channels.ingress_persistence import get_channel_ingress_pending_service
 from afkbot.services.channels.telethon_user.errors import TelethonUserServiceError
-from afkbot.services.channels.telethon_user.normalization import TelethonUserIdentity
+from afkbot.services.channels.telethon_user.normalization import (
+    TelethonInboundMessage,
+    TelethonUserIdentity,
+)
 from afkbot.services.channels.telethon_user.service import TelethonUserService
+from afkbot.services.channels.telethon_user.service_events import enrich_inbound_with_downloaded_media
 from afkbot.settings import Settings
 from tests.services.channels.telethon_user._harness import (
     FakeDeliveryService,
@@ -61,6 +66,276 @@ async def test_telethon_user_service_translates_flood_wait_from_live_sender(
 
     assert exc_info.value.error_code == "telethon_flood_wait"
     assert exc_info.value.metadata["retry_after_sec"] == 9
+
+
+async def test_telethon_user_service_sends_rich_live_message(tmp_path: Path) -> None:
+    """Telethon live sender should support text formatting, buttons, and file delivery."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_rich_send.db'}",
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+
+    class RichClient(FakeTelethonClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sent_files: list[dict[str, object]] = []
+
+        async def send_message(self, entity: object, text: str, **kwargs: object) -> object:
+            self.sent_messages.append({"entity": entity, "text": text, **kwargs})
+            return SimpleNamespace(id=91)
+
+        async def send_file(self, entity: object, file: object, **kwargs: object) -> object:
+            self.sent_files.append({"entity": entity, "file": file, **kwargs})
+            return SimpleNamespace(id=92)
+
+    client = RichClient()
+    service._client = client  # type: ignore[attr-defined]
+    report_path = tmp_path / "profiles/default/report.txt"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("report", encoding="utf-8")
+
+    payload = await service._send_text_via_live_client(  # type: ignore[attr-defined]
+        SimpleNamespace(
+            peer_id="42",
+            thread_id=None,
+            to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+        ),
+        ChannelOutboundMessage(
+            text="*hello*",
+            parse_mode="md",
+            reply_markup={"inline_keyboard": [[{"text": "Open", "url": "https://example.com"}]]},
+            attachments=(
+                ChannelOutboundAttachment(kind="document", source="report.txt", caption="report"),
+            ),
+        ),
+    )
+
+    assert payload["message_id"] == 91
+    assert Path(str(client.sent_files[0]["file"])) == report_path
+    assert client.sent_files[0]["caption"] == "report"
+    assert client.sent_messages[0]["text"] == "*hello*"
+    assert client.sent_messages[0]["parse_mode"] == "md"
+    assert client.sent_messages[0]["buttons"] is not None
+
+
+async def test_telethon_user_service_rejects_attachment_paths_outside_workspace(
+    tmp_path: Path,
+) -> None:
+    """Telethon userbot file sends should not read arbitrary host paths."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_rich_send_scope.db'}",
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+    outside_file = tmp_path / "outside.txt"
+    outside_file.write_text("secret", encoding="utf-8")
+
+    service._client = FakeTelethonClient()  # type: ignore[attr-defined]
+
+    with pytest.raises(TelethonUserServiceError) as exc_info:
+        await service._send_text_via_live_client(  # type: ignore[attr-defined]
+            SimpleNamespace(
+                peer_id="42",
+                thread_id=None,
+                to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+            ),
+            ChannelOutboundMessage(
+                attachments=(ChannelOutboundAttachment(kind="document", source=str(outside_file)),),
+            ),
+        )
+
+    assert exc_info.value.error_code == "telethon_media_path_invalid"
+
+
+async def test_telethon_user_service_splits_long_rich_text_after_file_send(tmp_path: Path) -> None:
+    """Rich Telethon messages should keep text chunking when attachments are present."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_rich_send_chunks.db'}",
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+
+    class RichClient(FakeTelethonClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sent_files: list[dict[str, object]] = []
+
+        async def send_message(self, entity: object, text: str, **kwargs: object) -> object:
+            self.sent_messages.append({"entity": entity, "text": text, **kwargs})
+            return SimpleNamespace(id=len(self.sent_messages))
+
+        async def send_file(self, entity: object, file: object, **kwargs: object) -> object:
+            self.sent_files.append({"entity": entity, "file": file, **kwargs})
+            return SimpleNamespace(id=90)
+
+    client = RichClient()
+    service._client = client  # type: ignore[attr-defined]
+    report_path = tmp_path / "profiles/default/report.txt"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("report", encoding="utf-8")
+
+    payload = await service._send_text_via_live_client(  # type: ignore[attr-defined]
+        SimpleNamespace(
+            peer_id="42",
+            thread_id=None,
+            to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+        ),
+        ChannelOutboundMessage(
+            text=("beta " * 900).strip(),
+            attachments=(ChannelOutboundAttachment(kind="document", source="report.txt"),),
+        ),
+    )
+
+    assert payload["message_id"] == 2
+    assert len(client.sent_files) == 1
+    assert len(client.sent_messages) == 2
+    assert all(len(str(item["text"])) <= 4096 for item in client.sent_messages)
+
+
+async def test_telethon_user_service_downloads_media_into_profile_workspace(tmp_path: Path) -> None:
+    """Telethon inbound media should be saved where file tools can read it."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_media_download.db'}",
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+
+    async def download_media(*, file: str) -> str:
+        destination = Path(file)
+        destination.mkdir(parents=True, exist_ok=True)
+        path = destination / "note.txt"
+        path.write_text("hello from telegram file", encoding="utf-8")
+        return str(path)
+
+    inbound = TelethonInboundMessage(
+        event_key="tg-user:42:10",
+        message_id=10,
+        chat_id="42",
+        chat_kind="private",
+        user_id="777",
+        text="read this",
+    )
+    event = SimpleNamespace(
+        message=SimpleNamespace(
+            document=object(),
+            file=SimpleNamespace(mime_type="text/plain"),
+        ),
+        download_media=download_media,
+    )
+
+    enriched = await enrich_inbound_with_downloaded_media(service, event=event, inbound=inbound)
+
+    assert "Downloaded Telegram attachments:" in enriched.text
+    assert "channel_attachments/telegram_user/telethon-main/10/note.txt" in enriched.text
+    assert "hello from telegram file" in enriched.text
+
+
+async def test_telethon_user_service_skips_oversized_media_before_download(tmp_path: Path) -> None:
+    """Telethon inbound media should honor the configured download limit before saving."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_media_prelimit.db'}",
+        channel_media_download_max_bytes=4,
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+
+    async def download_media(*, file: str) -> str:
+        _ = file
+        raise AssertionError("oversized media should not be downloaded")
+
+    inbound = TelethonInboundMessage(
+        event_key="tg-user:42:11",
+        message_id=11,
+        chat_id="42",
+        chat_kind="private",
+        user_id="777",
+        text="too big",
+    )
+    event = SimpleNamespace(
+        message=SimpleNamespace(
+            document=object(),
+            file=SimpleNamespace(mime_type="text/plain", size=5),
+        ),
+        download_media=download_media,
+    )
+
+    enriched = await enrich_inbound_with_downloaded_media(service, event=event, inbound=inbound)
+
+    assert "download skipped" in enriched.text
+    assert "file too large" in enriched.text
+
+
+async def test_telethon_user_service_deletes_oversized_media_after_download(tmp_path: Path) -> None:
+    """Telethon downloads with missing metadata should be removed if the saved file is too large."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telethon_media_postlimit.db'}",
+        channel_media_download_max_bytes=4,
+    )
+    service = TelethonUserService(
+        settings,
+        endpoint=endpoint(),
+        client_factory=lambda **kwargs: FakeTelethonClient(),
+    )
+    saved_path: Path | None = None
+
+    async def download_media(*, file: str) -> str:
+        nonlocal saved_path
+        destination = Path(file)
+        destination.mkdir(parents=True, exist_ok=True)
+        saved_path = destination / "large.txt"
+        saved_path.write_text("12345", encoding="utf-8")
+        return str(saved_path)
+
+    inbound = TelethonInboundMessage(
+        event_key="tg-user:42:12",
+        message_id=12,
+        chat_id="42",
+        chat_kind="private",
+        user_id="777",
+        text="too big after save",
+    )
+    event = SimpleNamespace(
+        message=SimpleNamespace(
+            document=object(),
+            file=SimpleNamespace(mime_type="text/plain"),
+        ),
+        download_media=download_media,
+    )
+
+    enriched = await enrich_inbound_with_downloaded_media(service, event=event, inbound=inbound)
+
+    assert saved_path is not None
+    assert not saved_path.exists()
+    assert "download skipped" in enriched.text
+    assert "file too large" in enriched.text
 
 
 async def test_telethon_user_service_schedules_retry_when_batch_delivery_hits_flood_wait(

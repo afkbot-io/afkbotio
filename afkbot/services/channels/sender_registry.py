@@ -6,10 +6,12 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from afkbot.services.channels.contracts import ChannelOutboundMessage
 from afkbot.services.channels.delivery_runtime import ResolvedDeliveryTarget
 from afkbot.settings import Settings
 
-ChannelSenderFn = Callable[[ResolvedDeliveryTarget, str], Awaitable[dict[str, object]]]
+ChannelSenderPayload = str | ChannelOutboundMessage
+ChannelSenderFn = Callable[[ResolvedDeliveryTarget, ChannelSenderPayload], Awaitable[dict[str, object]]]
 _REGISTRIES_BY_ROOT: dict[str, "ChannelSenderRegistry"] = {}
 
 

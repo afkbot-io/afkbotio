@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from afkbot.services.channels import ChannelDeliveryTarget
+from afkbot.services.channels import (
+    ChannelDeliveryTarget,
+    ChannelOutboundAttachment,
+    ChannelOutboundMessage,
+)
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,
     TelegramPollingEndpointConfig,
@@ -38,6 +42,28 @@ class _FakeDeliveryService:
                 "run_id": run_id,
                 "target": target,
                 "text": text,
+                "credential_profile_key": credential_profile_key,
+            }
+        )
+        return {"ok": True, "transport": target.transport}
+
+    async def deliver_message(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        run_id: int,
+        target: ChannelDeliveryTarget,
+        message: ChannelOutboundMessage,
+        credential_profile_key: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "profile_id": profile_id,
+                "session_id": session_id,
+                "run_id": run_id,
+                "target": target,
+                "message": message,
                 "credential_profile_key": credential_profile_key,
             }
         )
@@ -117,8 +143,8 @@ async def test_channel_send_tool_delivers_text_to_explicit_telegram_target(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_channel_send_tool_requires_text_for_now(tmp_path: Path) -> None:
-    """MVP channel.send should fail clearly when no text payload is provided."""
+async def test_channel_send_tool_requires_payload(tmp_path: Path) -> None:
+    """channel.send should fail clearly when no text or attachment payload is provided."""
 
     tool = ChannelSendTool(
         Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_empty.db'}")
@@ -131,7 +157,7 @@ async def test_channel_send_tool_requires_text_for_now(tmp_path: Path) -> None:
     )
 
     assert result.ok is False
-    assert result.error_code == "channel_send_text_required"
+    assert result.error_code == "channel_send_payload_invalid"
 
 
 @pytest.mark.asyncio
@@ -261,3 +287,67 @@ async def test_channel_send_tool_rejects_smtp_transport(tmp_path: Path) -> None:
     assert result.ok is False
     assert result.error_code == "channel_send_transport_not_supported"
     assert delivery.calls == []
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_delivers_media_buttons_and_markdown(tmp_path: Path) -> None:
+    """channel.send should forward rich Telegram payloads to channel delivery."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+    )
+    tool = ChannelSendTool(
+        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_rich.db'}"),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=13)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="telegram",
+            endpoint_id="owner-bot",
+            chat_id="12345",
+            text="*Choose* next step",
+            parse_mode="MarkdownV2",
+            stream_draft=True,
+            reply_markup={
+                "inline_keyboard": [
+                    [
+                        {"text": "Approve", "callback_data": "approve:42"},
+                        {"text": "Docs", "url": "https://example.com/docs"},
+                    ]
+                ]
+            },
+            attachments=(
+                ChannelOutboundAttachment(
+                    kind="document",
+                    source="reports/build.txt",
+                    caption="Build log",
+                ),
+            ),
+        ),
+    )
+
+    assert result.ok is True
+    assert "message" in delivery.calls[0]
+    message = delivery.calls[0]["message"]
+    assert isinstance(message, ChannelOutboundMessage)
+    assert message.text == "*Choose* next step"
+    assert message.parse_mode == "MarkdownV2"
+    assert message.stream_draft is True
+    assert message.reply_markup == {
+        "inline_keyboard": [
+            [
+                {"text": "Approve", "callback_data": "approve:42"},
+                {"text": "Docs", "url": "https://example.com/docs"},
+            ]
+        ]
+    }
+    assert message.attachments[0].kind == "document"
+    assert message.attachments[0].source == "reports/build.txt"

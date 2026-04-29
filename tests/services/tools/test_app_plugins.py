@@ -24,6 +24,7 @@ from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRunti
 from afkbot.services.apps.imap.actions import _search_messages_sync
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.apps.smtp.actions import _send_email_sync
+from afkbot.services.apps.telegram import http_api as telegram_http_api
 from afkbot.services.apps.telegram.http_api import _resolve_workspace_media_path
 from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.tools.base import ToolCall, ToolContext
@@ -406,10 +407,18 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
     assert telegram is not None
     assert telegram.allowed_skills == {"telegram"}
     assert telegram.allowed_actions == {
+        "answer_callback_query",
+        "download_file",
         "send_document",
+        "send_animation",
+        "send_audio",
         "send_message",
+        "send_message_draft",
         "send_photo",
+        "send_sticker",
         "send_chat_action",
+        "send_video",
+        "send_voice",
         "get_me",
         "get_updates",
         "ban_chat_member",
@@ -483,6 +492,7 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
         assert field_map["text"]["required"] is True
         assert field_map["chat_id"]["required"] is False
         assert field_map["disable_web_page_preview"]["type"] == "boolean"
+        assert "reply_markup" in field_map
         ping_item = next(item for item in items if item.get("name") == "ping")
         assert ping_item["allowed_skills"] == ["ping-skill"]
         assert ping_item["allowed_actions"] == ["echo"]
@@ -1539,6 +1549,39 @@ async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(tm
     )
 
     assert resolved is None
+
+
+async def test_telegram_local_media_upload_rejects_oversized_file(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Telegram Bot local uploads should reject oversized files before multipart buffering."""
+
+    settings = Settings(root_dir=tmp_path, channel_media_upload_max_bytes=4)
+    media_path = tmp_path / "profiles/default/huge.bin"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"12345")
+
+    def fail_request(**_: object) -> dict[str, object]:
+        raise AssertionError("oversized upload should be rejected before request build")
+
+    monkeypatch.setattr(telegram_http_api, "_request_json_multipart", fail_request)
+
+    with pytest.raises(ValueError, match="exceeds max upload size"):
+        await telegram_http_api._post_send_media(
+            settings=settings,
+            profile_id="default",
+            token="token",
+            chat_id="42",
+            action="send_document",
+            field_name="document",
+            media_value="huge.bin",
+            caption=None,
+            message_thread_id=None,
+            parse_mode=None,
+            reply_markup=None,
+            timeout_sec=5,
+        )
 
 
 async def test_app_run_telegram_supports_send_chat_action(

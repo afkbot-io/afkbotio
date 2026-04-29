@@ -336,6 +336,11 @@ class Settings(BaseSettings):
     telegram_polling_timeout_sec: int = 20
     telegram_polling_idle_sleep_ms: int = 250
     telegram_polling_error_backoff_ms: int = 1000
+    channel_media_download_max_bytes: int = 20_000_000
+    channel_media_upload_max_bytes: int = 50_000_000
+    channel_media_text_preview_bytes: int = 8_192
+    channel_telegram_draft_stream_chunk_chars: int = 512
+    channel_telegram_draft_stream_delay_ms: int = 80
     enable_profile_app_modules: bool = False
     cli_progress_poll_interval_ms: int = 150
     cli_progress_batch_size: int = 50
@@ -560,6 +565,11 @@ class Settings(BaseSettings):
         "telegram_polling_timeout_sec",
         "telegram_polling_idle_sleep_ms",
         "telegram_polling_error_backoff_ms",
+        "channel_media_download_max_bytes",
+        "channel_media_upload_max_bytes",
+        "channel_media_text_preview_bytes",
+        "channel_telegram_draft_stream_chunk_chars",
+        "channel_telegram_draft_stream_delay_ms",
         "skills_marketplace_max_markdown_bytes",
         "skills_marketplace_max_json_bytes",
         "skills_marketplace_timeout_sec",
