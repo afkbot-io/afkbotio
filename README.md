@@ -187,6 +187,17 @@ afk channel telegram add
 afk channel telegram status
 ```
 
+Telegram Bot polling now enriches inbound updates with downloadable attachments for
+voice, audio, documents/files, photos/images, video, animation, video notes, and
+stickers. Files are downloaded into the profile workspace under
+`channel_attachments/telegram/<endpoint_id>/<update_id>/...`, and the agent turn gets
+path, kind, mime type, size, plus text previews for text-like files. Downloaded
+stickers keep their Telegram format extensions: static `.webp`, animated `.tgs`, and
+video `.webm`. Inline `callback_query` button presses are converted into
+agent-readable text with the pressed button text, `callback_data`, and the original
+message; forum-topic callbacks also preserve `message_thread_id` for topic routing, and
+the runtime best-effort acknowledges them through Telegram `answer_callback_query`.
+
 For a private 1:1 bot, use the interactive wizard and choose:
 
 - `Private chat access`: `allowlist`
@@ -227,6 +238,31 @@ safe channel tool profiles allow that tool while still blocking broad `app.run`.
 the wizard `Restrict channel.send outbound targets` step or `--outbound-allow-to`
 is configured, `channel.send` can only target those peer ids.
 
+`channel.send` still supports plain text, and now also accepts structured Telegram
+messages with `parse_mode`, `disable_web_page_preview`, Bot API-style `reply_markup`
+inline/reply keyboards, `attachments` of kind `photo`, `document`, `voice`, `audio`,
+`video`, `animation`, `sticker`, and `stream_draft`. For Telegram Bot channels,
+`stream_draft` sends best-effort `sendMessageDraft` preview chunks only for private
+chats before the final message. For group, supergroup, channel, and forum targets,
+AFKBOT skips draft previews and still sends the final message normally. Bot API local
+media uploads are also bounded by `channel_media_upload_max_bytes` and Telegram local
+upload caps: 10 MB for photos and 50 MB for other local uploads. It is not
+token-by-token model streaming; the final agent response is still delivered from the
+normal final-text path.
+
+Telethon inbound messages now save downloaded media into
+`channel_attachments/telegram_user/<endpoint_id>/<message_id>/...` and attach
+path, mime type, size, plus previews for text-like files to the agent turn. They also
+honor `channel_media_download_max_bytes`: oversized files are skipped before download
+when size metadata is available, or deleted and reported after download when size is
+only known after save. Downloaded stickers keep their Telegram format extensions:
+static `.webp`, animated `.tgs`, and video `.webm`. Outbound rich messages use
+Telethon `send_file`, preserve parse modes, resolve local attachments through the same
+workspace path and scope checks as Telegram Bot local media, and do a best-effort
+conversion of Bot API-like inline/reply keyboards into Telethon buttons. Outside-scope
+local paths are rejected; remote/http sources or opaque non-path values still pass
+through when they do not look like local paths.
+
 Useful channel tool-profile presets:
 
 - `chat_minimal`: reply only, no tools exposed from the channel
@@ -238,6 +274,15 @@ Overview:
 
 ```bash
 afk channel list
+```
+
+Telegram media and rich outbound delivery were verified with:
+
+```bash
+uv run pytest tests/services/channels/telegram_polling/test_support.py tests/services/channels/test_channel_delivery_service.py::test_channel_delivery_service_skips_draft_stream_for_non_private_telegram_target tests/services/channels/telethon_user/test_runtime_ingress.py::test_telethon_user_service_sends_rich_live_message tests/services/channels/telethon_user/test_runtime_ingress.py::test_telethon_user_service_rejects_attachment_paths_outside_workspace tests/services/channels/telethon_user/test_runtime_ingress.py::test_telethon_user_service_splits_long_rich_text_after_file_send tests/services/channels/telethon_user/test_runtime_ingress.py::test_telethon_user_service_skips_oversized_media_before_download tests/services/channels/telethon_user/test_runtime_ingress.py::test_telethon_user_service_deletes_oversized_media_after_download tests/services/tools/test_app_plugins.py::test_telegram_local_media_upload_rejects_oversized_file
+uv run pytest tests/services/channels/test_channel_delivery_service.py tests/services/tools/test_channel_send_tool.py tests/services/tools/test_app_plugins.py tests/services/channels/telegram_polling tests/services/channels/telethon_user
+uv run ruff check afkbot/services/apps/telegram/actions.py afkbot/services/apps/telegram/http_api.py afkbot/services/channels afkbot/services/tools/plugins/channel_send/plugin.py afkbot/settings.py tests/services/channels tests/services/tools/test_app_plugins.py tests/services/tools/test_channel_send_tool.py
+uv run mypy afkbot
 ```
 
 ## Install browser runtime

@@ -12,6 +12,7 @@ from afkbot.services.channels.endpoint_contracts import (
 )
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
 from afkbot.services.channels.telegram_polling import TelegramPollingService
+from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 from tests.services.channels.telegram_polling._harness import (
     FakeAppRuntime,
@@ -85,6 +86,146 @@ async def test_telegram_polling_processes_private_message_and_replies(tmp_path: 
         "peer_id": "42",
         "user_id": "777",
     }
+
+
+async def test_telegram_polling_downloads_media_before_agent_turn(tmp_path: Path) -> None:
+    """Polling adapter should download Telegram media and expose workspace paths to the model."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telegram_polling_media.db'}",
+    )
+    await seed_profile_and_binding(settings)
+
+    class DownloadingAppRuntime(FakeAppRuntime):
+        async def run(self, *, app: str, action: str, ctx: object, params: dict[str, object]):
+            if action == "download_file":
+                self.calls.append({"app": app, "action": action, "ctx": ctx, "params": params})
+                assert params["file_id"] == "voice-file-id"
+                return ToolResult(
+                    ok=True,
+                    payload={
+                        "path": "channel_attachments/telegram/telegram-main/41/voice.ogg",
+                        "file_name": "voice.ogg",
+                        "mime_type": "audio/ogg",
+                        "size_bytes": 12,
+                    },
+                )
+            return await super().run(app=app, action=action, ctx=ctx, params=params)
+
+    app_runtime = DownloadingAppRuntime(
+        updates=[
+            {
+                "update_id": 41,
+                "message": {
+                    "message_id": 5,
+                    "from": {"id": 777, "is_bot": False},
+                    "chat": {"id": 42, "type": "private"},
+                    "voice": {
+                        "file_id": "voice-file-id",
+                        "duration": 3,
+                        "mime_type": "audio/ogg",
+                        "file_size": 12,
+                    },
+                },
+            }
+        ]
+    )
+    captured: list[dict[str, object]] = []
+
+    async def _fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        captured.append(dict(kwargs))
+        return TurnResult(
+            run_id=91,
+            profile_id=str(kwargs["profile_id"]),
+            session_id=str(kwargs["session_id"]),
+            envelope=ActionEnvelope(action="finalize", message="heard"),
+        )
+
+    service = TelegramPollingService(
+        settings,
+        endpoint=endpoint(),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        app_runtime=app_runtime,
+        channel_delivery_service=FakeDeliveryService(),  # type: ignore[arg-type]
+        run_chat_turn_fn=_fake_run_chat_turn,
+    )
+
+    processed = await service.poll_once()
+
+    assert processed == 1
+    assert len(captured) == 1
+    message = str(captured[0]["message"])
+    assert "Incoming Telegram attachments:" in message
+    assert "- voice: 3s, audio/ogg, 12 bytes" in message
+    assert "Downloaded Telegram attachments:" in message
+    assert "channel_attachments/telegram/telegram-main/41/voice.ogg" in message
+
+
+async def test_telegram_polling_acknowledges_callback_queries(tmp_path: Path) -> None:
+    """Callback button presses should be acknowledged so Telegram clients stop spinning."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'telegram_polling_callback.db'}",
+    )
+    await seed_profile_and_binding(settings)
+
+    class CallbackAppRuntime(FakeAppRuntime):
+        async def run(self, *, app: str, action: str, ctx: object, params: dict[str, object]):
+            if action == "answer_callback_query":
+                self.calls.append({"app": app, "action": action, "ctx": ctx, "params": params})
+                return ToolResult(ok=True, payload={"ok": True})
+            return await super().run(app=app, action=action, ctx=ctx, params=params)
+
+    app_runtime = CallbackAppRuntime(
+        updates=[
+            {
+                "update_id": 42,
+                "callback_query": {
+                    "id": "callback-1",
+                    "from": {"id": 777, "is_bot": False},
+                    "data": "approve:42",
+                    "message": {
+                        "message_id": 7,
+                        "from": {"id": 1001, "is_bot": True},
+                        "chat": {"id": 42, "type": "private"},
+                        "text": "Approve?",
+                        "reply_markup": {
+                            "inline_keyboard": [[{"text": "Approve", "callback_data": "approve:42"}]]
+                        },
+                    },
+                },
+            }
+        ]
+    )
+    captured: list[dict[str, object]] = []
+
+    async def _fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        captured.append(dict(kwargs))
+        return TurnResult(
+            run_id=93,
+            profile_id="default",
+            session_id="telegram:42",
+            envelope=ActionEnvelope(action="finalize", message="approved"),
+        )
+
+    service = TelegramPollingService(
+        settings,
+        endpoint=endpoint(),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        app_runtime=app_runtime,
+        channel_delivery_service=FakeDeliveryService(),  # type: ignore[arg-type]
+        run_chat_turn_fn=_fake_run_chat_turn,
+    )
+
+    processed = await service.poll_once()
+
+    assert processed == 1
+    assert len(captured) == 1
+    assert "Telegram button pressed:" in str(captured[0]["message"])
+    callback_call = next(call for call in app_runtime.calls if call["action"] == "answer_callback_query")
+    assert callback_call["params"] == {"callback_query_id": "callback-1"}
 
 
 async def test_telegram_polling_suppresses_llm_error_replies(tmp_path: Path) -> None:

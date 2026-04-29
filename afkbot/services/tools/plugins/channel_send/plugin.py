@@ -6,7 +6,11 @@ from typing import Any
 
 from pydantic import Field, model_validator
 
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
+from afkbot.services.channels.contracts import (
+    ChannelDeliveryTarget,
+    ChannelOutboundAttachment,
+    ChannelOutboundMessage,
+)
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
 from afkbot.services.channels.endpoint_contracts import ChannelEndpointConfig
 from afkbot.services.channels.endpoint_service import (
@@ -27,6 +31,11 @@ class ChannelSendParams(ToolParameters):
 
     transport: str = Field(min_length=1, max_length=64)
     text: str = Field(default="", max_length=200000)
+    parse_mode: str | None = Field(default=None, min_length=1, max_length=32)
+    disable_web_page_preview: bool = False
+    reply_markup: dict[str, object] | None = None
+    attachments: tuple[ChannelOutboundAttachment, ...] = ()
+    stream_draft: bool = False
     endpoint_id: str | None = Field(default=None, min_length=1, max_length=120)
     binding_id: str | None = Field(default=None, min_length=1, max_length=255)
     account_id: str | None = Field(default=None, min_length=1, max_length=255)
@@ -48,11 +57,12 @@ class ChannelSendParams(ToolParameters):
 
 
 class ChannelSendTool(ToolBase):
-    """Send text back through a configured external channel."""
+    """Send messages and media back through a configured external channel."""
 
     name = "channel.send"
     description = (
-        "Send a text message through a configured channel. "
+        "Send a Telegram channel message, optionally with Markdown/HTML parse_mode, "
+        "inline/reply keyboards in reply_markup, media attachments, or Bot API draft streaming. "
         "Use transport=telegram for Bot API channels and transport=telegram_user for Telethon userbot channels. "
         "Telegram targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id unless endpoint_id/binding_id supplies it. "
         "Optional thread_id targets forum topics. Optional credential_profile_key selects the sender credential profile."
@@ -75,12 +85,6 @@ class ChannelSendTool(ToolBase):
         scope_error = self._ensure_profile_scope(ctx=ctx, payload=payload)
         if scope_error is not None:
             return scope_error
-        message = payload.text.strip()
-        if not message:
-            return ToolResult.error(
-                error_code="channel_send_text_required",
-                reason="channel.send requires non-empty text.",
-            )
         if payload.transport not in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
             return ToolResult.error(
                 error_code="channel_send_transport_not_supported",
@@ -88,6 +92,14 @@ class ChannelSendTool(ToolBase):
                 metadata={"transport": payload.transport},
             )
         try:
+            message = ChannelOutboundMessage(
+                text=payload.text,
+                parse_mode=payload.parse_mode,
+                disable_web_page_preview=payload.disable_web_page_preview,
+                reply_markup=payload.reply_markup,
+                attachments=payload.attachments,
+                stream_draft=payload.stream_draft,
+            )
             target = ChannelDeliveryTarget(
                 transport=payload.transport,
                 binding_id=payload.binding_id,
@@ -114,15 +126,27 @@ class ChannelSendTool(ToolBase):
             target = target.model_copy(
                 update={"account_id": target.account_id or endpoint_or_error.account_id}
             )
-            result = await self._delivery_service.deliver_text(
-                profile_id=ctx.profile_id,
-                session_id=ctx.session_id,
-                run_id=ctx.run_id,
-                target=target,
-                text=message,
-                credential_profile_key=payload.credential_profile_key
-                or endpoint_or_error.credential_profile_key,
+            credential_profile_key = (
+                payload.credential_profile_key or endpoint_or_error.credential_profile_key
             )
+            if _is_plain_text_message(message):
+                result = await self._delivery_service.deliver_text(
+                    profile_id=ctx.profile_id,
+                    session_id=ctx.session_id,
+                    run_id=ctx.run_id,
+                    target=target,
+                    text=message.text or "",
+                    credential_profile_key=credential_profile_key,
+                )
+            else:
+                result = await self._delivery_service.deliver_message(
+                    profile_id=ctx.profile_id,
+                    session_id=ctx.session_id,
+                    run_id=ctx.run_id,
+                    target=target,
+                    message=message,
+                    credential_profile_key=credential_profile_key,
+                )
         except ChannelDeliveryServiceError as exc:
             return ToolResult.error(
                 error_code=exc.error_code,
@@ -131,7 +155,7 @@ class ChannelSendTool(ToolBase):
             )
         except ValueError as exc:
             return ToolResult.error(
-                error_code="channel_send_target_invalid",
+                error_code="channel_send_payload_invalid",
                 reason=str(exc),
             )
         return ToolResult(ok=True, payload=_delivery_result_payload(result))
@@ -282,6 +306,17 @@ def _delivery_result_payload(result: object) -> dict[str, object]:
     if isinstance(result, dict):
         return {str(key): _jsonish(value) for key, value in result.items()}
     return {"result": _jsonish(result)}
+
+
+def _is_plain_text_message(message: ChannelOutboundMessage) -> bool:
+    return (
+        bool(message.text)
+        and message.parse_mode is None
+        and not message.disable_web_page_preview
+        and message.reply_markup is None
+        and not message.attachments
+        and not message.stream_draft
+    )
 
 
 def _jsonish(value: Any) -> object:

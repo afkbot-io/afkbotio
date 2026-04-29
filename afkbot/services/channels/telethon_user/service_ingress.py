@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
 from afkbot.services.channel_routing.runtime_target import (
@@ -13,7 +13,7 @@ from afkbot.services.channel_routing.runtime_target import (
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
-from afkbot.services.channels.contracts import ChannelDeliveryTarget
+from afkbot.services.channels.contracts import ChannelDeliveryTarget, ChannelOutboundMessage
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
 from afkbot.services.channels.ingress_coalescer import (
     ChannelIngressBatch,
@@ -25,7 +25,9 @@ from afkbot.services.channels.ingress_journal import get_channel_ingress_journal
 from afkbot.services.channels.ingress_persistence import get_channel_ingress_pending_service
 from afkbot.services.channels.reply_humanization import simulate_telethon_reply_humanization
 from afkbot.services.channels.reply_policy import should_suppress_channel_reply
+from afkbot.services.channels.media_ingest import resolve_channel_outbound_media_path
 from afkbot.services.channels.telethon_user.errors import TelethonUserServiceError
+from afkbot.services.telegram_text import split_telegram_text
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -364,7 +366,7 @@ async def send_text_via_live_client(
     service: TelethonUserService,
     *,
     target: Any,
-    text: str,
+    text: str | ChannelOutboundMessage,
 ) -> dict[str, object]:
     """Send one outbound message through the live Telethon client with structured errors."""
 
@@ -389,8 +391,49 @@ async def send_text_via_live_client(
             reason=f"Invalid Telethon peer_id: {target.peer_id}",
             metadata=target.to_payload(),
         ) from exc
+    if isinstance(text, ChannelOutboundMessage):
+        message = text
+    else:
+        message = ChannelOutboundMessage(text=text)
     try:
-        result = await client.send_message(entity, text)
+        last_result: object | None = None
+        buttons = _build_telethon_buttons(message.reply_markup)
+        for attachment in message.attachments:
+            source = await _resolve_telethon_attachment_source(
+                service=service,
+                target=target,
+                source=attachment.source,
+            )
+            send_file = getattr(client, "send_file", None)
+            if not callable(send_file):
+                raise TelethonUserServiceError(
+                    error_code="telethon_media_not_supported",
+                    reason="Connected Telethon client does not support file delivery.",
+                    metadata=target.to_payload(),
+                )
+            kwargs: dict[str, object] = {}
+            if attachment.caption:
+                kwargs["caption"] = attachment.caption
+            if attachment.parse_mode:
+                kwargs["parse_mode"] = attachment.parse_mode
+            if buttons is not None:
+                kwargs["buttons"] = buttons
+            last_result = await send_file(entity, source, **kwargs)
+        if message.text:
+            chunks = split_telegram_text(message.text)
+            for index, chunk in enumerate(chunks):
+                kwargs = {}
+                if message.parse_mode:
+                    kwargs["parse_mode"] = message.parse_mode
+                if buttons is not None and index == len(chunks) - 1:
+                    kwargs["buttons"] = buttons
+                last_result = await client.send_message(entity, chunk, **kwargs)
+        if last_result is None:
+            raise TelethonUserServiceError(
+                error_code="telethon_message_empty",
+                reason="Telethon outbound message is empty.",
+                metadata=target.to_payload(),
+            )
     except Exception as exc:
         retry_after_sec = extract_flood_wait_retry_after_sec(exc)
         if retry_after_sec is not None:
@@ -405,12 +448,108 @@ async def send_text_via_live_client(
                     "retry_after_sec": retry_after_sec,
                 },
             ) from exc
+        if isinstance(exc, TelethonUserServiceError):
+            raise
         raise
-    message_id = getattr(result, "id", None)
-    payload: dict[str, object] = {"peer_id": str(target.peer_id), "text": text}
+    message_id = getattr(last_result, "id", None)
+    payload: dict[str, object] = {"peer_id": str(target.peer_id), "text": message.text}
     if isinstance(message_id, int):
         payload["message_id"] = message_id
     return payload
+
+
+async def _resolve_telethon_attachment_source(
+    *,
+    service: TelethonUserService,
+    target: Any,
+    source: str,
+) -> str:
+    try:
+        local_path = await resolve_channel_outbound_media_path(
+            settings=service._settings,
+            profile_id=service._endpoint.profile_id,
+            raw_value=source,
+            label="Telethon media",
+        )
+    except ValueError as exc:
+        raise TelethonUserServiceError(
+            error_code="telethon_media_path_invalid",
+            reason=str(exc),
+            metadata=target.to_payload(),
+        ) from exc
+    if local_path is None:
+        return source
+    size_bytes = local_path.stat().st_size
+    max_bytes = service._settings.channel_media_upload_max_bytes
+    if size_bytes > max_bytes:
+        raise TelethonUserServiceError(
+            error_code="telethon_media_too_large",
+            reason=f"Telethon media file exceeds max upload size: {size_bytes} > {max_bytes}",
+            metadata=target.to_payload(),
+        )
+    return str(local_path)
+
+
+def _build_telethon_buttons(reply_markup: dict[str, object] | None) -> object | None:
+    """Best-effort conversion from Bot API reply_markup to Telethon buttons."""
+
+    if not reply_markup:
+        return None
+    try:
+        from telethon import Button  # type: ignore[import-untyped]
+    except Exception:
+        return reply_markup
+    inline_keyboard = reply_markup.get("inline_keyboard")
+    if isinstance(inline_keyboard, list):
+        rows: list[list[object]] = []
+        for row in inline_keyboard:
+            if not isinstance(row, list):
+                continue
+            rendered_row: list[object] = []
+            for button in row:
+                rendered = _build_telethon_inline_button(Button, button)
+                if rendered is not None:
+                    rendered_row.append(rendered)
+            if rendered_row:
+                rows.append(rendered_row)
+        return rows or None
+    keyboard = reply_markup.get("keyboard")
+    if isinstance(keyboard, list):
+        rows = []
+        for row in keyboard:
+            if not isinstance(row, list):
+                continue
+            rendered_row = []
+            for button in row:
+                text = button if isinstance(button, str) else button.get("text") if isinstance(button, dict) else None
+                if isinstance(text, str) and text.strip():
+                    rendered_row.append(Button.text(text.strip()))
+            if rendered_row:
+                rows.append(rendered_row)
+        return rows or None
+    return reply_markup
+
+
+def _build_telethon_inline_button(button_factory: Any, payload: object) -> object | None:
+    if not isinstance(payload, dict):
+        return None
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    label = text.strip()
+    callback_data = payload.get("callback_data")
+    if isinstance(callback_data, str):
+        return cast(object, button_factory.inline(label, data=callback_data.encode("utf-8")))
+    url = payload.get("url")
+    if isinstance(url, str) and url.strip():
+        return cast(object, button_factory.url(label, url.strip()))
+    switch_current = payload.get("switch_inline_query_current_chat")
+    if isinstance(switch_current, str):
+        return cast(object, button_factory.switch_inline(label, query=switch_current, same_peer=True))
+    switch_query = payload.get("switch_inline_query")
+    if isinstance(switch_query, str):
+        return cast(object, button_factory.switch_inline(label, query=switch_query, same_peer=False))
+    return cast(object, button_factory.inline(label, data=label.encode("utf-8")))
 
 
 def extract_flood_wait_retry_after_sec(exc: Exception) -> int | None:

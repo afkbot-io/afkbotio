@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-04-29
+
+### Added
+
+- Telegram Bot polling channels now download inbound media attachments into the
+  profile workspace, including voice, audio, documents, photos, videos,
+  animations, video notes, and stickers.
+- `channel.send` now supports rich Telegram payloads with parse modes, web
+  preview control, reply/inline keyboards, media attachments, and private-chat
+  draft previews.
+- Telethon userbot channels now expose inbound media paths to agent turns and
+  support rich outbound file sends through workspace-scoped attachments.
+
+### Fixed
+
+- Telegram forum-topic callback queries now preserve `message_thread_id` for
+  topic-aware routing.
+- Telegram Bot and Telethon media paths and file sizes now fail closed for
+  outside-scope or oversized local media.
+- Animated and video Telegram stickers now keep `.tgs` and `.webm` download
+  extensions instead of being forced to `.webp`.
+- Release metadata and lockfile package metadata are aligned to `1.5.4`.
+
 ## [1.5.3] - 2026-04-28
 
 ### Changed
