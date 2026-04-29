@@ -38,7 +38,7 @@ def test_start_invokes_full_stack(monkeypatch) -> None:  # type: ignore[no-untyp
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
-    calls: list[tuple[str, int, int, bool, tuple[str, ...], bool, str]] = []
+    calls: list[tuple[str, int, int, bool, tuple[str, ...], bool, str, str | None, str | None]] = []
 
     async def _fake_run_full_stack(
         *,
@@ -61,6 +61,8 @@ def test_start_invokes_full_stack(monkeypatch) -> None:  # type: ignore[no-untyp
                 channel_ids,
                 strict_channels,
                 str(settings.root_dir),
+                settings.taskflow_runtime_profile_id,
+                settings.taskflow_runtime_owner_ref,
             )
         )
 
@@ -69,12 +71,103 @@ def test_start_invokes_full_stack(monkeypatch) -> None:  # type: ignore[no-untyp
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["start", "--host", "127.0.0.1", "--runtime-port", "18080", "--api-port", "18081"],
+        [
+            "start",
+            "--host",
+            "127.0.0.1",
+            "--runtime-port",
+            "18080",
+            "--api-port",
+            "18081",
+            "--taskflow-profile",
+            "ops",
+            "--taskflow-owner-ref",
+            "analyst:researcher",
+        ],
     )
     assert result.exit_code == 0
-    assert calls == [("127.0.0.1", 18080, 18081, True, (), False, str(get_settings().root_dir))]
+    assert calls == [
+        (
+            "127.0.0.1",
+            18080,
+            18081,
+            True,
+            (),
+            False,
+            str(get_settings().root_dir),
+            "ops",
+            "analyst:researcher",
+        )
+    ]
     assert "runtime daemon: http://127.0.0.1:18080" in result.stdout
     assert "chat api/ws: http://127.0.0.1:18081" in result.stdout
+    get_settings.cache_clear()
+
+
+def test_start_supports_structured_taskflow_owner_selector(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Start should normalize structured Task Flow owner selectors into owner_ref sharding."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    calls: list[tuple[str | None, str | None]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        persist_runtime_bind: bool,
+        settings,
+    ) -> None:
+        del host, runtime_port, api_port, start_channels, channel_ids, strict_channels, persist_runtime_bind
+        calls.append((settings.taskflow_runtime_profile_id, settings.taskflow_runtime_owner_ref))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "--taskflow-profile",
+            "ops",
+            "--taskflow-owner-profile",
+            "papercliper",
+            "--taskflow-owner-subagent",
+            "reviewer",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("ops", "papercliper:reviewer")]
+    get_settings.cache_clear()
+
+
+def test_start_rejects_invalid_taskflow_profile(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Invalid --taskflow-profile should surface as deterministic CLI usage error."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "start",
+            "--runtime-port",
+            "19000",
+            "--api-port",
+            "19001",
+            "--taskflow-profile",
+            "invalid profile",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid profile id: invalid profile" in result.stderr
     get_settings.cache_clear()
 
 

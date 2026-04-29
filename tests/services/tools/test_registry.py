@@ -27,6 +27,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "automation.update",
         "bash.exec",
         "browser.control",
+        "channel.send",
         "credentials.create",
         "credentials.delete",
         "credentials.list",
@@ -105,6 +106,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("web.search") is not None
     assert registry.get("web.fetch") is not None
     assert registry.get("browser.control") is not None
+    assert registry.get("channel.send") is not None
     assert registry.get("mcp.profile.upsert") is not None
     assert registry.get("task.board") is not None
     assert registry.get("task.block") is not None

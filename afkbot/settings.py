@@ -20,6 +20,7 @@ from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
     MAX_LLM_REQUEST_TIMEOUT_SEC,
 )
+from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 
 
 def _package_root() -> Path:
@@ -138,6 +139,7 @@ class Settings(BaseSettings):
         "diffs_render",
         "bash_exec",
         "browser_control",
+        "channel_send",
         "debug_echo",
         "http_request",
         "web_search",
@@ -256,6 +258,7 @@ class Settings(BaseSettings):
     taskflow_runtime_poll_interval_sec: float = 5.0
     taskflow_runtime_maintenance_batch_size: int = 32
     taskflow_runtime_claim_ttl_sec: int = 900
+    taskflow_runtime_profile_id: str | None = None
     taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = False
     taskflow_strict_team_profile_ids: bool = False
@@ -333,6 +336,11 @@ class Settings(BaseSettings):
     telegram_polling_timeout_sec: int = 20
     telegram_polling_idle_sleep_ms: int = 250
     telegram_polling_error_backoff_ms: int = 1000
+    channel_media_download_max_bytes: int = 20_000_000
+    channel_media_upload_max_bytes: int = 50_000_000
+    channel_media_text_preview_bytes: int = 8_192
+    channel_telegram_draft_stream_chunk_chars: int = 512
+    channel_telegram_draft_stream_delay_ms: int = 80
     enable_profile_app_modules: bool = False
     cli_progress_poll_interval_ms: int = 150
     cli_progress_batch_size: int = 50
@@ -453,6 +461,21 @@ class Settings(BaseSettings):
             return normalized or None
         return value
 
+    @field_validator("taskflow_runtime_profile_id", mode="before")
+    @classmethod
+    def _normalize_taskflow_runtime_profile_id(cls, value: object) -> str | None:
+        """Normalize optional detached runtime backlog profile filter."""
+
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return validate_profile_id(text)
+        except InvalidProfileIdError as exc:
+            raise ValueError(str(exc)) from exc
+
     @field_validator("taskflow_runtime_owner_ref", mode="before")
     @classmethod
     def _normalize_taskflow_runtime_owner_ref(cls, value: object) -> str | None:
@@ -542,6 +565,11 @@ class Settings(BaseSettings):
         "telegram_polling_timeout_sec",
         "telegram_polling_idle_sleep_ms",
         "telegram_polling_error_backoff_ms",
+        "channel_media_download_max_bytes",
+        "channel_media_upload_max_bytes",
+        "channel_media_text_preview_bytes",
+        "channel_telegram_draft_stream_chunk_chars",
+        "channel_telegram_draft_stream_delay_ms",
         "skills_marketplace_max_markdown_bytes",
         "skills_marketplace_max_json_bytes",
         "skills_marketplace_timeout_sec",

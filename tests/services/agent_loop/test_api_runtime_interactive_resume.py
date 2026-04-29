@@ -50,6 +50,7 @@ async def test_resume_chat_interaction_approval_replays_with_confirmation(monkey
         spec_patch={
             "tool_name": "debug.echo",
             "tool_params": {"message": "ok"},
+            "tool_call_id": "call_debug_1",
         },
     )
 
@@ -73,6 +74,7 @@ async def test_resume_chat_interaction_approval_replays_with_confirmation(monkey
     assert captured["message"] == "approval_resume:debug.echo"
     planned_tool_calls = captured["planned_tool_calls"]
     assert isinstance(planned_tool_calls, list)
+    assert planned_tool_calls[0].call_id == "call_debug_1"
     assert planned_tool_calls[0].params[CONFIRM_ACK_PARAM] is True
     assert planned_tool_calls[0].params[CONFIRM_QID_PARAM] == "approval-1"
 
@@ -103,6 +105,7 @@ async def test_resume_chat_interaction_profile_selection_applies_profile_name(mo
                 "action": "get_me",
                 "params": {},
             },
+            "tool_call_id": "call_app_run_1",
             "available_profile_keys": ["work", "personal"],
         },
     )
@@ -127,6 +130,7 @@ async def test_resume_chat_interaction_profile_selection_applies_profile_name(mo
     assert captured["message"] == "profile_resume:app.run"
     planned_tool_calls = captured["planned_tool_calls"]
     assert isinstance(planned_tool_calls, list)
+    assert planned_tool_calls[0].call_id == "call_app_run_1"
     assert planned_tool_calls[0].params["profile_name"] == "work"
 
 

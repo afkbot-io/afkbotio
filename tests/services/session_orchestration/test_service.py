@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from pathlib import Path
+import sqlite3
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.db.session import session_scope
 from afkbot.models.chat_session_turn_queue import ChatSessionTurnQueueItem
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
@@ -54,6 +58,56 @@ class _ObservedRunner:
             profile_id=profile_id,
             status="completed",
         )
+        return TurnResult(
+            run_id=run.id,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message=f"done:{message}"),
+        )
+
+
+class _ParallelObservedRunner:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        started_sessions: list[str],
+        started_lock: asyncio.Lock,
+        all_started: asyncio.Event,
+        release_all: asyncio.Event,
+        expected_count: int,
+    ) -> None:
+        self._session = session
+        self._started_sessions = started_sessions
+        self._started_lock = started_lock
+        self._all_started = all_started
+        self._release_all = release_all
+        self._expected_count = expected_count
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        **_unused: object,
+    ) -> TurnResult:
+        sessions = ChatSessionRepository(self._session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        run = await RunRepository(self._session).create_run(
+            session_id=session_id,
+            profile_id=profile_id,
+            status="running",
+        )
+        await self._session.commit()
+        async with self._started_lock:
+            self._started_sessions.append(session_id)
+            if len(self._started_sessions) >= self._expected_count:
+                self._all_started.set()
+        await self._release_all.wait()
+        run.status = "completed"
+        await self._session.flush()
         return TurnResult(
             run_id=run.id,
             session_id=session_id,
@@ -240,6 +294,80 @@ async def test_session_orchestrator_turn_lease_serializes_internal_concurrent_ca
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_session_orchestrator_allows_parallel_turns_for_different_sessions(
+    tmp_path: Path,
+) -> None:
+    """Independent chat sessions should not serialize each other through the SQLite queue."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_parallel_sessions.db",
+    )
+    started_sessions: list[str] = []
+    started_lock = asyncio.Lock()
+    all_started = asyncio.Event()
+    release_all = asyncio.Event()
+    session_ids = ("s-parallel-a", "s-parallel-b", "s-parallel-c")
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    orchestrators = [
+        SessionOrchestrator(
+            settings=settings,
+            turn_runner_factory=lambda session, _profile_id: _ParallelObservedRunner(
+                session,
+                started_sessions=started_sessions,
+                started_lock=started_lock,
+                all_started=all_started,
+                release_all=release_all,
+                expected_count=len(session_ids),
+            ),
+        )
+        for _ in session_ids
+    ]
+
+    tasks = [
+        asyncio.create_task(
+            orchestrator.run_turn(
+                profile_id="default",
+                session_id=session_id,
+                message=session_id,
+                source="chat",
+            )
+        )
+        for orchestrator, session_id in zip(orchestrators, session_ids, strict=True)
+    ]
+
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=2.0)
+        async with session_scope(factory) as session:
+            running_rows = (
+                await session.execute(
+                    select(ChatSessionTurnQueueItem).where(
+                        ChatSessionTurnQueueItem.status == "running"
+                    )
+                )
+            ).scalars().all()
+            assert {row.session_id for row in running_rows} == set(session_ids)
+        release_all.set()
+        results = await asyncio.gather(*tasks)
+        assert {result.session_id for result in results} == set(session_ids)
+        assert {result.envelope.message for result in results} == {
+            "done:s-parallel-a",
+            "done:s-parallel-b",
+            "done:s-parallel-c",
+        }
+        async with session_scope(factory) as session:
+            rows = (await session.execute(select(ChatSessionTurnQueueItem))).scalars().all()
+            assert rows == []
+    finally:
+        release_all.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await engine.dispose()
+
+
 def test_session_queue_poll_delay_uses_capped_backoff() -> None:
     """Session queue wait loop should reduce DB churn while preserving short first retry."""
 
@@ -249,3 +377,133 @@ def test_session_queue_poll_delay_uses_capped_backoff() -> None:
     assert _session_queue_poll_delay(3) == pytest.approx(0.4)
     assert _session_queue_poll_delay(4) == pytest.approx(0.5)
     assert _session_queue_poll_delay(8) == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_retries_transient_sqlite_lock_during_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queue release should retry transient SQLite lock errors instead of crashing chat."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_release_retry.db",
+    )
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    release_calls = {"count": 0}
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        await ChatSessionRepository(session).create(session_id="s-release", profile_id="default")
+
+    original_release = ChatSessionTurnQueueRepository.release
+
+    async def _flaky_release(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        queue_item_id: int,
+        owner_token: str,
+    ) -> None:
+        release_calls["count"] += 1
+        if release_calls["count"] == 1:
+            raise OperationalError(
+                "DELETE FROM chat_session_turn_queue WHERE id = ? AND owner_token = ?",
+                (queue_item_id, owner_token),
+                sqlite3.OperationalError("database is locked"),
+            )
+        await original_release(
+            self,
+            queue_item_id=queue_item_id,
+            owner_token=owner_token,
+        )
+
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "release", _flaky_release)
+
+    orchestrator = SessionOrchestrator(
+        settings=settings,
+        session_factory=factory,
+        turn_runner_factory=lambda session, _profile_id: _ObservedRunner(
+            session,
+            started=[],
+            first_started=first_started,
+            release_first=release_first,
+        ),
+    )
+
+    try:
+        result = await orchestrator.run_turn(
+            profile_id="default",
+            session_id="s-release",
+            message="single",
+            source="chat",
+        )
+        assert result.envelope.message == "done:single"
+        assert release_calls["count"] >= 2
+        async with session_scope(factory) as session:
+            rows = (await session.execute(select(ChatSessionTurnQueueItem))).scalars().all()
+            assert rows == []
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_wait_loop_throttles_stale_queue_sweeps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waiting for queue admission should not execute stale cleanup on every poll tick."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_stale_sweep.db",
+    )
+    release_stale_calls = {"count": 0}
+
+    async def _count_release_stale(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        older_than,
+        profile_id: str,
+        session_id: str,
+    ) -> int:
+        _ = self, older_than, profile_id, session_id
+        release_stale_calls["count"] += 1
+        return 0
+
+    async def _never_mark_running(
+        self: ChatSessionTurnQueueRepository,
+        *,
+        queue_item_id: int,
+        profile_id: str,
+        session_id: str,
+        owner_token: str,
+        touched_at,
+    ) -> bool:
+        _ = self, queue_item_id, profile_id, session_id, owner_token, touched_at
+        return False
+
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "release_stale", _count_release_stale)
+    monkeypatch.setattr(ChatSessionTurnQueueRepository, "try_mark_running", _never_mark_running)
+
+    orchestrator = SessionOrchestrator(settings=settings, session_factory=factory)
+    waiter = asyncio.create_task(
+        orchestrator._wait_until_marker_is_running(
+            session_factory=factory,
+            queue_item_id=1,
+            profile_id="default",
+            session_id="s-stale",
+            owner_token="owner",
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.26)
+    finally:
+        waiter.cancel()
+        with suppress(asyncio.CancelledError):
+            await waiter
+        await engine.dispose()
+
+    assert release_stale_calls["count"] == 1

@@ -329,6 +329,23 @@ def test_chat_repl_status_and_activity_surface_latest_activity() -> None:
     assert toolbar_text.startswith("/ commands · $ capabilities · @ files")
 
 
+def test_chat_workspace_surface_shows_session_identity() -> None:
+    """Workspace status surface should pin the current session id above the prompt."""
+
+    state = ChatReplSessionState(
+        planning_mode="auto",
+        thinking_level=None,
+        default_planning_mode="auto",
+        default_thinking_level=None,
+        session_id="cli:default:incident-room",
+        session_label="incident-room",
+    )
+
+    surface_state = build_chat_workspace_surface_state(state)
+
+    assert surface_state.status_lines == ("◦ Session incident-room · id=cli:default:incident-room",)
+
+
 def test_chat_workspace_status_line_formats_elapsed_time_and_activity(
     monkeypatch,
 ) -> None:

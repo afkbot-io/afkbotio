@@ -18,6 +18,7 @@ from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingSe
 from afkbot.services.channel_routing.service import reset_channel_binding_services_async
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     PartyFlowWebhookEndpointConfig,
 )
@@ -129,6 +130,7 @@ def _endpoint(
     ingress_batch: ChannelIngressBatchConfig | None = None,
     reply_mode: str = "same_conversation",
     trigger_keywords: tuple[str, ...] = (),
+    access_policy: ChannelAccessPolicy | None = None,
 ) -> PartyFlowWebhookEndpointConfig:
     return PartyFlowWebhookEndpointConfig(
         endpoint_id="partyflow-main",
@@ -139,6 +141,7 @@ def _endpoint(
         trigger_keywords=trigger_keywords,
         ingress_batch=ingress_batch or ChannelIngressBatchConfig(),
         reply_mode=reply_mode,
+        access_policy=access_policy or ChannelAccessPolicy(),
     )
 
 
@@ -429,6 +432,195 @@ async def test_partyflow_webhook_ignores_self_authored_messages(
     assert pending == []
 
 
+async def test_partyflow_webhook_requires_delivery_id_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PartyFlow webhook idempotency requires X-PartyFlow-Delivery-Id."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_delivery_id.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    service = PartyFlowWebhookService(settings, endpoint=_endpoint(reply_mode="disabled"))
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-1",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "@bot hello",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers = _build_headers(
+            secret=b"signing-secret",
+            body=body,
+            delivery_id="delivery-required",
+        )
+        headers.pop("x-partyflow-delivery-id")
+        status, response = await service.handle_webhook(headers=headers, body=body)
+    finally:
+        await service.stop()
+
+    assert status == 400
+    assert response == {
+        "ok": False,
+        "error_code": "partyflow_missing_delivery_id",
+        "reason": "Missing X-PartyFlow-Delivery-Id header",
+    }
+
+
+async def test_partyflow_webhook_ignores_message_updated_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edited PartyFlow messages should not start fresh AgentLoop turns by default."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_updated.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        calls.append(dict(kwargs))
+        return TurnResult(
+            run_id=1,
+            session_id="session-1",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="ignored"),
+        )
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_UPDATED",
+        "event_id": "evt-updated",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-1",
+            "text": "@bot edited",
+            "mentions": ["bot-42"],
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-updated",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}
+    assert calls == []
+
+
+async def test_partyflow_webhook_applies_access_policy_before_agent_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PartyFlow access policy should block disallowed group senders before routing."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_access.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        calls.append(dict(kwargs))
+        return TurnResult(
+            run_id=1,
+            session_id="session-1",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="ignored"),
+        )
+
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(
+            reply_mode="disabled",
+            access_policy=ChannelAccessPolicy(
+                group_policy="allowlist",
+                groups=("conv-1",),
+                group_allow_from=("user-allowed",),
+            ),
+        ),
+        run_chat_turn_fn=fake_run_chat_turn,
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = b"signing-secret"  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_CREATED",
+        "event_id": "evt-access",
+        "conversation_id": "conv-1",
+        "data": {
+            "message_id": "msg-1",
+            "author_id": "user-blocked",
+            "text": "@bot blocked",
+            "mentions": ["bot-42"],
+            "conversation_type": "group",
+        },
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers=_build_headers(
+                secret=b"signing-secret",
+                body=body,
+                delivery_id="delivery-access",
+            ),
+            body=body,
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}
+    assert calls == []
+
+
 async def test_partyflow_webhook_rejects_old_replay_timestamps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -470,7 +662,7 @@ async def test_partyflow_webhook_rejects_old_replay_timestamps(
                 secret=b"signing-secret",
                 body=body,
                 delivery_id="delivery-stale",
-                timestamp=int(time.time()) - 301,
+                timestamp=int(time.time()) - 3601,
             ),
             body=body,
         )

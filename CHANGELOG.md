@@ -4,6 +4,129 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-04-29
+
+### Added
+
+- Telegram Bot polling channels now download inbound media attachments into the
+  profile workspace, including voice, audio, documents, photos, videos,
+  animations, video notes, and stickers.
+- `channel.send` now supports rich Telegram payloads with parse modes, web
+  preview control, reply/inline keyboards, media attachments, and private-chat
+  draft previews.
+- Telethon userbot channels now expose inbound media paths to agent turns and
+  support rich outbound file sends through workspace-scoped attachments.
+
+### Fixed
+
+- Telegram forum-topic callback queries now preserve `message_thread_id` for
+  topic-aware routing.
+- Telegram Bot and Telethon media paths and file sizes now fail closed for
+  outside-scope or oversized local media.
+- Animated and video Telegram stickers now keep `.tgs` and `.webm` download
+  extensions instead of being forced to `.webp`.
+- Release metadata and lockfile package metadata are aligned to `1.5.4`.
+
+## [1.5.3] - 2026-04-28
+
+### Changed
+
+- Task Flow owner inputs now accept the public `subagent` owner type alias while persisting canonical `ai_subagent` ownership for runtime scheduling.
+- Task Flow review inbox, approve, and request-changes paths now normalize the same `subagent` actor alias before actor validation and tool spoof checks.
+- Release metadata and lockfile package metadata are aligned to `1.5.3`.
+
+## [1.5.2] - 2026-04-28
+
+### Fixed
+
+- Task Flow runtime schema upkeep now migrates legacy `task.prompt` data into canonical `task.description` rows before hot-path runtime indexes are applied.
+- Legacy task migrations now preserve an existing non-empty `description` when both `description` and `prompt` columns are present, falling back to `prompt` only for blank descriptions.
+- Release metadata and lockfile package metadata are aligned to `1.5.2`.
+
+## [1.5.1] - 2026-04-28
+
+### Changed
+
+- Channel, MCP, browser, setup, provider, and plugin wizards now use clearer bilingual copy with beginner-friendly option descriptions while still saving stable raw config values.
+- Telegram Bot API and Telethon channel setup now explains private 1:1 bots, group allowlists, routing bindings, session grouping, and safe channel tool-profile choices more directly.
+- The interactive channel wizard now surfaces outbound `channel.send` target restrictions for profiles that expose outbound channel messaging.
+
+### Fixed
+
+- Telethon reply mode `disabled` is now described as read-only/no-reply mode instead of being confused with access-policy `disabled`.
+- Package update checks no longer offer an update from the current version to the same version when a stale saved installer target is present.
+- Release metadata and lockfile package metadata are aligned to `1.5.1`.
+
+## [1.5.0] - 2026-04-27
+
+### Added
+
+- Telegram Bot API and Telethon channel wizards now include bilingual private-chat, group-chat, sender allowlist, and outbound target allowlist settings.
+- `channel.send` is available as a profile-scoped tool for explicit outbound channel replies, with channel-level outbound allowlist enforcement.
+- Inbound Telegram media summaries now describe richer attachments such as stickers, GIF/animation, video, audio, voice, photo, and document payloads for the model.
+
+### Changed
+
+- Channel matching bindings can now be generated from access policies, producing scoped direct-chat and group/user binding rules instead of only a broad endpoint binding.
+- Safe channel tool profiles now allow `channel.send` while still blocking broad `app.run` access on user-facing channels.
+- Release metadata and lockfile package metadata are aligned to `1.5.0`.
+
+## [1.4.7] - 2026-04-27
+
+### Added
+
+- Persistent bounded diagnostic error logs under the runtime `logs/` directory, with `afk logs` commands for locating, listing, tailing, and cleaning log files.
+- README preview artwork sourced from the AFKBOT web project.
+
+### Changed
+
+- License explainer docs are slimmer: `LICENSE_FAQ.md` is the single human-readable commercial-use summary, and the duplicate `COMMERCIAL_LICENSE.md` file was removed.
+- Local-only `docs/`, `plans/`, and root `AGENTS.md` / `agents.md` files are ignored by git.
+
+### Fixed
+
+- Unhandled API, CLI, runtime, and tool execution exceptions now write redacted traceback context to operator-readable files instead of only surfacing as generic 500/tool failures.
+- Code of Conduct reporting no longer points conduct reports at the security vulnerability mailbox.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.7`.
+
+## [1.4.6] - 2026-04-23
+
+### Changed
+
+- Chat progress output now reports clearer model lifecycle states such as queued, started, running, and timed out instead of repeating generic `thinking...` lines for low-level LLM events.
+- Repository-local `docs/` content has been removed from the source tree, and bundled references were cleaned up so checkout layout stays focused on runtime code and tests.
+
+### Fixed
+
+- Parallel tool progress/result rows now preserve stable call grouping by provider `call_id`, preventing unrelated tool results from collapsing under the same progress marker.
+- Approval/profile-resume flows now preserve the original tool `call_id`, so resumed tool execution keeps the same progress correlation and transcript linkage as the original call.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.6`.
+
+## [1.4.5] - 2026-04-22
+
+### Changed
+
+- `afk chat` now treats unnamed interactive launches as fresh sessions by default, shows the active session id in the chat UI, and keeps explicit named sessions reusable without silently reusing the last anonymous transcript.
+- Interactive chat runtime calls now tolerate adjacent-version REPL/runtime signature drift during upgrades, reducing mixed-binary failures while shells, prompt sessions, or installed tool entrypoints are temporarily out of sync.
+
+### Fixed
+
+- Explicit Task Flow task creation now converts legacy `task` / `task_event` schema mismatches into a structured compatibility error with upgrade guidance instead of bubbling a generic storage-backed 500.
+- `afk chat` rejects opening the same explicit session from multiple terminals at once, while still allowing independent anonymous sessions to run in parallel.
+- Release metadata, runtime version surfaces, and lockfile package metadata are aligned to `1.4.5`.
+
+## [1.4.2] - 2026-04-21
+
+### Changed
+
+- Webhook automations now persist an encrypted-at-rest secret copy for operator-side endpoint reveal while keeping generic automation metadata, CLI reads, tool reads, and LLM-facing list/get surfaces masked by default.
+- AFKBOT UI can rehydrate the current webhook URL inside the automation inspector through an operator-only reveal path instead of browser or plugin-process secret caches.
+
+### Fixed
+
+- Legacy plaintext webhook rows now fail closed during schema upgrade until `AFKBOT_CREDENTIALS_MASTER_KEYS` is configured, preventing silent secret loss or indefinite plaintext persistence during rollout.
+- Release metadata, API versioning, README install examples, and update-runtime expectations are aligned to `1.4.2`.
+
 ## [1.4.1] - 2026-04-20
 
 ### Fixed

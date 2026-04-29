@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
@@ -13,6 +15,7 @@ from afkbot.services.channel_routing.runtime_target import (
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
@@ -23,15 +26,23 @@ from afkbot.services.channels.ingress_coalescer import (
     render_channel_ingress_batch_message,
 )
 from afkbot.services.channels.ingress_persistence import get_channel_ingress_pending_service
+from afkbot.services.channels.media_ingest import (
+    build_channel_attachment_dir,
+    build_text_preview,
+    relative_to_profile_workspace,
+    safe_filename,
+)
 from afkbot.services.channels.reply_humanization import simulate_telegram_bot_reply_humanization
 from afkbot.services.channels.reply_policy import should_suppress_channel_reply
 from afkbot.services.channels.telegram_polling_support import (
+    TelegramInboundAttachment,
     TelegramInboundMessage,
     extract_inbound_message,
     load_next_update_offset,
     persist_next_update_offset,
 )
 from afkbot.services.channels.telegram_timeouts import is_telegram_action_timeout_reason
+from afkbot.services.tools.workspace import resolve_tool_workspace_base_dir
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,6 +104,23 @@ class TelegramPollingRuntimeMixin:
     ) -> None:
         """Enqueue one normalized inbound Telegram message into the ingress coalescer."""
 
+        if not is_channel_message_allowed(
+            policy=self._endpoint.access_policy,
+            chat_kind=inbound.chat_type,
+            peer_id=inbound.chat_id,
+            user_id=inbound.user_id,
+        ):
+            _LOGGER.warning(
+                "telegram_polling_access_denied account_id=%s peer_id=%s user_id=%s chat_type=%s",
+                self._account_id,
+                inbound.chat_id,
+                inbound.user_id,
+                inbound.chat_type,
+            )
+            return
+        if inbound.callback_query_id is not None:
+            await self._answer_callback_query(inbound.callback_query_id)
+        text = await self._enrich_inbound_text_with_media(inbound)
         await self._ingress_coalescer.enqueue(
             ChannelIngressEvent(
                 endpoint_id=self._endpoint.endpoint_id,
@@ -104,11 +132,102 @@ class TelegramPollingRuntimeMixin:
                 event_key=str(inbound.update_id),
                 message_id=str(inbound.update_id),
                 source_event_id=str(inbound.update_id),
-                text=inbound.text,
+                text=text,
                 observed_at=datetime.now(UTC).isoformat(),
                 chat_kind=inbound.chat_type,
             )
         )
+
+    async def _answer_callback_query(
+        self: Any,
+        callback_query_id: str,
+    ) -> None:
+        """Acknowledge one Telegram inline-button callback without blocking routing."""
+
+        result = await self._app_runtime.run(
+            app="telegram",
+            action="answer_callback_query",
+            ctx=self._app_context(timeout_sec=min(10, self._settings.tool_timeout_max_sec)),
+            params={"callback_query_id": callback_query_id},
+        )
+        if not result.ok:
+            _LOGGER.warning(
+                "telegram_callback_ack_failed endpoint_id=%s error_code=%s reason=%s",
+                self._endpoint.endpoint_id,
+                result.error_code,
+                result.reason,
+            )
+
+    async def _enrich_inbound_text_with_media(
+        self: Any,
+        inbound: TelegramInboundMessage,
+    ) -> str:
+        """Download inbound Bot API media and append workspace paths for the agent."""
+
+        if not inbound.attachments:
+            return inbound.text
+        destination = build_channel_attachment_dir(
+            settings=self._settings,
+            profile_id=self._runtime_profile_id,
+            transport="telegram",
+            endpoint_id=self._endpoint.endpoint_id,
+            event_id=str(inbound.update_id),
+        )
+        destination_dir = relative_to_profile_workspace(
+            settings=self._settings,
+            profile_id=self._runtime_profile_id,
+            path=destination,
+        )
+        workspace_base = resolve_tool_workspace_base_dir(
+            settings=self._settings,
+            profile_id=self._runtime_profile_id,
+        )
+        lines: list[str] = []
+        for attachment in inbound.attachments:
+            suggested_file_name = _suggest_attachment_filename(attachment)
+            result = await self._app_runtime.run(
+                app="telegram",
+                action="download_file",
+                ctx=self._app_context(timeout_sec=min(60, self._settings.tool_timeout_max_sec)),
+                params={
+                    "file_id": attachment.file_id,
+                    "destination_dir": destination_dir,
+                    "suggested_file_name": suggested_file_name,
+                    "max_bytes": self._settings.channel_media_download_max_bytes,
+                },
+            )
+            if not result.ok:
+                lines.append(
+                    f"- {attachment.kind}: download failed"
+                    f" ({result.error_code or 'unknown_error'})"
+                )
+                continue
+            payload = result.payload
+            path_value = payload.get("path")
+            if not isinstance(path_value, str) or not path_value.strip():
+                lines.append(f"- {attachment.kind}: downloaded, path unavailable")
+                continue
+            mime_type = _first_text(payload.get("mime_type"), attachment.mime_type)
+            size_value = payload.get("size_bytes")
+            details = [path_value.strip()]
+            if mime_type:
+                details.append(mime_type)
+            if isinstance(size_value, int) and size_value >= 0:
+                details.append(f"{size_value} bytes")
+            lines.append(f"- {attachment.kind}: " + ", ".join(details))
+            preview = _build_download_preview(
+                base_path=workspace_base,
+                relative_path=path_value.strip(),
+                mime_type=mime_type,
+                max_bytes=self._settings.channel_media_text_preview_bytes,
+            )
+            if preview is not None:
+                preview_text, truncated = preview
+                suffix = " [truncated]" if truncated else ""
+                lines.append(f"  text preview{suffix}:\n{preview_text}")
+        if not lines:
+            return inbound.text
+        return f"{inbound.text}\n\nDownloaded Telegram attachments:\n" + "\n".join(lines)
 
     async def _flush_inbound_batch(
         self: Any,
@@ -432,3 +551,55 @@ class TelegramPollingRuntimeMixin:
             f"telegram-batch:{batch.account_id}:{batch.peer_id}:{batch.thread_id or '-'}:"
             f"{batch.user_id or '-'}:{first_id}:{last_id}:{len(batch.events)}"
         )
+
+
+def _suggest_attachment_filename(attachment: TelegramInboundAttachment) -> str:
+    """Build a stable local filename for one Telegram file attachment."""
+
+    if attachment.file_name:
+        return safe_filename(attachment.file_name)
+    ext = _extension_for_attachment(attachment)
+    unique = attachment.file_unique_id or attachment.file_id
+    suffix = safe_filename(unique, fallback=attachment.kind)
+    if attachment.kind == "voice":
+        return f"voice{ext}"
+    if suffix == attachment.kind:
+        return f"{attachment.kind}{ext}"
+    return f"{attachment.kind}_{suffix}{ext}"
+
+
+def _extension_for_attachment(attachment: TelegramInboundAttachment) -> str:
+    if attachment.kind == "photo":
+        return ".jpg"
+    if attachment.kind == "voice" and attachment.mime_type == "audio/ogg":
+        return ".ogg"
+    if attachment.kind == "sticker":
+        if attachment.is_video:
+            return ".webm"
+        if attachment.is_animated:
+            return ".tgs"
+        return ".webp"
+    if attachment.mime_type:
+        guessed = mimetypes.guess_extension(attachment.mime_type)
+        if guessed:
+            return guessed
+    return ".bin"
+
+
+def _first_text(*values: object) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _build_download_preview(
+    *,
+    base_path: Path,
+    relative_path: str,
+    mime_type: str | None,
+    max_bytes: int,
+) -> tuple[str, bool] | None:
+    path = Path(relative_path)
+    candidate = path if path.is_absolute() else base_path / path
+    return build_text_preview(path=candidate, mime_type=mime_type, max_bytes=max_bytes)

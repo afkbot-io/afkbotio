@@ -41,6 +41,17 @@ class AutomationWebhookMetadata(BaseModel):
     chat_resume_command: str | None = None
 
 
+class AutomationWebhookEndpointMetadata(BaseModel):
+    """Operator-only reveal payload for the current webhook ingress endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    recoverable: bool
+    webhook_path: str | None = None
+    webhook_url: str | None = None
+    webhook_token_masked: str
+
+
 class AutomationMetadata(BaseModel):
     """Public metadata for one automation descriptor."""
 

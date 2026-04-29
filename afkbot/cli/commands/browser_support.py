@@ -133,7 +133,7 @@ def browser_install_question(
         msg(
             lang,
             en=f"Use browser backend: {backend_spec.label}.",
-            ru=f"Использовать browser backend: {backend_spec.label}.",
+            ru=f"Использовать способ запуска браузера: {backend_spec.label}.",
         ),
     ]
     if backend_spec.requires_cdp_url:
@@ -148,7 +148,7 @@ def browser_install_question(
             msg(
                 lang,
                 en=f"Use CDP endpoint: {active_browser_cdp_url(settings) or '(not set)'}.",
-                ru=f"Использовать CDP endpoint: {active_browser_cdp_url(settings) or '(not set)'}.",
+                ru=f"Использовать CDP-адрес: {active_browser_cdp_url(settings) or '(not set)'}.",
             )
         )
     else:
@@ -156,7 +156,7 @@ def browser_install_question(
             msg(
                 lang,
                 en="Install Chromium runtime used by browser.control.",
-                ru="Установить Chromium runtime, который использует browser.control.",
+                ru="Установить Chromium, который использует browser.control.",
             )
         )
     if force:
@@ -164,7 +164,7 @@ def browser_install_question(
             msg(
                 lang,
                 en="Reinstall the browser runtime even if it is already available.",
-                ru="Переустановить браузерный runtime, даже если он уже доступен.",
+                ru="Переустановить браузерную среду, даже если она уже доступна.",
             )
         )
     if platform.system().lower() == "linux":

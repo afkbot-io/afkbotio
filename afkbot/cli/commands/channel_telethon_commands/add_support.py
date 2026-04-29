@@ -19,12 +19,14 @@ from afkbot.cli.commands.channel_shared import (
     build_ingress_batch_config,
     build_reply_humanization_config,
     collect_channel_add_base_inputs,
-    put_matching_binding,
+    collect_channel_access_policy_inputs,
+    put_access_policy_bindings,
     render_channel_add_intro,
     should_collect_channel_add_interactively,
 )
 from afkbot.cli.commands.channel_telethon_commands.common import (
     TELETHON_GROUP_INVOCATION_MODES,
+    TELETHON_REPLY_MODE_LABEL_OVERRIDES,
     TELETHON_REPLY_MODES,
     normalize_telethon_group_invocation_mode,
     normalize_telethon_reply_mode,
@@ -83,6 +85,12 @@ def create_telethon_channel(
     account_id: str | None,
     enabled: bool | None,
     reply_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     reply_blocked_chat_patterns: str | None,
     reply_allowed_chat_patterns: str | None,
@@ -165,9 +173,27 @@ def create_telethon_channel(
             default="disabled",
             allowed=TELETHON_REPLY_MODES,
             lang=prompt_language,
-            detail_en="Choose whether the user account should stay read-only in this channel or send replies back to the same chat.",
-            detail_ru="Выберите, должен ли user-аккаунт только читать этот канал или ещё и отправлять ответы обратно в тот же чат.",
+            detail_en=(
+                "Choose whether the Telegram user account should only ingest messages or also send replies "
+                "back to the same chat. Keep `disabled` for read-only monitoring."
+            ),
+            detail_ru=(
+                "Выберите, должен ли Telegram user-аккаунт только принимать сообщения или ещё и отвечать "
+                "обратно в тот же чат. Для режима только чтения оставьте `disabled`."
+            ),
+            label_overrides=TELETHON_REPLY_MODE_LABEL_OVERRIDES,
         )
+    )
+    access_policy = collect_channel_access_policy_inputs(
+        interactive=interactive,
+        lang=prompt_language,
+        private_policy=private_policy,
+        allow_from=allow_from,
+        group_policy=group_policy,
+        groups=groups,
+        group_allow_from=group_allow_from,
+        outbound_allow_to=outbound_allow_to,
+        tool_profile=base_inputs.tool_profile,
     )
     resolved_group_invocation_mode = normalize_telethon_group_invocation_mode(
         resolve_channel_choice(
@@ -178,8 +204,14 @@ def create_telethon_channel(
             default="reply_or_command",
             allowed=TELETHON_GROUP_INVOCATION_MODES,
             lang=prompt_language,
-            detail_en="This controls when group messages are allowed to trigger the agent: on replies, commands, mentions, or all messages.",
-            detail_ru="Это определяет, когда сообщения в группах могут запускать агента: по reply, по командам, по mention или на все сообщения.",
+            detail_en=(
+                "Choose which group messages may start an agent turn: replies to the account, command-prefix "
+                "messages, or every allowed message."
+            ),
+            detail_ru=(
+                "Выберите, какие сообщения в группах могут запускать ход агента: ответы user-аккаунту, "
+                "сообщения с командным префиксом или каждое разрешённое сообщение."
+            ),
         )
     )
     resolved_process_self_commands = resolve_channel_bool(
@@ -189,8 +221,11 @@ def create_telethon_channel(
         prompt_ru="Обрабатывать собственные команды?",
         default=False,
         lang=prompt_language,
-        detail_en="Enable this only if you want to control the userbot channel with your own messages such as `.afk status`.",
-        detail_ru="Включайте это только если хотите управлять userbot-каналом своими сообщениями вроде `.afk status`.",
+        detail_en="Enable this only if your own Telegram messages should control the userbot, for example `.afk status`.",
+        detail_ru=(
+            "Включайте только если ваши собственные сообщения в Telegram должны управлять userbot, "
+            "например `.afk status`."
+        ),
     )
     resolved_command_prefix = resolve_channel_text(
         value=command_prefix,
@@ -199,103 +234,115 @@ def create_telethon_channel(
         prompt_ru="Префикс команды",
         default=".afk",
         lang=prompt_language,
-        detail_en="Prefix for commands sent from your own Telegram account, for example `.afk status`.",
-        detail_ru="Префикс команд, которые вы отправляете со своего Telegram-аккаунта, например `.afk status`.",
+        detail_en="Command prefix for messages sent from your own Telegram account, for example `.afk status`.",
+        detail_ru="Префикс команд из вашего Telegram-аккаунта, например `.afk status`.",
     )
     resolved_ingress_enabled = resolve_channel_bool(
         value=ingress_batch_enabled,
         interactive=interactive,
-        prompt_en="Enable ingress batching?",
-        prompt_ru="Включить batching входящих сообщений?",
+        prompt_en="Merge message bursts before replying?",
+        prompt_ru="Объединять всплески сообщений перед ответом?",
         default=False,
         lang=prompt_language,
-        detail_en="Batching waits a short quiet window and merges bursts of inbound messages into one turn, which helps against flood and spam.",
-        detail_ru="Batching ждёт короткое окно тишины и объединяет всплески входящих сообщений в один turn, что помогает против флуда и спама.",
+        detail_en=(
+            "When enabled, AFKBOT waits briefly after new messages and sends one combined prompt to the "
+            "agent. This helps when chats arrive in bursts."
+        ),
+        detail_ru=(
+            "Если включить, AFKBOT коротко ждёт после новых сообщений и отправляет агенту один "
+            "объединённый запрос. Это полезно, когда сообщения приходят всплесками."
+        ),
     )
     resolved_ingress_batch = build_ingress_batch_config(
         enabled=resolved_ingress_enabled,
             debounce_ms=resolve_channel_int(
                 value=ingress_debounce_ms,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress debounce (ms)",
-                prompt_ru="Ingress debounce (мс)",
+                prompt_en="Quiet window before merge (ms)",
+                prompt_ru="Окно тишины перед объединением (мс)",
                 default=1500,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MAX,
-                detail_en="How long AFKBOT waits after the last inbound message before flushing one combined turn.",
-                detail_ru="Сколько AFKBOT ждёт после последнего входящего сообщения перед отправкой одного объединённого turn.",
+                detail_en="How long AFKBOT waits after the latest inbound message before it sends the merged turn.",
+                detail_ru="Сколько AFKBOT ждёт после последнего входящего сообщения перед отправкой объединённого хода.",
             ),
             cooldown_sec=resolve_channel_int(
                 value=ingress_cooldown_sec,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress cooldown (sec)",
-                prompt_ru="Ingress cooldown (сек)",
+                prompt_en="Pause after each merged turn (sec)",
+                prompt_ru="Пауза после каждого объединённого хода (сек)",
                 default=0,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MAX,
-                detail_en="Optional extra quiet period per chat after one batch is processed. Keep 0 for normal real-time behavior.",
-                detail_ru="Необязательная дополнительная пауза на чат после обработки одного batch. Для обычного real-time поведения оставьте 0.",
+                detail_en="Optional extra pause per chat after one merged turn is processed. Keep 0 for normal real-time behavior.",
+                detail_ru="Необязательная пауза на чат после обработки объединённого хода. Для обычных быстрых ответов оставьте 0.",
             ),
             max_batch_size=resolve_channel_int(
                 value=ingress_max_batch_size,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress max batch size",
-                prompt_ru="Максимальный размер ingress batch",
+                prompt_en="Maximum messages per merged turn",
+                prompt_ru="Максимум сообщений в одном объединённом ходе",
                 default=20,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_SIZE_MAX,
-                detail_en="Safety cap on how many inbound messages may merge into one turn before AFKBOT flushes immediately.",
-                detail_ru="Страхующий лимит на количество входящих сообщений, которые можно слить в один turn до немедленного flush.",
+                detail_en="Safety cap on how many inbound messages may be merged before AFKBOT flushes immediately.",
+                detail_ru="Защитный лимит: сколько входящих сообщений можно объединить до немедленной отправки агенту.",
             ),
             max_buffer_chars=resolve_channel_int(
                 value=ingress_max_buffer_chars,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress max buffer chars",
-                prompt_ru="Максимальный размер ingress buffer в символах",
+                prompt_en="Maximum merged text size (chars)",
+                prompt_ru="Максимальный размер объединённого текста (символы)",
                 default=12000,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
-                detail_en="Safety cap on the total buffered text size for one merged turn.",
-                detail_ru="Страхующий лимит на суммарный размер текста, который хранится для одного объединённого turn.",
+                detail_en="Safety cap on the total text kept for one merged turn.",
+                detail_ru="Защитный лимит на общий размер текста, который попадёт в один объединённый ход.",
             ),
         )
     resolved_humanize_replies = resolve_channel_bool(
         value=humanize_replies,
         interactive=interactive,
-        prompt_en="Enable humanized replies?",
-        prompt_ru="Включить humanized replies?",
+        prompt_en="Make replies look more natural?",
+        prompt_ru="Делать ответы более похожими на живую переписку?",
         default=False,
         lang=prompt_language,
-        detail_en="Show read receipts, typing, and short delays so replies from the user account look less abrupt. Disable for the fastest behavior.",
-        detail_ru="Показывать read receipts, typing и небольшие задержки, чтобы ответы от user-аккаунта выглядели менее резкими. Отключите для максимально быстрого поведения.",
+        detail_en=(
+            "Show read receipts, typing indicators, and small delays before replies. Disable this when fastest "
+            "possible behavior matters more than a human-like pace."
+        ),
+        detail_ru=(
+            "Показывать отметки прочтения, индикатор печати и небольшие задержки перед ответами. "
+            "Выключите, если важнее максимальная скорость."
+        ),
     )
     resolved_reply_humanization = build_reply_humanization_config(
         enabled=resolved_humanize_replies,
             min_delay_ms=resolve_channel_int(
                 value=humanize_min_delay_ms,
                 interactive=interactive and resolved_humanize_replies,
-                prompt_en="Humanized min delay (ms)",
-                prompt_ru="Минимальная задержка humanized replies (мс)",
+                prompt_en="Minimum reply delay (ms)",
+                prompt_ru="Минимальная задержка ответа (мс)",
                 default=1000,
                 lang=prompt_language,
                 min_value=0,
-                detail_en="Shortest delay before sending a reply when humanized replies are enabled.",
-                detail_ru="Минимальная задержка перед отправкой ответа, когда включены humanized replies.",
+                detail_en="Shortest delay before AFKBOT sends a reply.",
+                detail_ru="Минимальная задержка перед отправкой ответа.",
             ),
             max_delay_ms=resolve_channel_int(
                 value=humanize_max_delay_ms,
                 interactive=interactive and resolved_humanize_replies,
-                prompt_en="Humanized max delay (ms)",
-                prompt_ru="Максимальная задержка humanized replies (мс)",
+                prompt_en="Maximum reply delay (ms)",
+                prompt_ru="Максимальная задержка ответа (мс)",
                 default=8000,
                 lang=prompt_language,
                 min_value=0,
-                detail_en="Maximum delay cap before sending a reply. Longer answers scale toward this ceiling.",
-                detail_ru="Верхний предел задержки перед отправкой ответа. Более длинные ответы стремятся к этому потолку.",
+                detail_en="Maximum delay before sending a reply. Longer replies scale toward this cap.",
+                detail_ru="Максимальная задержка перед отправкой ответа. Более длинные ответы стремятся к этому пределу.",
             ),
             chars_per_second=resolve_channel_int(
                 value=humanize_chars_per_second,
@@ -305,8 +352,8 @@ def create_telethon_channel(
                 default=12,
                 lang=prompt_language,
                 min_value=1,
-                detail_en="Approximate typing speed used to convert reply length into a delay.",
-                detail_ru="Примерная скорость печати, по которой длина ответа переводится в задержку.",
+                detail_en="Approximate typing speed used to turn reply length into a delay.",
+                detail_ru="Примерная скорость печати, по которой длина ответа превращается в задержку.",
             ),
         )
     resolved_mark_read_before_reply = resolve_channel_bool(
@@ -316,120 +363,132 @@ def create_telethon_channel(
         prompt_ru="Отмечать чат прочитанным перед ответом?",
         default=True,
         lang=prompt_language,
-        detail_en="Send a read receipt before replying. Keep this on if the account should behave like a normal user; turn it off if read receipts are undesirable.",
-        detail_ru="Отправлять отметку о прочтении перед ответом. Оставьте включённым, если аккаунт должен вести себя как обычный пользователь; выключите, если read receipts нежелательны.",
+        detail_en=(
+            "Send a read receipt before replying. Keep this on if the account should behave like a normal user; "
+            "turn it off if read receipts are undesirable."
+        ),
+        detail_ru=(
+            "Отправлять отметку о прочтении перед ответом. Оставьте включённым, если аккаунт должен вести себя "
+            "как обычный пользователь; выключите, если отметки прочтения нежелательны."
+        ),
     )
     resolved_watcher_enabled = resolve_channel_bool(
         value=watcher_enabled,
         interactive=interactive,
-        prompt_en="Enable watcher mode?",
-        prompt_ru="Включить watcher mode?",
+        prompt_en="Enable watcher digests?",
+        prompt_ru="Включить дайджесты наблюдателя?",
         default=False,
         lang=prompt_language,
-        detail_en="Watcher collects activity from selected dialogs into periodic digest turns instead of replying directly inside those chats.",
-        detail_ru="Watcher собирает активность из выбранных диалогов в периодические digest turns вместо прямых ответов внутри этих чатов.",
+        detail_en=(
+            "Watcher mode collects activity from selected dialogs and sends periodic digest turns to the agent "
+            "instead of replying directly inside those chats."
+        ),
+        detail_ru=(
+            "Режим наблюдателя собирает активность из выбранных диалогов и периодически отправляет агенту "
+            "дайджесты вместо прямых ответов внутри этих чатов."
+        ),
     )
     resolved_watcher = build_watcher_config(
         enabled=resolved_watcher_enabled,
         unmuted_only=resolve_channel_bool(
             value=watcher_unmuted_only,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watch only unmuted dialogs?",
-            prompt_ru="Следить только за unmuted диалогами?",
+            prompt_en="Watch only dialogs with notifications on?",
+            prompt_ru="Следить только за диалогами с включёнными уведомлениями?",
             default=True,
             lang=prompt_language,
-            detail_en="Track only dialogs whose notifications are effectively unmuted. This is a good default if watcher should ignore muted backlog.",
-            detail_ru="Отслеживать только диалоги, у которых уведомления фактически не заглушены. Это хороший дефолт, если watcher должен игнорировать muted backlog.",
+            detail_en="Track only dialogs whose notifications are not muted. This is a good default to ignore muted backlog.",
+            detail_ru="Отслеживать только диалоги без mute. Это хороший вариант по умолчанию, чтобы игнорировать заглушенный backlog.",
         ),
         include_private=resolve_channel_bool(
             value=watcher_include_private,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Include private chats in watcher?",
-            prompt_ru="Включать личные чаты в watcher?",
+            prompt_en="Include private chats in digests?",
+            prompt_ru="Включать личные чаты в дайджесты?",
             default=True,
             lang=prompt_language,
             detail_en="Include one-to-one chats when building watcher digests.",
-            detail_ru="Включать личные диалоги при сборке watcher-digest.",
+            detail_ru="Включать личные диалоги при сборке дайджестов наблюдателя.",
         ),
         include_groups=resolve_channel_bool(
             value=watcher_include_groups,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Include groups in watcher?",
-            prompt_ru="Включать группы в watcher?",
+            prompt_en="Include groups in digests?",
+            prompt_ru="Включать группы в дайджесты?",
             default=True,
             lang=prompt_language,
             detail_en="Include groups and supergroups when building watcher digests.",
-            detail_ru="Включать группы и супергруппы при сборке watcher-digest.",
+            detail_ru="Включать группы и супергруппы при сборке дайджестов наблюдателя.",
         ),
         include_channels=resolve_channel_bool(
             value=watcher_include_channels,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Include channels in watcher?",
-            prompt_ru="Включать каналы в watcher?",
+            prompt_en="Include Telegram channels in digests?",
+            prompt_ru="Включать Telegram-каналы в дайджесты?",
             default=True,
             lang=prompt_language,
             detail_en="Include channel posts when building watcher digests.",
-            detail_ru="Включать посты каналов при сборке watcher-digest.",
+            detail_ru="Включать посты Telegram-каналов при сборке дайджестов наблюдателя.",
         ),
         batch_interval_sec=resolve_channel_int(
             value=watcher_batch_interval_sec,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watcher batch interval (sec)",
-            prompt_ru="Интервал watcher batch (сек)",
+            prompt_en="Digest interval (sec)",
+            prompt_ru="Интервал дайджеста (сек)",
             default=300,
             lang=prompt_language,
             min_value=TELETHON_WATCHER_BATCH_INTERVAL_SEC_MIN,
             max_value=TELETHON_WATCHER_BATCH_INTERVAL_SEC_MAX,
-            detail_en="How often watcher flushes collected events into one digest turn.",
-            detail_ru="Как часто watcher сбрасывает накопленные события в один digest turn.",
+            detail_en="How often watcher sends collected events as one digest turn.",
+            detail_ru="Как часто наблюдатель отправляет накопленные события одним дайджестом.",
         ),
         dialog_refresh_interval_sec=resolve_channel_int(
             value=watcher_dialog_refresh_interval_sec,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watcher dialog refresh interval (sec)",
-            prompt_ru="Интервал обновления диалогов watcher (сек)",
+            prompt_en="Dialog metadata refresh interval (sec)",
+            prompt_ru="Интервал обновления данных диалогов (сек)",
             default=300,
             lang=prompt_language,
             min_value=TELETHON_WATCHER_REFRESH_INTERVAL_SEC_MIN,
             max_value=TELETHON_WATCHER_REFRESH_INTERVAL_SEC_MAX,
             detail_en="How often watcher refreshes dialog metadata such as titles and mute state.",
-            detail_ru="Как часто watcher обновляет метаданные диалогов, например названия и состояние mute.",
+            detail_ru="Как часто наблюдатель обновляет данные диалогов: названия, mute-состояние и похожие признаки.",
         ),
         max_batch_size=resolve_channel_int(
             value=watcher_max_batch_size,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watcher max batch size",
-            prompt_ru="Максимальный размер watcher batch",
+            prompt_en="Maximum events per digest",
+            prompt_ru="Максимум событий в одном дайджесте",
             default=100,
             lang=prompt_language,
             min_value=TELETHON_WATCHER_BATCH_SIZE_MIN,
             max_value=TELETHON_WATCHER_BATCH_SIZE_MAX,
             detail_en="Maximum number of watched events included in one digest turn.",
-            detail_ru="Максимальное количество событий, которое попадёт в один digest turn.",
+            detail_ru="Максимальное количество событий, которое попадёт в один дайджест.",
         ),
         max_buffer_size=resolve_channel_int(
             value=watcher_max_buffer_size,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watcher max buffer size",
-            prompt_ru="Максимальный размер watcher buffer",
+            prompt_en="Maximum watcher backlog",
+            prompt_ru="Максимальный backlog наблюдателя",
             default=500,
             lang=prompt_language,
             min_value=TELETHON_WATCHER_BUFFER_SIZE_MIN,
             max_value=TELETHON_WATCHER_BUFFER_SIZE_MAX,
             detail_en="Maximum in-memory watcher backlog before the oldest events start dropping.",
-            detail_ru="Максимальный in-memory backlog watcher до начала удаления самых старых событий.",
+            detail_ru="Максимальный backlog наблюдателя в памяти перед удалением самых старых событий.",
         ),
         max_message_chars=resolve_channel_int(
             value=watcher_max_message_chars,
             interactive=interactive and resolved_watcher_enabled,
-            prompt_en="Watcher max message chars",
-            prompt_ru="Максимальная длина сообщения watcher",
+            prompt_en="Maximum characters per watched message",
+            prompt_ru="Максимум символов на одно наблюдаемое сообщение",
             default=1000,
             lang=prompt_language,
             min_value=TELETHON_WATCHER_MESSAGE_CHARS_MIN,
             max_value=TELETHON_WATCHER_MESSAGE_CHARS_MAX,
             detail_en="Per-message clip length before watcher truncates message bodies in digests.",
-            detail_ru="Лимит длины одного сообщения до обрезки текста watcher в digest.",
+            detail_ru="Лимит длины одного сообщения перед обрезкой текста в дайджесте.",
         ),
         blocked_chat_patterns=split_csv_patterns(watcher_blocked_chat_patterns),
         allowed_chat_patterns=split_csv_patterns(watcher_allowed_chat_patterns),
@@ -446,6 +505,7 @@ def create_telethon_channel(
         enabled=base_inputs.enabled,
         reply_mode=resolved_reply_mode,
         tool_profile=base_inputs.tool_profile,
+        access_policy=access_policy,
         reply_blocked_chat_patterns=split_csv_patterns(reply_blocked_chat_patterns),
         reply_allowed_chat_patterns=split_csv_patterns(reply_allowed_chat_patterns),
         group_invocation_mode=resolved_group_invocation_mode,
@@ -468,9 +528,9 @@ def create_telethon_channel(
         asyncio.run(get_legacy_channel_endpoint_service(settings).create(endpoint)).model_dump()
     )
     if base_inputs.create_binding:
-        put_matching_binding(
+        binding_count = put_access_policy_bindings(
             settings=settings,
-            binding_id=saved.endpoint_id,
+            endpoint_id=saved.endpoint_id,
             transport="telegram_user",
             profile_id=saved.profile_id,
             session_policy=base_inputs.session_policy,
@@ -478,7 +538,10 @@ def create_telethon_channel(
             enabled=saved.enabled,
             account_id=saved.account_id,
             prompt_overlay=prompt_overlay,
+            access_policy=saved.access_policy,
         )
+    else:
+        binding_count = 0
     binding_warning: str | None = None
     policy_warning: str | None = None
     try:
@@ -507,7 +570,7 @@ def create_telethon_channel(
             binding_warning = None
     return TelethonCreateResult(
         saved=saved,
-        binding_created=base_inputs.create_binding,
+        binding_created=base_inputs.create_binding and binding_count > 0,
         binding_warning=binding_warning,
         policy_warning=policy_warning,
     )

@@ -96,6 +96,46 @@ def test_partyflow_webhook_route_returns_503_for_configured_but_inactive_runtime
     }
 
 
+def test_partyflow_webhook_route_returns_non_retryable_disabled_response(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Disabled PartyFlow endpoints should not ask PartyFlow to keep retrying."""
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_partyflow_webhook_runtime_registry",
+        lambda _settings: type("_Registry", (), {"get": lambda self, endpoint_id: None})(),
+    )
+
+    class _EndpointService:
+        async def get(self, *, endpoint_id: str) -> object:
+            return PartyFlowWebhookEndpointConfig(
+                endpoint_id=endpoint_id,
+                profile_id="default",
+                credential_profile_key=endpoint_id,
+                account_id="partyflow-bot",
+                enabled=False,
+            )
+
+    monkeypatch.setattr(
+        "afkbot.api.routes_partyflow_webhooks.get_channel_endpoint_service",
+        lambda _settings: _EndpointService(),
+    )
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/v1/channels/partyflow/disabled/webhook",
+        json={"event_type": "MESSAGE_CREATED"},
+    )
+
+    assert response.status_code == 410
+    assert "Retry-After" not in response.headers
+    assert response.json() == {
+        "ok": False,
+        "error_code": "partyflow_channel_disabled",
+        "reason": "PartyFlow channel endpoint is disabled: disabled",
+    }
+
+
 def test_partyflow_webhook_route_returns_404_for_unknown_endpoint(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -153,7 +193,11 @@ def test_partyflow_webhook_route_sets_retry_after_header_from_runtime_payload(
         lambda _settings: type(
             "_Registry",
             (),
-            {"get": lambda self, endpoint_id: _FakeRuntime() if endpoint_id == "partyflow-main" else None},
+            {
+                "get": lambda self, endpoint_id: _FakeRuntime()
+                if endpoint_id == "partyflow-main"
+                else None
+            },
         )(),
     )
 

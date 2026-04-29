@@ -9,7 +9,11 @@ import pytest
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
-from afkbot.services.channels import ChannelDeliveryTarget
+from afkbot.services.channels import (
+    ChannelDeliveryTarget,
+    ChannelOutboundAttachment,
+    ChannelOutboundMessage,
+)
 from afkbot.services.channels.service import (
     ChannelDeliveryService,
     ChannelDeliveryServiceError,
@@ -167,6 +171,85 @@ async def test_channel_delivery_service_sends_explicit_telegram_target(tmp_path:
         "chat_id": "42",
         "message_thread_id": 9001,
     }
+
+
+async def test_channel_delivery_service_sends_telegram_rich_message(tmp_path: Path) -> None:
+    """Telegram delivery should pass parse mode, buttons, media, and draft streaming options."""
+
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_rich.db'}"
+    )
+    app_runtime = _FakeAppRuntime()
+    service = ChannelDeliveryService(settings, app_runtime=app_runtime)
+
+    result = await service.deliver_message(
+        profile_id="default",
+        session_id="s-1",
+        run_id=12,
+        target=ChannelDeliveryTarget(transport="telegram", peer_id="42"),
+        message=ChannelOutboundMessage(
+            text="*Report* ready",
+            parse_mode="MarkdownV2",
+            stream_draft=True,
+            reply_markup={
+                "inline_keyboard": [[{"text": "Open", "url": "https://example.com/report"}]]
+            },
+            attachments=(
+                ChannelOutboundAttachment(
+                    kind="document",
+                    source="reports/build.txt",
+                    caption="Build log",
+                ),
+            ),
+        ),
+    )
+
+    assert result.transport == "telegram"
+    assert [call["action"] for call in app_runtime.calls] == [
+        "send_message_draft",
+        "send_document",
+        "send_message",
+    ]
+    assert app_runtime.calls[0]["params"]["text"] == "*Report* ready"
+    assert app_runtime.calls[1]["params"] == {
+        "document": "reports/build.txt",
+        "caption": "Build log",
+        "chat_id": "42",
+        "reply_markup": {
+            "inline_keyboard": [[{"text": "Open", "url": "https://example.com/report"}]]
+        },
+    }
+    assert app_runtime.calls[2]["params"] == {
+        "text": "*Report* ready",
+        "chat_id": "42",
+        "parse_mode": "MarkdownV2",
+        "reply_markup": {
+            "inline_keyboard": [[{"text": "Open", "url": "https://example.com/report"}]]
+        },
+    }
+
+
+async def test_channel_delivery_service_skips_draft_stream_for_non_private_telegram_target(
+    tmp_path: Path,
+) -> None:
+    """Telegram draft previews are private-chat only and should not run for groups."""
+
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_group_draft.db'}"
+    )
+    app_runtime = _FakeAppRuntime()
+    service = ChannelDeliveryService(settings, app_runtime=app_runtime)
+
+    result = await service.deliver_message(
+        profile_id="default",
+        session_id="s-1",
+        run_id=13,
+        target=ChannelDeliveryTarget(transport="telegram", peer_id="-10042"),
+        message=ChannelOutboundMessage(text="group reply", stream_draft=True),
+    )
+
+    assert result.transport == "telegram"
+    assert [call["action"] for call in app_runtime.calls] == ["send_message"]
 
 
 async def test_channel_delivery_service_splits_long_telegram_message(tmp_path: Path) -> None:
@@ -382,6 +465,52 @@ async def test_channel_delivery_service_sends_explicit_partyflow_target(tmp_path
         "content": "hello from partyflow",
         "thread_id": "770e8400-e29b-41d4-a716-446655440002",
     }
+
+
+async def test_channel_delivery_service_splits_long_partyflow_text(tmp_path: Path) -> None:
+    """PartyFlow delivery should split text at the documented 4000-char send limit."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_partyflow_long.db'}",
+    )
+    app_runtime = _FakeAppRuntime()
+    service = ChannelDeliveryService(settings, app_runtime=app_runtime)
+
+    result = await service.deliver_text(
+        profile_id="default",
+        session_id="s-1",
+        run_id=20,
+        target=ChannelDeliveryTarget(transport="partyflow", peer_id="conv-1"),
+        text="x" * 4001,
+    )
+
+    assert result.payload["chunk_count"] == 2
+    assert [len(call["params"]["content"]) for call in app_runtime.calls] == [4000, 1]
+
+
+async def test_channel_delivery_service_rejects_partyflow_rich_payloads(tmp_path: Path) -> None:
+    """PartyFlow channel.send should fail closed for media/buttons until Bot API supports them directly."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_partyflow_rich.db'}",
+    )
+    service = ChannelDeliveryService(settings, app_runtime=_FakeAppRuntime())
+
+    with pytest.raises(ChannelDeliveryServiceError) as exc_info:
+        await service.deliver_message(
+            profile_id="default",
+            session_id="s-1",
+            run_id=21,
+            target=ChannelDeliveryTarget(transport="partyflow", peer_id="conv-1"),
+            message=ChannelOutboundMessage(
+                text="choose",
+                reply_markup={"inline_keyboard": [[{"text": "OK", "callback_data": "ok"}]]},
+            ),
+        )
+
+    assert exc_info.value.error_code == "channel_delivery_feature_not_supported"
 
 
 async def test_channel_delivery_service_records_unexpected_runtime_exception(

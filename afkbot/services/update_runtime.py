@@ -250,12 +250,13 @@ def _inspect_installer_source_update(
 
     if install_source.mode == "package":
         current_info = load_cli_version_info()
-        current_target = (
-            read_install_source_resolved_target_from_runtime_config(runtime_config)
-            or current_info.version
-        )
+        saved_target = read_install_source_resolved_target_from_runtime_config(runtime_config)
         latest_version = resolve_install_source_target(install_source)
-        if not latest_version or not _version_is_newer(latest_version, current_target):
+        if not latest_version:
+            return None
+        if saved_target and not _version_is_newer(latest_version, saved_target):
+            return None
+        if current_info.version and not _version_is_newer(latest_version, current_info.version):
             return None
         return UpdateAvailability(
             install_mode="uv-tool",

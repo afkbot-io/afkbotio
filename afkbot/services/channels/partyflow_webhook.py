@@ -25,6 +25,7 @@ from afkbot.services.channel_routing.runtime_target import (
     resolve_runtime_target,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
@@ -49,6 +50,7 @@ from afkbot.settings import Settings
 _LOGGER = logging.getLogger(__name__)
 _PARTYFLOW_WEBHOOK_SIGNING_SECRET = "partyflow_webhook_signing_secret"
 _PARTYFLOW_SESSION_ID = "partyflow-webhook"
+_PARTYFLOW_SIGNATURE_WINDOW_SEC = 3600
 
 
 class PartyFlowWebhookServiceError(ValueError):
@@ -154,6 +156,12 @@ class PartyFlowWebhookService:
         """Verify and enqueue one PartyFlow outgoing webhook delivery."""
 
         delivery_id = headers.get("x-partyflow-delivery-id", "").strip() or None
+        if delivery_id is None:
+            return 400, {
+                "ok": False,
+                "error_code": "partyflow_missing_delivery_id",
+                "reason": "Missing X-PartyFlow-Delivery-Id header",
+            }
         verified = self._verify_signature(headers=headers, body=body)
         if not verified:
             return 401, {
@@ -477,7 +485,7 @@ class PartyFlowWebhookService:
         payload: Mapping[str, object],
     ) -> ChannelIngressEvent | None:
         event_type = str(payload.get("event_type") or "").strip().upper()
-        if event_type not in {"MESSAGE_CREATED", "MESSAGE_UPDATED"}:
+        if event_type != "MESSAGE_CREATED":
             return None
         data = payload.get("data")
         if not isinstance(data, Mapping):
@@ -508,6 +516,14 @@ class PartyFlowWebhookService:
             or _extract_identifier(payload.get("actor"), keys=("id", "user_id"))
         )
         if self._bot_id is not None and author_id == self._bot_id:
+            return None
+        chat_kind = _extract_chat_kind(payload=payload, data=data)
+        if not is_channel_message_allowed(
+            policy=self._endpoint.access_policy,
+            chat_kind=chat_kind,
+            peer_id=conversation_id,
+            user_id=author_id,
+        ):
             return None
         text = (
             _coerce_optional_str(data.get("text"))
@@ -550,7 +566,7 @@ class PartyFlowWebhookService:
             text=rendered_text,
             observed_at=occurred_at,
             source_event_id=str(payload.get("event_id") or "").strip() or None,
-            chat_kind=_extract_chat_kind(payload=payload, data=data),
+            chat_kind=chat_kind,
         )
 
     def _matches_trigger(self, *, text: str, mentions: tuple[str, ...]) -> bool:
@@ -577,7 +593,7 @@ class PartyFlowWebhookService:
         except ValueError:
             return False
         now_ts = int(time.time())
-        if abs(now_ts - ts_value) > 300:
+        if abs(now_ts - ts_value) > _PARTYFLOW_SIGNATURE_WINDOW_SEC:
             return False
         expected_v1 = (
             "sha256="
@@ -717,6 +733,7 @@ def _normalize_partyflow_identifier(value: str) -> str:
     with contextlib.suppress(ValueError):
         return str(UUID(lowered))
     return value
+
 
 def _extract_mentions(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):

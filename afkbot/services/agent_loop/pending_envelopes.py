@@ -65,6 +65,7 @@ class PendingEnvelopeBuilder:
                 spec_patch={
                     "tool_name": call.name,
                     "tool_params": call_params,
+                    "tool_call_id": call.call_id,
                     "approval_mode": mode,
                     "approval_reason": reason,
                 },
@@ -138,6 +139,7 @@ class PendingEnvelopeBuilder:
                     "question_kind": PROFILE_SELECTION_QUESTION_KIND,
                     "tool_name": call.name,
                     "tool_params": call_params,
+                    "tool_call_id": call.call_id,
                     "integration_name": integration_name,
                     "credential_name": credential_name,
                     "available_profile_keys": list(available_profile_keys),
@@ -170,6 +172,7 @@ class PendingEnvelopeBuilder:
                     "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
                     "tool_name": tool_name,
                     "tool_params": normalized_call_params,
+                    "tool_call_id": call.call_id,
                     "tool_not_allowed_reason": str(
                         result.reason or "Requested tool is outside the visible surface."
                     ).strip(),
@@ -231,6 +234,7 @@ class PendingEnvelopeBuilder:
                 spec_patch={
                     "tool_name": resume_tool_name,
                     "tool_params": resume_tool_params,
+                    "tool_call_id": call.call_id,
                     "integration_name": integration_name,
                     "credential_name": credential_name,
                     "credential_profile_key": credential_profile_key,

@@ -20,12 +20,15 @@ from afkbot.services.apps.contracts import AppRuntimeContext
 from afkbot.services.apps.params_validation import build_app_params_validation_error
 from afkbot.services.apps.registry import register_app
 from afkbot.services.apps.telegram.http_api import (
+    _post_answer_callback_query,
+    _post_download_file,
     _post_ban_chat_member,
     _post_get_me,
     _post_get_updates,
     _post_send_chat_action,
     _post_send_media,
     _post_send_message,
+    _post_send_message_draft,
     _post_unban_chat_member,
 )
 from afkbot.services.credentials import CredentialsServiceError
@@ -36,9 +39,17 @@ from afkbot.settings import Settings
 
 _ALLOWED_ACTIONS = frozenset(
     {
+        "answer_callback_query",
+        "download_file",
+        "send_animation",
+        "send_audio",
         "send_message",
+        "send_message_draft",
         "send_photo",
         "send_document",
+        "send_sticker",
+        "send_video",
+        "send_voice",
         "send_chat_action",
         "get_me",
         "get_updates",
@@ -64,6 +75,10 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
             required=("telegram_token",),
             optional=("telegram_chat_id",),
         ),
+        "send_message_draft": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
         "send_photo": ActionCredentialManifest(
             required=("telegram_token",),
             optional=("telegram_chat_id",),
@@ -72,10 +87,32 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
             required=("telegram_token",),
             optional=("telegram_chat_id",),
         ),
+        "send_voice": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
+        "send_audio": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
+        "send_video": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
+        "send_animation": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
+        "send_sticker": ActionCredentialManifest(
+            required=("telegram_token",),
+            optional=("telegram_chat_id",),
+        ),
         "send_chat_action": ActionCredentialManifest(
             required=("telegram_token",),
             optional=("telegram_chat_id",),
         ),
+        "answer_callback_query": ActionCredentialManifest(required=("telegram_token",)),
+        "download_file": ActionCredentialManifest(required=("telegram_token",)),
         "get_me": ActionCredentialManifest(required=("telegram_token",)),
         "get_updates": ActionCredentialManifest(required=("telegram_token",)),
         "ban_chat_member": ActionCredentialManifest(
@@ -98,6 +135,22 @@ class _SendMessageParams(BaseModel):
     message_thread_id: int | None = Field(default=None, ge=1)
     parse_mode: str | None = Field(default=None, max_length=32)
     disable_web_page_preview: bool = False
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _SendMessageDraftParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=4096)
+    draft_id: int = Field(ge=1)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
     token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
     chat_id_credential_name: str = Field(
         default="telegram_chat_id",
@@ -114,6 +167,7 @@ class _SendPhotoParams(BaseModel):
     chat_id: str | None = Field(default=None, max_length=128)
     message_thread_id: int | None = Field(default=None, ge=1)
     parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
     token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
     chat_id_credential_name: str = Field(
         default="telegram_chat_id",
@@ -130,12 +184,119 @@ class _SendDocumentParams(BaseModel):
     chat_id: str | None = Field(default=None, max_length=128)
     message_thread_id: int | None = Field(default=None, ge=1)
     parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
     token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
     chat_id_credential_name: str = Field(
         default="telegram_chat_id",
         min_length=1,
         max_length=128,
     )
+
+
+class _SendVoiceParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voice: str = Field(min_length=1, max_length=4096)
+    caption: str | None = Field(default=None, max_length=1024)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
+    parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _SendAudioParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audio: str = Field(min_length=1, max_length=4096)
+    caption: str | None = Field(default=None, max_length=1024)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
+    parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _SendVideoParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video: str = Field(min_length=1, max_length=4096)
+    caption: str | None = Field(default=None, max_length=1024)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
+    parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _SendAnimationParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    animation: str = Field(min_length=1, max_length=4096)
+    caption: str | None = Field(default=None, max_length=1024)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
+    parse_mode: str | None = Field(default=None, max_length=32)
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _SendStickerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sticker: str = Field(min_length=1, max_length=4096)
+    chat_id: str | None = Field(default=None, max_length=128)
+    message_thread_id: int | None = Field(default=None, ge=1)
+    reply_markup: dict[str, object] | None = None
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+    chat_id_credential_name: str = Field(
+        default="telegram_chat_id",
+        min_length=1,
+        max_length=128,
+    )
+
+
+class _AnswerCallbackQueryParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    callback_query_id: str = Field(min_length=1, max_length=256)
+    text: str | None = Field(default=None, max_length=200)
+    show_alert: bool = False
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
+
+
+class _DownloadFileParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str = Field(min_length=1, max_length=4096)
+    destination_dir: str = Field(
+        default="channel_attachments/telegram",
+        min_length=1,
+        max_length=4096,
+    )
+    suggested_file_name: str | None = Field(default=None, max_length=255)
+    max_bytes: int | None = Field(default=None, ge=1, le=50_000_000)
+    token_credential_name: str = Field(default="telegram_token", min_length=1, max_length=128)
 
 
 class _GetMeParams(BaseModel):
@@ -197,14 +358,31 @@ class _UnbanChatMemberParams(BaseModel):
 
 
 _ACTION_PARAMS_MODELS: dict[str, type[BaseModel]] = {
+    "answer_callback_query": _AnswerCallbackQueryParams,
+    "download_file": _DownloadFileParams,
     "send_message": _SendMessageParams,
+    "send_message_draft": _SendMessageDraftParams,
     "send_photo": _SendPhotoParams,
     "send_document": _SendDocumentParams,
+    "send_voice": _SendVoiceParams,
+    "send_audio": _SendAudioParams,
+    "send_video": _SendVideoParams,
+    "send_animation": _SendAnimationParams,
+    "send_sticker": _SendStickerParams,
     "send_chat_action": _SendChatActionParams,
     "get_me": _GetMeParams,
     "get_updates": _GetUpdatesParams,
     "ban_chat_member": _BanChatMemberParams,
     "unban_chat_member": _UnbanChatMemberParams,
+}
+_MEDIA_FIELD_BY_ACTION = {
+    "send_photo": "photo",
+    "send_document": "document",
+    "send_voice": "voice",
+    "send_audio": "audio",
+    "send_video": "video",
+    "send_animation": "animation",
+    "send_sticker": "sticker",
 }
 
 
@@ -255,7 +433,7 @@ async def run_telegram_action(
                 host="api.telegram.org",
             )
             responses: list[dict[str, object]] = []
-            for message_part in message_parts:
+            for index, message_part in enumerate(message_parts):
                 responses.append(
                     await _post_send_message(
                         token=token,
@@ -264,58 +442,56 @@ async def run_telegram_action(
                         message_thread_id=send_payload.message_thread_id,
                         parse_mode=send_payload.parse_mode,
                         disable_web_page_preview=send_payload.disable_web_page_preview,
+                        reply_markup=send_payload.reply_markup if index == len(message_parts) - 1 else None,
                         timeout_sec=ctx.timeout_sec,
                     )
                 )
             return ToolResult(ok=True, payload=_build_chunked_response(action="send_message", responses=responses))
 
-        if normalized_action == "send_photo":
-            photo_payload = _SendPhotoParams.model_validate(params)
+        if normalized_action == "send_message_draft":
+            draft_payload = _SendMessageDraftParams.model_validate(params)
             token = await resolve_credential_value(
                 settings=settings,
                 context=call_context,
-                credential_slug=photo_payload.token_credential_name,
+                credential_slug=draft_payload.token_credential_name,
             )
-            chat_id = photo_payload.chat_id
+            chat_id = draft_payload.chat_id
             if not chat_id:
                 chat_id = await resolve_credential_value(
                     settings=settings,
                     context=call_context,
-                    credential_slug=photo_payload.chat_id_credential_name,
+                    credential_slug=draft_payload.chat_id_credential_name,
                 )
             await ensure_host_allowed(
                 settings=settings,
                 context=call_context,
                 host="api.telegram.org",
             )
-            response = await _post_send_media(
-                settings=settings,
-                profile_id=ctx.profile_id,
+            response = await _post_send_message_draft(
                 token=token,
                 chat_id=chat_id,
-                action="send_photo",
-                field_name="photo",
-                media_value=photo_payload.photo,
-                caption=photo_payload.caption,
-                message_thread_id=photo_payload.message_thread_id,
-                parse_mode=photo_payload.parse_mode,
+                draft_id=draft_payload.draft_id,
+                text=draft_payload.text,
+                message_thread_id=draft_payload.message_thread_id,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=response)
 
-        if normalized_action == "send_document":
-            document_payload = _SendDocumentParams.model_validate(params)
+        media_field = _MEDIA_FIELD_BY_ACTION.get(normalized_action)
+        if media_field is not None:
+            media_model = _ACTION_PARAMS_MODELS[normalized_action]
+            media_payload = media_model.model_validate(params)
             token = await resolve_credential_value(
                 settings=settings,
                 context=call_context,
-                credential_slug=document_payload.token_credential_name,
+                credential_slug=str(getattr(media_payload, "token_credential_name")),
             )
-            chat_id = document_payload.chat_id
+            chat_id = getattr(media_payload, "chat_id")
             if not chat_id:
                 chat_id = await resolve_credential_value(
                     settings=settings,
                     context=call_context,
-                    credential_slug=document_payload.chat_id_credential_name,
+                    credential_slug=str(getattr(media_payload, "chat_id_credential_name")),
                 )
             await ensure_host_allowed(
                 settings=settings,
@@ -327,12 +503,13 @@ async def run_telegram_action(
                 profile_id=ctx.profile_id,
                 token=token,
                 chat_id=chat_id,
-                action="send_document",
-                field_name="document",
-                media_value=document_payload.document,
-                caption=document_payload.caption,
-                message_thread_id=document_payload.message_thread_id,
-                parse_mode=document_payload.parse_mode,
+                action=normalized_action,
+                field_name=media_field,
+                media_value=str(getattr(media_payload, media_field)),
+                caption=getattr(media_payload, "caption", None),
+                message_thread_id=getattr(media_payload, "message_thread_id", None),
+                parse_mode=getattr(media_payload, "parse_mode", None),
+                reply_markup=getattr(media_payload, "reply_markup", None),
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=response)
@@ -362,6 +539,51 @@ async def run_telegram_action(
                 action=action_payload.action,
                 message_thread_id=action_payload.message_thread_id,
                 timeout_sec=ctx.timeout_sec,
+            )
+            return ToolResult(ok=True, payload=response)
+
+        if normalized_action == "answer_callback_query":
+            callback_payload = _AnswerCallbackQueryParams.model_validate(params)
+            token = await resolve_credential_value(
+                settings=settings,
+                context=call_context,
+                credential_slug=callback_payload.token_credential_name,
+            )
+            await ensure_host_allowed(
+                settings=settings,
+                context=call_context,
+                host="api.telegram.org",
+            )
+            response = await _post_answer_callback_query(
+                token=token,
+                callback_query_id=callback_payload.callback_query_id,
+                text=callback_payload.text,
+                show_alert=callback_payload.show_alert,
+                timeout_sec=ctx.timeout_sec,
+            )
+            return ToolResult(ok=True, payload=response)
+
+        if normalized_action == "download_file":
+            download_payload = _DownloadFileParams.model_validate(params)
+            token = await resolve_credential_value(
+                settings=settings,
+                context=call_context,
+                credential_slug=download_payload.token_credential_name,
+            )
+            await ensure_host_allowed(
+                settings=settings,
+                context=call_context,
+                host="api.telegram.org",
+            )
+            response = await _post_download_file(
+                settings=settings,
+                profile_id=ctx.profile_id,
+                token=token,
+                file_id=download_payload.file_id,
+                destination_dir=download_payload.destination_dir,
+                suggested_file_name=download_payload.suggested_file_name,
+                timeout_sec=ctx.timeout_sec,
+                max_bytes=download_payload.max_bytes or settings.channel_media_download_max_bytes,
             )
             return ToolResult(ok=True, payload=response)
 

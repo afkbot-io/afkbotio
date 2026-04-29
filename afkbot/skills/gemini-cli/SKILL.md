@@ -61,7 +61,7 @@ gemini --version
 gemini -p "Summarize this repository"
 gemini -p "Explain the current test failures" --output-format json
 gemini -m gemini-2.5-flash -p "Draft a migration plan"
-gemini --include-directories ../docs,../lib -p "Compare these directories"
+gemini --include-directories ../src,../lib -p "Compare these directories"
 ```
 
 ## Installation

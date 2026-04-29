@@ -19,6 +19,7 @@ class ToolCall(BaseModel):
 
     name: str = Field(min_length=1)
     params: dict[str, object] = Field(default_factory=dict)
+    call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,7 @@ class ToolContext:
     run_id: int
     actor: Literal["main", "subagent"] = "main"
     runtime_metadata: dict[str, object] | None = None
+    trusted_runtime_context: dict[str, object] | None = None
     progress_callback: ToolProgressCallback | None = None
 
 

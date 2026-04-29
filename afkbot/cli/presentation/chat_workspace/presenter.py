@@ -11,6 +11,7 @@ from afkbot.cli.presentation.chat_workspace.layout import ChatWorkspaceSurfaceSt
 from afkbot.cli.presentation.chat_workspace.toolbar import (
     build_chat_workspace_footer,
     build_chat_workspace_status_line,
+    build_chat_workspace_session_line,
     build_chat_workspace_queue_lines,
 )
 from afkbot.cli.presentation.chat_workspace.transcript import (
@@ -46,8 +47,13 @@ def build_chat_workspace_surface_state(
         state,
         status_marker=status_marker,
     )
+    session_line = build_chat_workspace_session_line(state)
     return ChatWorkspaceSurfaceState(
-        status_lines=((status_line,) if status_line else ()),
+        status_lines=tuple(
+            line
+            for line in (session_line, status_line)
+            if line
+        ),
         queue_lines=build_chat_workspace_queue_lines(state),
     )
 
@@ -139,10 +145,10 @@ def build_chat_workspace_progress_entries(
         detail_lines = render_progress_detail_lines(event)
         preview_lines = detail_lines
         if event.event_type == "tool.progress":
-            group_seq = next_state.open_group_seq or next_state.group_seq
+            group_seq = frame.group_seq
             previous_lines = (
                 state.last_tool_preview_lines
-                if state.last_tool_preview_group_seq == group_seq
+                if group_seq is not None and state.last_tool_preview_group_seq == group_seq
                 else ()
             )
             detail_lines = _new_tool_preview_lines(previous_lines, preview_lines)
@@ -151,7 +157,7 @@ def build_chat_workspace_progress_entries(
                 last_tool_preview_group_seq=group_seq,
                 last_tool_preview_lines=preview_lines,
             )
-        elif event.event_type == "tool.result" and next_state.open_group_seq is None:
+        elif event.event_type == "tool.result" and not _tool_result_is_live(event):
             next_state = replace(
                 next_state,
                 last_tool_preview_group_seq=None,
@@ -281,3 +287,9 @@ def _tool_result_is_error(event: ProgressEvent) -> bool:
         return False
     exit_code = payload.get("exit_code")
     return isinstance(exit_code, int) and exit_code != 0
+
+
+def _tool_result_is_live(event: ProgressEvent) -> bool:
+    result = event.tool_result or {}
+    payload = result.get("payload")
+    return isinstance(payload, dict) and payload.get("running") is True

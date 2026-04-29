@@ -46,6 +46,15 @@ async def receive_partyflow_webhook(endpoint_id: str, request: Request) -> JSONR
                     "reason": f"PartyFlow channel endpoint is not configured: {endpoint_id}",
                 },
             )
+        if not endpoint.enabled:
+            return JSONResponse(
+                status_code=410,
+                content={
+                    "ok": False,
+                    "error_code": "partyflow_channel_disabled",
+                    "reason": f"PartyFlow channel endpoint is disabled: {endpoint_id}",
+                },
+            )
         return JSONResponse(
             status_code=503,
             content={

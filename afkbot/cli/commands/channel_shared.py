@@ -19,16 +19,20 @@ from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.services.channel_routing import ChannelBindingRule
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channel_routing.service import (
+    ChannelBindingService,
     ChannelBindingServiceError,
     run_channel_binding_service_sync,
 )
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessMode,
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     ChannelReplyHumanizationConfig,
 )
 from afkbot.services.channels.tool_profiles import (
-    ChannelToolProfile,
     CHANNEL_TOOL_PROFILE_VALUES,
+    ChannelToolProfile,
+    allowed_tool_names_for_channel_profile,
     default_channel_tool_profile_for_policy,
 )
 from afkbot.services.profile_runtime import ProfileDetails, run_profile_service_sync
@@ -56,6 +60,9 @@ class ResolvedBindingUpdateInputs:
     session_policy: SessionPolicy
     priority: int
     prompt_overlay: str | None
+
+
+CHANNEL_ACCESS_MODES: tuple[str, ...] = ("open", "allowlist", "disabled")
 
 
 def should_collect_channel_add_interactively(
@@ -103,19 +110,26 @@ def render_channel_add_intro(
                 lang,
                 en=(
                     "Telegram Bot API channel setup\n"
-                    f"- This wizard creates one polling endpoint for a Telegram bot.\n"
-                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, `status`, and `poll-once` commands. "
-                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
-                    "- If bot credentials are not already configured, the wizard will ask for the BotFather token.\n"
-                    "- Optional: you may also save a default chat id for app-level Telegram actions; leave it blank if you do not need it yet."
+                    "- Use this for a Telegram bot created in @BotFather. AFKBOT will poll updates and route "
+                    "allowed messages into the selected profile.\n"
+                    f"- `Channel id` is only a local AFKBOT name for later `show`, `update`, `status`, and "
+                    f"`poll-once` commands. Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- The profile still owns persona, memory, skills, and the maximum tool permissions. "
+                    "Channel settings only narrow who may talk to it and which tools are visible from this channel.\n"
+                    "- If bot credentials are not configured yet, the wizard will ask for the BotFather token. "
+                    "The optional default chat id is only for app-level Telegram send actions."
                 ),
                 ru=(
-                    "Настройка Telegram Bot API канала\n"
-                    f"- Этот мастер создаёт один polling endpoint для Telegram-бота.\n"
-                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update`, `status` и `poll-once`. "
-                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
-                    "- Если credentials для бота ещё не настроены, мастер попросит BotFather token.\n"
-                    "- Дополнительно можно сохранить chat id по умолчанию для app-level Telegram действий; если пока не нужен, оставьте поле пустым."
+                    "Настройка канала Telegram Bot API\n"
+                    "- Используйте это для Telegram-бота, созданного в @BotFather. AFKBOT будет получать "
+                    "обновления и передавать разрешённые сообщения в выбранный профиль.\n"
+                    f"- `Идентификатор канала` это только локальное имя внутри AFKBOT для команд `show`, "
+                    f"`update`, `status` и `poll-once`. На этом вопросе можно нажать Enter и принять "
+                    f"`{suggested_channel_id}`.\n"
+                    "- Профиль по-прежнему задаёт роль агента, память, навыки и максимальные права на инструменты. "
+                    "Настройки канала только сужают, кто может писать и какие инструменты видны из этого канала.\n"
+                    "- Если данные бота ещё не настроены, мастер попросит токен BotFather. Необязательный chat id "
+                    "по умолчанию нужен только для app-level отправки сообщений в Telegram."
                 ),
             )
         )
@@ -125,20 +139,27 @@ def render_channel_add_intro(
             msg(
                 lang,
                 en=(
-                    "Telethon user channel setup\n"
-                    f"- This wizard creates one Telegram user-account endpoint powered by Telethon.\n"
-                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, `status`, `authorize`, and `dialogs` commands. "
-                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
-                    "- If Telethon credentials are not already configured, the wizard will ask for API id, API hash, and phone.\n"
-                    "- A session string is optional: import it now, or save the channel first and authorize later with `afk channel telethon authorize <channel_id>`."
+                    "Telethon user-account channel setup\n"
+                    "- Use this when AFKBOT should read Telegram as a user account instead of a bot. "
+                    "It can run as read-only, reply back to chats, or collect watcher digests.\n"
+                    f"- `Channel id` is only a local AFKBOT name for later `show`, `update`, `status`, "
+                    f"`authorize`, and `dialogs` commands. Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- The profile still owns persona, memory, skills, and the maximum tool permissions. "
+                    "Channel settings only narrow who may talk to it and which tools are visible from this channel.\n"
+                    "- If Telethon credentials are not configured yet, the wizard will ask for API id, API hash, "
+                    "and phone. Session string is optional: import it now or authorize later."
                 ),
                 ru=(
-                    "Настройка Telethon user-канала\n"
-                    f"- Этот мастер создаёт один endpoint Telegram user-аккаунта на Telethon.\n"
-                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update`, `status`, `authorize` и `dialogs`. "
-                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
-                    "- Если credentials для Telethon ещё не настроены, мастер попросит API id, API hash и телефон.\n"
-                    "- Session string необязателен: можно импортировать его сразу или сначала сохранить канал, а авторизоваться потом через `afk channel telethon authorize <channel_id>`."
+                    "Настройка канала Telegram user-аккаунта через Telethon\n"
+                    "- Используйте это, когда AFKBOT должен читать Telegram как пользователь, а не как бот. "
+                    "Канал может быть только для чтения, отвечать в чаты или собирать дайджесты наблюдателя.\n"
+                    f"- `Идентификатор канала` это только локальное имя внутри AFKBOT для команд `show`, "
+                    f"`update`, `status`, `authorize` и `dialogs`. На этом вопросе можно нажать Enter и принять "
+                    f"`{suggested_channel_id}`.\n"
+                    "- Профиль по-прежнему задаёт роль агента, память, навыки и максимальные права на инструменты. "
+                    "Настройки канала только сужают, кто может писать и какие инструменты видны из этого канала.\n"
+                    "- Если данные Telethon ещё не настроены, мастер попросит API id, API hash и телефон. "
+                    "Session string необязателен: его можно импортировать сейчас или авторизоваться позже."
                 ),
             )
         )
@@ -223,7 +244,7 @@ def collect_channel_add_base_inputs(
         value=account_id,
         interactive=False,
         prompt_en="Account id",
-        prompt_ru="Account id",
+        prompt_ru="ID аккаунта",
         default=resolved_channel_id,
         lang=lang,
         normalize_lower=True,
@@ -235,8 +256,11 @@ def collect_channel_add_base_inputs(
         prompt_ru="Включить канал?",
         default=True,
         lang=lang,
-        detail_en="Disabled channels stay saved in config, but runtime will ignore them until you enable them.",
-        detail_ru="Отключенный канал останется в конфиге, но runtime не будет его запускать, пока вы его не включите.",
+        detail_en="Disabled channels stay saved in config, but AFKBOT will not start or poll them until enabled.",
+        detail_ru=(
+            "Отключённый канал останется в конфиге, но AFKBOT не будет его запускать "
+            "и опрашивать, пока вы снова не включите канал."
+        ),
     )
     resolved_tool_profile = normalize_channel_tool_profile(
         resolve_channel_choice(
@@ -248,14 +272,14 @@ def collect_channel_add_base_inputs(
             allowed=CHANNEL_TOOL_PROFILE_VALUES,
             lang=lang,
             detail_en=(
-                "This narrows what the agent may do in this channel. "
-                "`inherit` keeps the profile ceiling, `chat_minimal` is reply-only, "
-                "`messaging_safe` allows safe memory/app actions, and `support_readonly` adds read-only file work."
+                "Choose the tool set visible from this channel. This cannot grant more than the profile allows; "
+                "it only narrows the profile ceiling. For private admin support use `support_readonly`. "
+                "Use `inherit` only for a fully trusted channel."
             ),
             detail_ru=(
-                "Это сужает набор действий агента именно в этом канале. "
-                "`inherit` оставляет потолок профиля, `chat_minimal` — только ответы, "
-                "`messaging_safe` — безопасные memory/app действия, `support_readonly` — ещё и read-only работу с файлами."
+                "Выберите набор инструментов, видимый из этого канала. Это не может дать больше прав, "
+                "чем разрешает профиль; настройка только сужает потолок профиля. Для личного support/admin-бота "
+                "обычно подходит `support_readonly`. `inherit` выбирайте только для полностью доверенного канала."
             ),
         )
     )
@@ -263,16 +287,17 @@ def collect_channel_add_base_inputs(
         value=create_binding,
         interactive=interactive,
         prompt_en="Create matching routing binding?",
-        prompt_ru="Создать matching routing binding?",
+        prompt_ru="Создать привязку маршрутизации?",
         default=True,
         lang=lang,
         detail_en=(
             "A binding connects inbound channel events to this profile and defines how sessions are grouped. "
-            "Turn it off only if you plan to manage routing manually."
+            "Leave this on for normal setup. Turn it off only if you plan to manage channel routing manually."
         ),
         detail_ru=(
-            "Binding связывает входящие события канала с этим профилем и определяет, как группируются сессии. "
-            "Отключайте только если хотите настраивать routing вручную."
+            "Привязка маршрутизации соединяет входящие события канала с этим профилем и задаёт, "
+            "как сообщения группируются в диалоги. Для обычной настройки оставьте включённым. "
+            "Отключайте только если будете настраивать маршрутизацию вручную."
         ),
     )
     resolved_session_policy: SessionPolicy = (
@@ -281,17 +306,19 @@ def collect_channel_add_base_inputs(
                 value=session_policy,
                 interactive=interactive,
                 prompt_en="Binding session policy",
-                prompt_ru="Политика сессии binding",
+                prompt_ru="Как группировать диалоги",
                 default=binding_session_policy_default,
                 allowed=binding_session_policy_allowed,
                 lang=lang,
                 detail_en=(
-                    "This decides how AFKBOT groups messages into one conversation: by whole chat, by thread, "
-                    "or by user inside a group."
+                    "Choose how AFKBOT groups incoming messages into conversations. Use `per-chat` for a private "
+                    "1:1 bot, `per-thread` for topic-based groups, and `per-user-in-group` when each group member "
+                    "needs a separate context."
                 ),
                 detail_ru=(
-                    "Это определяет, как AFKBOT группирует сообщения в одну сессию: по всему чату, по треду "
-                    "или по пользователю внутри группы."
+                    "Выберите, как AFKBOT объединяет входящие сообщения в диалоги. Для личного чата 1 на 1 "
+                    "обычно нужен `per-chat`, для групп с темами - `per-thread`, а для отдельного контекста "
+                    "каждого участника группы - `per-user-in-group`."
                 ),
             )
         )
@@ -342,7 +369,7 @@ def resolve_channel_profile_id(
             text=msg(
                 lang,
                 en="Select the profile that will own this channel. The profile provides the agent identity, runtime defaults, memory rules, and maximum permissions.",
-                ru="Выберите профиль, к которому будет привязан этот канал. Профиль задаёт личность агента, runtime defaults, правила памяти и максимальные права.",
+                ru="Выберите профиль, к которому будет привязан этот канал. Профиль задаёт роль агента, настройки запуска, правила памяти и максимальные права.",
             ),
             options=list(available),
             default=(default if default in available else available[0]),
@@ -388,6 +415,431 @@ def put_matching_binding(
                 prompt_overlay=prompt_overlay,
             )
         ),
+    )
+
+
+def collect_channel_access_policy_inputs(
+    *,
+    interactive: bool,
+    lang: PromptLanguage,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None = None,
+    tool_profile: ChannelToolProfile | None = None,
+    private_policy_default: ChannelAccessMode = "open",
+    allow_from_default: tuple[str, ...] = (),
+    group_policy_default: ChannelAccessMode = "open",
+    groups_default: tuple[str, ...] = (),
+    group_allow_from_default: tuple[str, ...] = (),
+    outbound_allow_to_default: tuple[str, ...] = (),
+) -> ChannelAccessPolicy:
+    """Collect OpenClaw-style access controls shared by channel transports."""
+
+    normalized_allow_from = (
+        split_channel_access_list(allow_from) if allow_from is not None else allow_from_default
+    )
+    normalized_groups = split_channel_access_list(groups) if groups is not None else groups_default
+    normalized_group_allow_from = (
+        split_channel_access_list(group_allow_from)
+        if group_allow_from is not None
+        else group_allow_from_default
+    )
+    normalized_outbound_allow_to = (
+        split_channel_access_list(outbound_allow_to)
+        if outbound_allow_to is not None
+        else outbound_allow_to_default
+    )
+    private_policy_value = private_policy
+    if (
+        private_policy_value is None
+        and not interactive
+        and private_policy_default == "open"
+        and allow_from is not None
+    ):
+        private_policy_value = "allowlist" if normalized_allow_from else None
+    group_policy_value = group_policy
+    if group_policy_value is None and not interactive and group_policy_default == "open":
+        if groups is not None or group_allow_from is not None:
+            group_policy_value = (
+                "allowlist" if normalized_groups or normalized_group_allow_from else None
+            )
+    resolved_private_policy = cast(
+        ChannelAccessMode,
+        resolve_channel_choice(
+            value=private_policy_value,
+            interactive=interactive,
+            prompt_en="Private chat access",
+            prompt_ru="Доступ в личных чатах",
+            default=private_policy_default,
+            allowed=CHANNEL_ACCESS_MODES,
+            lang=lang,
+            detail_en=(
+                "Choose who may write to the bot/userbot in direct messages. For a private 1:1 remote assistant, "
+                "choose `allowlist` and enter the platform sender/user id next."
+            ),
+            detail_ru=(
+                "Выберите, кто может писать боту или userbot в личные сообщения. Для закрытого личного "
+                "удалённого помощника выберите `allowlist` и дальше введите id отправителя/пользователя."
+            ),
+        ),
+    )
+    if resolved_private_policy == "allowlist" and (interactive or not normalized_allow_from):
+        normalized_allow_from = split_channel_access_list(
+            resolve_channel_text(
+                value=allow_from if allow_from is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed private sender ids",
+                prompt_ru="ID отправителей для личных чатов",
+                default=", ".join(normalized_allow_from) if normalized_allow_from else None,
+                lang=lang,
+                detail_en=(
+                    "Enter platform sender/user IDs allowed to write in private chats. Separate several IDs "
+                    "with commas."
+                ),
+                detail_ru=(
+                    "Введите id отправителей/пользователей, которым разрешено писать в личку. Несколько ID "
+                    "разделяйте запятыми."
+                ),
+            )
+        )
+    resolved_group_policy = cast(
+        ChannelAccessMode,
+        resolve_channel_choice(
+            value=group_policy_value,
+            interactive=interactive,
+            prompt_en="Group access",
+            prompt_ru="Доступ в группах",
+            default=group_policy_default,
+            allowed=CHANNEL_ACCESS_MODES,
+            lang=lang,
+            detail_en=(
+                "Choose whether this channel works in groups. `allowlist` is safest: only listed groups and listed "
+                "senders inside those groups can trigger the bot."
+            ),
+            detail_ru=(
+                "Выберите, работает ли канал в группах. Самый безопасный вариант - `allowlist`: запускать бота "
+                "смогут только указанные группы и указанные отправители внутри этих групп."
+            ),
+        ),
+    )
+    if resolved_group_policy == "allowlist" and (interactive or not normalized_groups):
+        normalized_groups = split_channel_access_list(
+            resolve_channel_text(
+                value=groups if groups is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed group ids",
+                prompt_ru="ID групп/каналов",
+                default=", ".join(normalized_groups) if normalized_groups else None,
+                lang=lang,
+                detail_en=(
+                    "Enter platform group/channel IDs allowed to use this channel. Separate several IDs with commas."
+                ),
+                detail_ru=(
+                    "Введите id групп или каналов, где разрешён этот канал. Несколько ID разделяйте запятыми."
+                ),
+            )
+        )
+    if resolved_group_policy == "allowlist" and (
+        interactive or not (normalized_group_allow_from or normalized_allow_from)
+    ):
+        normalized_group_allow_from = split_channel_access_list(
+            resolve_channel_text(
+                value=group_allow_from if group_allow_from is not None else None,
+                interactive=interactive,
+                prompt_en="Allowed group sender ids",
+                prompt_ru="ID отправителей в группах",
+                default=(
+                    ", ".join(normalized_group_allow_from or normalized_allow_from)
+                    if normalized_group_allow_from or normalized_allow_from
+                    else None
+                ),
+                lang=lang,
+                detail_en=(
+                    "Enter platform sender/user IDs allowed to trigger the bot inside the allowed groups. "
+                    "Leave no broad group access unless you trust every member."
+                ),
+                detail_ru=(
+                    "Введите id отправителей/пользователей, которым разрешено запускать бота в разрешённых группах. "
+                    "Не оставляйте широкий доступ к группе, если доверяете не всем участникам."
+                ),
+            )
+        )
+    if (
+        interactive
+        and outbound_allow_to is None
+        and _channel_tool_profile_may_send_outbound(tool_profile)
+    ):
+        outbound_default_values = normalized_outbound_allow_to or _default_outbound_allow_to(
+            allow_from=normalized_allow_from,
+            groups=normalized_groups,
+        )
+        restrict_outbound = resolve_channel_bool(
+            value=None,
+            interactive=True,
+            prompt_en="Restrict channel.send outbound targets?",
+            prompt_ru="Ограничить, куда channel.send может отправлять сообщения?",
+            default=bool(outbound_default_values),
+            lang=lang,
+            detail_en=(
+                "`channel.send` lets the agent initiate channel messages through this endpoint. "
+                "Choose Yes to limit it to specific chat/user IDs. Choose No only for fully trusted "
+                "profiles and credentials."
+            ),
+            detail_ru=(
+                "`channel.send` позволяет агенту самому отправлять сообщения через этот канал. "
+                "Выберите Да, чтобы ограничить отправку конкретными chat/user ID. Нет выбирайте только "
+                "для полностью доверенных профилей и учётных данных."
+            ),
+        )
+        if restrict_outbound:
+            normalized_outbound_allow_to = split_channel_access_list(
+                resolve_channel_text(
+                    value=None,
+                    interactive=True,
+                    prompt_en="Allowed outbound chat/user ids",
+                    prompt_ru="Chat/user ID для исходящих сообщений",
+                    default=", ".join(outbound_default_values) if outbound_default_values else None,
+                    lang=lang,
+                    detail_en=(
+                        "Enter platform chat/user IDs that `channel.send` may target through this endpoint."
+                    ),
+                    detail_ru=(
+                        "Введите chat/user ID платформы, куда `channel.send` может отправлять через этот канал."
+                    ),
+                )
+            )
+        else:
+            normalized_outbound_allow_to = ()
+    return ChannelAccessPolicy(
+        private_policy=resolved_private_policy,
+        allow_from=normalized_allow_from,
+        group_policy=resolved_group_policy,
+        groups=normalized_groups,
+        group_allow_from=normalized_group_allow_from,
+        outbound_allow_to=normalized_outbound_allow_to,
+    )
+
+
+def split_channel_access_list(value: str | None) -> tuple[str, ...]:
+    """Split comma-separated channel access ids while preserving Telegram signs."""
+
+    if value is None:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        normalized.append(text)
+    return tuple(normalized)
+
+
+def _channel_tool_profile_may_send_outbound(tool_profile: ChannelToolProfile | None) -> bool:
+    """Return whether this channel tool profile can expose channel.send."""
+
+    if tool_profile is None:
+        return False
+    allowed_tools = allowed_tool_names_for_channel_profile(tool_profile)
+    return allowed_tools is None or "channel.send" in set(allowed_tools)
+
+
+def _default_outbound_allow_to(
+    *,
+    allow_from: tuple[str, ...],
+    groups: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Suggest outbound targets that match already-entered inbound allowlists."""
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in (*allow_from, *groups):
+        if item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return tuple(normalized)
+
+
+def put_access_policy_bindings(
+    *,
+    settings: Settings,
+    endpoint_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    prompt_overlay: str | None,
+    access_policy: ChannelAccessPolicy,
+    replace_existing: bool = False,
+) -> int:
+    """Create scoped bindings from access policy and return how many were created."""
+
+    if replace_existing:
+        run_channel_binding_service_sync(
+            settings,
+            lambda service: _delete_existing_access_policy_bindings(
+                service=service,
+                endpoint_id=endpoint_id,
+                transport=transport,
+            ),
+        )
+    rules = build_access_policy_binding_rules(
+        endpoint_id=endpoint_id,
+        transport=transport,
+        profile_id=profile_id,
+        session_policy=session_policy,
+        priority=priority,
+        enabled=enabled,
+        account_id=account_id,
+        prompt_overlay=prompt_overlay,
+        access_policy=access_policy,
+    )
+    for rule in rules:
+
+        async def _put_rule(
+            service: ChannelBindingService, rule: ChannelBindingRule = rule
+        ) -> ChannelBindingRule:
+            return await service.put(rule)
+
+        run_channel_binding_service_sync(settings, _put_rule)
+    return len(rules)
+
+
+async def _delete_existing_access_policy_bindings(
+    *,
+    service: ChannelBindingService,
+    endpoint_id: str,
+    transport: str,
+) -> None:
+    existing = await service.list(transport=transport)
+    for rule in existing:
+        if rule.binding_id == endpoint_id or rule.binding_id.startswith(f"{endpoint_id}:"):
+            try:
+                await service.delete(binding_id=rule.binding_id)
+            except ChannelBindingServiceError as exc:
+                if exc.error_code != "channel_binding_not_found":
+                    raise
+
+
+def build_access_policy_binding_rules(
+    *,
+    endpoint_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    prompt_overlay: str | None,
+    access_policy: ChannelAccessPolicy,
+) -> tuple[ChannelBindingRule, ...]:
+    """Project one endpoint access policy into concrete routing rules."""
+
+    rules: list[ChannelBindingRule] = []
+    if access_policy.private_policy == "allowlist":
+        for sender_id in access_policy.allow_from:
+            if sender_id == "*":
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=f"{endpoint_id}:dm:any",
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=None,
+                        user_id=None,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+            else:
+                private_peer_id = None if transport == "partyflow" else sender_id
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=f"{endpoint_id}:dm:{sender_id}",
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=private_peer_id,
+                        user_id=sender_id,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+    if access_policy.group_policy == "allowlist":
+        sender_ids = access_policy.group_allow_from or access_policy.allow_from
+        for group_id in access_policy.groups:
+            for sender_id in sender_ids:
+                rules.append(
+                    _build_access_binding_rule(
+                        binding_id=(
+                            f"{endpoint_id}:group:{group_id}:user:{sender_id}"
+                            if sender_id != "*"
+                            else f"{endpoint_id}:group:{group_id}:any"
+                        ),
+                        transport=transport,
+                        profile_id=profile_id,
+                        session_policy=session_policy,
+                        priority=priority,
+                        enabled=enabled,
+                        account_id=account_id,
+                        peer_id=None if group_id == "*" else group_id,
+                        user_id=None if sender_id == "*" else sender_id,
+                        prompt_overlay=prompt_overlay,
+                    )
+                )
+    if access_policy.private_policy == "open" or access_policy.group_policy == "open":
+        rules.append(
+            _build_access_binding_rule(
+                binding_id=endpoint_id,
+                transport=transport,
+                profile_id=profile_id,
+                session_policy=session_policy,
+                priority=priority,
+                enabled=enabled,
+                account_id=account_id,
+                peer_id=None,
+                user_id=None,
+                prompt_overlay=prompt_overlay,
+            )
+        )
+    return tuple(rules)
+
+
+def _build_access_binding_rule(
+    *,
+    binding_id: str,
+    transport: str,
+    profile_id: str,
+    session_policy: SessionPolicy,
+    priority: int,
+    enabled: bool,
+    account_id: str,
+    peer_id: str | None,
+    user_id: str | None,
+    prompt_overlay: str | None,
+) -> ChannelBindingRule:
+    return ChannelBindingRule(
+        binding_id=binding_id,
+        transport=transport,
+        profile_id=profile_id,
+        session_policy=session_policy,
+        priority=priority,
+        enabled=enabled,
+        account_id=account_id,
+        peer_id=peer_id,
+        user_id=user_id,
+        prompt_overlay=prompt_overlay,
     )
 
 

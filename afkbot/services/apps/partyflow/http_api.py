@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
 
@@ -36,6 +36,7 @@ async def _get_me(*, base_url: str, token: str, timeout_sec: int) -> dict[str, o
             method="GET",
             path="/api/v1/bot/me",
             body=None,
+            query=None,
             timeout_sec=timeout_sec,
         ),
         timeout=float(timeout_sec),
@@ -57,6 +58,46 @@ async def _join_conversation(
             method="POST",
             path=f"/api/v1/bot/conversations/{conversation_id}/join",
             body=None,
+            query=None,
+            timeout_sec=timeout_sec,
+        ),
+        timeout=float(timeout_sec),
+    )
+
+
+async def _get_messages(
+    *,
+    base_url: str,
+    token: str,
+    conversation_id: str,
+    limit: int,
+    before_msg_index: int | None,
+    after_msg_index: int | None,
+    around_msg_index: int | None,
+    updated_since: str | None,
+    thread_id: str | None,
+    timeout_sec: int,
+) -> dict[str, object]:
+    query: dict[str, object] = {"limit": limit}
+    if before_msg_index is not None:
+        query["before_msg_index"] = before_msg_index
+    if after_msg_index is not None:
+        query["after_msg_index"] = after_msg_index
+    if around_msg_index is not None:
+        query["around_msg_index"] = around_msg_index
+    if updated_since is not None:
+        query["updated_since"] = updated_since
+    if thread_id is not None:
+        query["thread_id"] = thread_id
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _request_json_sync,
+            base_url=base_url,
+            token=token,
+            method="GET",
+            path=f"/api/v1/channels/{conversation_id}/messages",
+            body=None,
+            query=query,
             timeout_sec=timeout_sec,
         ),
         timeout=float(timeout_sec),
@@ -70,6 +111,9 @@ async def _send_message(
     conversation_id: str,
     content: str,
     thread_id: str | None,
+    display_name: str | None,
+    display_avatar_url: str | None,
+    metadata_json: str | None,
     timeout_sec: int,
 ) -> dict[str, object]:
     body: dict[str, object] = {
@@ -78,6 +122,12 @@ async def _send_message(
     }
     if thread_id is not None:
         body["thread_id"] = thread_id
+    if display_name is not None:
+        body["display_name"] = display_name
+    if display_avatar_url is not None:
+        body["display_avatar_url"] = display_avatar_url
+    if metadata_json is not None:
+        body["metadata_json"] = metadata_json
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(
@@ -87,6 +137,7 @@ async def _send_message(
                 method="POST",
                 path="/api/v1/bot/messages",
                 body=body,
+                query=None,
                 timeout_sec=timeout_sec,
             ),
             timeout=float(timeout_sec),
@@ -108,6 +159,7 @@ async def _send_message(
             method="POST",
             path="/api/v1/bot/messages",
             body=body,
+            query=None,
             timeout_sec=timeout_sec,
         ),
         timeout=float(timeout_sec),
@@ -121,6 +173,7 @@ def _request_json_sync(
     method: str,
     path: str,
     body: dict[str, object] | None,
+    query: dict[str, object] | None,
     timeout_sec: int,
 ) -> dict[str, object]:
     normalized_base_url = base_url.strip().rstrip("/")
@@ -136,8 +189,13 @@ def _request_json_sync(
     if body is not None:
         request_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    url = urljoin(f"{normalized_base_url}/", path.lstrip("/"))
+    if query:
+        filtered_query = {key: value for key, value in query.items() if value is not None}
+        if filtered_query:
+            url = f"{url}?{urlencode(filtered_query)}"
     request = Request(
-        url=urljoin(f"{normalized_base_url}/", path.lstrip("/")),
+        url=url,
         data=request_body,
         headers=headers,
         method=method,
@@ -180,6 +238,9 @@ def _http_error(exc: HTTPError) -> PartyFlowApiError:
     except (UnicodeDecodeError, json.JSONDecodeError):
         parsed_payload = {}
     metadata: dict[str, object] = {"http_status": exc.code}
+    retry_after_sec = _parse_retry_after(exc.headers.get("Retry-After"))
+    if retry_after_sec is not None:
+        metadata["retry_after_sec"] = retry_after_sec
     if isinstance(parsed_payload, dict):
         metadata["response"] = {str(key): value for key, value in parsed_payload.items()}
     reason = f"PartyFlow HTTP {exc.code}: {exc.reason}"
@@ -188,6 +249,8 @@ def _http_error(exc: HTTPError) -> PartyFlowApiError:
         error_code = "partyflow_unauthorized"
     elif exc.code == 403:
         error_code = "partyflow_bot_not_in_conversation"
+    elif exc.code == 429:
+        error_code = "partyflow_rate_limited"
     elif exc.code in {500, 503}:
         error_code = "partyflow_unavailable"
     return PartyFlowApiError(
@@ -196,3 +259,12 @@ def _http_error(exc: HTTPError) -> PartyFlowApiError:
         reason=reason,
         metadata=metadata,
     )
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized.isdigit():
+        return None
+    return max(1, int(normalized))

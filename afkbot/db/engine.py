@@ -25,6 +25,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
     if _is_sqlite_url(settings.db_url):
         _register_sqlite_datetime_codecs()
     engine = create_async_engine(settings.db_url, future=True)
+    setattr(engine.sync_engine, "_afkbot_settings", settings)
     if _is_sqlite_url(settings.db_url):
         _configure_sqlite(engine, db_url=settings.db_url)
     return engine

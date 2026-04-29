@@ -71,7 +71,7 @@ def test_channel_telethon_watcher_update_validates_scripted_values(
 
     # Assert
     assert update_result.exit_code == 2
-    assert "Watcher batch interval (sec) must be >= 10" in update_result.stderr
+    assert "Digest interval (sec) must be >= 10" in update_result.stderr
 
 
 def test_channel_telethon_update_preserves_enabled_state_for_humanize_and_watcher_subflags(

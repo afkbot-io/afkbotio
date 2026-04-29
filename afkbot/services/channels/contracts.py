@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+ChannelOutboundAttachmentKind = Literal[
+    "photo",
+    "document",
+    "voice",
+    "audio",
+    "video",
+    "animation",
+    "sticker",
+]
 
 
 class ChannelDeliveryTarget(BaseModel):
@@ -119,6 +130,91 @@ class ChannelDeliveryResult(BaseModel):
     transport: str
     target: dict[str, str]
     payload: dict[str, object] = Field(default_factory=dict)
+
+
+class ChannelOutboundAttachment(BaseModel):
+    """One media attachment requested for outbound channel delivery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: ChannelOutboundAttachmentKind
+    source: str = Field(min_length=1, max_length=4096)
+    caption: str | None = Field(default=None, max_length=1024)
+    parse_mode: str | None = Field(default=None, max_length=32)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_kind(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("attachment kind is required")
+        return value.strip().lower()
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_source(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("attachment source is required")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("attachment source is required")
+        return normalized
+
+    @field_validator("caption", "parse_mode", mode="before")
+    @classmethod
+    def _normalize_optional_text(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("attachment text fields must be strings")
+        normalized = value.strip()
+        return normalized or None
+
+
+class ChannelOutboundMessage(BaseModel):
+    """Structured outbound message payload shared by channel delivery adapters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(default="", max_length=200000)
+    parse_mode: str | None = Field(default=None, max_length=32)
+    disable_web_page_preview: bool = False
+    reply_markup: dict[str, object] | None = None
+    attachments: tuple[ChannelOutboundAttachment, ...] = ()
+    stream_draft: bool = False
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _normalize_text(cls, value: object) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("message text must be a string")
+        return value.strip()
+
+    @field_validator("parse_mode", mode="before")
+    @classmethod
+    def _normalize_parse_mode(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("parse_mode must be a string")
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("reply_markup", mode="before")
+    @classmethod
+    def _normalize_reply_markup(cls, value: object) -> dict[str, object] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("reply_markup must be an object")
+        return {str(key): item for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def _require_content(self) -> "ChannelOutboundMessage":
+        if self.text.strip() or self.attachments:
+            return self
+        raise ValueError("outbound message requires text or at least one attachment")
 
 
 @dataclass(frozen=True, slots=True)

@@ -18,7 +18,8 @@ from afkbot.cli.commands.channel_shared import (
     build_ingress_batch_config,
     build_reply_humanization_config,
     collect_channel_add_base_inputs,
-    put_matching_binding,
+    collect_channel_access_policy_inputs,
+    put_access_policy_bindings,
     render_channel_add_intro,
     should_collect_channel_add_interactively,
 )
@@ -51,6 +52,12 @@ def run_telegram_add(
     account_id: str | None,
     enabled: bool | None,
     group_trigger_mode: str | None,
+    private_policy: str | None,
+    allow_from: str | None,
+    group_policy: str | None,
+    groups: str | None,
+    group_allow_from: str | None,
+    outbound_allow_to: str | None,
     tool_profile: str | None,
     ingress_batch_enabled: bool | None,
     ingress_debounce_ms: int | None,
@@ -113,104 +120,133 @@ def run_telegram_add(
                 default="mention_or_reply",
                 allowed=TELEGRAM_GROUP_TRIGGER_MODES,
                 lang=prompt_language,
-                detail_en="Choose when group and supergroup messages are allowed to trigger the bot: on mentions, replies, or every message.",
-                detail_ru="Выберите, когда сообщения в группах и супергруппах могут запускать бота: по mentions, по reply или на каждое сообщение.",
+                detail_en=(
+                    "Choose which messages in groups may start an agent turn. This is checked after the "
+                    "group access policy, so allowlists still apply."
+                ),
+                detail_ru=(
+                    "Выберите, какие сообщения в группах могут запускать ход агента. Эта проверка выполняется "
+                    "после политики доступа к группам, поэтому allowlist всё равно действует."
+                ),
             )
+        )
+        access_policy = collect_channel_access_policy_inputs(
+            interactive=interactive,
+            lang=prompt_language,
+            private_policy=private_policy,
+            allow_from=allow_from,
+            group_policy=group_policy,
+            groups=groups,
+            group_allow_from=group_allow_from,
+            outbound_allow_to=outbound_allow_to,
+            tool_profile=base_inputs.tool_profile,
         )
         resolved_ingress_enabled = resolve_channel_bool(
             value=ingress_batch_enabled,
             interactive=interactive,
-            prompt_en="Enable ingress batching?",
-            prompt_ru="Включить batching входящих сообщений?",
+            prompt_en="Merge message bursts before replying?",
+            prompt_ru="Объединять всплески сообщений перед ответом?",
             default=False,
             lang=prompt_language,
-            detail_en="Batching waits for a short quiet window and merges bursts of inbound messages into one turn, which reduces spammy reply loops.",
-            detail_ru="Batching ждёт короткое окно тишины и объединяет всплески входящих сообщений в один turn, что уменьшает спамные циклы ответов.",
+            detail_en=(
+                "When enabled, AFKBOT waits briefly after new messages and sends one combined prompt to the "
+                "agent. This helps when users type several short messages in a row."
+            ),
+            detail_ru=(
+                "Если включить, AFKBOT коротко ждёт после новых сообщений и отправляет агенту один "
+                "объединённый запрос. Это полезно, когда пользователь пишет несколько коротких сообщений подряд."
+            ),
         )
         resolved_ingress_batch = build_ingress_batch_config(
             enabled=resolved_ingress_enabled,
             debounce_ms=resolve_channel_int(
                 value=ingress_debounce_ms,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress debounce (ms)",
-                prompt_ru="Ingress debounce (мс)",
+                prompt_en="Quiet window before merge (ms)",
+                prompt_ru="Окно тишины перед объединением (мс)",
                 default=1500,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_DEBOUNCE_MS_MAX,
-                detail_en="How long AFKBOT waits after the last inbound message before flushing one combined turn.",
-                detail_ru="Сколько AFKBOT ждёт после последнего входящего сообщения перед отправкой одного объединённого turn.",
+                detail_en="How long AFKBOT waits after the latest inbound message before it sends the merged turn.",
+                detail_ru="Сколько AFKBOT ждёт после последнего входящего сообщения перед отправкой объединённого хода.",
             ),
             cooldown_sec=resolve_channel_int(
                 value=ingress_cooldown_sec,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress cooldown (sec)",
-                prompt_ru="Ingress cooldown (сек)",
+                prompt_en="Pause after each merged turn (sec)",
+                prompt_ru="Пауза после каждого объединённого хода (сек)",
                 default=0,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_COOLDOWN_SEC_MAX,
-                detail_en="Optional extra quiet period per chat after one batch is processed. Keep 0 for normal real-time behavior.",
-                detail_ru="Необязательная дополнительная пауза на чат после обработки одного batch. Для обычного real-time поведения оставьте 0.",
+                detail_en="Optional extra pause per chat after one merged turn is processed. Keep 0 for normal real-time behavior.",
+                detail_ru="Необязательная пауза на чат после обработки объединённого хода. Для обычных быстрых ответов оставьте 0.",
             ),
             max_batch_size=resolve_channel_int(
                 value=ingress_max_batch_size,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress max batch size",
-                prompt_ru="Максимальный размер ingress batch",
+                prompt_en="Maximum messages per merged turn",
+                prompt_ru="Максимум сообщений в одном объединённом ходе",
                 default=20,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_SIZE_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_SIZE_MAX,
-                detail_en="Safety cap on how many inbound messages may merge into one turn before AFKBOT flushes immediately.",
-                detail_ru="Страхующий лимит на количество входящих сообщений, которые можно слить в один turn до немедленного flush.",
+                detail_en="Safety cap on how many inbound messages may be merged before AFKBOT flushes immediately.",
+                detail_ru="Защитный лимит: сколько входящих сообщений можно объединить до немедленной отправки агенту.",
             ),
             max_buffer_chars=resolve_channel_int(
                 value=ingress_max_buffer_chars,
                 interactive=interactive and resolved_ingress_enabled,
-                prompt_en="Ingress max buffer chars",
-                prompt_ru="Максимальный размер ingress buffer в символах",
+                prompt_en="Maximum merged text size (chars)",
+                prompt_ru="Максимальный размер объединённого текста (символы)",
                 default=12000,
                 lang=prompt_language,
                 min_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
                 max_value=CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
-                detail_en="Safety cap on the total buffered text size for one merged turn.",
-                detail_ru="Страхующий лимит на суммарный размер текста, который хранится для одного объединённого turn.",
+                detail_en="Safety cap on the total text kept for one merged turn.",
+                detail_ru="Защитный лимит на общий размер текста, который попадёт в один объединённый ход.",
             ),
         )
         resolved_humanize_replies = resolve_channel_bool(
             value=humanize_replies,
             interactive=interactive,
-            prompt_en="Enable humanized replies?",
-            prompt_ru="Включить humanized replies?",
+            prompt_en="Make replies look more natural?",
+            prompt_ru="Делать ответы более похожими на живую переписку?",
             default=False,
             lang=prompt_language,
-            detail_en="Show typing indicators and short reply delays so the bot behaves less abruptly. Disable for the fastest possible responses.",
-            detail_ru="Показывать typing и добавлять небольшие задержки, чтобы бот отвечал менее резко. Отключите для максимально быстрых ответов.",
+            detail_en=(
+                "Show typing indicators and add small delays before replies. Disable this when fastest possible "
+                "responses matter more than a human-like pace."
+            ),
+            detail_ru=(
+                "Показывать индикатор печати и добавлять небольшие задержки перед ответами. Выключите, "
+                "если важнее максимальная скорость."
+            ),
         )
         resolved_reply_humanization = build_reply_humanization_config(
             enabled=resolved_humanize_replies,
             min_delay_ms=resolve_channel_int(
                 value=humanize_min_delay_ms,
                 interactive=interactive and resolved_humanize_replies,
-                prompt_en="Humanized min delay (ms)",
-                prompt_ru="Минимальная задержка humanized replies (мс)",
+                prompt_en="Minimum reply delay (ms)",
+                prompt_ru="Минимальная задержка ответа (мс)",
                 default=1000,
                 lang=prompt_language,
                 min_value=0,
-                detail_en="Shortest delay before sending a reply when humanized replies are enabled.",
-                detail_ru="Минимальная задержка перед отправкой ответа, когда включены humanized replies.",
+                detail_en="Shortest delay before AFKBOT sends a reply.",
+                detail_ru="Минимальная задержка перед отправкой ответа.",
             ),
             max_delay_ms=resolve_channel_int(
                 value=humanize_max_delay_ms,
                 interactive=interactive and resolved_humanize_replies,
-                prompt_en="Humanized max delay (ms)",
-                prompt_ru="Максимальная задержка humanized replies (мс)",
+                prompt_en="Maximum reply delay (ms)",
+                prompt_ru="Максимальная задержка ответа (мс)",
                 default=8000,
                 lang=prompt_language,
                 min_value=0,
-                detail_en="Maximum delay cap before sending a reply. Longer answers scale toward this ceiling.",
-                detail_ru="Верхний предел задержки перед отправкой ответа. Более длинные ответы стремятся к этому потолку.",
+                detail_en="Maximum delay before sending a reply. Longer replies scale toward this cap.",
+                detail_ru="Максимальная задержка перед отправкой ответа. Более длинные ответы стремятся к этому пределу.",
             ),
             chars_per_second=resolve_channel_int(
                 value=humanize_chars_per_second,
@@ -220,8 +256,8 @@ def run_telegram_add(
                 default=12,
                 lang=prompt_language,
                 min_value=1,
-                detail_en="Approximate typing speed used to convert reply length into a delay.",
-                detail_ru="Примерная скорость печати, по которой длина ответа переводится в задержку.",
+                detail_en="Approximate typing speed used to turn reply length into a delay.",
+                detail_ru="Примерная скорость печати, по которой длина ответа превращается в задержку.",
             ),
         )
         endpoint = TelegramPollingEndpointConfig(
@@ -232,6 +268,7 @@ def run_telegram_add(
             enabled=base_inputs.enabled,
             group_trigger_mode=resolved_group_trigger_mode,
             tool_profile=base_inputs.tool_profile,
+            access_policy=access_policy,
             ingress_batch=resolved_ingress_batch,
             reply_humanization=resolved_reply_humanization,
         )
@@ -244,10 +281,11 @@ def run_telegram_add(
                 lang=prompt_language,
             )
         saved = runtime.create_endpoint(endpoint)
+        binding_count = 0
         if base_inputs.create_binding:
-            put_matching_binding(
+            binding_count = put_access_policy_bindings(
                 settings=runtime.settings,
-                binding_id=saved.endpoint_id,
+                endpoint_id=saved.endpoint_id,
                 transport="telegram",
                 profile_id=saved.profile_id,
                 session_policy=base_inputs.session_policy,
@@ -255,6 +293,7 @@ def run_telegram_add(
                 enabled=saved.enabled,
                 account_id=saved.account_id,
                 prompt_overlay=prompt_overlay,
+                access_policy=saved.access_policy,
             )
     except Exception as exc:
         runtime.raise_error(exc)
@@ -273,7 +312,7 @@ def run_telegram_add(
         f"enabled={saved.enabled})."
     )
     if base_inputs.create_binding:
-        typer.echo(f"Matching binding `{saved.endpoint_id}` was also created/updated.")
+        typer.echo(f"Matching bindings created/updated: {binding_count}.")
     runtime.reload_notice(runtime.settings)
 
 

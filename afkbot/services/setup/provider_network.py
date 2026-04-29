@@ -253,7 +253,7 @@ def resolve_nginx_plan(
         value=runtime_host_value,
         interactive=interactive,
         default=runtime_host_default,
-        endpoint_label=msg(lang, en="runtime", ru="runtime"),
+        endpoint_label=msg(lang, en="runtime", ru="службы AFKBOT"),
         internal_port=runtime_port,
         lang=lang,
     )
@@ -261,7 +261,7 @@ def resolve_nginx_plan(
         value=api_host_value,
         interactive=interactive,
         default=api_host_default,
-        endpoint_label=msg(lang, en="chat/api/ws", ru="chat/api/ws"),
+        endpoint_label=msg(lang, en="chat/api/ws", ru="чата/API/WebSocket"),
         internal_port=api_port,
         lang=lang,
     )
@@ -274,7 +274,7 @@ def resolve_nginx_plan(
         interactive=interactive,
         default=runtime_https_default,
         host=runtime_host,
-        endpoint_label=msg(lang, en="runtime", ru="runtime"),
+        endpoint_label=msg(lang, en="runtime", ru="службы AFKBOT"),
         lang=lang,
     )
     api_https = resolve_nginx_https_enabled(
@@ -282,7 +282,7 @@ def resolve_nginx_plan(
         interactive=interactive,
         default=api_https_default,
         host=api_host,
-        endpoint_label=msg(lang, en="chat/api/ws", ru="chat/api/ws"),
+        endpoint_label=msg(lang, en="chat/api/ws", ru="чата/API/WebSocket"),
         lang=lang,
     )
 

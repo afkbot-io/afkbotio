@@ -26,6 +26,8 @@ class AutomationTriggerWebhook(Base):
     )
     webhook_token: Mapped[str] = mapped_column(String(255))
     webhook_token_hash: Mapped[str] = mapped_column(String(128))
+    encrypted_webhook_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    webhook_token_key_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     in_progress_event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -103,6 +103,7 @@ class LLMIterationRuntime:
         explicit_subagent_requests: set[str] | None,
         emit_planning_progress: bool = True,
         runtime_metadata: dict[str, object] | None = None,
+        trusted_runtime_context: dict[str, object] | None = None,
         approved_tool_names: tuple[str, ...] | None = None,
         approval_required_tool_names: tuple[str, ...] | None = None,
     ) -> LLMIterationResult:
@@ -173,6 +174,7 @@ class LLMIterationRuntime:
                 ToolCall(
                     name=call.name,
                     params=self._to_params_dict(call.params),
+                    call_id=call.call_id,
                 )
                 for call in normalized_calls
             ]
@@ -187,6 +189,7 @@ class LLMIterationRuntime:
                 explicit_subagent_requests=explicit_subagent_requests,
                 allow_confirmation_markers=False,
                 runtime_metadata=runtime_metadata,
+                trusted_runtime_context=trusted_runtime_context,
                 allowed_tool_names=effective_allowed_tool_names,
                 approved_tool_names=(
                     None

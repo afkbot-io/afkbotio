@@ -7,13 +7,14 @@ import asyncio
 from afkbot.cli.commands.channel_prompt_support import resolve_channel_text
 from afkbot.cli.presentation.setup_prompts import PromptLanguage
 from afkbot.cli.commands.channel_shared import (
-    put_matching_binding,
+    put_access_policy_bindings,
     resolve_binding_update_inputs,
 )
 from afkbot.cli.commands.channel_telethon_commands.common import split_csv_patterns
 from afkbot.cli.commands.channel_telethon_commands.legacy import get_legacy_channel_endpoint_service
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     ChannelReplyHumanizationConfig,
     TelethonGroupInvocationMode,
@@ -34,6 +35,7 @@ def save_updated_telethon_channel(
     account_id: str | None,
     reply_mode: TelethonReplyMode,
     tool_profile: ChannelToolProfile,
+    access_policy: ChannelAccessPolicy,
     reply_blocked_chat_patterns: str | None,
     reply_allowed_chat_patterns: str | None,
     group_invocation_mode: TelethonGroupInvocationMode,
@@ -58,7 +60,7 @@ def save_updated_telethon_channel(
             value=credential_profile_key,
             interactive=False,
             prompt_en="Credential profile",
-            prompt_ru="Credential profile",
+            prompt_ru="Профиль учётных данных",
             default=current.credential_profile_key or current.endpoint_id,
             lang=prompt_language,
             normalize_lower=True,
@@ -67,7 +69,7 @@ def save_updated_telethon_channel(
             value=account_id,
             interactive=False,
             prompt_en="Account id",
-            prompt_ru="Account id",
+            prompt_ru="ID аккаунта",
             default=current.account_id,
             lang=prompt_language,
             normalize_lower=True,
@@ -75,6 +77,7 @@ def save_updated_telethon_channel(
         enabled=current.enabled,
         reply_mode=reply_mode,
         tool_profile=tool_profile,
+        access_policy=access_policy,
         reply_blocked_chat_patterns=(
             current.reply_blocked_chat_patterns
             if reply_blocked_chat_patterns is None
@@ -105,9 +108,9 @@ def save_updated_telethon_channel(
             priority=priority,
             prompt_overlay=prompt_overlay,
         )
-        put_matching_binding(
+        put_access_policy_bindings(
             settings=settings,
-            binding_id=saved.endpoint_id,
+            endpoint_id=saved.endpoint_id,
             transport="telegram_user",
             profile_id=saved.profile_id,
             session_policy=resolved_binding_inputs.session_policy,
@@ -115,6 +118,8 @@ def save_updated_telethon_channel(
             enabled=saved.enabled,
             account_id=saved.account_id,
             prompt_overlay=resolved_binding_inputs.prompt_overlay,
+            access_policy=saved.access_policy,
+            replace_existing=True,
         )
     return saved
 

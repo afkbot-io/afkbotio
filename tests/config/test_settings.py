@@ -88,6 +88,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "diffs_render",
         "bash_exec",
         "browser_control",
+        "channel_send",
         "debug_echo",
         "http_request",
         "web_search",
@@ -167,6 +168,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.taskflow_runtime_poll_interval_sec == 5.0
     assert settings.taskflow_runtime_maintenance_batch_size == 32
     assert settings.taskflow_runtime_claim_ttl_sec == 900
+    assert settings.taskflow_runtime_profile_id is None
     assert settings.taskflow_runtime_owner_ref is None
     assert settings.taskflow_public_principal_required is False
     assert settings.taskflow_strict_team_profile_ids is False
@@ -293,6 +295,23 @@ def test_settings_runtime_limits_validation() -> None:
         Settings(session_compaction_keep_recent_turns=0)
     with pytest.raises(ValueError):
         Settings(session_compaction_max_chars=0)
+
+
+def test_settings_normalize_taskflow_runtime_shard_filters() -> None:
+    """Optional Task Flow worker shard filters should normalize empty values and validate profile ids."""
+
+    settings = Settings(
+        taskflow_runtime_profile_id=" analyst ",
+        taskflow_runtime_owner_ref=" analyst:researcher ",
+    )
+
+    assert settings.taskflow_runtime_profile_id == "analyst"
+    assert settings.taskflow_runtime_owner_ref == "analyst:researcher"
+    assert Settings(taskflow_runtime_profile_id="   ").taskflow_runtime_profile_id is None
+    assert Settings(taskflow_runtime_owner_ref="   ").taskflow_runtime_owner_ref is None
+
+    with pytest.raises(ValueError):
+        Settings(taskflow_runtime_profile_id="invalid profile")
 
 
 def test_settings_runtime_store_respects_allowlists(

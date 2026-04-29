@@ -6,7 +6,7 @@ from typing import Final
 
 import typer
 
-from afkbot.cli.presentation.inline_select import confirm_space, select_option_dialog
+from afkbot.cli.presentation.inline_select import confirm_space, run_inline_single_select, select_option_dialog
 from afkbot.cli.presentation.prompt_i18n import (
     PromptLanguage,
     msg,
@@ -37,19 +37,27 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
     """Prompt LLM provider via inline selector with robust fallback."""
 
     selected_default = default if default in LLM_PROVIDER_CHOICES else LLM_PROVIDER_CHOICES[0]
-    selected = select_option_dialog(
+    selected = run_inline_single_select(
         title=msg(lang, en="Setup: AI provider", ru="Настройка: AI-провайдер"),
         text=msg(
             lang,
-            en="Choose which AI service AFKBOT should use for new chats by default.",
-            ru="Выберите, какой AI-сервис AFKBOT будет использовать в новых чатах по умолчанию.",
+            en=(
+                "Choose the AI service this profile will use by default. This affects normal chat, "
+                "Task Flow work, and channel messages routed into this profile."
+            ),
+            ru=(
+                "Выберите AI-сервис, который этот профиль будет использовать по умолчанию. Это влияет "
+                "на обычный чат, Task Flow и сообщения из каналов, попавшие в этот профиль."
+            ),
         ),
-        options=list(LLM_PROVIDER_CHOICES),
-        default=selected_default,
+        options=[(item, item) for item in LLM_PROVIDER_CHOICES],
+        default_value=selected_default,
         hint_text=single_hint(lang),
     )
     if selected in LLM_PROVIDER_CHOICES:
         return selected
+    if selected is None:
+        return selected_default
     options = "/".join(LLM_PROVIDER_CHOICES)
     while True:
         provider = str(
@@ -93,8 +101,14 @@ def prompt_chat_model(
         title=msg(lang, en="Setup: Chat model", ru="Настройка: Модель чата"),
         text=msg(
             lang,
-            en=f"Choose the {spec.label} model AFKBOT should use. Pick manual input if your model ID is not listed.",
-            ru=f"Выберите модель {spec.label}, которую AFKBOT будет использовать. Выберите ручной ввод, если нужного ID модели нет в списке.",
+            en=(
+                f"Choose the {spec.label} model for this profile. Pick `manual` if your model ID is not listed "
+                "or you use a new model that the wizard does not know yet."
+            ),
+            ru=(
+                f"Выберите модель {spec.label} для этого профиля. Выберите `manual`, если нужного ID модели "
+                "нет в списке или вы используете новую модель, о которой мастер ещё не знает."
+            ),
         ),
         options=options,
         default=selected_default,
@@ -137,19 +151,44 @@ def prompt_thinking_level(
     """Prompt default reasoning level via selector with validated fallback."""
 
     selected_default = default if default in THINKING_LEVEL_CHOICES else "medium"
-    selected = select_option_dialog(
+    selected = run_inline_single_select(
         title=msg(lang, en="Setup: Reasoning effort", ru="Настройка: Глубина рассуждения"),
         text=msg(
             lang,
-            en="Choose how much effort the agent should spend thinking before it acts.",
-            ru="Выберите, насколько глубоко агент должен обдумывать ответ перед действием.",
+            en=(
+                "Choose the default reasoning depth. Higher values can improve difficult planning and coding, "
+                "but usually cost more time and tokens."
+            ),
+            ru=(
+                "Выберите глубину рассуждения по умолчанию. Более высокие значения помогают в сложном "
+                "планировании и кодинге, но обычно требуют больше времени и токенов."
+            ),
         ),
-        options=list(THINKING_LEVEL_CHOICES),
-        default=selected_default,
+        options=[
+            (
+                "low",
+                msg(lang, en="low - fastest, for simple replies", ru="low - быстрее всего, для простых ответов"),
+            ),
+            (
+                "medium",
+                msg(lang, en="medium - balanced default", ru="medium - сбалансированный вариант"),
+            ),
+            (
+                "high",
+                msg(lang, en="high - deeper work for coding and analysis", ru="high - глубже для кода и анализа"),
+            ),
+            (
+                "very_high",
+                msg(lang, en="very_high - maximum reasoning for hard tasks", ru="very_high - максимум для сложных задач"),
+            ),
+        ],
+        default_value=selected_default,
         hint_text=single_hint(lang),
     )
     if selected in THINKING_LEVEL_CHOICES:
         return selected
+    if selected is None:
+        return selected_default
     while True:
         value = str(
             typer.prompt(
@@ -181,11 +220,11 @@ def prompt_custom_interface(
 
     selected_default = default if default == "openai" else "openai"
     selected = select_option_dialog(
-        title=msg(lang, en="Setup: Custom interface", ru="Настройка: Интерфейс custom API"),
+        title=msg(lang, en="Setup: Custom interface", ru="Настройка: Интерфейс своего API"),
         text=msg(
             lang,
-            en="Choose the API format your custom endpoint speaks.",
-            ru="Выберите формат API, который поддерживает ваш custom endpoint.",
+            en="Choose the API request format for your custom endpoint. AFKBOT currently supports OpenAI-compatible APIs here.",
+            ru="Выберите формат запросов для своего API-сервера. Сейчас здесь поддерживается формат, совместимый с OpenAI API.",
         ),
         options=["openai"],
         default=selected_default,
@@ -207,8 +246,8 @@ def prompt_proxy_config(
     should_use_proxy = confirm_space(
         question=msg(
             lang,
-            en="Route provider requests through a proxy?",
-            ru="Пропускать запросы к провайдеру через прокси?",
+            en="Use a proxy for AI provider requests?",
+            ru="Использовать прокси для запросов к AI-провайдеру?",
         ),
         default=default_type != "none",
         title=msg(lang, en="Setup: Proxy", ru="Настройка: Прокси"),
@@ -218,15 +257,25 @@ def prompt_proxy_config(
     )
     if not should_use_proxy:
         return "none", ""
-    selected = select_option_dialog(
+    selected = run_inline_single_select(
         title=msg(lang, en="Setup: Proxy type", ru="Настройка: Тип прокси"),
         text=msg(
             lang,
-            en="Choose which proxy protocol AFKBOT should use for provider requests.",
-            ru="Выберите, какой протокол прокси AFKBOT должен использовать для запросов к провайдеру.",
+            en="Choose the proxy protocol. Use `socks5h` when DNS lookup should happen through the proxy too.",
+            ru="Выберите протокол прокси. Используйте `socks5h`, если DNS тоже должен выполняться через прокси.",
         ),
-        options=[HTTP_PROXY_TYPE, SOCKS5_PROXY_TYPE, SOCKS5H_PROXY_TYPE],
-        default=(default_type if default_type in PROXY_TYPE_CHOICES else HTTP_PROXY_TYPE),
+        options=[
+            (HTTP_PROXY_TYPE, msg(lang, en="http - common HTTP proxy", ru="http - обычный HTTP-прокси")),
+            (
+                SOCKS5_PROXY_TYPE,
+                msg(lang, en="socks5 - SOCKS proxy, local DNS", ru="socks5 - SOCKS-прокси, DNS локально"),
+            ),
+            (
+                SOCKS5H_PROXY_TYPE,
+                msg(lang, en="socks5h - SOCKS proxy, DNS through proxy", ru="socks5h - SOCKS-прокси, DNS через прокси"),
+            ),
+        ],
+        default_value=(default_type if default_type in PROXY_TYPE_CHOICES else HTTP_PROXY_TYPE),
         hint_text=single_hint(lang),
     )
     proxy_type = selected if selected in PROXY_TYPE_CHOICES else HTTP_PROXY_TYPE
@@ -276,11 +325,13 @@ def prompt_secret_ack(*, lang: PromptLanguage = PromptLanguage.EN) -> bool:
             lang,
             en=(
                 "AFKBOT can use your API keys, local files, and automations on this machine. "
+                "Profiles and channel policies can limit access, but you are still authorizing a local agent. "
                 "Continue only if you understand and accept that responsibility."
             ),
             ru=(
                 "AFKBOT может использовать ваши API-ключи, локальные файлы и автоматизации на этой машине. "
-                "Продолжайте, только если понимаете и принимаете эту ответственность."
+                "Профили и политики каналов могут ограничивать доступ, но вы всё равно разрешаете работу "
+                "локального агента. Продолжайте, только если понимаете и принимаете эту ответственность."
             ),
         ),
         default=False,
@@ -316,8 +367,8 @@ def prompt_nginx_enabled(*, default: bool, lang: PromptLanguage = PromptLanguage
     return confirm_space(
         question=msg(
             lang,
-            en="Generate nginx reverse-proxy configuration?",
-            ru="Сгенерировать конфигурацию nginx как reverse proxy?",
+            en="Generate an nginx reverse-proxy config for public access?",
+            ru="Сгенерировать конфигурацию nginx reverse proxy для публичного доступа?",
         ),
         default=default,
         title=msg(lang, en="Setup: Nginx", ru="Настройка: Nginx"),

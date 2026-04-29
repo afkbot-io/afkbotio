@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+from cryptography.fernet import Fernet
+
 from afkbot.settings import Settings
 
 
@@ -84,6 +86,7 @@ def build_settings(tmp_path: Path, **overrides: object) -> Settings:
 
     base = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_daemon.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
         root_dir=tmp_path,
         runtime_host="127.0.0.1",
         runtime_port=0,

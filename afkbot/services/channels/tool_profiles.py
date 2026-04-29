@@ -24,11 +24,13 @@ _ALLOWED_TOOL_NAMES_BY_PROFILE: dict[ChannelToolProfile, tuple[str, ...] | None]
     "inherit": None,
     "chat_minimal": (),
     "messaging_safe": (
+        "channel.send",
         "memory.digest",
         "memory.search",
         "memory.upsert",
     ),
     "support_readonly": (
+        "channel.send",
         "memory.digest",
         "memory.search",
         "memory.upsert",

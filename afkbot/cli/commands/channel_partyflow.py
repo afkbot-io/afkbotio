@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 from typing import cast
@@ -21,10 +22,11 @@ from afkbot.cli.commands.channel_shared import (
     build_generated_channel_id,
     build_ingress_batch_config,
     collect_channel_add_base_inputs,
+    collect_channel_access_policy_inputs,
     load_channel_profile,
     merge_ingress_batch_config,
     normalize_channel_tool_profile,
-    put_matching_binding,
+    put_access_policy_bindings,
     resolve_binding_update_inputs,
     resolve_channel_update_profile_id,
     render_channel_add_intro,
@@ -43,11 +45,14 @@ from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg
 from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channel_routing.service import (
     ChannelBindingServiceError,
     run_channel_binding_service_sync,
 )
+from afkbot.services.apps.contracts import AppRuntimeContext
+from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.channels.endpoint_contracts import (
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -61,6 +66,7 @@ from afkbot.services.channels.endpoint_contracts import (
 )
 from afkbot.services.channels.endpoint_service import (
     ChannelEndpointServiceError,
+    get_channel_endpoint_service,
     run_channel_endpoint_service_sync,
 )
 from afkbot.services.channels.tool_profiles import (
@@ -68,12 +74,15 @@ from afkbot.services.channels.tool_profiles import (
     CHANNEL_TOOL_PROFILE_VALUES,
 )
 from afkbot.services.profile_runtime import ProfileDetails, run_profile_service_sync
+from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
 from afkbot.settings import Settings, get_settings
 
 _PARTYFLOW_INGRESS_MODES = ("webhook",)
 _PARTYFLOW_TRIGGER_MODES = ("all", "mention", "keywords")
 _PARTYFLOW_REPLY_MODES = ("same_conversation", "disabled")
 _PRIVATE_HOST_SUFFIXES = (".internal", ".local", ".lan", ".home", ".localhost", ".test", ".invalid")
+_PARTYFLOW_BOT_TOKEN = "partyflow_bot_token"
+_PARTYFLOW_WEBHOOK_SIGNING_SECRET = "partyflow_webhook_signing_secret"
 
 
 def register_partyflow_commands(channel_app: typer.Typer) -> None:
@@ -119,6 +128,38 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             None,
             "--trigger-keywords",
             help="Comma-separated lowercase-insensitive keywords used when --trigger-mode keywords is selected.",
+        ),
+        private_policy: str | None = typer.Option(
+            None,
+            "--private-policy",
+            help="Private conversation access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        allow_from: str | None = typer.Option(
+            None,
+            "--allow-from",
+            help="Comma-separated PartyFlow user ids allowed in private allowlist mode.",
+        ),
+        group_policy: str | None = typer.Option(
+            None,
+            "--group-policy",
+            help="Group/channel access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        groups: str | None = typer.Option(
+            None,
+            "--groups",
+            help="Comma-separated PartyFlow conversation ids allowed in group allowlist mode.",
+        ),
+        group_allow_from: str | None = typer.Option(
+            None,
+            "--group-allow-from",
+            help="Comma-separated PartyFlow user ids allowed to trigger AFKBOT in allowed groups.",
+        ),
+        outbound_allow_to: str | None = typer.Option(
+            None,
+            "--outbound-allow-to",
+            help="Comma-separated PartyFlow conversation ids this endpoint may send outbound messages to.",
         ),
         include_context: bool | None = typer.Option(
             None,
@@ -268,6 +309,17 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 if resolved_trigger_mode == "keywords"
                 else ()
             )
+            access_policy = collect_channel_access_policy_inputs(
+                interactive=interactive,
+                lang=prompt_language,
+                private_policy=private_policy,
+                allow_from=allow_from,
+                group_policy=group_policy,
+                groups=groups,
+                group_allow_from=group_allow_from,
+                outbound_allow_to=outbound_allow_to,
+                tool_profile=base_inputs.tool_profile,
+            )
             resolved_include_context = resolve_channel_bool(
                 value=include_context,
                 interactive=interactive,
@@ -367,6 +419,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 context_size=resolved_context_size,
                 reply_mode=resolved_reply_mode,  # type: ignore[arg-type]
                 tool_profile=base_inputs.tool_profile,
+                access_policy=access_policy,
                 ingress_batch=resolved_ingress_batch,
             )
             if interactive and credential_profile_key is None:
@@ -378,10 +431,11 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     lang=prompt_language,
                 )
             saved = _create_partyflow_endpoint(settings=settings, endpoint=endpoint)
+            binding_count = 0
             if base_inputs.create_binding:
-                put_matching_binding(
+                binding_count = put_access_policy_bindings(
                     settings=settings,
-                    binding_id=saved.endpoint_id,
+                    endpoint_id=saved.endpoint_id,
                     transport=saved.transport,
                     profile_id=saved.profile_id,
                     session_policy=base_inputs.session_policy,
@@ -389,6 +443,8 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     enabled=saved.enabled,
                     account_id=saved.account_id,
                     prompt_overlay=prompt_overlay,
+                    access_policy=saved.access_policy,
+                    replace_existing=True,
                 )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
@@ -416,12 +472,25 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         )
         if saved.trigger_keywords:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
+        if base_inputs.create_binding:
+            typer.echo(f"- matching_bindings: {binding_count}")
+        typer.echo(f"- access.private_policy: {saved.access_policy.private_policy}")
+        typer.echo("- access.allow_from: " + (", ".join(saved.access_policy.allow_from) or "-"))
+        typer.echo(f"- access.group_policy: {saved.access_policy.group_policy}")
+        typer.echo("- access.groups: " + (", ".join(saved.access_policy.groups) or "-"))
+        typer.echo(
+            "- access.group_allow_from: " + (", ".join(saved.access_policy.group_allow_from) or "-")
+        )
+        typer.echo(
+            "- access.outbound_allow_to: "
+            + (", ".join(saved.access_policy.outbound_allow_to) or "-")
+        )
         typer.echo(f"- webhook_url: {webhook_url or 'unavailable'}")
         typer.echo(
             msg(
                 prompt_language,
-                en="- configure PartyFlow subscription event_types: MESSAGE_CREATED, MESSAGE_UPDATED",
-                ru="- настройте в подписке PartyFlow event_types: MESSAGE_CREATED, MESSAGE_UPDATED",
+                en="- configure PartyFlow subscription event_types: MESSAGE_CREATED",
+                ru="- настройте в подписке PartyFlow event_types: MESSAGE_CREATED",
             )
         )
         typer.echo(
@@ -441,6 +510,19 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 ru=(
                     "- настройте в подписке PartyFlow include_context/context_size: "
                     f"{saved.include_context}/{saved.context_size}"
+                ),
+            )
+        )
+        typer.echo(
+            msg(
+                prompt_language,
+                en=(
+                    "- before enabling the subscription in PartyFlow, verify credentials with "
+                    f"`afk channel partyflow status {saved.endpoint_id} --probe`."
+                ),
+                ru=(
+                    "- перед включением подписки в PartyFlow проверьте учётные данные командой "
+                    f"`afk channel partyflow status {saved.endpoint_id} --probe`."
                 ),
             )
         )
@@ -479,6 +561,38 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             None,
             "--trigger-keywords",
             help="Comma-separated keywords used when --trigger-mode keywords is selected.",
+        ),
+        private_policy: str | None = typer.Option(
+            None,
+            "--private-policy",
+            help="Private conversation access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        allow_from: str | None = typer.Option(
+            None,
+            "--allow-from",
+            help="Comma-separated PartyFlow user ids allowed in private allowlist mode.",
+        ),
+        group_policy: str | None = typer.Option(
+            None,
+            "--group-policy",
+            help="Group/channel access: open, allowlist, disabled.",
+            case_sensitive=False,
+        ),
+        groups: str | None = typer.Option(
+            None,
+            "--groups",
+            help="Comma-separated PartyFlow conversation ids allowed in group allowlist mode.",
+        ),
+        group_allow_from: str | None = typer.Option(
+            None,
+            "--group-allow-from",
+            help="Comma-separated PartyFlow user ids allowed to trigger AFKBOT in allowed groups.",
+        ),
+        outbound_allow_to: str | None = typer.Option(
+            None,
+            "--outbound-allow-to",
+            help="Comma-separated PartyFlow conversation ids this endpoint may send outbound messages to.",
         ),
         include_context: bool | None = typer.Option(
             None,
@@ -554,6 +668,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         settings = get_settings()
+        binding_count = 0
         try:
             current = _load_partyflow_endpoint(settings=settings, channel_id=channel_id)
             prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
@@ -566,6 +681,12 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     account_id,
                     trigger_mode,
                     trigger_keywords,
+                    private_policy,
+                    allow_from,
+                    group_policy,
+                    groups,
+                    group_allow_from,
+                    outbound_allow_to,
                     include_context,
                     context_size,
                     reply_mode,
@@ -656,6 +777,23 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 )
                 if interactive
                 else normalize_channel_tool_profile(tool_profile or current.tool_profile)
+            )
+            resolved_access_policy = collect_channel_access_policy_inputs(
+                interactive=interactive,
+                lang=prompt_language,
+                private_policy=private_policy,
+                allow_from=allow_from,
+                group_policy=group_policy,
+                groups=groups,
+                group_allow_from=group_allow_from,
+                outbound_allow_to=outbound_allow_to,
+                tool_profile=resolved_tool_profile,
+                private_policy_default=current.access_policy.private_policy,
+                allow_from_default=current.access_policy.allow_from,
+                group_policy_default=current.access_policy.group_policy,
+                groups_default=current.access_policy.groups,
+                group_allow_from_default=current.access_policy.group_allow_from,
+                outbound_allow_to_default=current.access_policy.outbound_allow_to,
             )
             resolved_ingress_enabled = (
                 resolve_channel_bool(
@@ -766,6 +904,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     context_size=resolved_context_size,
                     reply_mode=resolved_reply_mode,  # type: ignore[arg-type]
                     tool_profile=resolved_tool_profile,
+                    access_policy=resolved_access_policy,
                     ingress_batch=resolved_ingress_batch,
                 ),
             )
@@ -778,9 +917,9 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     priority=priority,
                     prompt_overlay=prompt_overlay,
                 )
-                put_matching_binding(
+                binding_count = put_access_policy_bindings(
                     settings=settings,
-                    binding_id=saved.endpoint_id,
+                    endpoint_id=saved.endpoint_id,
                     transport=saved.transport,
                     profile_id=saved.profile_id,
                     session_policy=binding_inputs.session_policy,
@@ -788,6 +927,8 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     enabled=saved.enabled,
                     account_id=saved.account_id,
                     prompt_overlay=binding_inputs.prompt_overlay,
+                    access_policy=saved.access_policy,
+                    replace_existing=True,
                 )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
@@ -814,12 +955,23 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         )
         if saved.trigger_keywords:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
+        typer.echo(f"- access.private_policy: {saved.access_policy.private_policy}")
+        typer.echo("- access.allow_from: " + (", ".join(saved.access_policy.allow_from) or "-"))
+        typer.echo(f"- access.group_policy: {saved.access_policy.group_policy}")
+        typer.echo("- access.groups: " + (", ".join(saved.access_policy.groups) or "-"))
+        typer.echo(
+            "- access.group_allow_from: " + (", ".join(saved.access_policy.group_allow_from) or "-")
+        )
+        typer.echo(
+            "- access.outbound_allow_to: "
+            + (", ".join(saved.access_policy.outbound_allow_to) or "-")
+        )
         if sync_binding:
             typer.echo(
                 msg(
                     prompt_language,
-                    en=f"Matching binding `{saved.endpoint_id}` was also updated.",
-                    ru=f"Связанная привязка `{saved.endpoint_id}` тоже обновлена.",
+                    en=f"Matching bindings updated: {binding_count}.",
+                    ru=f"Связанные привязки обновлены: {binding_count}.",
                 )
             )
         reload_install_managed_runtime_notice(settings)
@@ -855,7 +1007,8 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 f"- {item.endpoint_id}: profile={item.profile_id}, credential_profile={item.credential_profile_key}, "
                 f"account_id={item.account_id}, ingress_mode={item.ingress_mode}, trigger_mode={item.trigger_mode}, "
                 f"trigger_keywords={','.join(item.trigger_keywords) or '-'}, "
-                f"reply_mode={item.reply_mode}, ingress_batch={render_ingress_batch_summary(item.ingress_batch)}, enabled={item.enabled}"
+                f"reply_mode={item.reply_mode}, access={_render_access_policy_summary(item)}, "
+                f"ingress_batch={render_ingress_batch_summary(item.ingress_batch)}, enabled={item.enabled}"
             )
 
     @partyflow_app.command("show")
@@ -910,6 +1063,18 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         typer.echo(f"- context_size: {channel.context_size}")
         typer.echo(f"- reply_mode: {channel.reply_mode}")
         typer.echo(f"- tool_profile: {channel.tool_profile}")
+        typer.echo(f"- access.private_policy: {channel.access_policy.private_policy}")
+        typer.echo("- access.allow_from: " + (", ".join(channel.access_policy.allow_from) or "-"))
+        typer.echo(f"- access.group_policy: {channel.access_policy.group_policy}")
+        typer.echo("- access.groups: " + (", ".join(channel.access_policy.groups) or "-"))
+        typer.echo(
+            "- access.group_allow_from: "
+            + (", ".join(channel.access_policy.group_allow_from) or "-")
+        )
+        typer.echo(
+            "- access.outbound_allow_to: "
+            + (", ".join(channel.access_policy.outbound_allow_to) or "-")
+        )
         typer.echo(f"- ingress_batch.enabled: {channel.ingress_batch.enabled}")
         typer.echo(f"- ingress_batch.debounce_ms: {channel.ingress_batch.debounce_ms}")
         typer.echo(f"- ingress_batch.cooldown_sec: {channel.ingress_batch.cooldown_sec}")
@@ -943,13 +1108,40 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
     @partyflow_app.command("webhook-url")
     def partyflow_webhook_url(
         channel_id: str = typer.Argument(..., help="PartyFlow channel endpoint id."),
+        probe: bool = typer.Option(
+            False, "--probe", help="Verify saved credentials before printing."
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         settings = get_settings()
         try:
             channel = _load_partyflow_endpoint(settings=settings, channel_id=channel_id)
+            probe_payload = (
+                asyncio.run(_probe_partyflow_endpoint(settings=settings, endpoint=channel))
+                if probe
+                else None
+            )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
+        if probe_payload is not None and probe_payload.get("ok") is False:
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        {
+                            "channel_id": channel.endpoint_id,
+                            "webhook_url": None,
+                            "status": "unavailable",
+                            "reason": "probe_failed",
+                            "probe": probe_payload,
+                        },
+                        ensure_ascii=True,
+                    )
+                )
+                raise typer.Exit(code=1)
+            raise_usage_error(
+                f"Webhook URL not printed because PartyFlow probe failed: "
+                f"[{probe_payload.get('error_code')}] {probe_payload.get('reason')}"
+            )
         webhook_url, reason = _resolve_partyflow_webhook_url(
             settings=settings,
             endpoint_id=channel.endpoint_id,
@@ -970,6 +1162,33 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         if webhook_url is None:
             raise_usage_error(_partyflow_webhook_url_unavailable_message(reason))
         typer.echo(webhook_url)
+
+    @partyflow_app.command("status")
+    def partyflow_status(
+        channel_id: str | None = typer.Argument(
+            None,
+            help="Optional PartyFlow channel endpoint id. When omitted, show all endpoints.",
+        ),
+        probe: bool = typer.Option(False, "--probe", help="Run live PartyFlow get_me probe."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
+    ) -> None:
+        settings = get_settings()
+        try:
+            payload = asyncio.run(
+                _partyflow_status_payload(
+                    settings=settings,
+                    channel_id=channel_id,
+                    probe=probe,
+                )
+            )
+        except Exception as exc:
+            _raise_partyflow_cli_error(exc)
+        if json_output:
+            typer.echo(json.dumps(payload, ensure_ascii=True))
+        else:
+            _render_partyflow_status_payload(payload)
+        if payload.get("ok") is False:
+            raise typer.Exit(code=1)
 
     @partyflow_app.command("enable")
     def partyflow_enable(
@@ -1000,14 +1219,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             )
             binding_removed = False
             if not keep_binding:
-                try:
-                    run_channel_binding_service_sync(
-                        settings,
-                        lambda service: service.delete(binding_id=channel_id),
-                    )
-                    binding_removed = True
-                except ChannelBindingServiceError:
-                    binding_removed = False
+                binding_removed = _delete_partyflow_bindings(
+                    settings=settings,
+                    channel_id=channel_id,
+                )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
@@ -1020,6 +1235,223 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         if binding_removed:
             typer.echo(f"Matching binding `{channel_id}` deleted.")
         reload_install_managed_runtime_notice(settings)
+
+
+def _render_access_policy_summary(endpoint: PartyFlowWebhookEndpointConfig) -> str:
+    policy = endpoint.access_policy
+    private = policy.private_policy
+    group = policy.group_policy
+    outbound = "restricted" if policy.outbound_allow_to else "open"
+    return f"private={private},group={group},outbound={outbound}"
+
+
+def _delete_partyflow_bindings(*, settings: Settings, channel_id: str) -> bool:
+    rules = run_channel_binding_service_sync(
+        settings, lambda service: service.list(transport="partyflow")
+    )
+    removed = False
+    for rule in rules:
+        if rule.binding_id != channel_id and not rule.binding_id.startswith(f"{channel_id}:"):
+            continue
+        try:
+            run_channel_binding_service_sync(
+                settings,
+                lambda service, binding_id=rule.binding_id: service.delete(binding_id=binding_id),
+            )
+            removed = True
+        except ChannelBindingServiceError as exc:
+            if exc.error_code != "channel_binding_not_found":
+                raise
+    return removed
+
+
+async def _partyflow_status_payload(
+    *,
+    settings: Settings,
+    channel_id: str | None,
+    probe: bool,
+) -> dict[str, object]:
+    endpoint_service = get_channel_endpoint_service(settings)
+    binding_service = get_channel_binding_service(settings)
+    if channel_id is not None:
+        endpoint = await endpoint_service.get(endpoint_id=channel_id)
+        if endpoint.transport != "partyflow" or endpoint.adapter_kind != "partyflow_webhook":
+            raise ChannelEndpointServiceError(
+                error_code="channel_endpoint_type_mismatch",
+                reason=f"Channel endpoint `{channel_id}` is not a PartyFlow webhook channel.",
+            )
+        endpoints = [PartyFlowWebhookEndpointConfig.model_validate(endpoint.model_dump())]
+    else:
+        endpoints = [
+            PartyFlowWebhookEndpointConfig.model_validate(item.model_dump())
+            for item in await endpoint_service.list(transport="partyflow")
+        ]
+    bindings = await binding_service.list(transport="partyflow")
+    rows = [
+        await _partyflow_status_row(
+            settings=settings,
+            endpoint=endpoint,
+            binding_count=sum(
+                1
+                for binding in bindings
+                if binding.binding_id == endpoint.endpoint_id
+                or binding.binding_id.startswith(f"{endpoint.endpoint_id}:")
+            ),
+            probe=probe,
+        )
+        for endpoint in endpoints
+    ]
+    return {
+        "ok": all(row.get("ok") is not False for row in rows),
+        "partyflow_webhooks": rows,
+    }
+
+
+async def _partyflow_status_row(
+    *,
+    settings: Settings,
+    endpoint: PartyFlowWebhookEndpointConfig,
+    binding_count: int,
+    probe: bool,
+) -> dict[str, object]:
+    webhook_url, webhook_reason = _resolve_partyflow_webhook_url(
+        settings=settings,
+        endpoint_id=endpoint.endpoint_id,
+    )
+    token_status = await _partyflow_credential_status(
+        settings=settings,
+        endpoint=endpoint,
+        credential_name=_PARTYFLOW_BOT_TOKEN,
+    )
+    signing_status = await _partyflow_credential_status(
+        settings=settings,
+        endpoint=endpoint,
+        credential_name=_PARTYFLOW_WEBHOOK_SIGNING_SECRET,
+    )
+    row: dict[str, object] = {
+        "ok": True,
+        "endpoint_id": endpoint.endpoint_id,
+        "enabled": endpoint.enabled,
+        "profile_id": endpoint.profile_id,
+        "credential_profile_key": endpoint.credential_profile_key,
+        "account_id": endpoint.account_id,
+        "trigger_mode": endpoint.trigger_mode,
+        "reply_mode": endpoint.reply_mode,
+        "webhook_url": webhook_url,
+        "webhook_url_status": "ok" if webhook_url is not None else "unavailable",
+        "webhook_url_reason": webhook_reason,
+        "bot_token_configured": token_status["configured"],
+        "signing_secret_configured": signing_status["configured"],
+        "binding_count": binding_count,
+    }
+    if token_status["configured"] is False:
+        row["ok"] = False
+        row["bot_token_error"] = token_status["reason"]
+    if signing_status["configured"] is False:
+        row["ok"] = False
+        row["signing_secret_error"] = signing_status["reason"]
+    if webhook_url is None:
+        row["ok"] = False
+    if probe:
+        probe_payload = await _probe_partyflow_endpoint(settings=settings, endpoint=endpoint)
+        row["probe"] = probe_payload
+        if probe_payload.get("ok") is False:
+            row["ok"] = False
+    return row
+
+
+async def _partyflow_credential_status(
+    *,
+    settings: Settings,
+    endpoint: PartyFlowWebhookEndpointConfig,
+    credential_name: str,
+) -> dict[str, object]:
+    try:
+        await get_credentials_service(settings).resolve_metadata_for_app_tool(
+            profile_id=endpoint.profile_id,
+            tool_name="app.run",
+            integration_name="partyflow",
+            credential_profile_key=endpoint.credential_profile_key,
+            credential_name=credential_name,
+        )
+    except CredentialsServiceError as exc:
+        return {"configured": False, "error_code": exc.error_code, "reason": exc.reason}
+    return {"configured": True}
+
+
+async def _probe_partyflow_endpoint(
+    *,
+    settings: Settings,
+    endpoint: PartyFlowWebhookEndpointConfig,
+) -> dict[str, object]:
+    signing_status = await _partyflow_credential_status(
+        settings=settings,
+        endpoint=endpoint,
+        credential_name=_PARTYFLOW_WEBHOOK_SIGNING_SECRET,
+    )
+    if signing_status["configured"] is False:
+        return {
+            "ok": False,
+            "error_code": "partyflow_signing_secret_missing",
+            "reason": signing_status.get("reason", "PartyFlow signing secret is not configured."),
+        }
+    result = await AppRuntime(settings).run(
+        app="partyflow",
+        action="get_me",
+        ctx=AppRuntimeContext(
+            profile_id=endpoint.profile_id,
+            session_id="partyflow-status",
+            run_id=0,
+            credential_profile_key=endpoint.credential_profile_key,
+            timeout_sec=min(10, settings.tool_timeout_max_sec),
+        ),
+        params={},
+    )
+    if not result.ok:
+        return {
+            "ok": False,
+            "error_code": result.error_code or "partyflow_probe_failed",
+            "reason": result.reason or "PartyFlow get_me probe failed.",
+            "metadata": result.metadata,
+        }
+    bot = result.payload.get("bot")
+    payload: dict[str, object] = {"ok": True}
+    if isinstance(bot, dict):
+        payload["bot_id"] = str(bot.get("id") or "")
+        payload["display_name"] = str(bot.get("display_name") or "")
+        payload["is_active"] = bool(bot.get("is_active", True))
+        if payload["is_active"] is False:
+            payload["ok"] = False
+            payload["error_code"] = "partyflow_bot_inactive"
+            payload["reason"] = "PartyFlow bot is inactive."
+    return payload
+
+
+def _render_partyflow_status_payload(payload: dict[str, object]) -> None:
+    endpoints = payload.get("partyflow_webhooks")
+    if not isinstance(endpoints, list) or not endpoints:
+        typer.echo("No PartyFlow channels configured.")
+        return
+    typer.echo(f"PartyFlow webhook endpoints: {len(endpoints)}")
+    for item in endpoints:
+        if not isinstance(item, dict):
+            continue
+        typer.echo(
+            f"- {item['endpoint_id']}: enabled={item['enabled']}, profile={item['profile_id']}, "
+            f"credential_profile={item['credential_profile_key']}, account_id={item['account_id']}, "
+            f"bot_token_configured={item['bot_token_configured']}, "
+            f"signing_secret_configured={item['signing_secret_configured']}, "
+            f"webhook_url_status={item['webhook_url_status']}, binding_count={item['binding_count']}"
+        )
+        probe = item.get("probe")
+        if isinstance(probe, dict):
+            if probe.get("ok") is True:
+                typer.echo(
+                    f"  probe: ok bot_id={probe.get('bot_id', '')} "
+                    f"display_name={probe.get('display_name', '')}"
+                )
+            else:
+                typer.echo(f"  probe: ERROR [{probe.get('error_code')}] {probe.get('reason')}")
 
 
 def resolve_partyflow_webhook_url(*, settings: Settings, endpoint_id: str) -> str | None:
@@ -1188,19 +1620,21 @@ def _set_partyflow_enabled(*, channel_id: str, enabled: bool) -> None:
             settings,
             lambda service: service.update(current.model_copy(update={"enabled": enabled})),
         )
-        try:
-            binding = run_channel_binding_service_sync(
-                settings,
-                lambda service: service.get(binding_id=channel_id),
-            )
+        bindings = run_channel_binding_service_sync(
+            settings,
+            lambda service: service.list(transport="partyflow"),
+        )
+        for binding in bindings:
+            if binding.binding_id != channel_id and not binding.binding_id.startswith(
+                f"{channel_id}:"
+            ):
+                continue
             run_channel_binding_service_sync(
                 settings,
-                lambda service: service.put(
+                lambda service, binding=binding: service.put(
                     ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
                 ),
             )
-        except ChannelBindingServiceError:
-            pass
     except Exception as exc:
         _raise_partyflow_cli_error(exc)
     typer.echo(f"PartyFlow channel `{updated.endpoint_id}` enabled={updated.enabled}.")

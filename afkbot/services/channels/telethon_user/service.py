@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from afkbot.services.agent_loop.api_runtime import run_chat_turn
+from afkbot.services.channels.contracts import ChannelOutboundMessage
 from afkbot.services.channel_routing.runtime_target import RuntimeTarget, resolve_runtime_target
 from afkbot.services.channels.endpoint_contracts import TelethonUserEndpointConfig
 from afkbot.services.channels.endpoint_service import telethon_user_state_path_for
@@ -360,7 +361,7 @@ class TelethonUserService:
     async def _send_text_via_live_client(
         self,
         target: Any,
-        text: str,
+        text: str | ChannelOutboundMessage,
     ) -> dict[str, object]:
         """Send one outbound message through the live Telethon client."""
 

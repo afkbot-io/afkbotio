@@ -602,6 +602,7 @@ async def test_channel_tool_profile_filters_llm_visible_tools(tmp_path: Path) ->
 
         assert "file.read" in tool_names
         assert "diffs.render" in tool_names
+        assert "channel.send" in tool_names
         assert "app.run" not in tool_names
         assert "bash.exec" not in tool_names
         assert "credentials.list" not in tool_names

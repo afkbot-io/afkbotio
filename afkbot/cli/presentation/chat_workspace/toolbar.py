@@ -16,6 +16,18 @@ from afkbot.services.chat_session.session_state import ChatReplSessionState
 DEFAULT_CHAT_WORKSPACE_FOOTER = "/ commands · $ capabilities · @ files"
 
 
+def build_chat_workspace_session_line(state: ChatReplSessionState) -> str | None:
+    """Render the current chat session identity for the prompt status surface."""
+
+    session_id = sanitize_terminal_text((state.session_id or "").strip())
+    if not session_id:
+        return None
+    session_label = sanitize_terminal_text((state.session_label or "").strip())
+    if session_label and session_label != session_id:
+        return f"◦ Session {session_label} · id={session_id}"
+    return f"◦ Session {session_id}"
+
+
 def build_chat_workspace_status_line(
     state: ChatReplSessionState,
     *,

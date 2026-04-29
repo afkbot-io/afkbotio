@@ -5,20 +5,25 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory, session_scope
 from afkbot.cli.commands.chat_planning import build_plan_only_overrides
 from afkbot.cli.commands.chat_target import build_cli_runtime_overrides
 from afkbot.cli.main import app
+from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.runtime_config import ProfileRuntimeConfigService
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.channel_routing.runtime_target import RuntimeTarget
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
+from afkbot.services.chat_session.terminal_lock import ChatSessionTerminalLock
 from afkbot.services.agent_loop.turn_runtime import run_once_result
 from afkbot.settings import Settings, get_settings
 from tests.cli._rendering import invoke_plain_help, strip_ansi
@@ -106,6 +111,290 @@ def test_chat_cli_uses_profile_scoped_default_session_ids(
     assert smoke_result.exit_code == 0
     assert "SessionProfileMismatchError" not in smoke_result.stdout
     assert "LLM provider is temporarily unavailable." in smoke_result.stdout
+
+
+def test_chat_cli_generates_fresh_session_ids_for_implicit_repl_invocations(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Each plain `afk chat` REPL should start with a new generated session id."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    captured: list[tuple[str, str | None]] = []
+
+    def _fake_run_repl(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        captured.append((str(kwargs["session_id"]), kwargs.get("session_label")))
+
+    monkeypatch.setattr(module, "run_repl", _fake_run_repl)
+
+    first = runner.invoke(app, ["chat"])
+    second = runner.invoke(app, ["chat"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert len(captured) == 2
+    assert captured[0][0] != captured[1][0]
+    assert captured[0][0].startswith("cli:default:chat-")
+    assert captured[1][0].startswith("cli:default:chat-")
+    assert captured[0][1] is not None
+    assert captured[1][1] is not None
+
+
+def test_chat_cli_positional_session_name_resolves_named_repl_target(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Positional chat argument should reuse one named profile-scoped session target."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def _fake_run_repl(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "run_repl", _fake_run_repl)
+
+    result = runner.invoke(app, ["chat", "incident-room"])
+
+    assert result.exit_code == 0
+    assert captured["session_id"] == "cli:default:incident-room"
+    assert captured["session_label"] == "incident-room"
+
+
+def test_chat_cli_creates_generated_session_before_repl_starts(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Session rows should exist as soon as REPL starts, not only after the first turn."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def _fake_run_repl(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "run_repl", _fake_run_repl)
+
+    result = runner.invoke(app, ["chat"])
+
+    assert result.exit_code == 0
+
+    async def _load_session_row():
+        settings = get_settings()
+        engine = create_engine(settings)
+        try:
+            factory = create_session_factory(engine)
+            async with session_scope(factory) as session:
+                return await ChatSessionRepository(session).get(str(captured["session_id"]))
+        finally:
+            await engine.dispose()
+
+    row = asyncio.run(_load_session_row())
+
+    assert row is not None
+    assert row.profile_id == "default"
+
+
+def test_chat_cli_creates_named_session_before_repl_starts(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Named sessions should attach/create upfront before the operator enters any message."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    captured: dict[str, object] = {}
+
+    def _fake_run_repl(**kwargs) -> None:  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+
+    monkeypatch.setattr(module, "run_repl", _fake_run_repl)
+
+    result = runner.invoke(app, ["chat", "incident-room"])
+
+    assert result.exit_code == 0
+
+    async def _load_session_row():
+        settings = get_settings()
+        engine = create_engine(settings)
+        try:
+            factory = create_session_factory(engine)
+            async with session_scope(factory) as session:
+                return await ChatSessionRepository(session).get("cli:default:incident-room")
+        finally:
+            await engine.dispose()
+
+    row = asyncio.run(_load_session_row())
+
+    assert row is not None
+    assert row.id == captured["session_id"]
+    assert row.profile_id == "default"
+
+
+def test_chat_cli_rejects_conflicting_session_name_and_session_id(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Operators should choose either a named session or an explicit raw session id."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["chat", "incident-room", "--session", "cli:default:manual-session"],
+    )
+
+    assert result.exit_code == 2
+    assert "Pass either a positional session name or --session, not both." in result.stderr
+
+
+def test_chat_cli_rejects_profile_mismatch_for_existing_raw_session(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Raw session ids should fail early when another profile already owns the row."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["chat", "--message", "hello", "--session", "shared"])
+    second = runner.invoke(app, ["chat", "--profile", "smoke", "--session", "shared"])
+
+    assert first.exit_code == 0
+    assert second.exit_code == 2
+    assert (
+        "session 'shared' belongs to profile 'default', requested 'smoke'" in second.stderr
+    )
+
+
+def test_chat_cli_reports_platform_without_terminal_lock(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive chat should return usage error when lock layer is unavailable."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    original_acquire_process_lock = ChatSessionTerminalLock._acquire_process_lock
+
+    def _raising_acquire_process_lock(self, *, key: tuple[str, str]) -> int:
+        _profile_id, session_id = key
+        if session_id.startswith("cli:"):
+            raise RuntimeError("Terminal session lock is unavailable on this platform.")
+        return original_acquire_process_lock(self, key=key)
+
+    monkeypatch.setattr(
+        ChatSessionTerminalLock,
+        "_acquire_process_lock",
+        _raising_acquire_process_lock,
+    )
+
+    result = runner.invoke(app, ["chat", "incident-room"])
+
+    assert result.exit_code == 2
+    assert (
+        "Interactive terminal chat session locking is unavailable on this platform." in result.stderr
+    )
+    assert (
+        "Use --message for one-shot chat or run on a platform with fcntl support." in result.stderr
+    )
+
+
+def test_chat_cli_rejects_second_terminal_for_same_named_session(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Second CLI terminal should fail fast when the same named session is already open."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    entered = Event()
+    release = Event()
+    first_result: dict[str, object] = {}
+
+    def _blocking_run_repl(**_kwargs) -> None:  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(timeout=5.0)
+
+    monkeypatch.setattr(module, "run_repl", _blocking_run_repl)
+
+    def _run_first_terminal() -> None:
+        runner = CliRunner()
+        first_result["result"] = runner.invoke(app, ["chat", "incident-room"])
+
+    first_terminal = Thread(target=_run_first_terminal)
+    first_terminal.start()
+    assert entered.wait(timeout=1.0)
+
+    second = CliRunner().invoke(app, ["chat", "incident-room"])
+
+    release.set()
+    first_terminal.join(timeout=5.0)
+
+    assert not first_terminal.is_alive()
+    assert isinstance(first_result["result"], type(second))
+    assert first_result["result"].exit_code == 0
+    assert second.exit_code == 2
+    assert (
+        "Chat session 'cli:default:incident-room' is already open in another terminal"
+        in second.stderr
+    )
+
+
+def test_chat_cli_rejects_second_terminal_for_same_one_shot_session(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """One-shot chat should also fail fast when another terminal owns the same session."""
+
+    from afkbot.cli.commands import chat as module
+
+    _prepare_env(tmp_path, monkeypatch)
+    entered = Event()
+    release = Event()
+    first_result: dict[str, object] = {}
+
+    def _blocking_run_single_turn(**_kwargs) -> None:  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(timeout=5.0)
+
+    monkeypatch.setattr(module, "run_single_turn", _blocking_run_single_turn)
+
+    def _run_first_terminal() -> None:
+        runner = CliRunner()
+        first_result["result"] = runner.invoke(
+            app,
+            ["chat", "--message", "hello", "--session", "shared"],
+        )
+
+    first_terminal = Thread(target=_run_first_terminal)
+    first_terminal.start()
+    assert entered.wait(timeout=1.0)
+
+    second = CliRunner().invoke(app, ["chat", "--message", "hello", "--session", "shared"])
+
+    release.set()
+    first_terminal.join(timeout=5.0)
+
+    assert not first_terminal.is_alive()
+    assert isinstance(first_result["result"], type(second))
+    assert first_result["result"].exit_code == 0
+    assert second.exit_code == 2
+    assert "Chat session 'shared' is already open in another terminal" in second.stderr
 
 
 def test_chat_cli_uses_current_cwd_for_one_shot_when_profile_has_full_access(
@@ -328,6 +617,7 @@ def test_chat_cli_repl_smoke_via_stdin(tmp_path: Path, monkeypatch: MonkeyPatch)
 
     assert result.exit_code == 0
     clean_stdout = strip_ansi(result.stdout)
+    assert "Session: s-chat-repl" in clean_stdout
     assert "you >" in clean_stdout
     assert "AFK Agent" in clean_stdout
     assert "LLM provider is temporarily unavailable." in clean_stdout

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from afkbot.api.chat_routes.router import router as chat_router
@@ -19,8 +21,10 @@ from afkbot.services.agent_loop.api_runtime import (
     initialize_api_runtime,
     shutdown_api_runtime,
 )
+from afkbot.services.error_logging import log_exception
 from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import get_settings
+from afkbot.version import load_cli_version_info
 
 
 def create_app() -> FastAPI:
@@ -44,7 +48,11 @@ def create_app() -> FastAPI:
             finally:
                 await shutdown_api_runtime()
 
-    app = FastAPI(title="AFKBOT API", version="1.4.1", lifespan=_lifespan)
+    app = FastAPI(
+        title="AFKBOT API",
+        version=load_cli_version_info(root_dir=settings.app_dir).version,
+        lifespan=_lifespan,
+    )
     app.add_middleware(
         PluginUIAuthMiddleware,
         settings=settings,
@@ -58,6 +66,25 @@ def create_app() -> FastAPI:
     @app.get("/readyz")
     async def readyz() -> dict[str, str]:
         return {"status": "ready"}
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        request_id = uuid4().hex[:12]
+        log_exception(
+            settings=settings,
+            component="api",
+            message="Unhandled API exception",
+            exc=exc,
+            context={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "request_id": request_id},
+        )
 
     app.include_router(chat_router)
     app.include_router(partyflow_webhook_router)

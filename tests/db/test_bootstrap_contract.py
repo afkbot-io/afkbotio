@@ -7,10 +7,11 @@ from pathlib import Path
 import sqlite3
 import warnings
 
+import pytest
 from sqlalchemy import text
 
 from afkbot.db.bootstrap import create_schema, list_applied_migrations, ping
-from afkbot.db.bootstrap_runtime import prune_runtime_history
+from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema, prune_runtime_history
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.runlog_event import RunlogEvent
@@ -20,6 +21,7 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.settings import Settings
+from afkbot.services.task_flow import TaskFlowServiceError
 from afkbot.services.task_flow.service import TaskFlowService
 
 
@@ -257,8 +259,8 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     index_names = {str(row[1]) for row in rows}
     assert "ux_task_active_ai_owner" in index_names
     index_sql_text = str(index_sql)
-    assert "ON task (profile_id, owner_ref)" in index_sql_text
-    assert "NOT (profile_id = 'default' AND owner_ref = 'analyst')" in index_sql_text
+    assert "ON task (profile_id, owner_type, owner_ref)" in index_sql_text
+    assert "NOT (profile_id = 'default' AND owner_type = 'ai_profile' AND owner_ref = 'analyst')" in index_sql_text
     assert first_after.status == "running"
     assert second_after.status == "claimed"
     assert second_after.last_error_code is None
@@ -775,6 +777,80 @@ async def test_create_schema_backfills_task_description_from_legacy_prompt_colum
     await engine.dispose()
 
 
+async def test_create_schema_preserves_existing_description_over_legacy_prompt(
+    tmp_path: Path,
+) -> None:
+    """When both columns exist, migration should keep filled description and fallback only blanks."""
+
+    db_path = tmp_path / "legacy_task_description_precedence.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    prompt TEXT NOT NULL,
+                    description TEXT NOT NULL
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO task (id, profile_id, title, prompt, description)
+                VALUES
+                    ('task_keep_description', 'default', 'Keep description', 'Legacy prompt', 'Canonical description'),
+                    ('task_fill_blank', 'default', 'Fill blank', 'Fallback prompt', '')
+                """
+            )
+        )
+
+    await create_schema(engine)
+
+    async with engine.connect() as conn:
+        columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
+        }
+        rows = (
+            await conn.execute(text("SELECT id, description FROM task ORDER BY id"))
+        ).fetchall()
+
+    assert "prompt" not in columns
+    assert dict(rows) == {
+        "task_fill_blank": "Fallback prompt",
+        "task_keep_description": "Canonical description",
+    }
+    await engine.dispose()
+
+
 async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade(
     tmp_path: Path,
 ) -> None:
@@ -885,4 +961,338 @@ async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade
             for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
         }
     assert "prompt" not in columns
+    await engine.dispose()
+
+
+async def test_task_runtime_schema_upkeep_migrates_legacy_prompt_to_description(
+    tmp_path: Path,
+) -> None:
+    """Task runtime upkeep should migrate prompt-only task tables before hot-path indexes."""
+
+    db_path = tmp_path / "runtime_legacy_task_prompt.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    flow_id VARCHAR(64),
+                    title VARCHAR(255) NOT NULL,
+                    prompt TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'todo',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    due_at DATETIME,
+                    ready_at DATETIME,
+                    owner_type VARCHAR(32) NOT NULL,
+                    owner_ref VARCHAR(255) NOT NULL,
+                    reviewer_type VARCHAR(32),
+                    reviewer_ref VARCHAR(255),
+                    source_type VARCHAR(64) NOT NULL DEFAULT 'manual',
+                    source_ref VARCHAR(255),
+                    created_by_type VARCHAR(32) NOT NULL,
+                    created_by_ref VARCHAR(255) NOT NULL,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    requires_review BOOLEAN NOT NULL DEFAULT 0,
+                    blocked_reason_code VARCHAR(64),
+                    blocked_reason_text TEXT,
+                    claim_token VARCHAR(64),
+                    claimed_by VARCHAR(128),
+                    lease_until DATETIME,
+                    current_attempt INTEGER NOT NULL DEFAULT 0,
+                    last_session_id VARCHAR(128),
+                    last_run_id INTEGER,
+                    last_error_code VARCHAR(64),
+                    last_error_text TEXT,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(profile_id) REFERENCES profile(id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO task (
+                    id, profile_id, title, prompt, status, owner_type, owner_ref,
+                    created_by_type, created_by_ref
+                )
+                VALUES (
+                    'task_runtime_legacy', 'default', 'Runtime legacy task',
+                    'Runtime legacy prompt body', 'todo', 'human', 'cli_user:alice',
+                    'human', 'cli'
+                )
+                """
+            )
+        )
+
+    await ensure_task_runtime_schema(engine)
+
+    async with engine.connect() as conn:
+        columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
+        }
+        description = (
+            await conn.execute(
+                text("SELECT description FROM task WHERE id = 'task_runtime_legacy'")
+            )
+        ).scalar_one()
+
+    assert "description" in columns
+    assert "prompt" not in columns
+    assert description == "Runtime legacy prompt body"
+    await engine.dispose()
+
+
+async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_path: Path) -> None:
+    """Legacy task tables should raise one structured compatibility error instead of raw DB failure."""
+
+    db_path = tmp_path / "legacy_task_schema_mismatch.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    flow_id VARCHAR(64),
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'todo',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    due_at DATETIME,
+                    ready_at DATETIME,
+                    owner_type VARCHAR(32) NOT NULL,
+                    owner_ref VARCHAR(255) NOT NULL,
+                    reviewer_type VARCHAR(32),
+                    reviewer_ref VARCHAR(255),
+                    source_type VARCHAR(64) NOT NULL DEFAULT 'manual',
+                    source_ref VARCHAR(255),
+                    created_by_type VARCHAR(32) NOT NULL,
+                    created_by_ref VARCHAR(255) NOT NULL,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    requires_review BOOLEAN NOT NULL DEFAULT 0,
+                    blocked_reason_code VARCHAR(64),
+                    blocked_reason_text TEXT,
+                    claim_token VARCHAR(64),
+                    claimed_by VARCHAR(128),
+                    lease_until DATETIME,
+                    current_attempt INTEGER NOT NULL DEFAULT 0,
+                    last_session_id VARCHAR(128),
+                    last_run_id INTEGER,
+                    last_error_code VARCHAR(64),
+                    last_error_text TEXT,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(profile_id) REFERENCES profile(id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task_event (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id VARCHAR(64) NOT NULL,
+                    task_run_id INTEGER,
+                    event_type VARCHAR(64) NOT NULL,
+                    actor_type VARCHAR(32),
+                    actor_ref VARCHAR(255),
+                    message TEXT,
+                    from_status VARCHAR(32),
+                    to_status VARCHAR(32),
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+
+    service = TaskFlowService(create_session_factory(engine))
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.create_task(
+            profile_id="default",
+            title="Legacy task schema mismatch",
+            description="This should surface a compatibility error.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            session_id="session-1",
+            session_profile_id="default",
+        )
+
+    assert exc_info.value.error_code == "task_flow_schema_incompatible"
+    assert "AFKBOT >= 1.4.2" in exc_info.value.reason
+    await engine.dispose()
+
+
+async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(tmp_path: Path) -> None:
+    """Legacy task_event tables should raise one structured compatibility error instead of raw DB failure."""
+
+    db_path = tmp_path / "legacy_task_event_schema_mismatch.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE profile (
+                    id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    is_default BOOLEAN NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task (
+                    id VARCHAR(64) PRIMARY KEY,
+                    profile_id VARCHAR(64) NOT NULL,
+                    flow_id VARCHAR(64),
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'todo',
+                    priority INTEGER NOT NULL DEFAULT 50,
+                    due_at DATETIME,
+                    ready_at DATETIME,
+                    owner_type VARCHAR(32) NOT NULL,
+                    owner_ref VARCHAR(255) NOT NULL,
+                    reviewer_type VARCHAR(32),
+                    reviewer_ref VARCHAR(255),
+                    source_type VARCHAR(64) NOT NULL DEFAULT 'manual',
+                    source_ref VARCHAR(255),
+                    created_by_type VARCHAR(32) NOT NULL,
+                    created_by_ref VARCHAR(255) NOT NULL,
+                    labels_json TEXT NOT NULL DEFAULT '[]',
+                    requires_review BOOLEAN NOT NULL DEFAULT 0,
+                    blocked_reason_code VARCHAR(64),
+                    blocked_reason_text TEXT,
+                    claim_token VARCHAR(64),
+                    claimed_by VARCHAR(128),
+                    lease_until DATETIME,
+                    current_attempt INTEGER NOT NULL DEFAULT 0,
+                    last_session_id VARCHAR(128),
+                    last_session_profile_id VARCHAR(120),
+                    last_run_id INTEGER,
+                    last_error_code VARCHAR(64),
+                    last_error_text TEXT,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(profile_id) REFERENCES profile(id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE task_event (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id VARCHAR(64) NOT NULL,
+                    task_run_id INTEGER,
+                    event_type VARCHAR(64) NOT NULL,
+                    actor_type VARCHAR(32),
+                    actor_ref VARCHAR(255),
+                    message TEXT,
+                    from_status VARCHAR(32),
+                    to_status VARCHAR(32),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                INSERT INTO profile (id, name, is_default, status, settings_json)
+                VALUES ('default', 'Default', 1, 'active', '{}')
+                """
+            )
+        )
+
+    service = TaskFlowService(create_session_factory(engine))
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.create_task(
+            profile_id="default",
+            title="Legacy task_event schema mismatch",
+            description="This should surface a compatibility error.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+
+    assert exc_info.value.error_code == "task_flow_schema_incompatible"
+    assert "afk upgrade apply" in exc_info.value.reason
     await engine.dispose()

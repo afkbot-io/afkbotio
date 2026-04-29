@@ -99,8 +99,8 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
     PolicyCapabilityId.APPS: PolicyCapabilitySpec(
         id=PolicyCapabilityId.APPS,
         label="App integrations",
-        description="List and execute app integrations via app runtime.",
-        tool_names=("app.list", "app.run"),
+        description="List and execute app integrations via app runtime and channel delivery.",
+        tool_names=("app.list", "app.run", "channel.send"),
     ),
     PolicyCapabilityId.MCP: PolicyCapabilitySpec(
         id=PolicyCapabilityId.MCP,
@@ -113,13 +113,13 @@ CAPABILITIES: dict[PolicyCapabilityId, PolicyCapabilitySpec] = {
         id=PolicyCapabilityId.EMAIL,
         label="Email (legacy alias)",
         description="Legacy alias mapped to app integrations capability.",
-        tool_names=("app.run", "app.list"),
+        tool_names=("app.run", "app.list", "channel.send"),
     ),
     PolicyCapabilityId.TELEGRAM: PolicyCapabilitySpec(
         id=PolicyCapabilityId.TELEGRAM,
         label="Telegram (legacy alias)",
         description="Legacy alias mapped to app integrations capability.",
-        tool_names=("app.run", "app.list"),
+        tool_names=("app.run", "app.list", "channel.send"),
     ),
     PolicyCapabilityId.DEBUG: PolicyCapabilitySpec(
         id=PolicyCapabilityId.DEBUG,

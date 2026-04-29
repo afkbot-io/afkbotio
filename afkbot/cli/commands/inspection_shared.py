@@ -408,7 +408,7 @@ def _apply_channel_tool_profile_to_tool_access(
         web=_tool_family_access(summary.web, allowed=allowed, prefixes=("web.",)),
         browser=_tool_family_access(summary.browser, allowed=allowed, prefixes=("browser.",)),
         skills=_tool_family_access(summary.skills, allowed=allowed, prefixes=("skill.",)),
-        apps=_tool_family_access(summary.apps, allowed=allowed, exact_names=("app.run", "app.list")),
+        apps=_tool_family_access(summary.apps, allowed=allowed, exact_names=("app.run", "app.list", "channel.send")),
         debug=_tool_family_access(summary.debug, allowed=allowed, prefixes=("debug.",)),
     )
 

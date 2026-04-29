@@ -8,8 +8,10 @@ from pydantic import Field
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
+from afkbot.services.error_logging import component_log_path
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.settings import get_settings
 
 
 async def _noop_async(**_: object) -> None:
@@ -197,6 +199,15 @@ class _EchoTool(ToolBase):
         return ToolResult(ok=True, payload={"ok": True})
 
 
+class _ExplodingExecuteTool(ToolBase):
+    name = "debug.echo"
+    description = "Tool that raises during execute"
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        raise RuntimeError("debug token=secret")
+
+
 class _SessionJobTool(ToolBase):
     name = "session.job.run"
     description = "Session job tool"
@@ -274,6 +285,50 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
     assert len(results) == 1
     assert results[0].ok is True
     assert policy_engine.calls == [("bash.exec", {"bash.exec"})]
+
+
+async def test_execute_tool_call_logs_unexpected_tool_exception(tmp_path, monkeypatch) -> None:
+    """Tool runtime should preserve traceback context before returning a sanitized error."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_ExplodingExecuteTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    result = await runtime.execute_tool_call(
+        tool_call=ToolCall(name="debug.echo", params={}, call_id="call-1"),
+        ctx=ToolContext(profile_id="default", session_id="s-tool", run_id=42),
+    )
+
+    get_settings.cache_clear()
+    assert result.ok is False
+    assert result.error_code == "tool_execution_failed"
+    assert result.reason == (
+        "RuntimeError: tool execution failed. Run `afk logs` to find the diagnostic log path."
+    )
+    assert "secret" not in str(result.reason)
+    contents = component_log_path(get_settings(), "tools").read_text(encoding="utf-8")
+    assert "Unhandled tool execution exception" in contents
+    assert "tool_name=debug.echo" in contents
+    assert "session_id=s-tool" in contents
+    assert "run_id=42" in contents
+    assert "call_id=call-1" in contents
+    assert "RuntimeError: debug token=[REDACTED]" in contents
+    assert "secret" not in contents
 
 
 async def test_session_job_run_rejects_nested_bash_not_visible_in_current_turn() -> None:

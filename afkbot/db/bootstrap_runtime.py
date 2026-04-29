@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from afkbot.models import load_all_models
 from afkbot.models.base import Base
 from afkbot.models.task import Task
+from afkbot.services.credentials.vault import CredentialsVault, CredentialsVaultUnavailableError
 from afkbot.services.automations.webhook_tokens import (
     hash_webhook_token,
     issue_webhook_token,
     stored_webhook_token_ref,
     stored_webhook_token_ref_hash,
 )
+from afkbot.settings import Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,13 +32,18 @@ class RuntimeHistoryPruneResult:
     runlog_event_count: int = 0
 
 
+class LegacyWebhookSecretUpgradeError(RuntimeError):
+    """Raised when legacy plaintext webhook secrets need a configured credentials vault."""
+
+
 async def create_schema(engine: AsyncEngine) -> None:
     """Create all mapped tables for the tracked SQLite runtime."""
 
     load_all_models()
+    settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_upgrade_schema)
+        await conn.run_sync(_upgrade_schema, settings=settings)
 
 
 async def list_applied_migrations(engine: AsyncEngine) -> tuple[int, ...]:
@@ -87,7 +94,7 @@ async def prune_runtime_history(
         )
 
 
-def _upgrade_schema(conn: Connection) -> None:
+def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> None:
     """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
 
     _ensure_task_description_column(conn)
@@ -99,12 +106,16 @@ def _upgrade_schema(conn: Connection) -> None:
     _ensure_automation_graph_runtime_columns(conn)
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
+    vault = _resolve_credentials_vault(settings)
+    _guard_legacy_plaintext_webhook_tokens(conn, vault=vault)
+    _backfill_encrypted_webhook_tokens(conn, vault=vault)
     _backfill_webhook_token_hashes(conn)
 
 
 def _upgrade_task_runtime_schema(conn: Connection) -> None:
     """Apply only Task Flow runtime upkeep needed on execution hot paths."""
 
+    _ensure_task_description_column(conn)
     _ensure_task_runtime_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
@@ -201,11 +212,25 @@ def _ensure_task_runtime_columns(conn: Connection) -> None:
     if not columns:
         return
     missing_columns = {
+        "claim_owner_type": "ALTER TABLE task ADD COLUMN claim_owner_type VARCHAR(32)",
+        "claim_owner_ref": "ALTER TABLE task ADD COLUMN claim_owner_ref VARCHAR(255)",
+        "claim_source_status": "ALTER TABLE task ADD COLUMN claim_source_status VARCHAR(32)",
         "last_session_profile_id": "ALTER TABLE task ADD COLUMN last_session_profile_id VARCHAR(120)",
     }
     for column_name, ddl in missing_columns.items():
         if column_name not in columns:
             conn.execute(text(ddl))
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
+    conn.execute(
+        text(
+            "UPDATE task "
+            "SET claim_owner_type = owner_type, claim_owner_ref = owner_ref, claim_source_status = status "
+            "WHERE status IN ('claimed', 'running') "
+            "AND owner_type IN ('ai_profile', 'ai_subagent') "
+            "AND claim_owner_type IS NULL "
+            "AND claim_owner_ref IS NULL"
+        )
+    )
 
 
 def _ensure_run_indexes(conn: Connection) -> None:
@@ -234,23 +259,53 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
     if not columns:
         return
     duplicate_owner_scopes = _list_duplicate_active_ai_owner_scopes(conn)
+    duplicate_claim_scopes = _list_duplicate_active_ai_claim_owner_scopes(conn)
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
-    predicate = "owner_type = 'ai_profile' AND status IN ('claimed', 'running')"
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
+    predicate = "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
     if duplicate_owner_scopes:
         excluded_owner_scopes = " AND ".join(
             "NOT (profile_id = "
             + _quote_sqlite_text_literal(profile_id)
+            + " AND owner_type = "
+            + _quote_sqlite_text_literal(owner_type)
             + " AND owner_ref = "
             + _quote_sqlite_text_literal(owner_ref)
             + ")"
-            for profile_id, owner_ref in duplicate_owner_scopes
+            for profile_id, owner_type, owner_ref in duplicate_owner_scopes
         )
         predicate = f"{predicate} AND {excluded_owner_scopes}"
     conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
-            "ON task (profile_id, owner_ref) "
+            "ON task (profile_id, owner_type, owner_ref) "
             f"WHERE {predicate}"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_task_profile_claim_owner_status "
+            "ON task (profile_id, claim_owner_type, claim_owner_ref, status)"
+        )
+    )
+    claim_predicate = "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+    if duplicate_claim_scopes:
+        excluded_claim_scopes = " AND ".join(
+            "NOT (profile_id = "
+            + _quote_sqlite_text_literal(profile_id)
+            + " AND claim_owner_type = "
+            + _quote_sqlite_text_literal(owner_type)
+            + " AND claim_owner_ref = "
+            + _quote_sqlite_text_literal(owner_ref)
+            + ")"
+            for profile_id, owner_type, owner_ref in duplicate_claim_scopes
+        )
+        claim_predicate = f"{claim_predicate} AND {excluded_claim_scopes}"
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_claim_owner "
+            "ON task (profile_id, claim_owner_type, claim_owner_ref) "
+            f"WHERE {claim_predicate}"
         )
     )
 
@@ -288,27 +343,54 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
         )
 
 
-def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str], ...]:
+def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
     """Return active AI owner profile scopes violating the one-active-task invariant."""
 
     if not _table_columns(conn, "task"):
         return ()
     rows = conn.execute(
         text(
-            "SELECT profile_id, owner_ref "
+            "SELECT profile_id, owner_type, owner_ref "
             "FROM task "
-            "WHERE owner_type = 'ai_profile' AND status IN ('claimed', 'running') "
-            "GROUP BY profile_id, owner_ref "
+            "WHERE owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "GROUP BY profile_id, owner_type, owner_ref "
             "HAVING COUNT(*) > 1 "
-            "ORDER BY profile_id ASC, owner_ref ASC"
+            "ORDER BY profile_id ASC, owner_type ASC, owner_ref ASC"
         )
     ).fetchall()
-    scopes: list[tuple[str, str]] = []
-    for profile_id, owner_ref in rows:
+    scopes: list[tuple[str, str, str]] = []
+    for profile_id, owner_type, owner_ref in rows:
         profile_text = str(profile_id or "").strip()
+        owner_type_text = str(owner_type or "").strip()
         owner_text = str(owner_ref or "").strip()
-        if profile_text and owner_text:
-            scopes.append((profile_text, owner_text))
+        if profile_text and owner_type_text and owner_text:
+            scopes.append((profile_text, owner_type_text, owner_text))
+    return tuple(scopes)
+
+
+def _list_duplicate_active_ai_claim_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
+    """Return active AI claim-owner scopes violating the one-active-task invariant."""
+
+    columns = _table_columns(conn, "task")
+    if not columns or "claim_owner_type" not in columns or "claim_owner_ref" not in columns:
+        return ()
+    rows = conn.execute(
+        text(
+            "SELECT profile_id, claim_owner_type, claim_owner_ref "
+            "FROM task "
+            "WHERE claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "GROUP BY profile_id, claim_owner_type, claim_owner_ref "
+            "HAVING COUNT(*) > 1 "
+            "ORDER BY profile_id ASC, claim_owner_type ASC, claim_owner_ref ASC"
+        )
+    ).fetchall()
+    scopes: list[tuple[str, str, str]] = []
+    for profile_id, owner_type, owner_ref in rows:
+        profile_text = str(profile_id or "").strip()
+        owner_type_text = str(owner_type or "").strip()
+        owner_text = str(owner_ref or "").strip()
+        if profile_text and owner_type_text and owner_text:
+            scopes.append((profile_text, owner_type_text, owner_text))
     return tuple(scopes)
 
 
@@ -405,6 +487,18 @@ def _ensure_webhook_token_columns(conn: Connection) -> None:
                 "ALTER TABLE automation_trigger_webhook ADD COLUMN webhook_token_hash VARCHAR(128)"
             )
         )
+    if "encrypted_webhook_token" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation_trigger_webhook ADD COLUMN encrypted_webhook_token TEXT"
+            )
+        )
+    if "webhook_token_key_version" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE automation_trigger_webhook ADD COLUMN webhook_token_key_version VARCHAR(64)"
+            )
+        )
     conn.execute(
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_automation_webhook_token "
@@ -438,7 +532,7 @@ def _ensure_webhook_execution_columns(conn: Connection) -> None:
 
 
 def _backfill_webhook_token_hashes(conn: Connection) -> None:
-    """Hash legacy plaintext webhook tokens and replace them with non-bearer refs."""
+    """Backfill webhook token hashes while preserving legacy plaintext until encrypted."""
 
     columns = _table_columns(conn, "automation_trigger_webhook")
     if "webhook_token" not in columns or "webhook_token_hash" not in columns:
@@ -446,7 +540,7 @@ def _backfill_webhook_token_hashes(conn: Connection) -> None:
 
     webhook_rows = conn.execute(
         text(
-            "SELECT automation_id, webhook_token, webhook_token_hash "
+            "SELECT automation_id, webhook_token, webhook_token_hash, encrypted_webhook_token "
             "FROM automation_trigger_webhook"
         )
     ).fetchall()
@@ -463,9 +557,11 @@ def _backfill_webhook_token_hashes(conn: Connection) -> None:
         ).fetchall()
     }
 
-    for automation_id, stored_token, stored_hash in webhook_rows:
+    encrypted_supported = "encrypted_webhook_token" in columns
+    for automation_id, stored_token, stored_hash, encrypted_token in webhook_rows:
         token_ref = str(stored_token or "").strip()
         token_hash = str(stored_hash or "").strip()
+        encrypted_text = str(encrypted_token or "").strip() if encrypted_supported else ""
         if not token_hash:
             token_hash = stored_webhook_token_ref_hash(token_ref) or (
                 hash_webhook_token(token_ref) if token_ref else ""
@@ -473,7 +569,12 @@ def _backfill_webhook_token_hashes(conn: Connection) -> None:
         if not token_hash:
             token_hash = _issue_unique_webhook_token_hash(existing_hashes=existing_hashes)
         existing_hashes.add(token_hash)
-        next_token_ref = stored_webhook_token_ref(token_hash)
+        keep_plaintext_token = bool(
+            token_ref
+            and stored_webhook_token_ref_hash(token_ref) is None
+            and not encrypted_text
+        )
+        next_token_ref = token_ref if keep_plaintext_token else stored_webhook_token_ref(token_hash)
         if token_ref == next_token_ref and str(stored_hash or "").strip() == token_hash:
             continue
         conn.execute(
@@ -488,6 +589,92 @@ def _backfill_webhook_token_hashes(conn: Connection) -> None:
                 "token_hash": token_hash,
             },
         )
+
+
+def _backfill_encrypted_webhook_tokens(
+    conn: Connection,
+    *,
+    vault: CredentialsVault | None,
+) -> None:
+    """Encrypt legacy plaintext webhook tokens before hash-ref backfill discards them."""
+
+    if vault is None:
+        return
+    columns = _table_columns(conn, "automation_trigger_webhook")
+    required_columns = {
+        "webhook_token",
+        "encrypted_webhook_token",
+        "webhook_token_key_version",
+    }
+    if not required_columns.issubset(columns):
+        return
+
+    webhook_rows = conn.execute(
+        text(
+            "SELECT automation_id, webhook_token, encrypted_webhook_token, webhook_token_key_version "
+            "FROM automation_trigger_webhook"
+        )
+    ).fetchall()
+    if not webhook_rows:
+        return
+
+    for automation_id, stored_token, encrypted_token, key_version in webhook_rows:
+        token_text = str(stored_token or "").strip()
+        encrypted_text = str(encrypted_token or "").strip()
+        key_version_text = str(key_version or "").strip()
+        if encrypted_text and key_version_text:
+            continue
+        if not token_text or stored_webhook_token_ref_hash(token_text):
+            continue
+        try:
+            next_encrypted_token, next_key_version = vault.encrypt(token_text)
+        except CredentialsVaultUnavailableError:
+            return
+        conn.execute(
+            text(
+                "UPDATE automation_trigger_webhook "
+                "SET encrypted_webhook_token = :encrypted_webhook_token, "
+                "webhook_token_key_version = :webhook_token_key_version "
+                "WHERE automation_id = :automation_id"
+            ),
+            {
+                "automation_id": int(automation_id),
+                "encrypted_webhook_token": next_encrypted_token,
+                "webhook_token_key_version": next_key_version,
+            },
+        )
+
+
+def _guard_legacy_plaintext_webhook_tokens(
+    conn: Connection,
+    *,
+    vault: CredentialsVault | None,
+) -> None:
+    """Fail closed when upgrade would otherwise leave legacy bearer tokens in plaintext."""
+
+    if vault is not None:
+        return
+    columns = _table_columns(conn, "automation_trigger_webhook")
+    required_columns = {
+        "automation_id",
+        "webhook_token",
+        "encrypted_webhook_token",
+    }
+    if not required_columns.issubset(columns):
+        return
+    row = conn.execute(
+        text(
+            "SELECT automation_id FROM automation_trigger_webhook "
+            "WHERE webhook_token IS NOT NULL AND TRIM(webhook_token) != '' "
+            "AND TRIM(webhook_token) NOT LIKE 'sha256:%' "
+            "AND (encrypted_webhook_token IS NULL OR encrypted_webhook_token = '')"
+        )
+    ).fetchone()
+    if row is None:
+        return
+    raise LegacyWebhookSecretUpgradeError(
+        "Legacy plaintext webhook tokens require AFKBOT_CREDENTIALS_MASTER_KEYS before upgrade"
+    )
 
 
 def _issue_unique_webhook_token_hash(*, existing_hashes: set[str]) -> str:
@@ -506,6 +693,22 @@ def _table_columns(conn: Connection, table_name: str) -> set[str]:
 
     rows = conn.execute(text(f"PRAGMA table_info('{table_name}')")).fetchall()
     return {str(row[1]) for row in rows}
+
+
+def _resolve_engine_settings(engine: AsyncEngine) -> Settings | None:
+    """Return the Settings object attached to the engine factory, if any."""
+
+    candidate = getattr(engine.sync_engine, "_afkbot_settings", None)
+    return candidate if isinstance(candidate, Settings) else None
+
+
+def _resolve_credentials_vault(settings: Settings | None) -> CredentialsVault | None:
+    """Build a credentials vault for runtime schema upgrades when configured."""
+
+    try:
+        return CredentialsVault(None if settings is None else settings.credentials_master_keys)
+    except CredentialsVaultUnavailableError:
+        return None
 
 
 def _prune_runtime_history_sync(  # type: ignore[no-untyped-def]

@@ -14,6 +14,7 @@ class TurnContextOverrides:
     """Turn-scoped context additions supplied by ingress/routing layers."""
 
     runtime_metadata: dict[str, object] | None = None
+    trusted_runtime_context: dict[str, object] | None = None
     cli_approval_surface_enabled: bool = False
     approved_tool_names: tuple[str, ...] | None = None
     prompt_overlay: str | None = None
@@ -30,6 +31,7 @@ def merge_turn_context_overrides(
     """Merge trusted turn overrides from multiple ingress/runtime sources."""
 
     merged_metadata: dict[str, object] = {}
+    merged_trusted_runtime_context: dict[str, object] = {}
     cli_approval_surface_enabled = False
     merged_approved_tool_names: list[str] = []
     merged_prompt: str | None = None
@@ -46,6 +48,8 @@ def merge_turn_context_overrides(
         saw_value = True
         if part.runtime_metadata:
             merged_metadata.update(part.runtime_metadata)
+        if part.trusted_runtime_context:
+            merged_trusted_runtime_context.update(part.trusted_runtime_context)
         if part.cli_approval_surface_enabled:
             cli_approval_surface_enabled = True
         _extend_unique_names(
@@ -68,6 +72,7 @@ def merge_turn_context_overrides(
         return None
     if (
         not merged_metadata
+        and not merged_trusted_runtime_context
         and not cli_approval_surface_enabled
         and not merged_approved_tool_names
         and merged_prompt is None
@@ -80,6 +85,7 @@ def merge_turn_context_overrides(
         return None
     return TurnContextOverrides(
         runtime_metadata=merged_metadata or None,
+        trusted_runtime_context=merged_trusted_runtime_context or None,
         cli_approval_surface_enabled=cli_approval_surface_enabled,
         approved_tool_names=tuple(merged_approved_tool_names) or None,
         prompt_overlay=merged_prompt,

@@ -18,10 +18,21 @@ class ChatSessionRepository:
 
         return await self._session.get(ChatSession, session_id)
 
-    async def create(self, session_id: str, profile_id: str, title: str = "Session") -> ChatSession:
+    async def create(
+        self,
+        session_id: str,
+        profile_id: str,
+        title: str | None = None,
+    ) -> ChatSession:
         """Create chat session."""
 
-        row = ChatSession(id=session_id, profile_id=profile_id, title=title, status="active")
+        resolved_title = str(title or "").strip() or session_id
+        row = ChatSession(
+            id=session_id,
+            profile_id=profile_id,
+            title=resolved_title,
+            status="active",
+        )
         self._session.add(row)
         await self._session.flush()
         return row

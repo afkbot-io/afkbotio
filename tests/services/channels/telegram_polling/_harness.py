@@ -15,6 +15,7 @@ from afkbot.services.channel_routing.service import reset_channel_binding_servic
 from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     ChannelReplyHumanizationConfig,
     TelegramPollingEndpointConfig,
@@ -260,6 +261,7 @@ def endpoint(
     account_id: str = "telegram-bot",
     enabled: bool = True,
     group_trigger_mode: str = "mention_or_reply",
+    access_policy: ChannelAccessPolicy | None = None,
     ingress_batch: ChannelIngressBatchConfig | None = None,
     reply_humanization: ChannelReplyHumanizationConfig | None = None,
 ) -> TelegramPollingEndpointConfig:
@@ -272,6 +274,7 @@ def endpoint(
         account_id=account_id,
         enabled=enabled,
         group_trigger_mode=group_trigger_mode,
+        access_policy=access_policy or ChannelAccessPolicy(),
         ingress_batch=ingress_batch or ChannelIngressBatchConfig(),
         reply_humanization=reply_humanization or ChannelReplyHumanizationConfig(),
     )

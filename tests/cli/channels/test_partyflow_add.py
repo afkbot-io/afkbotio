@@ -1,12 +1,14 @@
 """PartyFlow webhook channel add-command tests."""
 
 import asyncio
+import json
 from pathlib import Path
 
 from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.services.channel_routing import get_channel_binding_service
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.settings import get_settings
 from tests.cli.channels._harness import _new_profile_service, _prepare_env
@@ -79,6 +81,8 @@ def test_channel_partyflow_add_persists_webhook_shape(
     assert "- include_context: True" in shown
     assert "- context_size: 8" in shown
     assert "- reply_mode: same_conversation" in shown
+    assert "- access.private_policy: open" in shown
+    assert "- access.group_policy: open" in shown
     assert "- ingress_batch.enabled: True" in shown
     assert (
         "- webhook_url: https://bot.example.com/v1/channels/partyflow/ops-partyflow/webhook"
@@ -136,6 +140,81 @@ def test_channel_partyflow_add_persists_keyword_trigger_configuration(
     shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-keywords"]).stdout
     assert "- trigger_mode: keywords" in shown
     assert "- trigger_keywords: billing, urgent" in shown
+
+
+def test_channel_partyflow_add_persists_access_policy_and_scoped_bindings(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow add should use shared access policy bindings like other channel transports."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-access",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-access",
+            "--private-policy",
+            "allowlist",
+            "--allow-from",
+            "user-1",
+            "--group-policy",
+            "allowlist",
+            "--groups",
+            "conv-1",
+            "--group-allow-from",
+            "user-2",
+            "--outbound-allow-to",
+            "conv-1",
+            "--binding",
+            "--session-policy",
+            "per-thread",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    shown = runner.invoke(app, ["channel", "partyflow", "show", "ops-access"]).stdout
+    assert "- access.private_policy: allowlist" in shown
+    assert "- access.allow_from: user-1" in shown
+    assert "- access.group_policy: allowlist" in shown
+    assert "- access.groups: conv-1" in shown
+    assert "- access.group_allow_from: user-2" in shown
+    assert "- access.outbound_allow_to: conv-1" in shown
+    binding_service = get_channel_binding_service(settings)
+    dm_binding = asyncio.run(binding_service.get(binding_id="ops-access:dm:user-1"))
+    group_binding = asyncio.run(
+        binding_service.get(binding_id="ops-access:group:conv-1:user:user-2")
+    )
+    assert dm_binding.peer_id is None
+    assert dm_binding.user_id == "user-1"
+    assert group_binding.peer_id == "conv-1"
+    assert group_binding.user_id == "user-2"
 
 
 def test_channel_partyflow_show_marks_webhook_url_unavailable_without_public_base_url(
@@ -289,6 +368,17 @@ def test_channel_partyflow_webhook_url_command_returns_copyable_url(
         shown.stdout.strip()
         == "https://bot.example.com/v1/channels/partyflow/ops-webhook-url/webhook"
     )
+
+    status = runner.invoke(
+        app,
+        ["channel", "partyflow", "status", "ops-webhook-url", "--json"],
+    )
+    assert status.exit_code == 1
+    payload = json.loads(status.stdout)
+    row = payload["partyflow_webhooks"][0]
+    assert row["webhook_url_status"] == "ok"
+    assert row["bot_token_configured"] is False
+    assert row["signing_secret_configured"] is False
 
 
 def test_channel_partyflow_show_rejects_private_hostname_suffixes(

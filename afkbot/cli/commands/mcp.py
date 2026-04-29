@@ -22,6 +22,7 @@ from afkbot.cli.presentation.mcp_wizard import (
     render_mcp_remove_preview,
     prompt_resolved_mcp_url,
 )
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg, resolve_prompt_language
 from afkbot.services.mcp_integration.operator_contracts import (
     MCPAddResult,
     MCPServerView,
@@ -77,6 +78,8 @@ def register(app: typer.Typer) -> None:
         yes: bool,
         json_output: bool,
     ) -> None:
+        settings = get_settings()
+        prompt_language = _resolve_mcp_prompt_language(settings)
         interactive = mcp_wizard_enabled() and not json_output
         resolved_url = (url or "").strip()
         if not resolved_url:
@@ -85,7 +88,7 @@ def register(app: typer.Typer) -> None:
                     missing_url_reason,
                     json_output=json_output,
                 )
-            resolution = prompt_resolved_mcp_url()
+            resolution = prompt_resolved_mcp_url(lang=prompt_language)
         else:
             try:
                 resolution = resolve_mcp_url(resolved_url)
@@ -100,26 +103,27 @@ def register(app: typer.Typer) -> None:
 
         if interactive and not yes:
             if server is None:
-                resolved_server = prompt_mcp_server(default=resolved_server)
+                resolved_server = prompt_mcp_server(default=resolved_server, lang=prompt_language)
             if transport is None:
-                resolved_transport = prompt_mcp_transport(default=resolved_transport)
+                resolved_transport = prompt_mcp_transport(default=resolved_transport, lang=prompt_language)
             if capability is None:
-                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities)
+                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities, lang=prompt_language)
             if env_ref is None:
                 resolved_env_refs = prompt_optional_refs(
-                    label="Environment refs",
+                    label=msg(prompt_language, en="Environment refs", ru="Ссылки на environment"),
                     suggestion=resolution.suggested_env_ref,
                     default_values=resolved_env_refs,
+                    lang=prompt_language,
                 )
             if secret_ref is None:
                 resolved_secret_refs = prompt_optional_refs(
-                    label="Secret refs",
+                    label=msg(prompt_language, en="Secret refs", ru="Ссылки на secrets"),
                     suggestion=resolution.suggested_secret_ref,
                     default_values=resolved_secret_refs,
+                    lang=prompt_language,
                 )
 
         try:
-            settings = get_settings()
             service = get_mcp_profile_service(settings)
             preview = asyncio.run(
                 service.preview_add_by_url(
@@ -148,8 +152,9 @@ def register(app: typer.Typer) -> None:
                 storage_mode=preview.storage_mode,
                 replacing_existing=preview.would_replace_effective_server,
                 enabled=preview.server.enabled,
+                lang=prompt_language,
             )
-            if not confirm_mcp_add(preview_text=preview_text):
+            if not confirm_mcp_add(preview_text=preview_text, lang=prompt_language):
                 raise typer.Exit(code=0)
 
         try:
@@ -420,6 +425,7 @@ def register(app: typer.Typer) -> None:
         interactive = mcp_wizard_enabled() and not json_output
         try:
             settings = get_settings()
+            prompt_language = _resolve_mcp_prompt_language(settings)
             service = get_mcp_profile_service(settings)
             current = asyncio.run(service.get(profile_id=profile_id, server=server))
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
@@ -439,7 +445,7 @@ def register(app: typer.Typer) -> None:
                     json_output=json_output,
                 )
             else:
-                resolution = prompt_resolved_mcp_url()
+                resolution = prompt_resolved_mcp_url(lang=prompt_language)
         else:
             try:
                 resolution = resolve_mcp_url(resolved_url)
@@ -454,20 +460,22 @@ def register(app: typer.Typer) -> None:
 
         if interactive and not yes:
             if transport is None:
-                resolved_transport = prompt_mcp_transport(default=resolved_transport)
+                resolved_transport = prompt_mcp_transport(default=resolved_transport, lang=prompt_language)
             if capability is None:
-                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities)
+                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities, lang=prompt_language)
             if env_ref is None:
                 resolved_env_refs = prompt_optional_refs(
-                    label="Environment refs",
+                    label=msg(prompt_language, en="Environment refs", ru="Ссылки на environment"),
                     suggestion=resolution.suggested_env_ref,
                     default_values=current.env_refs,
+                    lang=prompt_language,
                 )
             if secret_ref is None:
                 resolved_secret_refs = prompt_optional_refs(
-                    label="Secret refs",
+                    label=msg(prompt_language, en="Secret refs", ru="Ссылки на secrets"),
                     suggestion=resolution.suggested_secret_ref,
                     default_values=current.secret_refs,
+                    lang=prompt_language,
                 )
 
         try:
@@ -498,8 +506,9 @@ def register(app: typer.Typer) -> None:
                 storage_mode=preview.storage_mode,
                 replacing_existing=True,
                 enabled=preview.server.enabled,
+                lang=prompt_language,
             )
-            if not confirm_mcp_add(preview_text=preview_text):
+            if not confirm_mcp_add(preview_text=preview_text, lang=prompt_language):
                 raise typer.Exit(code=0)
 
         try:
@@ -535,6 +544,7 @@ def register(app: typer.Typer) -> None:
         interactive = mcp_wizard_enabled() and not json_output
         try:
             settings = get_settings()
+            prompt_language = _resolve_mcp_prompt_language(settings)
             service = get_mcp_profile_service(settings)
             preview = asyncio.run(
                 service.preview_remove(
@@ -553,8 +563,9 @@ def register(app: typer.Typer) -> None:
                 target_path=preview.target_path,
                 storage_mode=preview.storage_mode,
                 config_source=preview.server.config_source,
+                lang=prompt_language,
             )
-            if not confirm_mcp_remove(preview_text=preview_text):
+            if not confirm_mcp_remove(preview_text=preview_text, lang=prompt_language):
                 raise typer.Exit(code=0)
 
         try:
@@ -583,6 +594,15 @@ class _MCPCLIError(ValueError):
         super().__init__(reason)
         self.error_code = error_code
         self.reason = reason
+
+
+def _resolve_mcp_prompt_language(settings: object) -> PromptLanguage:
+    """Resolve MCP wizard language without making test doubles implement Settings internals."""
+
+    try:
+        return resolve_prompt_language(settings=settings, value=None, ru=False)  # type: ignore[arg-type]
+    except (AttributeError, OSError, ValueError):
+        return resolve_prompt_language(settings=None, value=None, ru=False)
 
 
 def _exit_mcp_error(exc: Exception, *, json_output: bool) -> NoReturn:

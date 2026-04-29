@@ -10,7 +10,11 @@ from afkbot.cli.commands.chat_task_startup_digest import (
     compose_human_task_startup_message,
     render_human_task_startup_summary,
 )
-from afkbot.cli.commands.chat_repl_runtime import _run_repl_sequential, run_repl_transport
+from afkbot.cli.commands.chat_repl_runtime import (
+    _build_fullscreen_chat_workspace_session,
+    _run_repl_sequential,
+    run_repl_transport,
+)
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.services.chat_session.input_catalog import ChatInputCatalog, ChatInputCatalogStore
 from afkbot.services.chat_session.repl_input import ChatReplInputOutcome
@@ -272,6 +276,56 @@ def test_run_repl_transport_routes_interactive_tty_into_fullscreen_workspace(
     assert captured["catalog_before"] == initial_catalog
     assert captured["catalog_after"] == refreshed_catalog
     assert captured["closed"] == (str(settings.root_dir), "default", "session-1")
+
+
+def test_build_fullscreen_chat_workspace_session_tolerates_older_signature(monkeypatch) -> None:
+    """Compatibility wrapper should tolerate fullscreen runtimes lacking newer kwargs."""
+
+    captured: dict[str, object] = {}
+
+    async def _legacy_fullscreen(
+        *,
+        profile_id: str,
+        session_id: str,
+        repl_state,
+        catalog_getter,
+        refresh_catalog,
+        run_turn,
+    ) -> None:
+        captured.update(
+            profile_id=profile_id,
+            session_id=session_id,
+            repl_state=repl_state,
+            catalog_before=catalog_getter(),
+            refresh_catalog=refresh_catalog,
+            run_turn=run_turn,
+        )
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_repl_runtime.run_fullscreen_chat_workspace_session",
+        _legacy_fullscreen,
+    )
+
+    asyncio.run(
+        _build_fullscreen_chat_workspace_session(
+            profile_id="default",
+            session_id="session-legacy",
+            repl_state=ChatReplSessionState(
+                planning_mode="auto",
+                thinking_level=None,
+                default_planning_mode="auto",
+                default_thinking_level=None,
+            ),
+            catalog_getter=lambda: "catalog",
+            refresh_catalog=lambda: _async_noop(),
+            run_turn=lambda *_args, **_kwargs: None,
+            startup_assistant_message="startup",
+        )
+    )
+
+    assert captured["profile_id"] == "default"
+    assert captured["session_id"] == "session-legacy"
+    assert captured["catalog_before"] == "catalog"
 
 
 def test_run_repl_sequential_reuses_one_queue_across_inputs(monkeypatch) -> None:

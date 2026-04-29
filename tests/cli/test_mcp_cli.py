@@ -11,7 +11,16 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
-from afkbot.cli.presentation.mcp_wizard import prompt_optional_refs, prompt_resolved_mcp_url
+from afkbot.cli.presentation import mcp_wizard
+from afkbot.cli.presentation.mcp_wizard import (
+    prompt_mcp_capabilities,
+    prompt_mcp_url,
+    prompt_optional_refs,
+    prompt_resolved_mcp_url,
+    render_mcp_add_preview,
+)
+from afkbot.cli.presentation.prompt_i18n import PromptLanguage
+from afkbot.services.mcp_integration.url_resolver import resolve_mcp_url
 from afkbot.settings import get_settings
 
 
@@ -401,18 +410,18 @@ def test_mcp_cli_edit_uses_url_resolution_suggestions_for_optional_refs(
     monkeypatch.setattr("afkbot.cli.commands.mcp.mcp_wizard_enabled", lambda: True)
     monkeypatch.setattr(
         "afkbot.cli.commands.mcp.prompt_mcp_transport",
-        lambda *, default: str(default),
+        lambda *, default, lang: str(default),
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.mcp.prompt_mcp_capabilities",
-        lambda *, defaults: tuple(defaults),
+        lambda *, defaults, lang: tuple(defaults),
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.mcp.prompt_optional_refs",
-        lambda *, label, suggestion, default_values: captured_suggestions.append((label, suggestion))
+        lambda *, label, suggestion, default_values, lang: captured_suggestions.append((label, suggestion))
         or tuple(default_values),
     )
-    monkeypatch.setattr("afkbot.cli.commands.mcp.confirm_mcp_add", lambda *, preview_text: False)
+    monkeypatch.setattr("afkbot.cli.commands.mcp.confirm_mcp_add", lambda *, preview_text, lang: False)
 
     # Act
     result = runner.invoke(
@@ -452,6 +461,52 @@ def test_prompt_resolved_mcp_url_retries_until_valid(monkeypatch: MonkeyPatch, c
     captured = capsys.readouterr()
     assert "Invalid MCP URL: MCP URL scheme must be one of: http, https, ws, wss" in captured.out
     assert resolution.url == "https://example.com/mcp"
+
+
+def test_mcp_wizard_russian_labels_use_plain_language(monkeypatch: MonkeyPatch) -> None:
+    """Russian MCP wizard copy should avoid mixed English/Russian operator jargon."""
+
+    captured_prompt: dict[str, str] = {}
+    captured_options: dict[str, list[tuple[str, str]]] = {}
+
+    def _fake_prompt(prompt: str, **kwargs: object) -> str:
+        del kwargs
+        captured_prompt["url"] = prompt
+        return "https://example.com/mcp"
+
+    def _fake_multi_select(**kwargs: object) -> tuple[str, ...]:
+        captured_options["capabilities"] = list(kwargs["options"])  # type: ignore[arg-type]
+        return ("tools",)
+
+    monkeypatch.setattr("afkbot.cli.presentation.mcp_wizard.typer.prompt", _fake_prompt)
+    monkeypatch.setattr(mcp_wizard, "run_inline_multi_select", _fake_multi_select)
+
+    assert prompt_mcp_url(lang=PromptLanguage.RU) == "https://example.com/mcp"
+    assert prompt_mcp_capabilities(defaults=("tools",), lang=PromptLanguage.RU) == ("tools",)
+
+    assert captured_prompt["url"] == "URL MCP-сервера"
+    assert ("prompts", "prompts - шаблоны запросов") in captured_options["capabilities"]
+
+
+def test_mcp_wizard_preview_has_russian_copy() -> None:
+    """MCP wizard preview should be localized for Russian prompt language."""
+
+    preview = render_mcp_add_preview(
+        resolution=resolve_mcp_url("https://example.com/mcp"),
+        preview_server_id="example",
+        preview_transport="http",
+        preview_capabilities=("tools",),
+        preview_env_refs=(),
+        preview_secret_refs=("mcp_example_token",),
+        target_path="profiles/default/mcp.json",
+        storage_mode="profile",
+        replacing_existing=False,
+        enabled=True,
+        lang=PromptLanguage.RU,
+    )
+
+    assert "Записать конфигурацию этого удалённого MCP-сервера" in preview
+    assert "- secret_refs: mcp_example_token" in preview
 
 
 def test_prompt_optional_refs_keeps_existing_defaults_on_empty_input(monkeypatch: MonkeyPatch) -> None:

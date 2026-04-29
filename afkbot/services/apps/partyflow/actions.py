@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from afkbot.services.apps.common import (
     AppCallContext,
@@ -23,6 +24,7 @@ from afkbot.services.apps.params_validation import build_app_params_validation_e
 from afkbot.services.apps.partyflow.http_api import (
     PartyFlowApiError,
     _get_me,
+    _get_messages,
     _join_conversation,
     _send_message,
 )
@@ -33,7 +35,9 @@ from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 
 _DEFAULT_BASE_URL = "https://api.partyflow.ru"
-_ALLOWED_ACTIONS = frozenset({"get_me", "join_conversation", "send_message"})
+_ALLOWED_ACTIONS = frozenset(
+    {"get_me", "join_conversation", "send_message", "get_messages", "read_channel_history"}
+)
 _ALLOWED_SKILLS = frozenset({"partyflow"})
 _CREDENTIAL_MANIFEST = AppCredentialManifest(
     fields={
@@ -51,6 +55,8 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
         "get_me": ActionCredentialManifest(required=("partyflow_bot_token",)),
         "join_conversation": ActionCredentialManifest(required=("partyflow_bot_token",)),
         "send_message": ActionCredentialManifest(required=("partyflow_bot_token",)),
+        "get_messages": ActionCredentialManifest(required=("partyflow_bot_token",)),
+        "read_channel_history": ActionCredentialManifest(required=("partyflow_bot_token",)),
     },
 )
 
@@ -74,12 +80,59 @@ class _SendMessageParams(_BasePartyFlowParams):
     conversation_id: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=4000)
     thread_id: str | None = Field(default=None, max_length=128)
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    display_avatar_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    metadata_json: str | None = Field(default=None, max_length=32768)
+
+    @field_validator("display_avatar_url")
+    @classmethod
+    def _validate_display_avatar_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if urlparse(value).scheme.lower() != "https":
+            raise ValueError("display_avatar_url must use HTTPS")
+        return value
+
+    @field_validator("metadata_json")
+    @classmethod
+    def _validate_metadata_json(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("metadata_json must be a valid JSON string") from exc
+        return value
+
+
+class _GetMessagesParams(_BasePartyFlowParams):
+    conversation_id: str = Field(min_length=1, max_length=128)
+    limit: int = Field(default=50, ge=1, le=100)
+    before_msg_index: int | None = Field(default=None, ge=0)
+    after_msg_index: int | None = Field(default=None, ge=0)
+    around_msg_index: int | None = Field(default=None, ge=0)
+    updated_since: str | None = Field(default=None, min_length=1, max_length=128)
+    thread_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def _validate_single_cursor(self) -> "_GetMessagesParams":
+        cursor_count = sum(
+            item is not None
+            for item in (self.before_msg_index, self.after_msg_index, self.around_msg_index)
+        )
+        if cursor_count > 1:
+            raise ValueError(
+                "only one of before_msg_index, after_msg_index, around_msg_index may be set"
+            )
+        return self
 
 
 _ACTION_PARAMS_MODELS: dict[str, type[BaseModel]] = {
     "get_me": _GetMeParams,
     "join_conversation": _JoinConversationParams,
     "send_message": _SendMessageParams,
+    "get_messages": _GetMessagesParams,
+    "read_channel_history": _GetMessagesParams,
 }
 
 
@@ -161,6 +214,34 @@ async def run_partyflow_action(
                 conversation_id=send_params.conversation_id,
                 content=send_params.content,
                 thread_id=send_params.thread_id,
+                display_name=send_params.display_name,
+                display_avatar_url=send_params.display_avatar_url,
+                metadata_json=send_params.metadata_json,
+                timeout_sec=ctx.timeout_sec,
+            )
+            return ToolResult(ok=True, payload=result)
+        if normalized_action in {"get_messages", "read_channel_history"}:
+            get_messages_params = _GetMessagesParams.model_validate(params)
+            token = await resolve_credential_value(
+                settings=settings,
+                context=call_context,
+                credential_slug=get_messages_params.token_credential_name,
+            )
+            await ensure_host_allowed(
+                settings=settings,
+                context=call_context,
+                host=_host_from_base_url(get_messages_params.base_url),
+            )
+            result = await _get_messages(
+                base_url=get_messages_params.base_url,
+                token=token,
+                conversation_id=get_messages_params.conversation_id,
+                limit=get_messages_params.limit,
+                before_msg_index=get_messages_params.before_msg_index,
+                after_msg_index=get_messages_params.after_msg_index,
+                around_msg_index=get_messages_params.around_msg_index,
+                updated_since=get_messages_params.updated_since,
+                thread_id=get_messages_params.thread_id,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=result)

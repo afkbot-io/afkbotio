@@ -13,6 +13,7 @@ from afkbot.cli.commands.chat import register as register_chat
 from afkbot.cli.commands.connect import register as register_connect
 from afkbot.cli.commands.credentials import register as register_credentials
 from afkbot.cli.commands.doctor import register as register_doctor
+from afkbot.cli.commands.logs import register as register_logs
 from afkbot.cli.commands.setup import register as register_setup
 from afkbot.cli.commands.memory import register as register_memory
 from afkbot.cli.commands.mcp import register as register_mcp
@@ -29,6 +30,7 @@ from afkbot.cli.commands.update import register as register_update
 from afkbot.cli.commands.upgrade import register as register_upgrade
 from afkbot.cli.commands.version import register as register_version
 from afkbot.services.setup.state import setup_is_complete
+from afkbot.services.error_logging import log_exception
 from afkbot.settings import get_settings
 
 app = typer.Typer(
@@ -41,7 +43,7 @@ app = typer.Typer(
         "install optional platform extensions, `afk channel` to operate external adapters, `afk memory` to "
         "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, `afk auth` to protect web/plugin "
-        "surfaces, and `afk browser install` "
+        "surfaces, `afk logs` to inspect diagnostic error logs, and `afk browser install` "
         "to prepare browser automation runtime."
     ),
     no_args_is_help=True,
@@ -60,6 +62,7 @@ register_chat(app)
 register_connect(app)
 register_credentials(app)
 register_doctor(app)
+register_logs(app)
 register_memory(app)
 register_mcp(app)
 register_plugin(app)
@@ -93,6 +96,7 @@ def _guard_setup(ctx: typer.Context) -> None:
         "auth",
         "service",
         "version",
+        "logs",
     }:
         return
 
@@ -108,7 +112,17 @@ def _guard_setup(ctx: typer.Context) -> None:
 def run() -> None:
     """Execute Typer app."""
 
-    app()
+    settings = get_settings()
+    try:
+        app()
+    except Exception as exc:
+        log_exception(
+            settings=settings,
+            component="cli",
+            message="Unhandled CLI exception",
+            exc=exc,
+        )
+        raise
 
 
 if __name__ == "__main__":

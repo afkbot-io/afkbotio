@@ -72,6 +72,8 @@ class AutomationRepositoryCrudMixin:
         prompt: str,
         webhook_token_hash: str,
         webhook_token_ref: str | None = None,
+        encrypted_webhook_token: str | None = None,
+        webhook_token_key_version: str | None = None,
         execution_mode: str = "prompt",
         graph_fallback_mode: str = "resume_with_ai_if_safe",
         delivery_mode: str = "tool",
@@ -95,6 +97,8 @@ class AutomationRepositoryCrudMixin:
             automation_id=automation.id,
             webhook_token=webhook_token_ref or stored_webhook_token_ref(webhook_token_hash),
             webhook_token_hash=webhook_token_hash,
+            encrypted_webhook_token=encrypted_webhook_token,
+            webhook_token_key_version=webhook_token_key_version,
         )
         self._session.add(webhook)
         await self._session.flush()
@@ -236,6 +240,8 @@ class AutomationRepositoryCrudMixin:
         automation_id: int,
         webhook_token_hash: str | None = None,
         webhook_token_ref: str | None = None,
+        encrypted_webhook_token: str | None = None,
+        webhook_token_key_version: str | None = None,
     ) -> AutomationTriggerWebhook | None:
         """Update webhook trigger mutable fields for one automation id."""
 
@@ -250,6 +256,8 @@ class AutomationRepositoryCrudMixin:
             webhook.webhook_token = webhook_token_ref or stored_webhook_token_ref(
                 webhook_token_hash
             )
+            webhook.encrypted_webhook_token = encrypted_webhook_token
+            webhook.webhook_token_key_version = webhook_token_key_version
         await self._session.flush()
         await self._session.refresh(webhook)
         return webhook

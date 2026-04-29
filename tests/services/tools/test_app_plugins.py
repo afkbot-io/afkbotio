@@ -21,10 +21,15 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
-from afkbot.services.apps.partyflow.http_api import PartyFlowApiError, _send_message
+from afkbot.services.apps.partyflow.http_api import (
+    PartyFlowApiError,
+    _request_json_sync,
+    _send_message,
+)
 from afkbot.services.apps.imap.actions import _search_messages_sync
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.apps.smtp.actions import _send_email_sync
+from afkbot.services.apps.telegram import http_api as telegram_http_api
 from afkbot.services.apps.telegram.http_api import _resolve_workspace_media_path
 from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.tools.base import ToolCall, ToolContext
@@ -419,10 +424,18 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
     assert telegram is not None
     assert telegram.allowed_skills == {"telegram"}
     assert telegram.allowed_actions == {
+        "answer_callback_query",
+        "download_file",
         "send_document",
+        "send_animation",
+        "send_audio",
         "send_message",
+        "send_message_draft",
         "send_photo",
+        "send_sticker",
         "send_chat_action",
+        "send_video",
+        "send_voice",
         "get_me",
         "get_updates",
         "ban_chat_member",
@@ -434,7 +447,9 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
     assert partyflow.allowed_skills == {"partyflow"}
     assert partyflow.allowed_actions == {
         "get_me",
+        "get_messages",
         "join_conversation",
+        "read_channel_history",
         "send_message",
     }
 
@@ -507,6 +522,7 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
         assert field_map["text"]["required"] is True
         assert field_map["chat_id"]["required"] is False
         assert field_map["disable_web_page_preview"]["type"] == "boolean"
+        assert "reply_markup" in field_map
         ping_item = next(item for item in items if item.get("name") == "ping")
         assert ping_item["allowed_skills"] == ["ping-skill"]
         assert ping_item["allowed_actions"] == ["echo"]
@@ -958,6 +974,9 @@ async def test_app_run_partyflow_send_message_with_thread_id(
                 "conversation_id": "conv-1",
                 "content": "hello over partyflow",
                 "thread_id": "thr-7",
+                "display_name": None,
+                "display_avatar_url": None,
+                "metadata_json": None,
                 "timeout_sec": settings.tool_timeout_default_sec,
             }
         ]
@@ -995,6 +1014,9 @@ async def test_partyflow_http_send_message_joins_on_403(monkeypatch: MonkeyPatch
         conversation_id="conv-1",
         content="hello over helper",
         thread_id="thr-7",
+        display_name=None,
+        display_avatar_url=None,
+        metadata_json=None,
         timeout_sec=5,
     )
 
@@ -1004,6 +1026,214 @@ async def test_partyflow_http_send_message_joins_on_403(monkeypatch: MonkeyPatch
         "/api/v1/bot/conversations/conv-1/join",
         "/api/v1/bot/messages",
     ]
+
+
+def test_partyflow_http_error_preserves_retry_after(monkeypatch: MonkeyPatch) -> None:
+    """PartyFlow HTTP helper should expose Retry-After for channel retry scheduling."""
+
+    headers = EmailMessage()
+    headers["Retry-After"] = "17"
+
+    def _fake_urlopen(request: Request, timeout: int) -> object:
+        raise HTTPError(
+            url=request.full_url,
+            code=429,
+            msg="Too Many Requests",
+            hdrs=headers,
+            fp=io.BytesIO(b'{"ok":false,"error":"rate_limited"}'),
+        )
+
+    monkeypatch.setattr("afkbot.services.apps.partyflow.http_api.urlopen", _fake_urlopen)
+
+    with pytest.raises(PartyFlowApiError) as exc_info:
+        _request_json_sync(
+            base_url="https://api.partyflow.ru",
+            token="fri_bot_test_token",
+            method="GET",
+            path="/api/v1/channels/conv-1/messages",
+            body=None,
+            query={"limit": 50},
+            timeout_sec=5,
+        )
+
+    assert exc_info.value.error_code == "partyflow_rate_limited"
+    assert exc_info.value.metadata["retry_after_sec"] == 17
+    assert exc_info.value.metadata["http_status"] == 429
+
+
+async def test_app_run_partyflow_send_message_with_display_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should forward PartyFlow display overrides and metadata_json."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_send_message(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"message_id": "msg-rich"}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._send_message",
+            _fake_send_message,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "send_message",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "content": "hello",
+                    "display_name": "AFKBOT",
+                    "display_avatar_url": "https://cdn.example.com/bot.png",
+                    "metadata_json": '{"version":1}',
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert calls[0]["display_name"] == "AFKBOT"
+        assert calls[0]["display_avatar_url"] == "https://cdn.example.com/bot.png"
+        assert calls[0]["metadata_json"] == '{"version":1}'
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_get_messages_history(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should expose PartyFlow Bot Read API with documented cursors."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_get_messages(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"messages": [{"id": "msg-1"}], "has_more": False}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._get_messages",
+            _fake_get_messages,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "read_channel_history",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "limit": 25,
+                    "around_msg_index": 42,
+                    "updated_since": "2026-04-17T10:00:00.000Z",
+                    "thread_id": "thread-1",
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["messages"] == [{"id": "msg-1"}]
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "conversation_id": "conv-1",
+                "limit": 25,
+                "before_msg_index": None,
+                "after_msg_index": None,
+                "around_msg_index": 42,
+                "updated_since": "2026-04-17T10:00:00.000Z",
+                "thread_id": "thread-1",
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_get_messages_rejects_multiple_cursors(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow history action should enforce the documented single-cursor rule."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "get_messages",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "before_msg_index": 10,
+                    "after_msg_index": 20,
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is False
+        assert result.error_code == "app_run_invalid"
+        assert "only one of before_msg_index" in (result.reason or "")
+    finally:
+        await engine.dispose()
 
 
 async def test_app_run_telegram_auto_picks_single_profile_when_omitted(
@@ -1756,6 +1986,39 @@ async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(
     )
 
     assert resolved is None
+
+
+async def test_telegram_local_media_upload_rejects_oversized_file(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Telegram Bot local uploads should reject oversized files before multipart buffering."""
+
+    settings = Settings(root_dir=tmp_path, channel_media_upload_max_bytes=4)
+    media_path = tmp_path / "profiles/default/huge.bin"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"12345")
+
+    def fail_request(**_: object) -> dict[str, object]:
+        raise AssertionError("oversized upload should be rejected before request build")
+
+    monkeypatch.setattr(telegram_http_api, "_request_json_multipart", fail_request)
+
+    with pytest.raises(ValueError, match="exceeds max upload size"):
+        await telegram_http_api._post_send_media(
+            settings=settings,
+            profile_id="default",
+            token="token",
+            chat_id="42",
+            action="send_document",
+            field_name="document",
+            media_value="huge.bin",
+            caption=None,
+            message_thread_id=None,
+            parse_mode=None,
+            reply_markup=None,
+            timeout_sec=5,
+        )
 
 
 async def test_app_run_telegram_supports_send_chat_action(

@@ -176,6 +176,7 @@ class TaskMaintenanceSweepMetadata(BaseModel):
 
     generated_at: datetime
     profile_id: str | None = None
+    owner_ref: str | None = None
     limit: int = Field(ge=1)
     repaired_count: int = Field(ge=0)
     remaining_count: int = Field(ge=0)
