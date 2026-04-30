@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-04-30
+
+### Changed
+
+- PartyFlow channel setup now treats the webhook signing secret as optional and
+  explains that leaving it blank disables webhook signature validation.
+
+### Fixed
+
+- PartyFlow webhook runtime, status, and probe flows no longer fail when only the
+  optional webhook signing secret is absent; configured signing secrets still
+  enforce the existing timestamped HMAC validation.
+- Release metadata and lockfile package metadata are aligned to `1.6.1`.
+
 ## [1.6.0] - 2026-04-30
 
 ### Added

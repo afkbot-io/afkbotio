@@ -35,8 +35,10 @@ from afkbot.services.channels.partyflow_runtime_registry import (
     reset_partyflow_webhook_runtime_registries,
 )
 from afkbot.services.channels.partyflow_webhook import PartyFlowWebhookService
+from afkbot.services.credentials.errors import CredentialsServiceError
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import ProfileService, reset_profile_services_async
+from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 
 
@@ -84,6 +86,11 @@ class _FakeDeliveryService:
             }
         )
         return {"ok": True}
+
+
+class _FakePartyFlowIdentityRuntime:
+    async def run(self, **_kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, payload={"bot": {"id": "bot-42", "display_name": "Bot"}})
 
 
 async def _seed_profile_and_binding(settings: Settings) -> None:
@@ -820,6 +827,81 @@ async def test_partyflow_webhook_rejects_old_replay_timestamps(
         "error_code": "partyflow_invalid_signature",
         "reason": "Invalid PartyFlow webhook signature",
     }
+
+
+async def test_partyflow_webhook_accepts_unsigned_delivery_when_signing_secret_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing PartyFlow signing secret should disable signature validation explicitly."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_unsigned.db'}",
+    )
+    await _seed_profile_and_binding(settings)
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+    )
+
+    async def fake_bootstrap() -> None:
+        service._bot_id = "bot-42"  # type: ignore[attr-defined]
+        service._signing_secret = None  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(service, "_bootstrap_identity", fake_bootstrap)
+    payload = {
+        "event_type": "MESSAGE_UPDATED",
+        "conversation_id": "conv-1",
+        "data": {"author_id": "user-1", "text": "edited"},
+    }
+
+    await service.start()
+    try:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        status, response = await service.handle_webhook(
+            headers={"x-partyflow-delivery-id": "delivery-unsigned"},
+            body=body,
+        )
+    finally:
+        await service.stop()
+
+    assert status == 200
+    assert response == {"ok": True, "ignored": True}
+
+
+async def test_partyflow_webhook_bootstrap_treats_missing_signing_secret_as_optional(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime startup should still resolve bot identity when only the optional signing secret is absent."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_optional_secret.db'}",
+    )
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+        app_runtime=_FakePartyFlowIdentityRuntime(),  # type: ignore[arg-type]
+    )
+
+    class _MissingSigningSecretCredentials:
+        async def resolve_plaintext_for_app_tool(self, **_kwargs: object) -> str:
+            raise CredentialsServiceError(
+                error_code="credentials_missing",
+                reason="PartyFlow signing secret is not configured.",
+            )
+
+    monkeypatch.setattr(
+        "afkbot.services.channels.partyflow_webhook.get_credentials_service",
+        lambda _settings: _MissingSigningSecretCredentials(),
+    )
+
+    await service._bootstrap_identity()  # type: ignore[attr-defined]
+
+    assert service._signing_secret is None  # type: ignore[attr-defined]
+    assert service._bot_id == "bot-42"  # type: ignore[attr-defined]
 
 
 async def test_partyflow_webhook_keyword_trigger_uses_token_boundaries(

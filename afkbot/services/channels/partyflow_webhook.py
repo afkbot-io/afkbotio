@@ -249,6 +249,10 @@ class PartyFlowWebhookService:
         stable_id = _extract_partyflow_event_identifier(payload)
         if stable_id is not None:
             return "event:" + hashlib.sha256(stable_id.encode("utf-8")).hexdigest()
+        if self._signing_secret is None:
+            delivery_id = headers.get("x-partyflow-delivery-id", "").strip()
+            if delivery_id:
+                return "delivery:" + hashlib.sha256(delivery_id.encode("utf-8")).hexdigest()
         timestamp = headers.get("x-partyflow-timestamp", "").strip()
         material = timestamp.encode("utf-8") + b":" + body
         return "signed-payload:" + hashlib.sha256(material).hexdigest()
@@ -266,11 +270,20 @@ class PartyFlowWebhookService:
                 credential_name=_PARTYFLOW_WEBHOOK_SIGNING_SECRET,
             )
         except CredentialsServiceError as exc:
-            raise PartyFlowWebhookServiceError(
-                error_code=exc.error_code,
-                reason=exc.reason,
-            ) from exc
-        self._signing_secret = secret.encode("utf-8")
+            if exc.error_code in {
+                "credentials_missing",
+                "credentials_not_found",
+                "credential_binding_conflict",
+                "credential_profile_required",
+            }:
+                self._signing_secret = None
+            else:
+                raise PartyFlowWebhookServiceError(
+                    error_code=exc.error_code,
+                    reason=exc.reason,
+                ) from exc
+        else:
+            self._signing_secret = secret.encode("utf-8") if secret.strip() else None
         result = await self._app_runtime.run(
             app="partyflow",
             action="get_me",
@@ -583,7 +596,7 @@ class PartyFlowWebhookService:
     def _verify_signature(self, *, headers: Mapping[str, str], body: bytes) -> bool:
         signing_secret = self._signing_secret
         if signing_secret is None:
-            return False
+            return True
         timestamp = headers.get("x-partyflow-timestamp", "").strip()
         signature = headers.get("x-partyflow-signature", "").strip()
         if not timestamp or not signature:
