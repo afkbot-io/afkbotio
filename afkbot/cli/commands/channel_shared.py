@@ -164,6 +164,29 @@ def render_channel_add_intro(
             )
         )
         return
+    if normalized_transport == "partyflow":
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "PartyFlow webhook channel setup\n"
+                    f"- This wizard creates one PartyFlow outgoing-webhook endpoint.\n"
+                    f"- `Channel id` is your local AFKBOT id for later `show`, `update`, and `delete` commands. "
+                    f"Press Enter there to accept `{suggested_channel_id}`.\n"
+                    "- PartyFlow does not support Telegram-style polling here; webhook is the only ingress mode.\n"
+                    "- You will need the bot token and the webhook signing secret from PartyFlow UI."
+                ),
+                ru=(
+                    "Настройка PartyFlow webhook-канала\n"
+                    f"- Этот мастер создаёт один endpoint для исходящих webhook-событий PartyFlow.\n"
+                    f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update` и `delete`. "
+                    f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
+                    "- Polling в стиле Telegram здесь не поддерживается; сейчас доступен только режим webhook.\n"
+                    "- Понадобятся токен бота и секрет подписи webhook из UI PartyFlow."
+                ),
+            )
+        )
+        return
     raise ValueError(f"Unsupported channel transport for intro: {transport}")
 
 
@@ -413,7 +436,7 @@ def collect_channel_access_policy_inputs(
     group_allow_from_default: tuple[str, ...] = (),
     outbound_allow_to_default: tuple[str, ...] = (),
 ) -> ChannelAccessPolicy:
-    """Collect OpenClaw-style access controls shared by Telegram transports."""
+    """Collect OpenClaw-style access controls shared by channel transports."""
 
     normalized_allow_from = (
         split_channel_access_list(allow_from) if allow_from is not None else allow_from_default
@@ -430,12 +453,19 @@ def collect_channel_access_policy_inputs(
         else outbound_allow_to_default
     )
     private_policy_value = private_policy
-    if private_policy_value is None and not interactive and private_policy_default == "open" and allow_from is not None:
+    if (
+        private_policy_value is None
+        and not interactive
+        and private_policy_default == "open"
+        and allow_from is not None
+    ):
         private_policy_value = "allowlist" if normalized_allow_from else None
     group_policy_value = group_policy
     if group_policy_value is None and not interactive and group_policy_default == "open":
         if groups is not None or group_allow_from is not None:
-            group_policy_value = "allowlist" if normalized_groups or normalized_group_allow_from else None
+            group_policy_value = (
+                "allowlist" if normalized_groups or normalized_group_allow_from else None
+            )
     resolved_private_policy = cast(
         ChannelAccessMode,
         resolve_channel_choice(
@@ -448,11 +478,11 @@ def collect_channel_access_policy_inputs(
             lang=lang,
             detail_en=(
                 "Choose who may write to the bot/userbot in direct messages. For a private 1:1 remote assistant, "
-                "choose `allowlist` and enter your Telegram user id next."
+                "choose `allowlist` and enter the platform sender/user id next."
             ),
             detail_ru=(
                 "Выберите, кто может писать боту или userbot в личные сообщения. Для закрытого личного "
-                "удалённого помощника выберите `allowlist` и дальше введите свой Telegram user id."
+                "удалённого помощника выберите `allowlist` и дальше введите id отправителя/пользователя."
             ),
         ),
     )
@@ -462,16 +492,16 @@ def collect_channel_access_policy_inputs(
                 value=allow_from if allow_from is not None else None,
                 interactive=interactive,
                 prompt_en="Allowed private sender ids",
-                prompt_ru="Telegram user ID для личных чатов",
+                prompt_ru="ID отправителей для личных чатов",
                 default=", ".join(normalized_allow_from) if normalized_allow_from else None,
                 lang=lang,
                 detail_en=(
-                    "Enter Telegram numeric user IDs allowed to write in private chats. Separate several IDs "
-                    "with commas, for example `123456789,987654321`."
+                    "Enter platform sender/user IDs allowed to write in private chats. Separate several IDs "
+                    "with commas."
                 ),
                 detail_ru=(
-                    "Введите числовые Telegram user ID, которым разрешено писать в личку. Несколько ID "
-                    "разделяйте запятыми, например `123456789,987654321`."
+                    "Введите id отправителей/пользователей, которым разрешено писать в личку. Несколько ID "
+                    "разделяйте запятыми."
                 ),
             )
         )
@@ -501,16 +531,14 @@ def collect_channel_access_policy_inputs(
                 value=groups if groups is not None else None,
                 interactive=interactive,
                 prompt_en="Allowed group ids",
-                prompt_ru="Telegram group/supergroup ID",
+                prompt_ru="ID групп/каналов",
                 default=", ".join(normalized_groups) if normalized_groups else None,
                 lang=lang,
                 detail_en=(
-                    "Enter Telegram group or supergroup IDs allowed to use this channel. Supergroups often look "
-                    "like `-1001234567890`; separate several IDs with commas."
+                    "Enter platform group/channel IDs allowed to use this channel. Separate several IDs with commas."
                 ),
                 detail_ru=(
-                    "Введите Telegram ID групп или супергрупп, где разрешён этот канал. ID супергруппы часто "
-                    "выглядит как `-1001234567890`; несколько ID разделяйте запятыми."
+                    "Введите id групп или каналов, где разрешён этот канал. Несколько ID разделяйте запятыми."
                 ),
             )
         )
@@ -522,7 +550,7 @@ def collect_channel_access_policy_inputs(
                 value=group_allow_from if group_allow_from is not None else None,
                 interactive=interactive,
                 prompt_en="Allowed group sender ids",
-                prompt_ru="Telegram user ID отправителей в группах",
+                prompt_ru="ID отправителей в группах",
                 default=(
                     ", ".join(normalized_group_allow_from or normalized_allow_from)
                     if normalized_group_allow_from or normalized_allow_from
@@ -530,11 +558,11 @@ def collect_channel_access_policy_inputs(
                 ),
                 lang=lang,
                 detail_en=(
-                    "Enter Telegram user IDs allowed to trigger the bot inside the allowed groups. "
+                    "Enter platform sender/user IDs allowed to trigger the bot inside the allowed groups. "
                     "Leave no broad group access unless you trust every member."
                 ),
                 detail_ru=(
-                    "Введите Telegram user ID, которым разрешено запускать бота в разрешённых группах. "
+                    "Введите id отправителей/пользователей, которым разрешено запускать бота в разрешённых группах. "
                     "Не оставляйте широкий доступ к группе, если доверяете не всем участникам."
                 ),
             )
@@ -556,12 +584,12 @@ def collect_channel_access_policy_inputs(
             default=bool(outbound_default_values),
             lang=lang,
             detail_en=(
-                "`channel.send` lets the agent initiate Telegram messages through this endpoint. "
+                "`channel.send` lets the agent initiate channel messages through this endpoint. "
                 "Choose Yes to limit it to specific chat/user IDs. Choose No only for fully trusted "
                 "profiles and credentials."
             ),
             detail_ru=(
-                "`channel.send` позволяет агенту самому отправлять Telegram-сообщения через этот канал. "
+                "`channel.send` позволяет агенту самому отправлять сообщения через этот канал. "
                 "Выберите Да, чтобы ограничить отправку конкретными chat/user ID. Нет выбирайте только "
                 "для полностью доверенных профилей и учётных данных."
             ),
@@ -576,12 +604,10 @@ def collect_channel_access_policy_inputs(
                     default=", ".join(outbound_default_values) if outbound_default_values else None,
                     lang=lang,
                     detail_en=(
-                        "Enter Telegram chat or user IDs that `channel.send` may target through this endpoint. "
-                        "Use private user IDs for 1:1 messages and group IDs such as `-1001234567890` for groups."
+                        "Enter platform chat/user IDs that `channel.send` may target through this endpoint."
                     ),
                     detail_ru=(
-                        "Введите Telegram chat/user ID, куда `channel.send` может отправлять через этот канал. "
-                        "Для лички используйте user ID, для групп - ID вида `-1001234567890`."
+                        "Введите chat/user ID платформы, куда `channel.send` может отправлять через этот канал."
                     ),
                 )
             )
@@ -676,7 +702,10 @@ def put_access_policy_bindings(
         access_policy=access_policy,
     )
     for rule in rules:
-        async def _put_rule(service: ChannelBindingService, rule: ChannelBindingRule = rule) -> ChannelBindingRule:
+
+        async def _put_rule(
+            service: ChannelBindingService, rule: ChannelBindingRule = rule
+        ) -> ChannelBindingRule:
             return await service.put(rule)
 
         run_channel_binding_service_sync(settings, _put_rule)
@@ -732,6 +761,7 @@ def build_access_policy_binding_rules(
                     )
                 )
             else:
+                private_peer_id = None if transport == "partyflow" else sender_id
                 rules.append(
                     _build_access_binding_rule(
                         binding_id=f"{endpoint_id}:dm:{sender_id}",
@@ -741,7 +771,7 @@ def build_access_policy_binding_rules(
                         priority=priority,
                         enabled=enabled,
                         account_id=account_id,
-                        peer_id=sender_id,
+                        peer_id=private_peer_id,
                         user_id=sender_id,
                         prompt_overlay=prompt_overlay,
                     )
@@ -839,8 +869,12 @@ def resolve_binding_update_inputs(
             if session_policy is not None
             else (existing.session_policy if existing is not None else session_policy_default)
         ),
-        priority=priority if priority is not None else (existing.priority if existing is not None else 0),
-        prompt_overlay=prompt_overlay if prompt_overlay is not None else (existing.prompt_overlay if existing is not None else None),
+        priority=priority
+        if priority is not None
+        else (existing.priority if existing is not None else 0),
+        prompt_overlay=prompt_overlay
+        if prompt_overlay is not None
+        else (existing.prompt_overlay if existing is not None else None),
     )
 
 

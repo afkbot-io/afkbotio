@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from afkbot.api.chat_routes.router import router as chat_router
+from afkbot.api.routes_partyflow_webhooks import router as partyflow_webhook_router
 from afkbot.api.routes_auth import router as auth_router
 from afkbot.api.routes_connect import router as connect_router
 from afkbot.api.routes_health import router as health_router
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(chat_router)
+    app.include_router(partyflow_webhook_router)
     app.include_router(auth_router)
     app.include_router(connect_router)
     app.include_router(health_router)

@@ -21,6 +21,11 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
+from afkbot.services.apps.partyflow.http_api import (
+    PartyFlowApiError,
+    _request_json_sync,
+    _send_message,
+)
 from afkbot.services.apps.imap.actions import _search_messages_sync
 from afkbot.services.apps.registry import get_app_registry
 from afkbot.services.apps.smtp.actions import _send_email_sync
@@ -135,7 +140,9 @@ async def test_http_request_tool_success(tmp_path: Path, monkeypatch: MonkeyPatc
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
         assert result.payload["status_code"] == 200
     finally:
@@ -217,7 +224,9 @@ async def test_http_request_missing_auth_credential_returns_secure_error(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "credentials_missing"
         assert result.metadata["integration_name"] == "http"
@@ -292,7 +301,9 @@ async def test_http_request_rejects_non_http_scheme(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
     finally:
@@ -322,7 +333,9 @@ async def test_http_request_rejects_non_public_target_resolution(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
         assert "non-public network address" in str(result.reason)
@@ -349,7 +362,9 @@ async def test_http_request_rejects_localhost_target(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is False
         assert result.error_code == "http_request_invalid"
         assert "must not target localhost" in str(result.reason or "")
@@ -362,7 +377,9 @@ def test_http_no_redirect_handler_returns_none() -> None:
 
     handler = _NoRedirect()
     req = Request("https://example.com")
-    redirected = handler.redirect_request(req, fp=object(), code=302, msg="Found", headers={}, newurl="https://127.0.0.1/")
+    redirected = handler.redirect_request(
+        req, fp=object(), code=302, msg="Found", headers={}, newurl="https://127.0.0.1/"
+    )
     assert redirected is None
 
 
@@ -425,6 +442,17 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
         "unban_chat_member",
     }
 
+    partyflow = registry.get("partyflow")
+    assert partyflow is not None
+    assert partyflow.allowed_skills == {"partyflow"}
+    assert partyflow.allowed_actions == {
+        "get_me",
+        "get_messages",
+        "join_conversation",
+        "read_channel_history",
+        "send_message",
+    }
+
     smtp = registry.get("smtp")
     assert smtp is not None
     assert smtp.allowed_skills == {"smtp"}
@@ -451,15 +479,15 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -475,7 +503,9 @@ async def test_app_list_includes_profile_apps(tmp_path: Path, monkeypatch: Monke
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_list.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_list.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
 
         items = cast(list[dict[str, object]], result.payload["apps"])
@@ -520,15 +550,15 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -544,7 +574,9 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_list.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_list.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
 
         items = cast(list[dict[str, object]], result.payload["apps"])
@@ -554,7 +586,9 @@ async def test_app_list_skips_profile_apps_when_runtime_loading_disabled(
         await engine.dispose()
 
 
-async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+async def test_app_run_uses_profile_local_registry(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """app.run should execute profile-local app registered under profiles/<id>/apps."""
 
     monkeypatch.setenv("AFKBOT_ENABLE_PROFILE_APP_MODULES", "1")
@@ -569,15 +603,15 @@ async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: 
                     "",
                     "def register_apps(register_app):",
                     "    @register_app(",
-                    '        name=\"ping\",',
-                    "        allowed_skills={\"ping-skill\"},",
-                    "        allowed_actions={\"echo\"},",
+                    '        name="ping",',
+                    '        allowed_skills={"ping-skill"},',
+                    '        allowed_actions={"echo"},',
                     "    )",
                     "    async def _run(settings, ctx, action, params):",
                     "        _ = settings, ctx",
                     "        return ToolResult(ok=True, payload={",
-                    "            \"action\": action,",
-                    "            \"echo\": str(params.get(\"text\") or \"\"),",
+                    '            "action": action,',
+                    '            "echo": str(params.get("text") or ""),',
                     "        })",
                 )
             ),
@@ -597,7 +631,9 @@ async def test_app_run_uses_profile_local_registry(tmp_path: Path, monkeypatch: 
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
         assert result.ok is True
         assert result.payload["action"] == "echo"
         assert result.payload["echo"] == "hello"
@@ -806,6 +842,396 @@ async def test_app_run_telegram_smtp_imap_with_credentials(
         imap_result = await app_tool.execute(ctx, imap_params)
         assert imap_result.ok is True
         assert imap_result.payload["count"] == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_get_me_with_credentials(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should execute PartyFlow get_me with stored credentials and allowlisted host."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_get_me(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"bot": {"id": "bot-42", "name": "PartyFlow Test Bot"}}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._get_me",
+            _fake_get_me,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "get_me",
+                "profile_name": "default",
+                "params": {},
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["bot"]["id"] == "bot-42"
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_send_message_with_thread_id(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should forward PartyFlow send_message params including thread_id."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_send_message(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"message_id": "msg-99", "conversation_id": "conv-1", "thread_id": "thr-7"}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._send_message",
+            _fake_send_message,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "send_message",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "content": "hello over partyflow",
+                    "thread_id": "thr-7",
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["message_id"] == "msg-99"
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "conversation_id": "conv-1",
+                "content": "hello over partyflow",
+                "thread_id": "thr-7",
+                "display_name": None,
+                "display_avatar_url": None,
+                "metadata_json": None,
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_partyflow_http_send_message_joins_on_403(monkeypatch: MonkeyPatch) -> None:
+    """PartyFlow HTTP helper should join conversation then retry send after a 403."""
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_request_json_sync(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise PartyFlowApiError(
+                status_code=403,
+                error_code="partyflow_bot_not_in_conversation",
+                reason="PartyFlow HTTP 403: Forbidden",
+            )
+        if len(calls) == 2:
+            assert kwargs["path"] == "/api/v1/bot/conversations/conv-1/join"
+            return {"ok": True}
+        assert kwargs["path"] == "/api/v1/bot/messages"
+        return {"message_id": "msg-100", "conversation_id": "conv-1"}
+
+    monkeypatch.setattr(
+        "afkbot.services.apps.partyflow.http_api._request_json_sync",
+        _fake_request_json_sync,
+    )
+
+    result = await _send_message(
+        base_url="https://api.partyflow.ru",
+        token="fri_bot_test_token",
+        conversation_id="conv-1",
+        content="hello over helper",
+        thread_id="thr-7",
+        display_name=None,
+        display_avatar_url=None,
+        metadata_json=None,
+        timeout_sec=5,
+    )
+
+    assert result["message_id"] == "msg-100"
+    assert [str(item["path"]) for item in calls] == [
+        "/api/v1/bot/messages",
+        "/api/v1/bot/conversations/conv-1/join",
+        "/api/v1/bot/messages",
+    ]
+
+
+def test_partyflow_http_error_preserves_retry_after(monkeypatch: MonkeyPatch) -> None:
+    """PartyFlow HTTP helper should expose Retry-After for channel retry scheduling."""
+
+    headers = EmailMessage()
+    headers["Retry-After"] = "17"
+
+    def _fake_urlopen(request: Request, timeout: int) -> object:
+        raise HTTPError(
+            url=request.full_url,
+            code=429,
+            msg="Too Many Requests",
+            hdrs=headers,
+            fp=io.BytesIO(b'{"ok":false,"error":"rate_limited"}'),
+        )
+
+    monkeypatch.setattr("afkbot.services.apps.partyflow.http_api.urlopen", _fake_urlopen)
+
+    with pytest.raises(PartyFlowApiError) as exc_info:
+        _request_json_sync(
+            base_url="https://api.partyflow.ru",
+            token="fri_bot_test_token",
+            method="GET",
+            path="/api/v1/channels/conv-1/messages",
+            body=None,
+            query={"limit": 50},
+            timeout_sec=5,
+        )
+
+    assert exc_info.value.error_code == "partyflow_rate_limited"
+    assert exc_info.value.metadata["retry_after_sec"] == 17
+    assert exc_info.value.metadata["http_status"] == 429
+
+
+async def test_app_run_partyflow_send_message_with_display_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should forward PartyFlow display overrides and metadata_json."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_send_message(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"message_id": "msg-rich"}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._send_message",
+            _fake_send_message,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "send_message",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "content": "hello",
+                    "display_name": "AFKBOT",
+                    "display_avatar_url": "https://cdn.example.com/bot.png",
+                    "metadata_json": '{"version":1}',
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert calls[0]["display_name"] == "AFKBOT"
+        assert calls[0]["display_avatar_url"] == "https://cdn.example.com/bot.png"
+        assert calls[0]["metadata_json"] == '{"version":1}'
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_get_messages_history(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should expose PartyFlow Bot Read API with documented cursors."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_get_messages(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"messages": [{"id": "msg-1"}], "has_more": False}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._get_messages",
+            _fake_get_messages,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "read_channel_history",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "limit": 25,
+                    "around_msg_index": 42,
+                    "updated_since": "2026-04-17T10:00:00.000Z",
+                    "thread_id": "thread-1",
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["messages"] == [{"id": "msg-1"}]
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "conversation_id": "conv-1",
+                "limit": 25,
+                "before_msg_index": None,
+                "after_msg_index": None,
+                "around_msg_index": 42,
+                "updated_since": "2026-04-17T10:00:00.000Z",
+                "thread_id": "thread-1",
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_get_messages_rejects_multiple_cursors(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow history action should enforce the documented single-cursor rule."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "get_messages",
+                "profile_name": "default",
+                "params": {
+                    "conversation_id": "conv-1",
+                    "before_msg_index": 10,
+                    "after_msg_index": 20,
+                },
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is False
+        assert result.error_code == "app_run_invalid"
+        assert "only one of before_msg_index" in (result.reason or "")
     finally:
         await engine.dispose()
 
@@ -1189,7 +1615,9 @@ async def test_app_run_returns_structured_validation_hint_for_telegram_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1373,7 +1801,12 @@ async def test_app_run_telegram_splits_long_send_message(
 
         async def _fake_post_send_message(**kwargs: object) -> dict[str, object]:
             calls.append(dict(kwargs))
-            return {"ok": True, "action": "send_message", "message_id": len(calls), "chat_id": "1001"}
+            return {
+                "ok": True,
+                "action": "send_message",
+                "message_id": len(calls),
+                "chat_id": "1001",
+            }
 
         monkeypatch.setattr(
             "afkbot.services.apps.telegram.actions._post_send_message",
@@ -1491,7 +1924,9 @@ async def test_telegram_media_path_defaults_to_profile_workspace(tmp_path: Path)
     assert resolved == expected
 
 
-async def test_telegram_media_path_resolves_bare_filename_from_profile_workspace(tmp_path: Path) -> None:
+async def test_telegram_media_path_resolves_bare_filename_from_profile_workspace(
+    tmp_path: Path,
+) -> None:
     """Telegram media helper should resolve bare filenames from the profile workspace root."""
 
     settings = Settings(root_dir=tmp_path)
@@ -1537,7 +1972,9 @@ async def test_telegram_media_path_reports_missing_file(tmp_path: Path) -> None:
         )
 
 
-async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(tmp_path: Path) -> None:
+async def test_telegram_media_path_treats_slashed_file_id_as_remote_reference(
+    tmp_path: Path,
+) -> None:
     """Telegram media helper should not mistake opaque file ids for local workspace paths."""
 
     settings = Settings(root_dir=tmp_path)
@@ -1771,7 +2208,9 @@ async def test_app_run_telegram_returns_structured_validation_hint_for_ban_param
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1804,7 +2243,9 @@ async def test_app_run_returns_structured_validation_hint_for_smtp_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
@@ -1837,7 +2278,9 @@ async def test_app_run_returns_structured_validation_hint_for_imap_params(
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
-        result = await app_tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), params)
+        result = await app_tool.execute(
+            ToolContext(profile_id="default", session_id="s", run_id=1), params
+        )
 
         assert result.ok is False
         assert result.error_code == "app_run_invalid"

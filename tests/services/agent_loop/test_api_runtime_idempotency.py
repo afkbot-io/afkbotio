@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from afkbot.db.session import session_scope
 from afkbot.models.chat_turn_idempotency import ChatTurnIdempotencyClaim
@@ -60,6 +61,37 @@ async def _create_result_with_run(
         profile_id=profile_id,
         session_id=session_id,
         envelope=ActionEnvelope(action="finalize", message=message),
+    )
+
+
+async def _wait_for_claim_heartbeat(
+    *,
+    factory,
+    profile_id: str,
+    session_id: str,
+    client_msg_id: str,
+    timeout_sec: float = 1.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    while asyncio.get_running_loop().time() < deadline:
+        async with session_scope(factory) as session:
+            claim = (
+                await session.execute(
+                    select(ChatTurnIdempotencyClaim)
+                    .where(
+                        ChatTurnIdempotencyClaim.profile_id == profile_id,
+                        ChatTurnIdempotencyClaim.session_id == session_id,
+                        ChatTurnIdempotencyClaim.client_msg_id == client_msg_id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if claim is not None and claim.updated_at > claim.created_at:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        "Timed out waiting for idempotency heartbeat "
+        f"for {profile_id}/{session_id}/{client_msg_id}"
     )
 
 
@@ -458,7 +490,12 @@ async def test_run_chat_turn_does_not_reclaim_live_claim_with_heartbeat(
         )
     )
     await entered.wait()
-    await asyncio.sleep(0.03)
+    await _wait_for_claim_heartbeat(
+        factory=factory,
+        profile_id="default",
+        session_id="api-s",
+        client_msg_id="msg-heartbeat",
+    )
     second_task = asyncio.create_task(
         run_chat_turn(
             message="hello",

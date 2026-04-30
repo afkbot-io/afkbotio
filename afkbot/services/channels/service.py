@@ -48,6 +48,35 @@ _LOGGER = logging.getLogger(__name__)
 _TELEGRAM_ACTION_TIMEOUT_PREFIX = "Telegram action timed out after "
 
 
+def _split_plain_text(*, text: str, limit: int) -> tuple[str, ...]:
+    """Split plain text into bounded chunks without transport-specific formatting rules."""
+
+    if len(text) <= limit:
+        return (text,)
+
+    normalized = text.strip()
+    if not normalized:
+        return ("",)
+
+    chunks: list[str] = []
+    remaining = normalized
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at <= 0:
+            split_at = remaining.rfind(" ", 0, limit + 1)
+        if split_at <= 0:
+            split_at = limit
+        chunk = remaining[:split_at].rstrip()
+        if not chunk:
+            chunk = remaining[:limit]
+            split_at = len(chunk)
+        chunks.append(chunk)
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return tuple(chunks)
+
+
 class ChannelDeliveryService:
     """Deliver finalized output to explicit external channel targets."""
 
@@ -239,6 +268,15 @@ class ChannelDeliveryService:
                 )
                 payloads.append(result.payload)
             return payloads
+        if target.transport == "partyflow":
+            return await self._deliver_message_via_partyflow(
+                profile_id=profile_id,
+                session_id=session_id,
+                run_id=run_id,
+                target=target,
+                message=message,
+                credential_profile_key=credential_profile_key,
+            )
         if message.attachments:
             raise ChannelDeliveryServiceError(
                 error_code="channel_delivery_media_not_supported",
@@ -325,6 +363,55 @@ class ChannelDeliveryService:
                         },
                     )
                 payloads.append(result.payload)
+        return payloads
+
+    async def _deliver_message_via_partyflow(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        run_id: int,
+        target: ResolvedDeliveryTarget,
+        message: ChannelOutboundMessage,
+        credential_profile_key: str | None,
+    ) -> list[dict[str, object]]:
+        if message.attachments:
+            raise ChannelDeliveryServiceError(
+                error_code="channel_delivery_media_not_supported",
+                reason="PartyFlow channel delivery supports text messages only.",
+                metadata={"target": target.to_payload()},
+            )
+        if (
+            message.parse_mode is not None
+            or message.reply_markup is not None
+            or message.stream_draft
+            or message.disable_web_page_preview
+        ):
+            raise ChannelDeliveryServiceError(
+                error_code="channel_delivery_feature_not_supported",
+                reason="PartyFlow channel.send supports plain text and thread_id only.",
+                metadata={"target": target.to_payload()},
+            )
+        payloads: list[dict[str, object]] = []
+        for chunk in self._split_message_for_transport(
+            transport=target.transport,
+            text=message.text,
+        ):
+            result = await self._deliver_via_partyflow(
+                profile_id=profile_id,
+                session_id=session_id,
+                run_id=run_id,
+                target=target,
+                text=chunk,
+                credential_profile_key=credential_profile_key,
+            )
+            if not result.ok:
+                raise ChannelDeliveryServiceError(
+                    error_code=result.error_code or "channel_delivery_failed",
+                    reason=result.reason or "Channel delivery failed",
+                    metadata={"target": target.to_payload(), **result.metadata},
+                )
+            payloads.append(result.payload)
         return payloads
 
     async def _deliver_telegram_text_chunk(
@@ -519,6 +606,15 @@ class ChannelDeliveryService:
                 target=target,
                 text=text,
             )
+        if target.transport == "partyflow":
+            return await self._deliver_via_partyflow(
+                profile_id=profile_id,
+                session_id=session_id,
+                run_id=run_id,
+                target=target,
+                text=text,
+                credential_profile_key=credential_profile_key,
+            )
         return await self._deliver_via_smtp(
             profile_id=profile_id,
             session_id=session_id,
@@ -672,6 +768,33 @@ class ChannelDeliveryService:
             },
         )
 
+    async def _deliver_via_partyflow(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        run_id: int,
+        target: ResolvedDeliveryTarget,
+        text: str,
+        credential_profile_key: str | None,
+    ) -> ToolResult:
+        return await self._app_runtime.run(
+            app="partyflow",
+            action="send_message",
+            ctx=build_app_runtime_context(
+                settings=self._settings,
+                profile_id=profile_id,
+                session_id=session_id,
+                run_id=run_id,
+                credential_profile_key=credential_profile_key,
+            ),
+            params={
+                "conversation_id": target.peer_id,
+                "content": text,
+                "thread_id": target.thread_id,
+            },
+        )
+
     def _record_delivery_event(
         self,
         *,
@@ -695,15 +818,13 @@ class ChannelDeliveryService:
     ) -> dict[str, str]:
         candidate = metadata.get("target")
         if isinstance(candidate, dict):
-            return {
-                str(key): str(value)
-                for key, value in candidate.items()
-                if value is not None
-            }
+            return {str(key): str(value) for key, value in candidate.items() if value is not None}
         return target.model_dump(exclude_none=True)
 
     @staticmethod
     def _split_message_for_transport(*, transport: str, text: str) -> tuple[str, ...]:
+        if transport == "partyflow":
+            return _split_plain_text(text=text, limit=4000)
         if transport not in {"telegram", "telegram_user"}:
             return (text,)
         return split_telegram_text(text)

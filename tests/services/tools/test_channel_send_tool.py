@@ -13,6 +13,8 @@ from afkbot.services.channels import (
 )
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,
+    ChannelEndpointConfig,
+    PartyFlowWebhookEndpointConfig,
     TelegramPollingEndpointConfig,
 )
 from afkbot.services.channels.endpoint_service import ChannelEndpointServiceError
@@ -73,12 +75,12 @@ class _FakeDeliveryService:
 class _FakeEndpointService:
     def __init__(
         self,
-        endpoint: TelegramPollingEndpointConfig | None = None,
-        endpoints: list[TelegramPollingEndpointConfig] | None = None,
+        endpoint: ChannelEndpointConfig | None = None,
+        endpoints: list[ChannelEndpointConfig] | None = None,
     ) -> None:
         self.endpoints = list(endpoints or ([] if endpoint is None else [endpoint]))
 
-    async def get(self, *, endpoint_id: str) -> TelegramPollingEndpointConfig:
+    async def get(self, *, endpoint_id: str) -> ChannelEndpointConfig:
         for endpoint in self.endpoints:
             if endpoint.endpoint_id == endpoint_id:
                 return endpoint
@@ -93,7 +95,7 @@ class _FakeEndpointService:
         transport: str | None = None,
         enabled: bool | None = None,
         profile_id: str | None = None,
-    ) -> list[TelegramPollingEndpointConfig]:
+    ) -> list[ChannelEndpointConfig]:
         endpoints = self.endpoints
         if transport is not None:
             endpoints = [item for item in endpoints if item.transport == transport]
@@ -143,11 +145,56 @@ async def test_channel_send_tool_delivers_text_to_explicit_telegram_target(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_channel_send_tool_delivers_text_to_partyflow_target(tmp_path: Path) -> None:
+    """channel.send should support plain-text PartyFlow outbound delivery."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = PartyFlowWebhookEndpointConfig(
+        endpoint_id="partyflow-main",
+        profile_id="default",
+        credential_profile_key="partyflow-main",
+        account_id="partyflow-bot",
+        access_policy=ChannelAccessPolicy(outbound_allow_to=("conv-1",)),
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_pf.db'}"
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=7)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="partyflow",
+            endpoint_id="partyflow-main",
+            chat_id="conv-1",
+            thread_id="thread-1",
+            text="hello partyflow",
+        ),
+    )
+
+    assert result.ok is True
+    assert delivery.calls[0]["text"] == "hello partyflow"
+    assert delivery.calls[0]["credential_profile_key"] == "partyflow-main"
+    assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
+        "transport": "partyflow",
+        "account_id": "partyflow-bot",
+        "peer_id": "conv-1",
+        "thread_id": "thread-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_channel_send_tool_requires_payload(tmp_path: Path) -> None:
     """channel.send should fail clearly when no text or attachment payload is provided."""
 
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_empty.db'}")
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_empty.db'}"
+        )
     )
     ctx = ToolContext(profile_id="default", session_id="main", run_id=8)
 
@@ -173,7 +220,9 @@ async def test_channel_send_tool_enforces_endpoint_outbound_allowlist(tmp_path: 
         access_policy=ChannelAccessPolicy(outbound_allow_to=("12345",)),
     )
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_policy.db'}"),
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_policy.db'}"
+        ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
     )
@@ -207,7 +256,9 @@ async def test_channel_send_tool_uses_binding_endpoint_for_allowlist(tmp_path: P
         access_policy=ChannelAccessPolicy(outbound_allow_to=("12345",)),
     )
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_binding.db'}"),
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_binding.db'}"
+        ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
     )
@@ -251,7 +302,10 @@ async def test_channel_send_tool_fails_closed_when_endpoint_is_ambiguous(tmp_pat
         ),
     ]
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_ambiguous.db'}"),
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_ambiguous.db'}",
+        ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(endpoints=endpoints),  # type: ignore[arg-type]
     )
@@ -273,7 +327,9 @@ async def test_channel_send_tool_rejects_smtp_transport(tmp_path: Path) -> None:
 
     delivery = _FakeDeliveryService()
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_smtp.db'}"),
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_smtp.db'}"
+        ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(),  # type: ignore[arg-type]
     )
@@ -301,7 +357,9 @@ async def test_channel_send_tool_delivers_media_buttons_and_markdown(tmp_path: P
         account_id="bot-main",
     )
     tool = ChannelSendTool(
-        Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_rich.db'}"),
+        Settings(
+            root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_rich.db'}"
+        ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
     )

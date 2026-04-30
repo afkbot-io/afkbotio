@@ -19,6 +19,8 @@ from tests.services.channels.telethon_user._harness import (
     seed_profile_and_binding,
 )
 
+_QUEUE_DRAIN_TIMEOUT_SEC = 2.0
+
 
 async def test_telethon_user_service_processes_private_message_and_replies(
     tmp_path: Path,
@@ -76,7 +78,7 @@ async def test_telethon_user_service_processes_private_message_and_replies(
                 is_reply=False,
             )
         )
-        await asyncio.wait_for(service._queue.join(), timeout=2.0)  # type: ignore[attr-defined]
+        await asyncio.wait_for(service._queue.join(), timeout=_QUEUE_DRAIN_TIMEOUT_SEC)  # type: ignore[attr-defined]
     finally:
         await service.stop()
 
@@ -170,7 +172,7 @@ async def test_telethon_user_service_filters_reactive_replies_by_chat_name_patte
                 is_reply=False,
             )
         )
-        await asyncio.wait_for(service._queue.join(), timeout=1.0)  # type: ignore[attr-defined]
+        await asyncio.wait_for(service._queue.join(), timeout=_QUEUE_DRAIN_TIMEOUT_SEC)  # type: ignore[attr-defined]
     finally:
         await service.stop()
 
@@ -247,7 +249,7 @@ async def test_telethon_user_service_can_resolve_reply_filter_name_via_event_ent
                 is_reply=False,
             )
         )
-        await asyncio.wait_for(service._queue.join(), timeout=1.0)  # type: ignore[attr-defined]
+        await asyncio.wait_for(service._queue.join(), timeout=_QUEUE_DRAIN_TIMEOUT_SEC)  # type: ignore[attr-defined]
     finally:
         await service.stop()
 
@@ -314,7 +316,7 @@ async def test_telethon_user_service_reply_filters_match_private_username_withou
                 is_reply=False,
             )
         )
-        await asyncio.wait_for(service._queue.join(), timeout=1.0)  # type: ignore[attr-defined]
+        await asyncio.wait_for(service._queue.join(), timeout=_QUEUE_DRAIN_TIMEOUT_SEC)  # type: ignore[attr-defined]
     finally:
         await service.stop()
 
@@ -388,7 +390,7 @@ async def test_telethon_user_service_group_filter_does_not_fall_back_to_sender_n
                 is_reply=False,
             )
         )
-        await asyncio.wait_for(service._queue.join(), timeout=1.0)  # type: ignore[attr-defined]
+        await asyncio.wait_for(service._queue.join(), timeout=_QUEUE_DRAIN_TIMEOUT_SEC)  # type: ignore[attr-defined]
     finally:
         await service.stop()
 

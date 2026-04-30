@@ -23,7 +23,7 @@ from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.settings import Settings
 
-_SUPPORTED_CHANNEL_SEND_TRANSPORTS = {"telegram", "telegram_user"}
+_SUPPORTED_CHANNEL_SEND_TRANSPORTS = {"telegram", "telegram_user", "partyflow"}
 
 
 class ChannelSendParams(ToolParameters):
@@ -51,7 +51,11 @@ class ChannelSendParams(ToolParameters):
     def _normalize_aliases(self) -> "ChannelSendParams":
         transport = self.transport.strip().lower()
         self.transport = transport
-        if self.peer_id is None and self.chat_id is not None and transport in {"telegram", "telegram_user"}:
+        if (
+            self.peer_id is None
+            and self.chat_id is not None
+            and transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS
+        ):
             self.peer_id = self.chat_id
         return self
 
@@ -61,11 +65,12 @@ class ChannelSendTool(ToolBase):
 
     name = "channel.send"
     description = (
-        "Send a Telegram channel message, optionally with Markdown/HTML parse_mode, "
+        "Send a Telegram or PartyFlow channel message. Telegram supports optional Markdown/HTML parse_mode, "
         "inline/reply keyboards in reply_markup, media attachments, or Bot API draft streaming. "
-        "Use transport=telegram for Bot API channels and transport=telegram_user for Telethon userbot channels. "
-        "Telegram targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id unless endpoint_id/binding_id supplies it. "
-        "Optional thread_id targets forum topics. Optional credential_profile_key selects the sender credential profile."
+        "PartyFlow supports plain text plus optional thread_id. Use transport=telegram for Bot API channels, "
+        "transport=telegram_user for Telethon userbot channels, and transport=partyflow for PartyFlow bot channels. "
+        "Targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id unless endpoint_id/binding_id supplies it. "
+        "Optional credential_profile_key selects the sender credential profile."
     )
     parameters_model = ChannelSendParams
 
@@ -81,14 +86,18 @@ class ChannelSendTool(ToolBase):
         self._endpoint_service = endpoint_service or get_channel_endpoint_service(settings)
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, ChannelSendParams) else ChannelSendParams.model_validate(params.model_dump())
+        payload = (
+            params
+            if isinstance(params, ChannelSendParams)
+            else ChannelSendParams.model_validate(params.model_dump())
+        )
         scope_error = self._ensure_profile_scope(ctx=ctx, payload=payload)
         if scope_error is not None:
             return scope_error
         if payload.transport not in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
             return ToolResult.error(
                 error_code="channel_send_transport_not_supported",
-                reason="channel.send supports only telegram and telegram_user transports.",
+                reason="channel.send supports only telegram, telegram_user, and partyflow transports.",
                 metadata={"transport": payload.transport},
             )
         try:
@@ -194,7 +203,9 @@ class ChannelSendTool(ToolBase):
         payload: ChannelSendParams,
         target: ChannelDeliveryTarget,
     ) -> ChannelEndpointConfig | ToolResult:
-        endpoint_id = payload.endpoint_id or await self._endpoint_id_from_binding_id(payload.binding_id)
+        endpoint_id = payload.endpoint_id or await self._endpoint_id_from_binding_id(
+            payload.binding_id
+        )
         if endpoint_id is not None:
             try:
                 endpoint = await self._endpoint_service.get(endpoint_id=endpoint_id)

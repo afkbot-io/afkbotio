@@ -55,3 +55,27 @@ def test_access_policy_bindings_keep_open_groups_with_private_allowlist() -> Non
         ("owner-bot:dm:12345", "12345", "12345"),
         ("owner-bot", None, None),
     ]
+
+
+def test_access_policy_bindings_use_sender_only_private_partyflow_rules() -> None:
+    """PartyFlow DM conversation ids are not guaranteed to equal user ids."""
+
+    rules = build_access_policy_binding_rules(
+        endpoint_id="partyflow-main",
+        transport="partyflow",
+        profile_id="default",
+        session_policy="per-chat",
+        priority=0,
+        enabled=True,
+        account_id="partyflow-bot",
+        prompt_overlay=None,
+        access_policy=ChannelAccessPolicy(
+            private_policy="allowlist",
+            allow_from=("user-1",),
+            group_policy="disabled",
+        ),
+    )
+
+    assert [(item.binding_id, item.peer_id, item.user_id) for item in rules] == [
+        ("partyflow-main:dm:user-1", None, "user-1"),
+    ]

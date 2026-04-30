@@ -12,6 +12,7 @@ _USER_FACING_TRANSPORTS = frozenset(
         "slack",
         "smtp",
         "email",
+        "partyflow",
     }
 )
 

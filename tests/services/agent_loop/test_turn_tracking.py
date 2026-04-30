@@ -22,6 +22,33 @@ from afkbot.services.tools.registry import ToolRegistry
 from tests.services.agent_loop._loop_harness import SlowTool, create_test_db
 
 
+async def _wait_for_run_started(
+    factory,
+    *,
+    profile_id: str,
+    session_id: str,
+    timeout_sec: float = 2.0,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_sec
+    while asyncio.get_running_loop().time() < deadline:
+        async with session_scope(factory) as session:
+            run = (
+                await session.execute(
+                    select(Run)
+                    .where(
+                        Run.profile_id == profile_id,
+                        Run.session_id == session_id,
+                    )
+                    .order_by(Run.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if run is not None:
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"Timed out waiting for run start: {profile_id}/{session_id}")
+
+
 async def test_cancelling_orchestrated_turn_marks_run_cancelled(tmp_path: Path) -> None:
     """Cancelling the outer session turn task should cancel AgentLoop and finalize the run."""
 
@@ -49,7 +76,11 @@ async def test_cancelling_orchestrated_turn_marks_run_cancelled(tmp_path: Path) 
             planned_tool_calls=[ToolCall(name="debug.slow", params={})],
         )
     )
-    await asyncio.sleep(0.1)
+    await _wait_for_run_started(
+        factory,
+        profile_id="default",
+        session_id="s-orchestrated-cancel",
+    )
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -99,16 +130,16 @@ async def test_cancel_request_marks_orchestrated_run_cancelled(tmp_path: Path) -
             ],
         )
     )
-    cancelled = False
-    for _ in range(20):
-        await asyncio.sleep(0.05)
-        async with session_scope(factory) as cancel_session:
-            cancelled = await RunRepository(cancel_session).request_cancel(
-                profile_id="default",
-                session_id="s-cross-cancel",
-            )
-        if cancelled:
-            break
+    await _wait_for_run_started(
+        factory,
+        profile_id="default",
+        session_id="s-cross-cancel",
+    )
+    async with session_scope(factory) as cancel_session:
+        cancelled = await RunRepository(cancel_session).request_cancel(
+            profile_id="default",
+            session_id="s-cross-cancel",
+        )
     assert cancelled is True
 
     with pytest.raises(asyncio.CancelledError):
