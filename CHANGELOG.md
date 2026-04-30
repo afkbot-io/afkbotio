@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-04-30
+
+### Added
+
+- PartyFlow webhook channels are now available through `afk channel partyflow`,
+  with bilingual setup/update/show flows, copyable webhook URLs, readiness
+  probes, trigger modes, batching, and private/group/outbound access controls.
+- PartyFlow Bot REST operations are exposed through `app.run`, including bot
+  identity lookup, conversation join, message send, and channel history reads.
+- Agent loops can now send plain-text outbound PartyFlow channel messages
+  through `channel.send`, with outbound allowlist enforcement and long-message
+  splitting.
+
+### Changed
+
+- Channel access-policy binding generation now supports PartyFlow-specific
+  sender and conversation rules while preserving the shared Telegram channel
+  policy model.
+
+### Fixed
+
+- PartyFlow webhook ingress now verifies raw-body signatures, requires delivery
+  identifiers for idempotency, ignores unsupported update events, maps disabled
+  endpoints to non-retry responses, and applies channel policy to webhook
+  payloads that omit `conversation_type`.
+- Release metadata and lockfile package metadata are aligned to `1.6.0`.
+
 ## [1.5.4] - 2026-04-29
 
 ### Added
