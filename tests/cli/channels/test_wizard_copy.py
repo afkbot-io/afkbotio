@@ -2,6 +2,7 @@
 
 from pytest import MonkeyPatch
 
+from afkbot.cli.commands import channel_credentials_support
 from afkbot.cli.commands import channel_shared
 from afkbot.cli.commands.channel_prompt_support import _channel_choice_label
 from afkbot.cli.commands.channel_shared import collect_channel_access_policy_inputs
@@ -80,3 +81,40 @@ def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(
     assert access.outbound_allow_to == ("12345",)
     assert bool_prompts == ["Restrict channel.send outbound targets?"]
     assert text_prompts == ["Allowed outbound chat/user ids"]
+
+
+def test_partyflow_credentials_wizard_marks_signing_secret_optional(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow setup copy should make the final webhook security check optional."""
+
+    secret_prompts: list[dict[str, object]] = []
+
+    def _fake_secret(**kwargs: object) -> str | None:
+        secret_prompts.append(dict(kwargs))
+        return "fri_bot_test" if kwargs["prompt_en"] == "PartyFlow bot token" else None
+
+    monkeypatch.setattr(
+        channel_credentials_support,
+        "existing_channel_credential_names",
+        lambda **_kwargs: set(),
+    )
+    monkeypatch.setattr(channel_credentials_support, "resolve_channel_secret", _fake_secret)
+    monkeypatch.setattr(channel_credentials_support, "_upsert_app_secret", lambda **_kwargs: None)
+    monkeypatch.setattr(channel_credentials_support.typer, "echo", lambda *_args, **_kwargs: None)
+
+    updated = channel_credentials_support.configure_partyflow_channel_credentials(
+        settings=object(),  # type: ignore[arg-type]
+        profile_id="default",
+        credential_profile_key="ops-partyflow",
+        interactive=True,
+        lang=PromptLanguage.RU,
+    )
+
+    signing_prompt = next(
+        item for item in secret_prompts if item["prompt_en"] == "PartyFlow webhook signing secret"
+    )
+    assert updated is True
+    assert signing_prompt["required"] is False
+    assert "leave this blank to skip signature validation" in str(signing_prompt["detail_en"])
+    assert "оставьте поле пустым" in str(signing_prompt["detail_ru"])

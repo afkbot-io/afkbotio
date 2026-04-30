@@ -81,7 +81,8 @@ Workflow:
 2. Check required credentials in the selected profile.
 3. Missing credentials:
    - call `credentials.request` without `value` to trigger secure input recovery;
-   - collect the missing token or signing secret securely;
+   - collect the missing bot token securely;
+   - collect the webhook signing secret only when the operator wants signature validation enabled.
    - continue the original task after the credential is stored.
 4. Use `get_me` to confirm bot identity when you need to verify the integration.
 5. Use `send_message` for outbound delivery; it will try to join a group/team conversation automatically after a `403` if the bot is not yet a member.

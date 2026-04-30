@@ -518,6 +518,21 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             msg(
                 prompt_language,
                 en=(
+                    "- webhook signature validation runs only when "
+                    "`partyflow_webhook_signing_secret` is configured; if you left it blank, "
+                    "AFKBOT accepts PartyFlow deliveries without signature validation."
+                ),
+                ru=(
+                    "- проверка подписи webhook работает только если настроен "
+                    "`partyflow_webhook_signing_secret`; если поле оставлено пустым, AFKBOT "
+                    "принимает доставки PartyFlow без проверки подписи."
+                ),
+            )
+        )
+        typer.echo(
+            msg(
+                prompt_language,
+                en=(
                     "- before enabling the subscription in PartyFlow, verify credentials with "
                     f"`afk channel partyflow status {saved.endpoint_id} --probe`."
                 ),
@@ -1341,14 +1356,16 @@ async def _partyflow_status_row(
         "webhook_url_reason": webhook_reason,
         "bot_token_configured": token_status["configured"],
         "signing_secret_configured": signing_status["configured"],
+        "signature_validation": "enabled" if signing_status["configured"] else "disabled",
         "binding_count": binding_count,
     }
     if token_status["configured"] is False:
         row["ok"] = False
         row["bot_token_error"] = token_status["reason"]
     if signing_status["configured"] is False:
-        row["ok"] = False
-        row["signing_secret_error"] = signing_status["reason"]
+        row["signing_secret_notice"] = (
+            "PartyFlow signing secret is not configured; webhook signature validation is disabled."
+        )
     if webhook_url is None:
         row["ok"] = False
     if probe:
@@ -1383,17 +1400,6 @@ async def _probe_partyflow_endpoint(
     settings: Settings,
     endpoint: PartyFlowWebhookEndpointConfig,
 ) -> dict[str, object]:
-    signing_status = await _partyflow_credential_status(
-        settings=settings,
-        endpoint=endpoint,
-        credential_name=_PARTYFLOW_WEBHOOK_SIGNING_SECRET,
-    )
-    if signing_status["configured"] is False:
-        return {
-            "ok": False,
-            "error_code": "partyflow_signing_secret_missing",
-            "reason": signing_status.get("reason", "PartyFlow signing secret is not configured."),
-        }
     result = await AppRuntime(settings).run(
         app="partyflow",
         action="get_me",
@@ -1440,8 +1446,12 @@ def _render_partyflow_status_payload(payload: dict[str, object]) -> None:
             f"credential_profile={item['credential_profile_key']}, account_id={item['account_id']}, "
             f"bot_token_configured={item['bot_token_configured']}, "
             f"signing_secret_configured={item['signing_secret_configured']}, "
+            f"signature_validation={item['signature_validation']}, "
             f"webhook_url_status={item['webhook_url_status']}, binding_count={item['binding_count']}"
         )
+        signing_notice = item.get("signing_secret_notice")
+        if isinstance(signing_notice, str) and signing_notice:
+            typer.echo(f"  {signing_notice}")
         probe = item.get("probe")
         if isinstance(probe, dict):
             if probe.get("ok") is True:

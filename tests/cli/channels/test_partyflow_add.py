@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from afkbot.cli.main import app
 from afkbot.services.channel_routing import get_channel_binding_service
+from afkbot.services.credentials import get_credentials_service
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.settings import get_settings
 from tests.cli.channels._harness import _new_profile_service, _prepare_env
@@ -379,6 +380,76 @@ def test_channel_partyflow_webhook_url_command_returns_copyable_url(
     assert row["webhook_url_status"] == "ok"
     assert row["bot_token_configured"] is False
     assert row["signing_secret_configured"] is False
+    assert row["signature_validation"] == "disabled"
+    assert "signing_secret_error" not in row
+
+
+def test_channel_partyflow_status_allows_missing_optional_signing_secret(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow status should remain ok when only optional webhook signature validation is off."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+    asyncio.run(
+        get_credentials_service(settings).create(
+            profile_id="default",
+            tool_name="app.run",
+            integration_name="partyflow",
+            credential_profile_key="ops-no-signature",
+            credential_name="partyflow_bot_token",
+            secret_value="fri_bot_test",
+        )
+    )
+    monkeypatch.setenv("AFKBOT_PUBLIC_CHAT_API_URL", "https://bot.example.com")
+    get_settings.cache_clear()
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-no-signature",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-no-signature",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    status = runner.invoke(
+        app,
+        ["channel", "partyflow", "status", "ops-no-signature", "--json"],
+    )
+
+    assert status.exit_code == 0
+    row = json.loads(status.stdout)["partyflow_webhooks"][0]
+    assert row["bot_token_configured"] is True
+    assert row["signing_secret_configured"] is False
+    assert row["signature_validation"] == "disabled"
+    assert "webhook signature validation is disabled" in row["signing_secret_notice"]
 
 
 def test_channel_partyflow_show_rejects_private_hostname_suffixes(
