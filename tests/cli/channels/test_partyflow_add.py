@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
@@ -17,10 +18,9 @@ from tests.cli.channels._harness import _new_profile_service, _prepare_env
 
 def _local_partyflow_webhook_url(channel_id: str) -> str:
     settings = get_settings()
-    host = settings.runtime_host or "127.0.0.1"
-    if host in {"0.0.0.0", "::", "*"}:
-        host = "127.0.0.1"
-    return f"http://{host}:{settings.runtime_port + 1}/v1/channels/partyflow/{channel_id}/webhook"
+    return (
+        f"http://127.0.0.1:{settings.runtime_port + 1}/v1/channels/partyflow/{channel_id}/webhook"
+    )
 
 
 def test_channel_partyflow_add_persists_webhook_shape(
@@ -390,6 +390,7 @@ def test_channel_partyflow_webhook_url_command_returns_copyable_url(
     assert row["webhook_url_status"] == "ok"
     assert row["webhook_url_source"] == "public"
     assert row["webhook_url_reason"] is None
+    assert row["webhook_url_public_delivery_ready"] is True
     assert row["bot_token_configured"] is False
     assert row["signing_secret_configured"] is False
     assert row["signature_validation"] == "disabled"
@@ -455,15 +456,96 @@ def test_channel_partyflow_webhook_url_command_returns_local_url_without_public_
     assert payload["webhook_url"] == _local_partyflow_webhook_url("ops-local-webhook-url")
     assert payload["source"] == "local"
     assert payload["reason"] == "missing_public_base_url"
+    assert payload["status"] == "local_only"
+    assert payload["public_delivery_ready"] is False
+    assert "public HTTPS" in payload["warning"]
 
 
-def test_channel_partyflow_local_webhook_url_uses_loopback_for_wildcard_bind(
+def test_channel_partyflow_status_marks_local_webhook_url_not_public_delivery_ready(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Wildcard runtime binds should be rendered as a copyable loopback URL."""
+    """Status should not mark a local-only webhook URL as externally ready."""
 
-    monkeypatch.setenv("AFKBOT_RUNTIME_HOST", "0.0.0.0")
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.partyflow.ru",),
+        )
+    )
+    asyncio.run(
+        get_credentials_service(settings).create(
+            profile_id="default",
+            tool_name="app.run",
+            integration_name="partyflow",
+            credential_profile_key="ops-local-ready",
+            credential_name="partyflow_bot_token",
+            secret_value="fri_bot_test",
+        )
+    )
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-local-ready",
+            "--profile",
+            "default",
+            "--credential-profile",
+            "ops-local-ready",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    status_json = runner.invoke(
+        app,
+        ["channel", "partyflow", "status", "ops-local-ready", "--json"],
+    )
+    assert status_json.exit_code == 1
+    payload = json.loads(status_json.stdout)
+    row = payload["partyflow_webhooks"][0]
+    assert payload["ok"] is False
+    assert row["bot_token_configured"] is True
+    assert row["webhook_url"] == _local_partyflow_webhook_url("ops-local-ready")
+    assert row["webhook_url_status"] == "local_only"
+    assert row["webhook_url_source"] == "local"
+    assert row["webhook_url_public_delivery_ready"] is False
+    assert "public HTTPS" in row["webhook_url_notice"]
+
+    status_text = runner.invoke(app, ["channel", "partyflow", "status", "ops-local-ready"])
+    assert status_text.exit_code == 1
+    assert "webhook_url_status=local_only" in status_text.stdout
+    assert f"webhook_url: {_local_partyflow_webhook_url('ops-local-ready')}" in status_text.stdout
+    assert "webhook_url warning:" in status_text.stdout
+    assert "public HTTPS" in status_text.stdout
+
+
+@pytest.mark.parametrize("runtime_host", ["0.0.0.0", "::1", "192.168.1.10"])
+def test_channel_partyflow_local_webhook_url_uses_loopback_for_local_fallback(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    runtime_host: str,
+) -> None:
+    """Local fallback should always render a copyable loopback URL."""
+
+    monkeypatch.setenv("AFKBOT_RUNTIME_HOST", runtime_host)
     _prepare_env(tmp_path, monkeypatch)
     runner = CliRunner()
     settings = get_settings()
