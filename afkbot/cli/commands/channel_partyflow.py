@@ -1063,8 +1063,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         payload = {
             "channel": channel.model_dump(mode="json"),
             "webhook_url": webhook_url_resolution.url,
+            "webhook_url_status": _partyflow_webhook_url_status(webhook_url_resolution),
             "webhook_url_source": webhook_url_resolution.source,
             "webhook_url_reason": webhook_url_resolution.reason,
+            "webhook_url_public_delivery_ready": webhook_url_resolution.public_delivery_ready,
             "mutation_state": inspection.mutation_state.model_dump(mode="json"),
             "profile_ceiling": inspection.profile_ceiling.model_dump(mode="json"),
             "effective_permissions": inspection.effective_permissions.model_dump(mode="json"),
