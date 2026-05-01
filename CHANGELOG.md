@@ -4,12 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-05-01
+
 ### Changed
 
 - PartyFlow channel setup now prints a local Chat API webhook URL when no usable
   public `AFKBOT_PUBLIC_CHAT_API_URL` is configured, while still preferring a
   valid public HTTPS base URL for real PartyFlow deliveries. Status output marks
   local-only URLs as not public-delivery-ready to avoid false rollout readiness.
+
+### Fixed
+
+- Release metadata and lockfile package metadata are aligned to `1.6.2`.
 
 ## [1.6.1] - 2026-04-30
 
