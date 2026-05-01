@@ -201,10 +201,65 @@ def test_channel_partyflow_add_extends_profile_policy_for_runtime_start(
     policy = _load_profile_policy_json("partyflow")
     assert "apps" in policy["capabilities"]
     assert "app.run" in policy["allowed_tools"]
-    assert "app.list" in policy["allowed_tools"]
-    assert "channel.send" in policy["allowed_tools"]
+    assert "app.list" not in policy["allowed_tools"]
+    assert "channel.send" not in policy["allowed_tools"]
     assert "api.openai.com" in policy["network_allowlist"]
     assert "api.partyflow.ru" in policy["network_allowlist"]
+
+
+def test_channel_partyflow_add_respects_existing_policy_wildcards(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow setup should not expand already-sufficient policy wildcards."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="partyflow",
+            name="PartyFlow",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.openai.com",),
+        )
+    )
+    _set_profile_policy_json(
+        "partyflow",
+        allowed_tools=["app.*", "channel.*"],
+        network_allowlist=["partyflow.ru"],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-wildcard-policy",
+            "--profile",
+            "partyflow",
+            "--credential-profile",
+            "ops-wildcard-policy",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "- profile_policy:" not in result.stdout
+    policy = _load_profile_policy_json("partyflow")
+    assert policy["capabilities"] == ["files"]
+    assert policy["allowed_tools"] == ["app.*", "channel.*"]
+    assert policy["network_allowlist"] == ["partyflow.ru"]
 
 
 def test_channel_partyflow_add_rejects_explicit_profile_policy_denies(
@@ -312,7 +367,63 @@ def test_channel_partyflow_enable_extends_policy_for_existing_channels(
     policy = _load_profile_policy_json("partyflow")
     assert "apps" in policy["capabilities"]
     assert "app.run" in policy["allowed_tools"]
+    assert "channel.send" not in policy["allowed_tools"]
     assert "api.partyflow.ru" in policy["network_allowlist"]
+
+
+def test_channel_partyflow_add_json_reports_profile_policy_adjustment(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Machine-readable add output should include policy changes made for runtime readiness."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="partyflow",
+            name="PartyFlow",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.openai.com",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-policy-json",
+            "--profile",
+            "partyflow",
+            "--credential-profile",
+            "ops-policy-json",
+            "--no-binding",
+            "--yes",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["channel"]["endpoint_id"] == "ops-policy-json"
+    assert payload["profile_policy_adjustment"] == {
+        "changed": True,
+        "added_capabilities": ["apps"],
+        "added_tools": ["app.run"],
+        "added_network_hosts": ["api.partyflow.ru"],
+        "denied_tools": [],
+    }
 
 
 def test_channel_partyflow_add_persists_keyword_trigger_configuration(
