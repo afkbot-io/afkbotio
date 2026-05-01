@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- PartyFlow channel add, update, and enable commands now prepare the selected
+  profile policy for runtime startup by allowing required app/channel tools and
+  the PartyFlow API host, while preserving explicit deny rules as hard failures.
+
 ## [1.6.2] - 2026-05-01
 
 ### Changed

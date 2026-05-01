@@ -9,6 +9,9 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.services.channel_routing import get_channel_binding_service
 from afkbot.services.credentials import get_credentials_service
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
@@ -21,6 +24,58 @@ def _local_partyflow_webhook_url(channel_id: str) -> str:
     return (
         f"http://127.0.0.1:{settings.runtime_port + 1}/v1/channels/partyflow/{channel_id}/webhook"
     )
+
+
+def _load_profile_policy_json(profile_id: str) -> dict[str, list[str]]:
+    settings = get_settings()
+
+    async def _load() -> dict[str, list[str]]:
+        engine = create_engine(settings)
+        session_factory = create_session_factory(engine)
+        try:
+            async with session_scope(session_factory) as session:
+                row = await ProfilePolicyRepository(session).get(profile_id)
+                assert row is not None
+                return {
+                    "capabilities": json.loads(row.policy_capabilities_json),
+                    "allowed_tools": json.loads(row.allowed_tools_json),
+                    "network_allowlist": json.loads(row.network_allowlist_json),
+                }
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_load())
+
+
+def _set_profile_policy_json(
+    profile_id: str,
+    *,
+    capabilities: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
+    denied_tools: list[str] | None = None,
+    network_allowlist: list[str] | None = None,
+) -> None:
+    settings = get_settings()
+
+    async def _set() -> None:
+        engine = create_engine(settings)
+        session_factory = create_session_factory(engine)
+        try:
+            async with session_scope(session_factory) as session:
+                row = await ProfilePolicyRepository(session).get(profile_id)
+                assert row is not None
+                if capabilities is not None:
+                    row.policy_capabilities_json = json.dumps(capabilities, ensure_ascii=True)
+                if allowed_tools is not None:
+                    row.allowed_tools_json = json.dumps(allowed_tools, ensure_ascii=True)
+                if denied_tools is not None:
+                    row.denied_tools_json = json.dumps(denied_tools, ensure_ascii=True)
+                if network_allowlist is not None:
+                    row.network_allowlist_json = json.dumps(network_allowlist, ensure_ascii=True)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_set())
 
 
 def test_channel_partyflow_add_persists_webhook_shape(
@@ -97,6 +152,167 @@ def test_channel_partyflow_add_persists_webhook_shape(
         "- webhook_url: https://bot.example.com/v1/channels/partyflow/ops-partyflow/webhook"
         in shown
     )
+
+
+def test_channel_partyflow_add_extends_profile_policy_for_runtime_start(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow setup should prevent inactive runtime caused by missing profile app policy."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="partyflow",
+            name="PartyFlow",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.openai.com",),
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-policy",
+            "--profile",
+            "partyflow",
+            "--credential-profile",
+            "ops-policy",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "- profile_policy: updated for PartyFlow runtime" in result.stdout
+    policy = _load_profile_policy_json("partyflow")
+    assert "apps" in policy["capabilities"]
+    assert "app.run" in policy["allowed_tools"]
+    assert "app.list" in policy["allowed_tools"]
+    assert "channel.send" in policy["allowed_tools"]
+    assert "api.openai.com" in policy["network_allowlist"]
+    assert "api.partyflow.ru" in policy["network_allowlist"]
+
+
+def test_channel_partyflow_add_rejects_explicit_profile_policy_denies(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """PartyFlow setup must not override explicit profile deny rules."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="partyflow",
+            name="PartyFlow",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.openai.com",),
+        )
+    )
+    _set_profile_policy_json("partyflow", denied_tools=["app.run"])
+
+    result = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-denied-policy",
+            "--profile",
+            "partyflow",
+            "--credential-profile",
+            "ops-denied-policy",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "ERROR [partyflow_profile_policy_denies_runtime]" in result.stderr
+    assert "app.run" in result.stderr
+
+
+def test_channel_partyflow_enable_extends_policy_for_existing_channels(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Enabling an old PartyFlow channel should repair runtime policy before restart."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="partyflow",
+            name="PartyFlow",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("api.openai.com",),
+        )
+    )
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-enable-policy",
+            "--profile",
+            "partyflow",
+            "--credential-profile",
+            "ops-enable-policy",
+            "--disabled",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    _set_profile_policy_json(
+        "partyflow",
+        capabilities=["files"],
+        allowed_tools=["diffs.render", "file.*"],
+        network_allowlist=["api.openai.com"],
+    )
+
+    enabled = runner.invoke(app, ["channel", "partyflow", "enable", "ops-enable-policy"])
+
+    assert enabled.exit_code == 0
+    assert "- profile_policy: updated for PartyFlow runtime" in enabled.stdout
+    policy = _load_profile_policy_json("partyflow")
+    assert "apps" in policy["capabilities"]
+    assert "app.run" in policy["allowed_tools"]
+    assert "api.partyflow.ru" in policy["network_allowlist"]
 
 
 def test_channel_partyflow_add_persists_keyword_trigger_configuration(

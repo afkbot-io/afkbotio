@@ -45,6 +45,9 @@ from afkbot.cli.commands.inspection_shared import (
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg
 from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.channel_routing.contracts import SessionPolicy
@@ -85,6 +88,9 @@ _PRIVATE_HOST_SUFFIXES = (".internal", ".local", ".lan", ".home", ".localhost", 
 _PARTYFLOW_BOT_TOKEN = "partyflow_bot_token"
 _PARTYFLOW_WEBHOOK_SIGNING_SECRET = "partyflow_webhook_signing_secret"
 _PARTYFLOW_WEBHOOK_PATH_PREFIX = "/v1/channels/partyflow"
+_PARTYFLOW_API_HOST = "api.partyflow.ru"
+_PARTYFLOW_PROFILE_POLICY_CAPABILITY = "apps"
+_PARTYFLOW_PROFILE_POLICY_TOOLS = ("app.list", "app.run", "channel.send")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +106,17 @@ class PartyFlowWebhookUrlResolution:
         """Return whether PartyFlow can use this URL for external webhook delivery."""
 
         return self.source == "public"
+
+
+@dataclass(frozen=True, slots=True)
+class PartyFlowProfilePolicyAdjustment:
+    """Profile-policy changes needed for PartyFlow runtime startup."""
+
+    changed: bool = False
+    added_capabilities: tuple[str, ...] = ()
+    added_tools: tuple[str, ...] = ()
+    added_network_hosts: tuple[str, ...] = ()
+    denied_tools: tuple[str, ...] = ()
 
 
 def register_partyflow_commands(channel_app: typer.Typer) -> None:
@@ -252,6 +269,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         settings = get_settings()
+        policy_adjustment = PartyFlowProfilePolicyAdjustment()
         interactive = should_collect_channel_add_interactively(
             yes=yes,
             channel_id=channel_id,
@@ -448,6 +466,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     interactive=True,
                     lang=prompt_language,
                 )
+            policy_adjustment = _ensure_partyflow_profile_runtime_policy(
+                settings=settings,
+                profile_id=base_inputs.profile_id,
+            )
             saved = _create_partyflow_endpoint(settings=settings, endpoint=endpoint)
             binding_count = 0
             if base_inputs.create_binding:
@@ -467,7 +489,17 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
-            typer.echo(json.dumps({"channel": saved.model_dump(mode="json")}, ensure_ascii=True))
+            typer.echo(
+                json.dumps(
+                    {
+                        "channel": saved.model_dump(mode="json"),
+                        "profile_policy_adjustment": (
+                            _partyflow_profile_policy_adjustment_payload(policy_adjustment)
+                        ),
+                    },
+                    ensure_ascii=True,
+                )
+            )
             reload_install_managed_runtime_notice(settings)
             return
         webhook_url_resolution = resolve_partyflow_webhook_url_resolution(
@@ -492,6 +524,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
         if base_inputs.create_binding:
             typer.echo(f"- matching_bindings: {binding_count}")
+        _render_partyflow_profile_policy_adjustment(
+            policy_adjustment,
+            lang=prompt_language,
+        )
         typer.echo(f"- access.private_policy: {saved.access_policy.private_policy}")
         typer.echo("- access.allow_from: " + (", ".join(saved.access_policy.allow_from) or "-"))
         typer.echo(f"- access.group_policy: {saved.access_policy.group_policy}")
@@ -699,6 +735,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
     ) -> None:
         settings = get_settings()
         binding_count = 0
+        policy_adjustment = PartyFlowProfilePolicyAdjustment()
         try:
             current = _load_partyflow_endpoint(settings=settings, channel_id=channel_id)
             prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
@@ -903,6 +940,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     else None
                 ),
             )
+            policy_adjustment = _ensure_partyflow_profile_runtime_policy(
+                settings=settings,
+                profile_id=resolved_profile_id,
+            )
             saved = _update_partyflow_endpoint(
                 settings=settings,
                 endpoint=PartyFlowWebhookEndpointConfig(
@@ -963,7 +1004,17 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
-            typer.echo(json.dumps({"channel": saved.model_dump(mode="json")}, ensure_ascii=True))
+            typer.echo(
+                json.dumps(
+                    {
+                        "channel": saved.model_dump(mode="json"),
+                        "profile_policy_adjustment": (
+                            _partyflow_profile_policy_adjustment_payload(policy_adjustment)
+                        ),
+                    },
+                    ensure_ascii=True,
+                )
+            )
             reload_install_managed_runtime_notice(settings)
             return
         typer.echo(
@@ -985,6 +1036,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         )
         if saved.trigger_keywords:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
+        _render_partyflow_profile_policy_adjustment(
+            policy_adjustment,
+            lang=prompt_language,
+        )
         typer.echo(f"- access.private_policy: {saved.access_policy.private_policy}")
         typer.echo("- access.allow_from: " + (", ".join(saved.access_policy.allow_from) or "-"))
         typer.echo(f"- access.group_policy: {saved.access_policy.group_policy}")
@@ -1301,6 +1356,171 @@ def _delete_partyflow_bindings(*, settings: Settings, channel_id: str) -> bool:
         return removed
 
     return run_channel_binding_service_sync(settings, _delete_rules)
+
+
+def _ensure_partyflow_profile_runtime_policy(
+    *,
+    settings: Settings,
+    profile_id: str,
+) -> PartyFlowProfilePolicyAdjustment:
+    """Ensure the selected profile can start and probe PartyFlow runtime."""
+
+    async def _ensure() -> PartyFlowProfilePolicyAdjustment:
+        engine = create_engine(settings)
+        session_factory = create_session_factory(engine)
+        try:
+            async with session_scope(session_factory) as session:
+                row = await ProfilePolicyRepository(session).get_or_create_default(profile_id)
+                if not row.policy_enabled:
+                    return PartyFlowProfilePolicyAdjustment()
+
+                denied_tools = tuple(
+                    tool
+                    for tool in _PARTYFLOW_PROFILE_POLICY_TOOLS
+                    if _tool_rule_matches_any(
+                        tool_name=tool,
+                        rules=_load_policy_json_string_tuple(
+                            row.denied_tools_json,
+                            field_name="denied_tools_json",
+                        ),
+                    )
+                )
+                if denied_tools:
+                    raise ChannelEndpointServiceError(
+                        error_code="partyflow_profile_policy_denies_runtime",
+                        reason=(
+                            f"Profile `{profile_id}` explicitly denies PartyFlow runtime tool(s): "
+                            f"{', '.join(denied_tools)}. Remove the deny rule or choose another profile "
+                            "before enabling this PartyFlow channel."
+                        ),
+                    )
+
+                added_tools: tuple[str, ...] = ()
+                allowed_tools = _load_policy_json_string_tuple(
+                    row.allowed_tools_json,
+                    field_name="allowed_tools_json",
+                )
+                if allowed_tools:
+                    missing_tools = tuple(
+                        tool
+                        for tool in _PARTYFLOW_PROFILE_POLICY_TOOLS
+                        if tool not in allowed_tools
+                    )
+                    if missing_tools:
+                        row.allowed_tools_json = _dump_sorted_strings(
+                            (*allowed_tools, *missing_tools)
+                        )
+                        added_tools = missing_tools
+
+                added_capabilities: tuple[str, ...] = ()
+                capabilities = _load_policy_json_string_tuple(
+                    row.policy_capabilities_json,
+                    field_name="policy_capabilities_json",
+                )
+                if _PARTYFLOW_PROFILE_POLICY_CAPABILITY not in capabilities:
+                    row.policy_capabilities_json = _dump_sorted_strings(
+                        (*capabilities, _PARTYFLOW_PROFILE_POLICY_CAPABILITY)
+                    )
+                    added_capabilities = (_PARTYFLOW_PROFILE_POLICY_CAPABILITY,)
+
+                added_network_hosts: tuple[str, ...] = ()
+                network_allowlist = _load_policy_json_string_tuple(
+                    row.network_allowlist_json,
+                    field_name="network_allowlist_json",
+                )
+                if "*" not in network_allowlist and _PARTYFLOW_API_HOST not in network_allowlist:
+                    row.network_allowlist_json = _dump_sorted_strings(
+                        (*network_allowlist, _PARTYFLOW_API_HOST)
+                    )
+                    added_network_hosts = (_PARTYFLOW_API_HOST,)
+
+                if added_tools or added_capabilities or added_network_hosts:
+                    await session.flush()
+                    return PartyFlowProfilePolicyAdjustment(
+                        changed=True,
+                        added_capabilities=added_capabilities,
+                        added_tools=added_tools,
+                        added_network_hosts=added_network_hosts,
+                    )
+                return PartyFlowProfilePolicyAdjustment()
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_ensure())
+
+
+def _partyflow_profile_policy_adjustment_payload(
+    adjustment: PartyFlowProfilePolicyAdjustment,
+) -> dict[str, object]:
+    return {
+        "changed": adjustment.changed,
+        "added_capabilities": list(adjustment.added_capabilities),
+        "added_tools": list(adjustment.added_tools),
+        "added_network_hosts": list(adjustment.added_network_hosts),
+        "denied_tools": list(adjustment.denied_tools),
+    }
+
+
+def _render_partyflow_profile_policy_adjustment(
+    adjustment: PartyFlowProfilePolicyAdjustment,
+    *,
+    lang: PromptLanguage | None,
+) -> None:
+    if not adjustment.changed:
+        return
+    resolved_lang = cast(PromptLanguage, lang or "en")
+    parts: list[str] = []
+    if adjustment.added_capabilities:
+        parts.append("capabilities=" + ",".join(adjustment.added_capabilities))
+    if adjustment.added_tools:
+        parts.append("tools=" + ",".join(adjustment.added_tools))
+    if adjustment.added_network_hosts:
+        parts.append("network_hosts=" + ",".join(adjustment.added_network_hosts))
+    suffix = "; ".join(parts)
+    typer.echo(
+        msg(
+            resolved_lang,
+            en=f"- profile_policy: updated for PartyFlow runtime ({suffix})",
+            ru=f"- политика профиля: обновлена для запуска PartyFlow runtime ({suffix})",
+        )
+    )
+
+
+def _load_policy_json_string_tuple(raw: str, *, field_name: str) -> tuple[str, ...]:
+    try:
+        decoded = json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        raise ChannelEndpointServiceError(
+            error_code="partyflow_profile_policy_invalid",
+            reason=f"Profile policy field `{field_name}` must be a JSON string list.",
+        ) from exc
+    if not isinstance(decoded, list):
+        raise ChannelEndpointServiceError(
+            error_code="partyflow_profile_policy_invalid",
+            reason=f"Profile policy field `{field_name}` must be a JSON string list.",
+        )
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in decoded:
+        if not isinstance(item, str):
+            continue
+        value = item.strip().lower()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    return tuple(normalized)
+
+
+def _dump_sorted_strings(values: tuple[str, ...]) -> str:
+    return json.dumps(sorted({item.strip().lower() for item in values if item.strip()}))
+
+
+def _tool_rule_matches_any(*, tool_name: str, rules: tuple[str, ...]) -> bool:
+    return any(
+        tool_name.startswith(rule[:-1]) if rule.endswith("*") else tool_name == rule
+        for rule in rules
+    )
 
 
 async def _partyflow_status_payload(
@@ -1675,8 +1895,14 @@ def _update_partyflow_endpoint(
 
 def _set_partyflow_enabled(*, channel_id: str, enabled: bool) -> None:
     settings = get_settings()
+    policy_adjustment = PartyFlowProfilePolicyAdjustment()
     try:
         current = _load_partyflow_endpoint(settings=settings, channel_id=channel_id)
+        if enabled:
+            policy_adjustment = _ensure_partyflow_profile_runtime_policy(
+                settings=settings,
+                profile_id=current.profile_id,
+            )
         updated = run_channel_endpoint_service_sync(
             settings,
             lambda service: service.update(current.model_copy(update={"enabled": enabled})),
@@ -1692,6 +1918,7 @@ def _set_partyflow_enabled(*, channel_id: str, enabled: bool) -> None:
     except Exception as exc:
         _raise_partyflow_cli_error(exc)
     typer.echo(f"PartyFlow channel `{updated.endpoint_id}` enabled={updated.enabled}.")
+    _render_partyflow_profile_policy_adjustment(policy_adjustment, lang=None)
     reload_install_managed_runtime_notice(settings)
 
 
