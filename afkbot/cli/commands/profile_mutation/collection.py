@@ -62,6 +62,8 @@ def collect_profile_mutation_inputs(
     policy_file_access_mode: str | None,
     policy_workspace_scope: str | None,
     policy_allowed_dir: tuple[str, ...],
+    policy_shell_sandbox_mode: str | None = None,
+    policy_shell_command: tuple[str, ...] = (),
     policy_network_host: tuple[str, ...],
     llm_history_turns: int | None,
     tool_plugins: tuple[str, ...],
@@ -184,6 +186,8 @@ def collect_profile_mutation_inputs(
         policy_capability=policy_capability,
         policy_file_access_mode=policy_file_access_mode,
         policy_workspace_scope=policy_workspace_scope,
+        policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+        policy_shell_command=policy_shell_command,
         policy_network_host=policy_network_host,
     )
     policy_setup_mode = resolve_policy_setup_mode(
@@ -212,6 +216,8 @@ def collect_profile_mutation_inputs(
         policy_workspace_scope_value=policy_workspace_scope,
         policy_allowed_dir_values=policy_allowed_dir,
         policy_network_host_values=policy_network_host,
+        policy_shell_sandbox_mode_value=policy_shell_sandbox_mode,
+        policy_shell_command_values=policy_shell_command,
         allow_custom_workspace_scope=(
             str(policy_defaults.get("AFKBOT_POLICY_WORKSPACE_SCOPE", "profile_only")) == "custom"
         ),
@@ -273,6 +279,8 @@ def collect_setup_profile_inputs(
     policy_capability: tuple[str, ...],
     policy_file_access_mode: str | None,
     policy_workspace_scope: str | None,
+    policy_shell_sandbox_mode: str | None = None,
+    policy_shell_command: tuple[str, ...] = (),
     policy_network_host: tuple[str, ...],
 ) -> CollectedProfileMutationInputs:
     """Resolve the setup-facing subset of default-profile mutation inputs."""
@@ -305,6 +313,8 @@ def collect_setup_profile_inputs(
         policy_file_access_mode=policy_file_access_mode,
         policy_workspace_scope=policy_workspace_scope,
         policy_allowed_dir=(),
+        policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+        policy_shell_command=policy_shell_command,
         policy_network_host=policy_network_host,
         llm_history_turns=None,
         tool_plugins=(),

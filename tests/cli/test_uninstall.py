@@ -57,6 +57,8 @@ def test_uninstall_clears_local_state(tmp_path: Path, monkeypatch) -> None:
             policy_allowed_tools=(),
             policy_file_access_mode="read_write",
             policy_allowed_directories=(),
+            policy_shell_sandbox_mode="disabled",
+            policy_shell_allowed_commands=(),
             policy_network_mode="unrestricted",
             policy_network_allowlist=("*",),
         ),

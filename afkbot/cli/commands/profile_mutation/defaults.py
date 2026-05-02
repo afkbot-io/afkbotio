@@ -67,6 +67,8 @@ def build_policy_defaults_from_details(*, root_dir: Path, details: ProfileDetail
             profile_root=Path(details.profile_root),
             allowed_directories=details.policy.allowed_directories,
         ),
+        "AFKBOT_POLICY_SHELL_SANDBOX_MODE": details.policy.shell_sandbox_mode,
+        "AFKBOT_POLICY_SHELL_ALLOWED_COMMANDS": ",".join(details.policy.shell_allowed_commands),
         "AFKBOT_POLICY_NETWORK_ALLOWLIST": ",".join(details.policy.network_allowlist),
     }
     defaults["AFKBOT_POLICY_NETWORK_MODE"] = default_policy_network_mode(

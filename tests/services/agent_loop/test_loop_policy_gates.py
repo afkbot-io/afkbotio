@@ -14,7 +14,10 @@ from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+from afkbot.services.channels.active_context import build_active_channel_context_overrides
+from afkbot.services.channels.endpoint_contracts import PartyFlowWebhookEndpointConfig
+from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointConfig
 from afkbot.services.llm import LLMResponse, MockLLMProvider, ToolCallRequest
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolCall
@@ -711,6 +714,273 @@ async def test_channel_tool_profile_blocks_app_run_in_user_channels(tmp_path: Pa
         )
         assert result_payload["result"]["ok"] is False
         assert result_payload["result"]["error_code"] == "tool_blocked_by_channel_profile"
+
+    await engine.dispose()
+
+
+async def test_active_channel_history_tool_is_visible_in_minimal_channel(
+    tmp_path: Path,
+) -> None:
+    """Active channel tools should remain visible even when the profile allowlist is narrow."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_channel_history_tool.db"
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        policy.network_allowlist_json = '["api.partyflow.ru"]'
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        active_overrides = build_active_channel_context_overrides(
+            endpoint=PartyFlowWebhookEndpointConfig(
+                endpoint_id="partyflow-main",
+                profile_id="default",
+                credential_profile_key="partyflow-main",
+                account_id="partyflow-bot",
+            ),
+            peer_id="conv-1",
+            thread_id=None,
+            user_id="user-1",
+        )
+        assert active_overrides is not None
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            profile_id="default",
+            automation_intent=True,
+            runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}},
+            trusted_runtime_context=active_overrides.trusted_runtime_context,
+            channel_owned_tool_names=("channel.history.list",),
+        )
+        tool_names = {item.name for item in tool_surface.visible_tools}
+
+        assert "channel.history.list" in tool_names
+        assert "debug.echo" not in tool_names
+        assert "app.run" not in tool_names
+
+    await engine.dispose()
+
+
+async def test_active_channel_context_survives_agent_loop_resolution(
+    tmp_path: Path,
+) -> None:
+    """Full AgentLoop turn resolution must keep trusted active-channel grants."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_channel_history_context_resolution.db"
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        policy.network_allowlist_json = '["api.partyflow.ru"]'
+        await session.flush()
+
+        provider = MockLLMProvider([LLMResponse.final("ok")])
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+            llm_provider=provider,
+            llm_max_iterations=1,
+        )
+        active_overrides = build_active_channel_context_overrides(
+            endpoint=PartyFlowWebhookEndpointConfig(
+                endpoint_id="partyflow-main",
+                profile_id="default",
+                credential_profile_key="partyflow-main",
+                account_id="partyflow-bot",
+            ),
+            peer_id="conv-1",
+            thread_id=None,
+            user_id="user-1",
+        )
+        overrides = merge_turn_context_overrides(
+            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            active_overrides,
+        )
+
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-active-channel-resolution",
+            message="show available tools",
+            context_overrides=overrides,
+        )
+        tool_names = {tool.name for tool in provider.requests[0].available_tools}
+
+        assert "channel.history.list" in tool_names
+        assert "debug.echo" not in tool_names
+        assert "app.run" not in tool_names
+
+    await engine.dispose()
+
+
+async def test_telegram_active_channel_send_is_visible_in_minimal_channel(
+    tmp_path: Path,
+) -> None:
+    """Telegram inbound turns should keep current-channel send without app.run/files."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_telegram_channel_send.db"
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        active_overrides = build_active_channel_context_overrides(
+            endpoint=TelegramPollingEndpointConfig(
+                endpoint_id="telegram-main",
+                profile_id="default",
+                credential_profile_key="telegram-main",
+                account_id="telegram-bot",
+            ),
+            peer_id="chat-1",
+            thread_id=None,
+            user_id="user-1",
+        )
+        assert active_overrides is not None
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            profile_id="default",
+            automation_intent=True,
+            runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}},
+            trusted_runtime_context=active_overrides.trusted_runtime_context,
+            channel_owned_tool_names=active_overrides.channel_owned_tool_names,
+        )
+        tool_names = {item.name for item in tool_surface.visible_tools}
+
+        assert "channel.send" in tool_names
+        assert "debug.echo" not in tool_names
+        assert "app.run" not in tool_names
+
+    await engine.dispose()
+
+
+async def test_llm_active_channel_history_execution_receives_trusted_context(
+    tmp_path: Path,
+) -> None:
+    """LLM execution must receive trusted context for channel-owned policy approval."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_channel_history_execution_context.db"
+    )
+    provider = MockLLMProvider(
+        [
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="channel.history.list", params={"limit": 1})]
+            ),
+            LLMResponse.final("done"),
+        ]
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        policy.network_allowlist_json = '["api.partyflow.ru"]'
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+            llm_provider=provider,
+            llm_max_iterations=2,
+        )
+        active_overrides = build_active_channel_context_overrides(
+            endpoint=PartyFlowWebhookEndpointConfig(
+                endpoint_id="partyflow-main",
+                profile_id="default",
+                credential_profile_key="partyflow-main",
+                account_id="partyflow-bot",
+            ),
+            peer_id="conv-1",
+            thread_id=None,
+            user_id="user-1",
+        )
+        overrides = merge_turn_context_overrides(
+            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            active_overrides,
+        )
+
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-active-channel-history-execution",
+            message="read current PartyFlow history",
+            context_overrides=overrides,
+        )
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+
+        assert result_payload["result"]["error_code"] == "channel_endpoint_not_found"
+
+    await engine.dispose()
+
+
+async def test_active_channel_history_approval_requires_trusted_channel_context(
+    tmp_path: Path,
+) -> None:
+    """Approved channel tools should not become a generic policy allowlist bypass."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_channel_history_requires_context.db"
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        policy.network_allowlist_json = '["api.partyflow.ru"]'
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+        )
+        tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
+            policy,
+            profile_id="default",
+            automation_intent=True,
+            runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}},
+            channel_owned_tool_names=("channel.history.list", "bash.exec"),
+        )
+        tool_names = {item.name for item in tool_surface.visible_tools}
+
+        assert "channel.history.list" not in tool_names
+        assert "bash.exec" not in tool_names
 
     await engine.dispose()
 

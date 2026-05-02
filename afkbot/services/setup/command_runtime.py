@@ -29,6 +29,8 @@ from afkbot.services.llm.provider_catalog import (
 from afkbot.services.profile_runtime import provider_secret_field, run_profile_service_sync
 from afkbot.services.profile_runtime.service import reset_profile_services_async
 from afkbot.services.update_runtime import resolve_install_source_target
+from afkbot.services.wizard.profile_catalog import infer_profile_scenario_id
+from afkbot.services.wizard.preview import build_profile_configuration_preview
 from afkbot.settings import Settings, get_settings
 
 
@@ -117,6 +119,72 @@ def render_setup_success(
     )
     if not isinstance(response, dict):
         return
+    configured = response.get("configured")
+    if isinstance(configured, dict):
+        scenario = configured.get("wizard_profile_scenario")
+        file_access = configured.get("policy_file_access_mode")
+        workspace_scope = configured.get("policy_workspace_scope_mode")
+        shell_sandbox = configured.get("policy_shell_sandbox_mode")
+        capabilities = _text_tuple(configured.get("policy_capabilities"))
+        shell_commands = _text_tuple(configured.get("policy_shell_allowed_commands"))
+        network_allowlist = _text_tuple(configured.get("policy_network_allowlist"))
+        network_mode = _text(configured.get("policy_network_mode"), default="custom")
+        profile_payload = response.get("default_profile")
+        allowed_directories: tuple[str, ...] = ()
+        if isinstance(profile_payload, dict):
+            policy_payload = profile_payload.get("policy")
+            if isinstance(policy_payload, dict):
+                allowed_directories = _text_tuple(policy_payload.get("allowed_directories"))
+        credential_status = (
+            (
+                "llm_api_key_configured"
+                if configured.get("llm_api_key_configured")
+                else "llm_api_key_missing"
+            ),
+            (
+                "credentials_master_keys_configured"
+                if configured.get("credentials_master_keys_configured")
+                else "credentials_master_keys_missing"
+            ),
+        )
+        if (
+            isinstance(scenario, str)
+            and isinstance(file_access, str)
+            and isinstance(workspace_scope, str)
+            and isinstance(shell_sandbox, str)
+        ):
+            for line in build_profile_configuration_preview(
+                scenario_id=scenario,
+                capabilities=capabilities,
+                file_access_mode=file_access,
+                workspace_scope_mode=workspace_scope,
+                allowed_directories=allowed_directories,
+                shell_sandbox_mode=shell_sandbox,
+                shell_allowed_commands=shell_commands,
+                network_mode=network_mode,
+                network_allowlist=network_allowlist,
+                credential_status=credential_status,
+                lang=prompt_language,
+            ).lines:
+                echo(line)
+        if isinstance(scenario, str) and scenario.strip():
+            echo(
+                msg(
+                    prompt_language,
+                    en=f"Profile wizard scenario: {scenario}",
+                    ru=f"Сценарий мастера профиля: {scenario}",
+                )
+            )
+        if isinstance(file_access, str) and isinstance(workspace_scope, str):
+            echo(
+                msg(
+                    prompt_language,
+                    en=f"File boundary: {file_access}, scope={workspace_scope}",
+                    ru=f"Граница файлов: {file_access}, область={workspace_scope}",
+                )
+            )
+        if isinstance(shell_sandbox, str):
+            echo(f"Shell sandbox: {shell_sandbox}")
 
     public_runtime_url = response.get("public_runtime_url")
     public_chat_api_url = response.get("public_chat_api_url")
@@ -153,6 +221,18 @@ def render_setup_success(
                 ru=f"Конфигурация nginx: {nginx_config_path}",
             )
         )
+
+
+def _text(value: object, *, default: str = "") -> str:
+    if isinstance(value, str):
+        return value
+    return default
+
+
+def _text_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(str(item) for item in value if str(item).strip())
 
 
 def _seed_platform_runtime(*, settings: Settings, config: SetupConfig) -> dict[str, object]:
@@ -222,6 +302,8 @@ def _finalize_setup_runtime(
                 policy_capabilities=config.policy_capabilities,
                 policy_file_access_mode=config.policy_file_access_mode,
                 policy_allowed_directories=config.policy_allowed_directories,
+                policy_shell_sandbox_mode=config.policy_shell_sandbox_mode,
+                policy_shell_allowed_commands=config.policy_shell_allowed_commands,
                 policy_network_allowlist=config.policy_network_allowlist,
             ),
         )
@@ -252,8 +334,20 @@ def _finalize_setup_runtime(
                 policy_allowed_tools=(),
                 policy_file_access_mode=config.policy_file_access_mode,
                 policy_allowed_directories=profile.policy.allowed_directories,
+                policy_shell_sandbox_mode=profile.policy.shell_sandbox_mode,
+                policy_shell_allowed_commands=profile.policy.shell_allowed_commands,
                 policy_network_mode=config.policy_network_mode,
                 policy_network_allowlist=profile.policy.network_allowlist,
+                policy_workspace_scope_mode=config.policy_workspace_scope_mode,
+                wizard_profile_scenario=infer_profile_scenario_id(
+                    capabilities=profile.policy.capabilities,
+                    file_access_mode=config.policy_file_access_mode,
+                    workspace_scope_mode=config.policy_workspace_scope_mode,
+                    shell_sandbox_mode=profile.policy.shell_sandbox_mode,
+                    shell_allowed_commands=profile.policy.shell_allowed_commands,
+                    network_mode=config.policy_network_mode,
+                    network_allowlist=profile.policy.network_allowlist,
+                ),
             ),
         )
 
@@ -325,6 +419,8 @@ def _build_runtime_config_payload(
             "policy_file_access_mode": config.policy_file_access_mode,
             "policy_workspace_scope": config.policy_workspace_scope_mode,
             "policy_allowed_directories": list(config.policy_allowed_directories),
+            "policy_shell_sandbox_mode": config.policy_shell_sandbox_mode,
+            "policy_shell_allowed_commands": list(config.policy_shell_allowed_commands),
             "policy_network_mode": config.policy_network_mode,
             "policy_network_allowlist": list(config.policy_network_allowlist),
             "update_notices_enabled": config.update_notices_enabled,
@@ -385,6 +481,15 @@ def _build_setup_response(
     runtime_config: dict[str, object],
     profile: dict[str, object],
 ) -> dict[str, object]:
+    wizard_profile_scenario = infer_profile_scenario_id(
+        capabilities=config.policy_capabilities,
+        file_access_mode=config.policy_file_access_mode,
+        workspace_scope_mode=config.policy_workspace_scope_mode,
+        shell_sandbox_mode=config.policy_shell_sandbox_mode,
+        shell_allowed_commands=config.policy_shell_allowed_commands,
+        network_mode=config.policy_network_mode,
+        network_allowlist=config.policy_network_allowlist,
+    )
     return {
         "ok": True,
         "error_code": None,
@@ -405,8 +510,12 @@ def _build_setup_response(
             "policy_preset": config.policy_preset,
             "policy_capabilities": list(config.policy_capabilities),
             "policy_file_access_mode": config.policy_file_access_mode,
+            "policy_workspace_scope_mode": config.policy_workspace_scope_mode,
+            "policy_shell_sandbox_mode": config.policy_shell_sandbox_mode,
+            "policy_shell_allowed_commands": list(config.policy_shell_allowed_commands),
             "policy_network_mode": config.policy_network_mode,
             "policy_network_allowlist": list(config.policy_network_allowlist),
+            "wizard_profile_scenario": wizard_profile_scenario,
         },
         "default_profile": profile,
     }

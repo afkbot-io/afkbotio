@@ -77,6 +77,8 @@ class SetupConfig:
     policy_file_access_mode: str
     policy_workspace_scope_mode: str
     policy_allowed_directories: tuple[str, ...]
+    policy_shell_sandbox_mode: str
+    policy_shell_allowed_commands: tuple[str, ...]
     policy_network_mode: str
     policy_network_allowlist: tuple[str, ...]
     default_profile_runtime_config: ProfileRuntimeConfig

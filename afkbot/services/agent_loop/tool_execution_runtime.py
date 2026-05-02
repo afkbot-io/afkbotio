@@ -15,6 +15,10 @@ from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 from afkbot.services.agent_loop.tool_invocation_gates import ToolInvocationGuards
+from afkbot.services.channels.active_context import (
+    filter_channel_owned_approved_tool_names,
+    filter_generic_approved_tool_names,
+)
 from afkbot.services.error_logging import log_exception, redact_log_text
 from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.tools.base import ToolCall, ToolContext, ToolResult
@@ -98,6 +102,7 @@ class ToolExecutionRuntime:
         trusted_runtime_context: dict[str, object] | None = None,
         allowed_tool_names: set[str] | None = None,
         approved_tool_names: set[str] | None = None,
+        channel_owned_tool_names: set[str] | None = None,
         approval_required_tool_names: set[str] | None = None,
     ) -> list[ToolResult]:
         """Execute tool calls with sequential guards and bounded safe fan-out."""
@@ -110,6 +115,11 @@ class ToolExecutionRuntime:
             runtime_metadata=runtime_metadata,
             trusted_runtime_context=trusted_runtime_context,
         )
+        effective_approved_tool_names = filter_generic_approved_tool_names(approved_tool_names)
+        effective_approved_tool_names.update(filter_channel_owned_approved_tool_names(
+            trusted_runtime_context=trusted_runtime_context,
+            approved_tool_names=channel_owned_tool_names,
+        ))
         results: list[ToolResult] = []
         explicit_skills = {
             name.strip() for name in (explicit_skill_requests or set()) if name.strip()
@@ -210,7 +220,7 @@ class ToolExecutionRuntime:
                 confirmed=confirmed,
                 confirmation_question_id=confirmation_question_id,
                 allowed_tool_names=allowed_tool_names,
-                approved_tool_names=approved_tool_names,
+                approved_tool_names=effective_approved_tool_names,
                 approval_required_tool_names=approval_required_tool_names,
             )
             if isinstance(prepared_or_result, ToolResult):

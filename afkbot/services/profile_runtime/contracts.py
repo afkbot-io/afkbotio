@@ -197,6 +197,8 @@ class ProfilePolicyView(BaseModel):
     capabilities: tuple[str, ...] = ()
     file_access_mode: str = "read_write"
     allowed_directories: tuple[str, ...] = ()
+    shell_sandbox_mode: str = "disabled"
+    shell_allowed_commands: tuple[str, ...] = ()
     network_allowlist: tuple[str, ...] = ()
 
 

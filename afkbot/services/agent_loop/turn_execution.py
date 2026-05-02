@@ -288,6 +288,12 @@ class TurnExecutionRuntime:
                         or effective_overrides.approved_tool_names is None
                         else set(effective_overrides.approved_tool_names)
                     ),
+                    channel_owned_tool_names=(
+                        None
+                        if effective_overrides is None
+                        or effective_overrides.channel_owned_tool_names is None
+                        else set(effective_overrides.channel_owned_tool_names)
+                    ),
                     approval_required_tool_names=approval_required_tool_names,
                 )
                 pending_envelope = self._pending_envelopes.build_tool_not_allowed_envelope(
@@ -349,8 +355,18 @@ class TurnExecutionRuntime:
                     runtime_metadata=(
                         None if effective_overrides is None else effective_overrides.runtime_metadata
                     ),
+                    trusted_runtime_context=(
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.trusted_runtime_context
+                    ),
                     approved_tool_names=(
                         None if effective_overrides is None else effective_overrides.approved_tool_names
+                    ),
+                    channel_owned_tool_names=(
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.channel_owned_tool_names
                     ),
                     approval_required_tool_names=tuple(approval_required_tool_names),
                 )

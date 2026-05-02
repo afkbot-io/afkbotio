@@ -86,10 +86,16 @@ def resolve_turn_execution_context(
     )
     effective_overrides = TurnContextOverrides(
         runtime_metadata=effective_runtime_metadata,
+        trusted_runtime_context=(
+            None if context_overrides is None else context_overrides.trusted_runtime_context
+        ),
         cli_approval_surface_enabled=(
             False if context_overrides is None else context_overrides.cli_approval_surface_enabled
         ),
         approved_tool_names=None if context_overrides is None else context_overrides.approved_tool_names,
+        channel_owned_tool_names=(
+            None if context_overrides is None else context_overrides.channel_owned_tool_names
+        ),
         prompt_overlay=combine_prompt_overlays(
             None if context_overrides is None else context_overrides.prompt_overlay,
             execution_planning_prompt_overlay() if execution_planning_enabled else None,

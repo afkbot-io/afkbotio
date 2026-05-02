@@ -11,6 +11,9 @@ from afkbot.services.channels import (
     ChannelOutboundAttachment,
     ChannelOutboundMessage,
 )
+from afkbot.services.channels.active_context import build_active_channel_context_overrides
+from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.services.channel_routing.service import ChannelBindingServiceError
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,
     ChannelEndpointConfig,
@@ -106,6 +109,20 @@ class _FakeEndpointService:
         return endpoints
 
 
+class _FakeBindingService:
+    def __init__(self, bindings: list[ChannelBindingRule] | None = None) -> None:
+        self.bindings = list(bindings or [])
+
+    async def get(self, *, binding_id: str) -> ChannelBindingRule:
+        for binding in self.bindings:
+            if binding.binding_id == binding_id:
+                return binding
+        raise ChannelBindingServiceError(
+            error_code="channel_binding_not_found",
+            reason=f"Channel binding not found: {binding_id}",
+        )
+
+
 @pytest.mark.asyncio
 async def test_channel_send_tool_delivers_text_to_explicit_telegram_target(tmp_path: Path) -> None:
     """channel.send should expose outbound channel delivery as a normal tool."""
@@ -142,6 +159,103 @@ async def test_channel_send_tool_delivers_text_to_explicit_telegram_target(tmp_p
         "account_id": "bot-main",
         "peer_id": "12345",
     }
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_defaults_to_active_channel_target(tmp_path: Path) -> None:
+    """Inbound channel turns should reply to the active endpoint without manual ids."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+        access_policy=ChannelAccessPolicy(outbound_allow_to=("12345",)),
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_active.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    overrides = build_active_channel_context_overrides(
+        endpoint=endpoint,
+        peer_id="12345",
+        thread_id="7",
+        user_id="42",
+    )
+    assert overrides is not None
+    ctx = ToolContext(
+        profile_id="default",
+        session_id="main",
+        run_id=7,
+        trusted_runtime_context=overrides.trusted_runtime_context,
+    )
+
+    result = await tool.execute(ctx, ChannelSendParams(text="hello current channel"))
+
+    assert result.ok is True
+    assert delivery.calls[0]["credential_profile_key"] == "bot-main"
+    assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
+        "transport": "telegram",
+        "account_id": "bot-main",
+        "peer_id": "12345",
+        "thread_id": "7",
+        "user_id": "42",
+    }
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_rejects_foreign_endpoint_in_active_channel(
+    tmp_path: Path,
+) -> None:
+    """Active channel turns must not switch to another endpoint."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_active_foreign.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    overrides = build_active_channel_context_overrides(
+        endpoint=endpoint,
+        peer_id="12345",
+        thread_id=None,
+        user_id=None,
+    )
+    assert overrides is not None
+    ctx = ToolContext(
+        profile_id="default",
+        session_id="main",
+        run_id=7,
+        trusted_runtime_context=overrides.trusted_runtime_context,
+    )
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="telegram",
+            endpoint_id="support-bot",
+            chat_id="12345",
+            text="blocked",
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "channel_send_endpoint_not_active"
+    assert delivery.calls == []
 
 
 @pytest.mark.asyncio
@@ -261,6 +375,17 @@ async def test_channel_send_tool_uses_binding_endpoint_for_allowlist(tmp_path: P
         ),
         delivery_service=delivery,  # type: ignore[arg-type]
         endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+        binding_service=_FakeBindingService(
+            [
+                ChannelBindingRule(
+                    binding_id="owner-bot:dm:12345",
+                    transport="telegram",
+                    profile_id="default",
+                    account_id="bot-main",
+                    peer_id="12345",
+                )
+            ]
+        ),  # type: ignore[arg-type]
     )
     ctx = ToolContext(profile_id="default", session_id="main", run_id=10)
 
@@ -277,6 +402,136 @@ async def test_channel_send_tool_uses_binding_endpoint_for_allowlist(tmp_path: P
 
     assert result.ok is False
     assert result.error_code == "channel_send_target_not_allowed"
+    assert delivery.calls == []
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_rejects_cross_profile_binding(tmp_path: Path) -> None:
+    """channel.send should not use binding coordinates from another profile."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_cross_profile.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+        binding_service=_FakeBindingService(
+            [
+                ChannelBindingRule(
+                    binding_id="owner-bot:dm:99999",
+                    transport="telegram",
+                    profile_id="other",
+                    account_id="bot-main",
+                    peer_id="99999",
+                )
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=10)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="telegram",
+            binding_id="owner-bot:dm:99999",
+            text="blocked",
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "channel_send_binding_not_in_profile"
+    assert delivery.calls == []
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_rejects_foreign_endpoint_binding(tmp_path: Path) -> None:
+    """channel.send should not mix one endpoint with another endpoint's binding."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_foreign_binding.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+        binding_service=_FakeBindingService(
+            [
+                ChannelBindingRule(
+                    binding_id="support-bot:dm:12345",
+                    transport="telegram",
+                    profile_id="default",
+                    account_id="bot-main",
+                    peer_id="12345",
+                )
+            ]
+        ),  # type: ignore[arg-type]
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=10)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="telegram",
+            endpoint_id="owner-bot",
+            binding_id="support-bot:dm:12345",
+            text="blocked",
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "channel_send_binding_endpoint_mismatch"
+    assert delivery.calls == []
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_rejects_credential_profile_override(tmp_path: Path) -> None:
+    """channel.send should always use the endpoint sender credentials."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = PartyFlowWebhookEndpointConfig(
+        endpoint_id="partyflow-main",
+        profile_id="default",
+        credential_profile_key="partyflow-main",
+        account_id="partyflow-bot",
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_credential_override.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=10)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="partyflow",
+            endpoint_id="partyflow-main",
+            chat_id="conv-1",
+            text="blocked",
+            credential_profile_key="other-partyflow",
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "channel_send_credential_profile_mismatch"
     assert delivery.calls == []
 
 

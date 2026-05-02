@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import sys
 
 import typer
 
 from afkbot.cli.presentation.inline_select import confirm_space, run_inline_single_select
 from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg
 from afkbot.cli.presentation.prompt_i18n import no_label, single_hint, yes_label
+from afkbot.services.channels.tool_profiles import CHANNEL_TOOL_PROFILE_VALUES
+from afkbot.services.wizard.channel_catalog import (
+    ChannelWizardScenario,
+    channel_scenario,
+    channel_tool_profile_label,
+    list_channel_scenarios,
+)
 
 
 def resolve_channel_text(
@@ -105,6 +113,58 @@ def resolve_channel_choice(
     return resolved
 
 
+def resolve_channel_setup_scenario(
+    *,
+    transport: str,
+    interactive: bool,
+    lang: PromptLanguage,
+) -> ChannelWizardScenario | None:
+    """Resolve an optional high-level channel scenario for real interactive terminals."""
+
+    if not interactive or not sys.stdin.isatty() or not sys.stdout.isatty():
+        return None
+    scenarios = list_channel_scenarios(transport=transport)
+    if not scenarios:
+        return None
+    default = scenarios[0].id
+    selected = run_inline_single_select(
+        title=msg(lang, en="Channel: Scenario", ru="Канал: Сценарий"),
+        text=msg(
+            lang,
+            en=(
+                "Choose the closest channel use case. AFKBOT will use it only as defaults; "
+                "explicit flags and later answers still win."
+            ),
+            ru=(
+                "Выберите ближайший сценарий канала. AFKBOT использует его только как значения "
+                "по умолчанию; явные флаги и следующие ответы всё равно главнее."
+            ),
+        ),
+        options=[
+            (
+                scenario.id,
+                scenario.label_ru if lang == PromptLanguage.RU else scenario.label_en,
+            )
+            for scenario in scenarios
+        ]
+        + [
+            (
+                "custom",
+                msg(
+                    lang,
+                    en="Custom - keep the transport defaults and choose details manually",
+                    ru="Вручную - оставить defaults транспорта и выбрать детали самостоятельно",
+                ),
+            )
+        ],
+        default_value=default,
+        hint_text=single_hint(lang),
+    )
+    if selected is None or selected == "custom":
+        return None
+    return channel_scenario(str(selected))
+
+
 def _select_channel_option(
     *,
     title: str,
@@ -143,24 +203,10 @@ def _channel_choice_label(
     if label_overrides is not None and value in label_overrides:
         override = label_overrides[value]
         return override[1] if lang == PromptLanguage.RU else override[0]
+    if value in CHANNEL_TOOL_PROFILE_VALUES:
+        return channel_tool_profile_label(value, lang=lang)
 
     labels: dict[str, tuple[str, str]] = {
-        "inherit": (
-            "inherit - use the profile's full tool ceiling for this channel",
-            "inherit - использовать полный потолок прав профиля в этом канале",
-        ),
-        "chat_minimal": (
-            "chat_minimal - replies only, no tools exposed to the channel",
-            "chat_minimal - только ответы, без инструментов в канале",
-        ),
-        "messaging_safe": (
-            "messaging_safe - replies, channel.send, and safe memory tools",
-            "messaging_safe - ответы, channel.send и безопасная работа с памятью",
-        ),
-        "support_readonly": (
-            "support_readonly - messaging_safe plus read-only file search/read",
-            "support_readonly - messaging_safe плюс чтение и поиск по файлам",
-        ),
         "main": (
             "main - one shared conversation for the whole binding",
             "main - одна общая беседа для всей привязки",

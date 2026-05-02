@@ -186,6 +186,8 @@ def collect_setup_config(
     policy_capability: tuple[str, ...],
     policy_file_access_mode: str | None,
     policy_workspace_scope: str | None,
+    policy_shell_sandbox_mode: str | None = None,
+    policy_shell_command: tuple[str, ...] = (),
     policy_network_host: tuple[str, ...],
     auto_install_deps: bool | None,
     update_notices_enabled: bool | None = None,
@@ -277,6 +279,8 @@ def collect_setup_config(
         policy_network_allowlist_resolved = cast(tuple[str, ...], (WILDCARD_NETWORK_HOST,))
         policy_file_access_mode_resolved = PolicyFileAccessMode.READ_WRITE.value
         policy_workspace_scope_mode_resolved = "profile_only"
+        policy_shell_sandbox_mode_resolved = "disabled"
+        policy_shell_allowed_commands_resolved: tuple[str, ...] = ()
     else:
         explicit_policy_overrides = has_explicit_policy_overrides(
             policy_enabled=policy_enabled,
@@ -284,6 +288,8 @@ def collect_setup_config(
             policy_capability=policy_capability,
             policy_file_access_mode=policy_file_access_mode,
             policy_workspace_scope=policy_workspace_scope,
+            policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+            policy_shell_command=policy_shell_command,
             policy_network_host=policy_network_host,
         )
         if resolved_policy_inputs is not None:
@@ -297,6 +303,8 @@ def collect_setup_config(
             policy_network_allowlist_resolved = resolved_policy_inputs.network_allowlist
             policy_file_access_mode_resolved = resolved_policy_inputs.file_access_mode
             policy_workspace_scope_mode_resolved = resolved_policy_inputs.workspace_scope_mode
+            policy_shell_sandbox_mode_resolved = resolved_policy_inputs.shell_sandbox_mode
+            policy_shell_allowed_commands_resolved = resolved_policy_inputs.shell_allowed_commands
         else:
             policy_setup_mode_resolved = resolve_policy_setup_mode(
                 interactive=interactive,
@@ -315,6 +323,8 @@ def collect_setup_config(
                 policy_network_allowlist_resolved = cast(tuple[str, ...], (WILDCARD_NETWORK_HOST,))
                 policy_file_access_mode_resolved = PolicyFileAccessMode.READ_WRITE.value
                 policy_workspace_scope_mode_resolved = "profile_only"
+                policy_shell_sandbox_mode_resolved = "disabled"
+                policy_shell_allowed_commands_resolved = ()
             else:
                 resolved_policy = resolve_profile_policy_inputs(
                     interactive=interactive,
@@ -329,6 +339,8 @@ def collect_setup_config(
                     policy_workspace_scope_value=policy_workspace_scope,
                     policy_allowed_dir_values=(),
                     policy_network_host_values=policy_network_host,
+                    policy_shell_sandbox_mode_value=policy_shell_sandbox_mode,
+                    policy_shell_command_values=policy_shell_command,
                     allow_custom_workspace_scope=False,
                 )
                 policy_preset_resolved = resolved_policy.preset
@@ -338,6 +350,8 @@ def collect_setup_config(
                 policy_network_allowlist_resolved = resolved_policy.network_allowlist
                 policy_file_access_mode_resolved = resolved_policy.file_access_mode
                 policy_workspace_scope_mode_resolved = resolved_policy.workspace_scope_mode
+                policy_shell_sandbox_mode_resolved = resolved_policy.shell_sandbox_mode
+                policy_shell_allowed_commands_resolved = resolved_policy.shell_allowed_commands
     policy_confirmation_mode_resolved = confirmation_mode_for_preset(policy_preset_resolved)
     if (
         policy_setup_mode_resolved == PolicySetupMode.RECOMMENDED.value
@@ -532,6 +546,8 @@ def collect_setup_config(
         policy_file_access_mode=policy_file_access_mode_resolved,
         policy_workspace_scope_mode=policy_workspace_scope_mode_resolved,
         policy_allowed_directories=policy_allowed_directories_resolved,
+        policy_shell_sandbox_mode=policy_shell_sandbox_mode_resolved,
+        policy_shell_allowed_commands=policy_shell_allowed_commands_resolved,
         policy_network_mode=policy_network_mode_resolved,
         policy_network_allowlist=policy_network_allowlist_resolved,
         default_profile_runtime_config=(

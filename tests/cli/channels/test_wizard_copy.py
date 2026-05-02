@@ -3,8 +3,12 @@
 from pytest import MonkeyPatch
 
 from afkbot.cli.commands import channel_credentials_support
+from afkbot.cli.commands import channel_prompt_support
 from afkbot.cli.commands import channel_shared
-from afkbot.cli.commands.channel_prompt_support import _channel_choice_label
+from afkbot.cli.commands.channel_prompt_support import (
+    _channel_choice_label,
+    resolve_channel_setup_scenario,
+)
 from afkbot.cli.commands.channel_shared import collect_channel_access_policy_inputs
 from afkbot.cli.commands.channel_telethon_commands.common import (
     TELETHON_REPLY_MODE_LABEL_OVERRIDES,
@@ -16,10 +20,16 @@ def test_channel_choice_labels_explain_raw_tool_profile_values() -> None:
     """Channel tool-profile values should render with beginner-friendly descriptions."""
 
     assert _channel_choice_label("inherit", lang=PromptLanguage.EN) == (
-        "inherit - use the profile's full tool ceiling for this channel"
+        "Trusted inherit - expose the profile's full tool ceiling"
+    )
+    assert _channel_choice_label("chat_minimal", lang=PromptLanguage.RU) == (
+        "Минимальный чат - ответы и история текущего канала, без общих инструментов"
     )
     assert _channel_choice_label("support_readonly", lang=PromptLanguage.RU) == (
-        "support_readonly - messaging_safe плюс чтение и поиск по файлам"
+        "Support только чтение - сообщения плюс чтение и поиск файлов"
+    )
+    assert _channel_choice_label("taskflow_operator", lang=PromptLanguage.RU) == (
+        "Оператор Task Flow - задачи из канала, без shell и файлов"
     )
 
 
@@ -32,6 +42,49 @@ def test_channel_choice_labels_explain_access_and_session_values_in_russian() ->
     assert _channel_choice_label("per-user-in-group", lang=PromptLanguage.RU) == (
         "per-user-in-group - отдельная беседа для каждого пользователя в группе"
     )
+
+
+def test_channel_setup_scenario_only_prompts_in_real_tty(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Scenario selection should not consume scripted CliRunner input."""
+
+    monkeypatch.setattr(channel_prompt_support.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(channel_prompt_support.sys.stdout, "isatty", lambda: False)
+
+    assert (
+        resolve_channel_setup_scenario(
+            transport="partyflow",
+            interactive=True,
+            lang=PromptLanguage.EN,
+        )
+        is None
+    )
+
+
+def test_channel_setup_scenario_returns_selected_defaults_in_tty(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Interactive scenario selection should return reusable channel defaults."""
+
+    monkeypatch.setattr(channel_prompt_support.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(channel_prompt_support.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(
+        channel_prompt_support,
+        "run_inline_single_select",
+        lambda **_kwargs: "partyflow_private_mention",
+    )
+
+    scenario = resolve_channel_setup_scenario(
+        transport="partyflow",
+        interactive=True,
+        lang=PromptLanguage.EN,
+    )
+
+    assert scenario is not None
+    assert scenario.tool_profile == "messaging_safe"
+    assert scenario.trigger_mode == "mention"
+    assert scenario.reply_mode == "same_conversation"
 
 
 def test_telethon_reply_mode_disabled_label_is_read_only_not_access_rejection() -> None:
@@ -79,7 +132,7 @@ def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(
     )
 
     assert access.outbound_allow_to == ("12345",)
-    assert bool_prompts == ["Restrict channel.send outbound targets?"]
+    assert bool_prompts == ["Limit proactive channel.send targets?"]
     assert text_prompts == ["Allowed outbound chat/user ids"]
 
 

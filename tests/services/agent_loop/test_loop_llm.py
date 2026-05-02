@@ -1551,13 +1551,14 @@ async def test_llm_visible_tools_include_explicitly_approved_tool_without_bypass
         tool_surface = loop._tool_exposure.build_tool_surface(  # noqa: SLF001
             policy,
             automation_intent=True,
-            approved_tool_names=("bash.exec", "file.read"),
+            approved_tool_names=("bash.exec", "file.read", "channel.history.list"),
         )
         visible = tool_surface.visible_tools
         tool_names = {item.name for item in visible}
         assert "debug.echo" in tool_names
         assert "bash.exec" in tool_names
         assert "file.read" not in tool_names
+        assert "channel.history.list" not in tool_names
 
     await engine.dispose()
 

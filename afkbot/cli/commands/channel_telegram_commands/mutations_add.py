@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import cast
 
 import typer
 
@@ -12,6 +13,7 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_bool,
     resolve_channel_choice,
     resolve_channel_int,
+    resolve_channel_setup_scenario,
 )
 from afkbot.cli.commands.channel_shared import (
     build_generated_channel_id,
@@ -40,6 +42,10 @@ from afkbot.services.channels.endpoint_contracts import (
     CHANNEL_INGRESS_BATCH_SIZE_MAX,
     CHANNEL_INGRESS_BATCH_SIZE_MIN,
     TelegramPollingEndpointConfig,
+)
+from afkbot.services.wizard.preview import (
+    build_channel_surface_preview,
+    current_channel_tool_names_for_transport,
 )
 
 
@@ -95,6 +101,15 @@ def run_telegram_add(
                 lang=prompt_language,
                 suggested_channel_id=generated_channel_id,
             )
+        channel_scenario = resolve_channel_setup_scenario(
+            transport="telegram",
+            interactive=interactive,
+            lang=prompt_language,
+        )
+        binding_session_policy_default: SessionPolicy = cast(
+            SessionPolicy,
+            channel_scenario.session_policy if channel_scenario else "per-thread",
+        )
         base_inputs = collect_channel_add_base_inputs(
             settings=runtime.settings,
             interactive=interactive,
@@ -104,16 +119,16 @@ def run_telegram_add(
             credential_profile_key=credential_profile_key,
             account_id=account_id,
             enabled=enabled,
-            tool_profile=tool_profile,
+            tool_profile=tool_profile or (channel_scenario.tool_profile if channel_scenario else None),
             create_binding=create_binding,
             session_policy=session_policy,
-            binding_session_policy_default="per-thread",
+            binding_session_policy_default=binding_session_policy_default,
             binding_session_policy_allowed=("main", "per-chat", "per-thread", "per-user-in-group"),
             generated_channel_id=generated_channel_id,
         )
         resolved_group_trigger_mode = normalize_telegram_group_trigger_mode(
             resolve_channel_choice(
-                value=group_trigger_mode,
+                value=group_trigger_mode or (channel_scenario.trigger_mode if channel_scenario else None),
                 interactive=interactive,
                 prompt_en="Telegram group trigger mode",
                 prompt_ru="Режим триггера для Telegram групп",
@@ -133,9 +148,9 @@ def run_telegram_add(
         access_policy = collect_channel_access_policy_inputs(
             interactive=interactive,
             lang=prompt_language,
-            private_policy=private_policy,
+            private_policy=private_policy or (channel_scenario.private_policy if channel_scenario else None),
             allow_from=allow_from,
-            group_policy=group_policy,
+            group_policy=group_policy or (channel_scenario.group_policy if channel_scenario else None),
             groups=groups,
             group_allow_from=group_allow_from,
             outbound_allow_to=outbound_allow_to,
@@ -313,6 +328,19 @@ def run_telegram_add(
     )
     if base_inputs.create_binding:
         typer.echo(f"Matching bindings created/updated: {binding_count}.")
+    for line in build_channel_surface_preview(
+        transport=saved.transport,
+        scenario_id=None if channel_scenario is None else channel_scenario.id,
+        tool_profile=saved.tool_profile,
+        trigger_mode=saved.group_trigger_mode,
+        reply_mode="same_chat",
+        private_policy=saved.access_policy.private_policy,
+        group_policy=saved.access_policy.group_policy,
+        current_channel_tools=current_channel_tool_names_for_transport(saved.transport),
+        credential_status=("bot_token_configured_or_prompted",),
+        lang=prompt_language,
+    ).lines:
+        typer.echo(line)
     runtime.reload_notice(runtime.settings)
 
 

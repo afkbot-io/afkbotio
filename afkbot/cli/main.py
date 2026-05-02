@@ -20,6 +20,7 @@ from afkbot.cli.commands.mcp import register as register_mcp
 from afkbot.cli.commands.automation import register as register_automation
 from afkbot.cli.commands.plugin import register as register_plugin
 from afkbot.cli.commands.profile import register as register_profile
+from afkbot.cli.commands.sandbox import register as register_sandbox
 from afkbot.cli.commands.service import register as register_service
 from afkbot.cli.commands.skill import register as register_skill
 from afkbot.cli.commands.start import register as register_start
@@ -67,6 +68,7 @@ register_memory(app)
 register_mcp(app)
 register_plugin(app)
 register_profile(app)
+register_sandbox(app)
 register_service(app)
 register_skill(app)
 register_start(app)
@@ -94,6 +96,7 @@ def _guard_setup(ctx: typer.Context) -> None:
         "mcp",
         "plugin",
         "auth",
+        "sandbox",
         "service",
         "version",
         "logs",

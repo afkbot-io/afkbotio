@@ -7,11 +7,9 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 import os
-from os import PathLike
 import signal
-import stat
+import shlex
 from pathlib import Path
-import shutil
 import time
 from typing import Any
 
@@ -30,8 +28,19 @@ from afkbot.services.tools.plugins.bash_exec.runtime import (
     BashExecSessionStartRequest,
     terminate_process_tree,
 )
+from afkbot.services.tools.shell_sandbox import (
+    ShellSandboxUnavailableError,
+    build_shell_sandbox_launch,
+)
+from afkbot.services.tools.trusted_executables import (
+    TrustedExecutableError,
+    is_trusted_executable_path,
+    resolve_trusted_executable,
+    trusted_path_env,
+)
 from afkbot.services.tools.workspace import (
     resolve_tool_workspace_base_dir,
+    resolve_tool_shell_policy,
     resolve_tool_workspace_scope_roots,
     resolve_workspace_path,
     to_workspace_relative,
@@ -39,7 +48,17 @@ from afkbot.services.tools.workspace import (
 from afkbot.settings import Settings
 
 _DEFAULT_RESUME_YIELD_TIME_MS = 1000
-_PROTECTED_ENV_NAMES = {"PATH"}
+_PROTECTED_ENV_NAMES = {
+    "BASH_ENV",
+    "ENV",
+    "HOME",
+    "PATH",
+    "PROMPT_COMMAND",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "ZDOTDIR",
+}
 _PROTECTED_ENV_PREFIXES = ("LD_", "DYLD_")
 _SAFE_INHERITED_ENV_NAMES = {
     "HOME",
@@ -48,7 +67,6 @@ _SAFE_INHERITED_ENV_NAMES = {
     "LC_CTYPE",
     "LOGNAME",
     "PATH",
-    "SHELL",
     "TEMP",
     "TERM",
     "TMP",
@@ -87,11 +105,13 @@ def _uses_credential_placeholder(value: str) -> bool:
 
 
 @dataclass(frozen=True)
-class _ResolvedExecutablePath:
-    """Executable candidate preserving both alias and resolved target paths."""
+class _ResolvedCommandInvocation:
+    """Process argv and display metadata after profile policy narrowing."""
 
-    candidate_path: Path
-    resolved_path: Path
+    argv: tuple[str, ...]
+    shell_display: str
+    login_applied: bool
+    execution_mode: str
 
 
 class _StreamingOutputTail:
@@ -281,6 +301,10 @@ class BashExecTool(ToolBase):
                 settings=self._settings,
                 profile_id=ctx.profile_id,
             )
+            shell_policy = await resolve_tool_shell_policy(
+                settings=self._settings,
+                profile_id=ctx.profile_id,
+            )
             cwd = resolve_workspace_path(
                 base_dir=base_dir,
                 scope_roots=scope_roots,
@@ -318,6 +342,9 @@ class BashExecTool(ToolBase):
                     yield_time_ms=payload.yield_time_ms,
                     cwd_label=to_workspace_relative(base_dir=base_dir, path=cwd),
                     redacted_values=resolved_values,
+                    scope_roots=scope_roots,
+                    shell_sandbox_mode=shell_policy.shell_sandbox_mode,
+                    shell_allowed_commands=shell_policy.shell_allowed_commands,
                 )
                 return ToolResult(ok=True, payload=self._build_session_payload(session_result))
 
@@ -331,6 +358,9 @@ class BashExecTool(ToolBase):
                 login=payload.login,
                 progress_callback=ctx.progress_callback,
                 secret_values=resolved_values,
+                scope_roots=scope_roots,
+                shell_sandbox_mode=shell_policy.shell_sandbox_mode,
+                shell_allowed_commands=shell_policy.shell_allowed_commands,
             )
             command_result["cwd"] = to_workspace_relative(base_dir=base_dir, path=cwd)
             if resolved_values:
@@ -351,6 +381,8 @@ class BashExecTool(ToolBase):
             )
         except ValueError as exc:
             return ToolResult.error(error_code="bash_exec_invalid", reason=str(exc))
+        except ShellSandboxUnavailableError as exc:
+            return ToolResult.error(error_code="bash_exec_sandbox_unavailable", reason=str(exc))
         except TimeoutError:
             return ToolResult.error(
                 error_code="bash_exec_failed",
@@ -411,24 +443,38 @@ class BashExecTool(ToolBase):
         yield_time_ms: int,
         cwd_label: str,
         redacted_values: set[str],
+        scope_roots: tuple[Path, ...],
+        shell_sandbox_mode: str,
+        shell_allowed_commands: tuple[str, ...],
     ) -> BashExecSessionResult:
-        shell_path = self._resolve_shell_path(requested_shell=requested_shell)
-        shell_args, login_applied = self._resolve_shell_args(
-            shell_path=shell_path,
+        command = self._resolve_command_invocation(
+            cmd=resolved_cmd,
+            requested_shell=requested_shell,
             login=login,
-            command=resolved_cmd,
+            shell_allowed_commands=shell_allowed_commands,
+        )
+        process_env = self._build_process_env(env)
+        process_env["PATH"] = trusted_path_env()
+        if command.execution_mode == "shell":
+            process_env["SHELL"] = command.shell_display
+        launch = build_shell_sandbox_launch(
+            base_argv=command.argv,
+            cwd=cwd,
+            env=process_env,
+            scope_roots=scope_roots,
+            shell_sandbox_mode=shell_sandbox_mode,
         )
         return await self._session_manager.start_session(
             request=BashExecSessionStartRequest(
-                argv=(shell_path, *shell_args),
-                cwd=cwd,
-                env=self._build_process_env(env),
+                argv=launch.argv,
+                cwd=launch.cwd,
+                env=launch.env,
                 display_cmd=display_cmd,
                 cwd_label=cwd_label,
                 env_keys=tuple(sorted(env.keys())),
-                shell=shell_path,
+                shell=command.shell_display,
                 login_requested=login,
-                login_applied=login_applied,
+                login_applied=command.login_applied,
                 redacted_values=frozenset(redacted_values),
             ),
             yield_time_ms=yield_time_ms,
@@ -480,12 +526,26 @@ class BashExecTool(ToolBase):
         login: bool,
         progress_callback: ToolProgressCallback | None = None,
         secret_values: set[str] | None = None,
+        scope_roots: tuple[Path, ...],
+        shell_sandbox_mode: str,
+        shell_allowed_commands: tuple[str, ...],
     ) -> dict[str, object]:
-        shell_path = self._resolve_shell_path(requested_shell=requested_shell)
-        shell_args, login_applied = self._resolve_shell_args(
-            shell_path=shell_path,
+        command = self._resolve_command_invocation(
+            cmd=cmd,
+            requested_shell=requested_shell,
             login=login,
-            command=cmd,
+            shell_allowed_commands=shell_allowed_commands,
+        )
+        process_env = self._build_process_env(env)
+        process_env["PATH"] = trusted_path_env()
+        if command.execution_mode == "shell":
+            process_env["SHELL"] = command.shell_display
+        launch = build_shell_sandbox_launch(
+            base_argv=command.argv,
+            cwd=cwd,
+            env=process_env,
+            scope_roots=scope_roots,
+            shell_sandbox_mode=shell_sandbox_mode,
         )
         output_tail = _StreamingOutputTail()
         emit_lock = asyncio.Lock()
@@ -563,13 +623,12 @@ class BashExecTool(ToolBase):
                 )
 
         process = await asyncio.create_subprocess_exec(
-            shell_path,
-            *shell_args,
-            cwd=str(cwd),
+            *launch.argv,
+            cwd=str(launch.cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            env=self._build_process_env(env),
+            env=launch.env,
         )
         max_bytes = max(1, self._settings.runtime_max_body_bytes)
         stdout_reader = asyncio.create_task(
@@ -616,12 +675,86 @@ class BashExecTool(ToolBase):
             "stderr": stderr_raw.decode("utf-8", errors="replace"),
             "stdout_truncated": stdout_truncated,
             "stderr_truncated": stderr_truncated,
-            "shell": shell_path,
+            "shell": command.shell_display,
+            "execution_mode": command.execution_mode,
+            "sandbox": launch.sandbox_kind,
             "login_requested": login,
-            "login_applied": login_applied,
+            "login_applied": command.login_applied,
             "env_keys": sorted(env.keys()),
             "running": False,
         }
+
+    def _resolve_command_invocation(
+        self,
+        *,
+        cmd: str,
+        requested_shell: str | None,
+        login: bool,
+        shell_allowed_commands: tuple[str, ...],
+    ) -> _ResolvedCommandInvocation:
+        """Resolve either a shell invocation or a direct allowlisted command argv."""
+
+        if shell_allowed_commands:
+            allowed = {command for command in shell_allowed_commands if command}
+            argv = self._parse_allowlisted_direct_command(cmd=cmd, allowed_commands=allowed)
+            executable = self._resolve_allowlisted_executable(command_name=argv[0])
+            return _ResolvedCommandInvocation(
+                argv=(str(executable), *argv[1:]),
+                shell_display=str(executable),
+                login_applied=False,
+                execution_mode="direct",
+            )
+
+        shell_path = self._resolve_shell_path(requested_shell=requested_shell)
+        shell_args, login_applied = self._resolve_shell_args(
+            shell_path=shell_path,
+            login=login,
+            command=cmd,
+        )
+        return _ResolvedCommandInvocation(
+            argv=(shell_path, *shell_args),
+            shell_display=shell_path,
+            login_applied=login_applied,
+            execution_mode="shell",
+        )
+
+    @staticmethod
+    def _parse_allowlisted_direct_command(
+        *,
+        cmd: str,
+        allowed_commands: set[str],
+    ) -> tuple[str, ...]:
+        """Parse a command allowlist entry as direct argv, without shell expansion."""
+
+        try:
+            argv = tuple(shlex.split(cmd, posix=True))
+        except ValueError as exc:
+            raise ValueError(f"Invalid allowlisted shell command syntax: {exc}") from exc
+        if not argv:
+            raise ValueError("Command is required")
+
+        command_token = argv[0]
+        command_name = Path(command_token).name
+        if command_token != command_name:
+            raise ValueError(
+                "Profile shell command allowlist only permits bare command names, not paths"
+            )
+        if command_name not in allowed_commands:
+            allowed = ", ".join(sorted(allowed_commands))
+            raise ValueError(
+                f"Command `{command_name}` is not allowed by profile shell command allowlist"
+                f" ({allowed})"
+            )
+        return argv
+
+    @staticmethod
+    def _resolve_allowlisted_executable(*, command_name: str) -> Path:
+        """Resolve one allowlisted command through trusted system directories only."""
+
+        try:
+            return resolve_trusted_executable((command_name,))
+        except TrustedExecutableError as exc:
+            raise ValueError(str(exc)) from exc
 
     async def _terminate_running_process(
         self,
@@ -675,139 +808,43 @@ class BashExecTool(ToolBase):
     def _resolve_shell_path(*, requested_shell: str | None) -> str:
         """Resolve requested shell path or choose a deterministic local fallback."""
 
-        trusted_directories = BashExecTool._trusted_shell_directories()
         normalized_requested_shell = str(requested_shell or "").strip()
         if normalized_requested_shell:
-            resolved_requested_shell = BashExecTool._normalize_shell_candidate(
-                normalized_requested_shell,
-                trusted_directories=trusted_directories,
+            resolved_requested_shell = BashExecTool._resolve_requested_shell(
+                normalized_requested_shell
             )
             if resolved_requested_shell is None:
                 raise ValueError(f"Unsupported shell executable: {normalized_requested_shell}")
             return resolved_requested_shell
 
-        for raw_candidate in (os.environ.get("SHELL"), "bash", "sh"):
-            resolved = BashExecTool._normalize_shell_candidate(
-                raw_candidate,
-                trusted_directories=trusted_directories,
-            )
-            if resolved is not None:
-                return resolved
+        for candidate in ("bash", "sh"):
+            try:
+                return str(resolve_trusted_executable((candidate,)))
+            except TrustedExecutableError:
+                continue
         raise ValueError("No usable shell executable found for bash.exec")
 
     @staticmethod
-    def _normalize_shell_candidate(
-        raw_candidate: str | PathLike[str] | None,
-        *,
-        trusted_directories: set[Path],
-    ) -> str | None:
-        candidate = str(raw_candidate or "").strip()
-        if not candidate:
+    def _resolve_requested_shell(raw_candidate: str) -> str | None:
+        """Resolve one requested shell without trusting environment PATH/SHELL."""
+
+        candidate = Path(raw_candidate).expanduser()
+        if candidate.name.lower() not in _ALLOWED_SHELL_NAMES:
             return None
-        resolved_executable = BashExecTool._resolve_existing_executable_path(candidate)
-        if resolved_executable is None:
-            return None
-        return (
-            str(resolved_executable.candidate_path)
-            if BashExecTool._is_allowed_shell_path(
-                resolved_executable,
-                trusted_directories=trusted_directories,
-            )
-            else None
-        )
-
-    @staticmethod
-    def _is_allowed_shell_path(
-        executable: _ResolvedExecutablePath,
-        *,
-        trusted_directories: set[Path],
-    ) -> bool:
-        """Return whether an executable candidate points to a supported trusted shell."""
-
-        shell_name = executable.candidate_path.name.lower()
-        if shell_name not in _ALLOWED_SHELL_NAMES:
-            return False
-        try:
-            if not executable.resolved_path.exists() or not executable.resolved_path.is_file():
-                return False
-            if not os.access(executable.resolved_path, os.X_OK):
-                return False
-        except OSError:
-            return False
-        return BashExecTool._is_trusted_shell_path(
-            executable.candidate_path,
-            trusted_directories=trusted_directories,
-        )
-
-    @staticmethod
-    def _is_trusted_shell_path(
-        path: Path,
-        *,
-        trusted_directories: set[Path],
-    ) -> bool:
-        """Return whether the resolved shell path comes from a trusted local location."""
-
-        if path.parent not in trusted_directories:
-            return False
-        try:
-            return (path.parent.stat().st_mode & stat.S_IWOTH) == 0
-        except OSError:
-            return False
-
-    @staticmethod
-    def _trusted_shell_directories() -> set[Path]:
-        """Resolve trusted shell directories from the current local environment."""
-
-        resolved_directories: set[Path] = set()
-        resolved_env_shell = BashExecTool._resolve_existing_executable_path(os.environ.get("SHELL"))
-        if resolved_env_shell is not None:
-            resolved_directories.add(resolved_env_shell.candidate_path.parent)
-            resolved_directories.add(resolved_env_shell.resolved_path.parent)
-        for raw_directory in str(os.environ.get("PATH") or "").split(os.pathsep):
-            candidate = raw_directory.strip()
-            if not candidate:
-                continue
-            path = Path(candidate).expanduser()
-            if not path.is_absolute():
-                path = path.resolve(strict=False)
-            resolved_path = path.resolve(strict=False)
+        if candidate.is_absolute():
             try:
-                if path.exists() and path.is_dir():
-                    resolved_directories.add(path)
-                if resolved_path.exists() and resolved_path.is_dir():
-                    resolved_directories.add(resolved_path)
+                resolved = candidate.resolve(strict=True)
             except OSError:
-                continue
-        return resolved_directories
-
-    @staticmethod
-    def _resolve_existing_executable_path(
-        raw_candidate: str | PathLike[str] | None,
-    ) -> _ResolvedExecutablePath | None:
-        """Resolve a candidate to an existing executable while preserving shell aliases."""
-
-        candidate = str(raw_candidate or "").strip()
-        if not candidate:
-            return None
-        path = Path(candidate).expanduser()
-        if not path.is_absolute():
-            located = shutil.which(candidate)
-            if located is None:
                 return None
-            path = Path(located)
-        if not path.is_absolute():
-            path = path.resolve(strict=False)
-        resolved_path = path.resolve(strict=False)
+            if not is_trusted_executable_path(resolved):
+                return None
+            return str(candidate)
+        if str(candidate) != candidate.name:
+            return None
         try:
-            if (
-                not resolved_path.exists()
-                or not resolved_path.is_file()
-                or not os.access(resolved_path, os.X_OK)
-            ):
-                return None
-        except OSError:
+            return str(resolve_trusted_executable((candidate.name,)))
+        except TrustedExecutableError:
             return None
-        return _ResolvedExecutablePath(candidate_path=path, resolved_path=resolved_path)
 
     @staticmethod
     async def _read_stream_bounded(

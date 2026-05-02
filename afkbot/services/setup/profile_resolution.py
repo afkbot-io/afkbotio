@@ -9,9 +9,17 @@ from collections.abc import Callable
 import typer
 
 from afkbot.services.agent_loop.planning_policy import normalize_chat_planning_mode
-from afkbot.cli.presentation.setup_prompts import PromptLanguage
+from afkbot.cli.presentation.setup_prompts import (
+    PromptLanguage,
+    msg,
+    prompt_confirm,
+    prompt_profile_permission_scenario,
+    prompt_policy_shell_allowed_commands,
+    prompt_policy_shell_sandbox_mode,
+)
 from afkbot.services.setup.policy_inputs import (
     default_policy_enabled_for_preset,
+    recommended_policy_network_hosts,
     resolve_policy_capabilities,
     resolve_policy_enabled,
     resolve_policy_file_access_mode,
@@ -31,11 +39,19 @@ from afkbot.services.setup.provider_inputs import (
 from afkbot.services.llm.provider_catalog import LLMProviderId, parse_provider
 from afkbot.services.llm.reasoning import normalize_thinking_level
 from afkbot.services.policy import (
+    default_shell_sandbox_mode,
+    normalize_shell_sandbox_mode,
     normalize_workspace_scope_mode,
     resolve_allowed_directories_for_scope_mode,
+    scope_requires_shell_sandbox,
 )
 from afkbot.services.policy.evaluation_helpers import normalize_path
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
+from afkbot.services.tools.shell_sandbox import (
+    get_shell_sandbox_backend_status,
+    install_shell_sandbox_backend,
+)
+from afkbot.services.wizard.profile_catalog import profile_scenario
 from afkbot.settings import Settings
 
 
@@ -66,6 +82,8 @@ class ResolvedProfilePolicyInputs:
     allowed_directories: tuple[str, ...]
     network_mode: str
     network_allowlist: tuple[str, ...]
+    shell_sandbox_mode: str = "disabled"
+    shell_allowed_commands: tuple[str, ...] = ()
 
 
 def resolve_profile_thinking_level(
@@ -375,6 +393,40 @@ def normalize_policy_workspace_scope_mode_value(value: str) -> str:
         raise typer.BadParameter(str(exc)) from exc
 
 
+def normalize_policy_shell_sandbox_mode_value(value: str) -> str:
+    """Validate one explicit shell sandbox mode flag value."""
+
+    try:
+        return normalize_shell_sandbox_mode(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def resolve_policy_shell_allowed_commands(
+    *,
+    raw_values: tuple[str, ...],
+    defaults: dict[str, str],
+) -> tuple[str, ...]:
+    """Resolve repeatable/comma-separated shell command allowlist values."""
+
+    source_values = raw_values
+    if not source_values:
+        source_values = (str(defaults.get("AFKBOT_POLICY_SHELL_ALLOWED_COMMANDS", "")),)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in source_values:
+        for fragment in str(raw).split(","):
+            value = fragment.strip()
+            if not value:
+                continue
+            command = Path(value).name
+            if command in seen:
+                continue
+            seen.add(command)
+            normalized.append(command)
+    return tuple(normalized)
+
+
 def resolve_policy_allowed_directories_from_scope(
     *,
     root_dir: Path,
@@ -425,6 +477,8 @@ def resolve_profile_policy_inputs(
     policy_workspace_scope_value: str | None,
     policy_allowed_dir_values: tuple[str, ...],
     policy_network_host_values: tuple[str, ...],
+    policy_shell_sandbox_mode_value: str | None = None,
+    policy_shell_command_values: tuple[str, ...] = (),
     allow_custom_workspace_scope: bool = False,
 ) -> ResolvedProfilePolicyInputs:
     """Resolve one full profile policy payload with shared create/update semantics."""
@@ -445,23 +499,49 @@ def resolve_profile_policy_inputs(
         lang=lang,
     )
     policy_details_interactive = interactive and resolved_policy_enabled
-    resolved_policy_capabilities = resolve_policy_capabilities(
-        value=policy_capability_values,
-        interactive=policy_details_interactive,
-        preset=resolved_policy_preset,
-        defaults=defaults,
-        lang=lang,
+    can_use_profile_scenario = (
+        policy_details_interactive
+        and not policy_capability_values
+        and policy_file_access_mode_value is None
+        and policy_workspace_scope_value is None
+        and not policy_allowed_dir_values
+        and policy_shell_sandbox_mode_value is None
+        and not policy_shell_command_values
     )
-    resolved_policy_file_access_mode = (
-        normalize_policy_file_access_mode_value(policy_file_access_mode_value)
-        if policy_file_access_mode_value is not None
-        else resolve_policy_file_access_mode(
-            value=None,
+    selected_profile_scenario = (
+        prompt_profile_permission_scenario(
+            default=str(defaults.get("AFKBOT_WIZARD_PROFILE_SCENARIO", "taskflow_channel")),
+            lang=lang,
+        )
+        if can_use_profile_scenario
+        else "custom"
+    )
+    scenario_defaults = (
+        profile_scenario(selected_profile_scenario)
+        if selected_profile_scenario != "custom"
+        else None
+    )
+    if scenario_defaults is not None:
+        resolved_policy_capabilities = scenario_defaults.capabilities
+        resolved_policy_file_access_mode = scenario_defaults.file_access_mode
+    else:
+        resolved_policy_capabilities = resolve_policy_capabilities(
+            value=policy_capability_values,
             interactive=policy_details_interactive,
+            preset=resolved_policy_preset,
             defaults=defaults,
             lang=lang,
         )
-    )
+        resolved_policy_file_access_mode = (
+            normalize_policy_file_access_mode_value(policy_file_access_mode_value)
+            if policy_file_access_mode_value is not None
+            else resolve_policy_file_access_mode(
+                value=None,
+                interactive=policy_details_interactive,
+                defaults=defaults,
+                lang=lang,
+            )
+        )
     current_workspace_scope_default = str(defaults.get("AFKBOT_POLICY_WORKSPACE_SCOPE", "profile_only"))
     if "files" not in set(resolved_policy_capabilities) or resolved_policy_file_access_mode == "none":
         resolved_policy_workspace_scope = "profile_only"
@@ -469,6 +549,8 @@ def resolve_profile_policy_inputs(
         resolved_policy_workspace_scope = normalize_policy_workspace_scope_mode_value(
             policy_workspace_scope_value
         )
+    elif scenario_defaults is not None:
+        resolved_policy_workspace_scope = scenario_defaults.workspace_scope_mode
     elif policy_details_interactive and not policy_allowed_dir_values:
         resolved_policy_workspace_scope = resolve_policy_workspace_scope_mode(
             value=None,
@@ -486,13 +568,85 @@ def resolve_profile_policy_inputs(
         raw_values=policy_allowed_dir_values,
         current_allowed_directories=current_allowed_directories,
     )
-    resolved_network_mode, resolved_network_allowlist = resolve_policy_network_settings(
-        value=policy_network_host_values,
-        interactive=policy_details_interactive,
-        defaults=defaults,
-        capabilities=resolved_policy_capabilities,
-        lang=lang,
+    shell_capability_enabled = (
+        resolved_policy_enabled and "shell" in set(resolved_policy_capabilities)
     )
+    if not shell_capability_enabled:
+        resolved_shell_sandbox_mode = "disabled"
+        resolved_shell_allowed_commands: tuple[str, ...] = ()
+    elif scenario_defaults is not None:
+        resolved_shell_sandbox_mode = normalize_policy_shell_sandbox_mode_value(
+            policy_shell_sandbox_mode_value or scenario_defaults.shell_sandbox_mode
+        )
+        resolved_shell_allowed_commands = resolve_policy_shell_allowed_commands(
+            raw_values=(
+                policy_shell_command_values
+                if policy_shell_command_values
+                else scenario_defaults.default_shell_allowed_commands
+            ),
+            defaults=defaults,
+        )
+        if policy_details_interactive:
+            _offer_shell_sandbox_backend_install_if_needed(
+                lang=lang,
+                shell_sandbox_mode=resolved_shell_sandbox_mode,
+                allowed_directories=resolved_policy_allowed_directories,
+            )
+    else:
+        default_shell_mode = str(
+            defaults.get("AFKBOT_POLICY_SHELL_SANDBOX_MODE")
+            or default_shell_sandbox_mode(
+                policy_enabled=resolved_policy_enabled,
+                capabilities=resolved_policy_capabilities,
+                workspace_scope_mode=resolved_policy_workspace_scope,
+            )
+        )
+        resolved_shell_sandbox_mode = (
+            normalize_policy_shell_sandbox_mode_value(policy_shell_sandbox_mode_value)
+            if policy_shell_sandbox_mode_value is not None
+            else normalize_policy_shell_sandbox_mode_value(
+                prompt_policy_shell_sandbox_mode(
+                    default=default_shell_mode,
+                    lang=lang,
+                )
+                if policy_details_interactive
+                else default_shell_mode
+            )
+        )
+        default_shell_commands = resolve_policy_shell_allowed_commands(
+            raw_values=(),
+            defaults=defaults,
+        )
+        resolved_shell_allowed_commands = resolve_policy_shell_allowed_commands(
+            raw_values=(
+                prompt_policy_shell_allowed_commands(
+                    default=default_shell_commands,
+                    lang=lang,
+                )
+                if policy_details_interactive and not policy_shell_command_values
+                else policy_shell_command_values
+            ),
+            defaults=defaults,
+        )
+        if policy_details_interactive:
+            _offer_shell_sandbox_backend_install_if_needed(
+                lang=lang,
+                shell_sandbox_mode=resolved_shell_sandbox_mode,
+                allowed_directories=resolved_policy_allowed_directories,
+            )
+    if scenario_defaults is not None and not policy_network_host_values:
+        resolved_network_mode, resolved_network_allowlist = _resolve_scenario_network_settings(
+            network_mode=scenario_defaults.network_mode,
+            capabilities=resolved_policy_capabilities,
+        )
+    else:
+        resolved_network_mode, resolved_network_allowlist = resolve_policy_network_settings(
+            value=policy_network_host_values,
+            interactive=policy_details_interactive,
+            defaults=defaults,
+            capabilities=resolved_policy_capabilities,
+            lang=lang,
+        )
     return ResolvedProfilePolicyInputs(
         enabled=resolved_policy_enabled,
         preset=resolved_policy_preset,
@@ -500,6 +654,119 @@ def resolve_profile_policy_inputs(
         file_access_mode=resolved_policy_file_access_mode,
         workspace_scope_mode=resolved_policy_workspace_scope,
         allowed_directories=resolved_policy_allowed_directories,
+        shell_sandbox_mode=resolved_shell_sandbox_mode,
+        shell_allowed_commands=resolved_shell_allowed_commands,
         network_mode=resolved_network_mode,
         network_allowlist=resolved_network_allowlist,
+    )
+
+
+def _resolve_scenario_network_settings(
+    *,
+    network_mode: str,
+    capabilities: tuple[str, ...],
+) -> tuple[str, tuple[str, ...]]:
+    """Resolve network settings for a selected high-level profile scenario."""
+
+    normalized = network_mode.strip().lower()
+    if normalized == "unrestricted":
+        return "unrestricted", ("*",)
+    if normalized == "deny_all":
+        return "deny_all", ()
+    if normalized == "recommended":
+        return "recommended", recommended_policy_network_hosts(capabilities=capabilities)
+    return "recommended", recommended_policy_network_hosts(capabilities=capabilities)
+
+
+def _offer_shell_sandbox_backend_install_if_needed(
+    *,
+    lang: PromptLanguage,
+    shell_sandbox_mode: str,
+    allowed_directories: tuple[str, ...],
+) -> None:
+    """Warn and optionally install the host sandbox backend during interactive setup."""
+
+    if normalize_shell_sandbox_mode(shell_sandbox_mode) == "disabled":
+        return
+    if not scope_requires_shell_sandbox(tuple(Path(item) for item in allowed_directories)):
+        return
+    status = get_shell_sandbox_backend_status()
+    if status.ok:
+        typer.echo(
+            msg(
+                lang,
+                en=f"Shell sandbox backend ready: {status.sandbox_kind} ({status.helper_path}).",
+                ru=f"Shell sandbox backend готов: {status.sandbox_kind} ({status.helper_path}).",
+            )
+        )
+        return
+    if not status.install_command:
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "Shell sandbox backend is missing. Restricted shell will fail closed in "
+                    "`required` mode until bubblewrap (Linux) or sandbox-exec (macOS) is available."
+                ),
+                ru=(
+                    "Shell sandbox backend не найден. Ограниченный shell будет безопасно падать "
+                    "в режиме `required`, пока не доступен bubblewrap (Linux) или sandbox-exec (macOS)."
+                ),
+            )
+        )
+        return
+    install_command = " ".join(status.install_command)
+    proceed = prompt_confirm(
+        question=msg(
+            lang,
+            en=(
+                "Shell sandbox backend is missing. AFKBOT can install it now with:\n"
+                f"`{install_command}`\n\nInstall now?"
+            ),
+            ru=(
+                "Shell sandbox backend не найден. AFKBOT может установить его сейчас командой:\n"
+                f"`{install_command}`\n\nУстановить сейчас?"
+            ),
+        ),
+        title=msg(lang, en="Setup: Shell sandbox backend", ru="Настройка: Shell sandbox backend"),
+        default=False,
+        lang=lang,
+    )
+    if not proceed:
+        typer.echo(
+            msg(
+                lang,
+                en=(
+                    "Skipped sandbox backend install. You can run `afk sandbox install` later; "
+                    "`required` shell profiles will fail closed until the backend is available."
+                ),
+                ru=(
+                    "Установка sandbox backend пропущена. Позже можно выполнить `afk sandbox install`; "
+                    "shell-профили в режиме `required` будут безопасно падать, пока backend недоступен."
+                ),
+            )
+        )
+        return
+    installed = install_shell_sandbox_backend()
+    if installed.ok:
+        typer.echo(
+            msg(
+                lang,
+                en=f"Shell sandbox backend installed: {installed.sandbox_kind}.",
+                ru=f"Shell sandbox backend установлен: {installed.sandbox_kind}.",
+            )
+        )
+        return
+    typer.echo(
+        msg(
+            lang,
+            en=(
+                "Sandbox backend install did not finish successfully. "
+                f"Last status: {installed.reason}"
+            ),
+            ru=(
+                "Установить sandbox backend не удалось. "
+                f"Последний статус: {installed.reason}"
+            ),
+        )
     )

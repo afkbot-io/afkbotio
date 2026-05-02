@@ -38,9 +38,11 @@ from afkbot.services.policy import (
     apply_file_access_mode,
     default_allowed_directories,
     infer_file_access_mode,
+    normalize_shell_sandbox_mode,
     parse_capability_ids,
     parse_preset_level,
     resolve_policy,
+    scope_requires_shell_sandbox,
 )
 from afkbot.services.profile_runtime.contracts import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.runtime_config import (
@@ -53,6 +55,7 @@ from afkbot.services.profile_runtime.runtime_secrets import (
 )
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.upgrade.contracts import UpgradeApplyReport, UpgradeStepReport
+from afkbot.services.wizard.profile_catalog import infer_profile_scenario_id
 from afkbot.settings import Settings
 
 
@@ -178,6 +181,33 @@ class UpgradeService:
             return UpgradeStepReport(name="setup_state", changed=False, details="invalid setup_state ignored")
 
         runtime_config = read_runtime_config(self._settings)
+        policy_capabilities = _coerce_text_tuple(config.get("policy_capabilities"))
+        policy_file_access_mode = _coerce_text(config.get("policy_file_access_mode"), default="read_write")
+        policy_workspace_scope_mode = _coerce_text(
+            _first_present_any(config, runtime_config, "policy_workspace_scope_mode", "policy_workspace_scope"),
+            default="profile_only",
+        )
+        policy_shell_sandbox_mode = _coerce_text(
+            _first_present(config, runtime_config, "policy_shell_sandbox_mode"),
+            default="disabled",
+        )
+        policy_shell_allowed_commands = _coerce_text_tuple(
+            _first_present(config, runtime_config, "policy_shell_allowed_commands")
+        )
+        policy_network_mode = _coerce_text(config.get("policy_network_mode"), default="custom")
+        policy_network_allowlist = _coerce_text_tuple(config.get("policy_network_allowlist"))
+        wizard_profile_scenario = _coerce_text(
+            config.get("wizard_profile_scenario"),
+            default=infer_profile_scenario_id(
+                capabilities=policy_capabilities,
+                file_access_mode=policy_file_access_mode,
+                workspace_scope_mode=policy_workspace_scope_mode,
+                shell_sandbox_mode=policy_shell_sandbox_mode,
+                shell_allowed_commands=policy_shell_allowed_commands,
+                network_mode=policy_network_mode,
+                network_allowlist=policy_network_allowlist,
+            ),
+        )
         snapshot = SetupStateSnapshot(
             env_file=_coerce_text(config.get("env_file"), default=".unused"),
             db_url=_coerce_text(_first_present(config, runtime_config, "db_url"), default=self._settings.db_url),
@@ -226,14 +256,18 @@ class UpgradeService:
             policy_enabled=_coerce_bool(_first_present(config, runtime_config, "policy_enabled"), default=True),
             policy_preset=_coerce_text(_first_present(config, runtime_config, "policy_preset"), default="medium"),
             policy_confirmation_mode=_coerce_text(config.get("policy_confirmation_mode"), default="confirm_file_destructive_ops"),
-            policy_capabilities=_coerce_text_tuple(config.get("policy_capabilities")),
+            policy_capabilities=policy_capabilities,
             policy_allowed_tools=_coerce_text_tuple(config.get("policy_allowed_tools")),
-            policy_file_access_mode=_coerce_text(config.get("policy_file_access_mode"), default="read_write"),
+            policy_file_access_mode=policy_file_access_mode,
             policy_allowed_directories=_coerce_text_tuple(
                 _first_present(config, runtime_config, "policy_allowed_directories")
             ),
-            policy_network_mode=_coerce_text(config.get("policy_network_mode"), default="custom"),
-            policy_network_allowlist=_coerce_text_tuple(config.get("policy_network_allowlist")),
+            policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+            policy_shell_allowed_commands=policy_shell_allowed_commands,
+            policy_network_mode=policy_network_mode,
+            policy_network_allowlist=policy_network_allowlist,
+            policy_workspace_scope_mode=policy_workspace_scope_mode,
+            wizard_profile_scenario=wizard_profile_scenario,
         )
         canonical_payload = build_setup_state_payload(
             snapshot,
@@ -471,10 +505,27 @@ class UpgradeService:
                 allowed_tools=resolved.allowed_tools,
                 file_access_mode=file_access_mode,
             )
+            current_shell_sandbox_mode = _coerce_shell_sandbox_mode(
+                getattr(row, "shell_sandbox_mode", "disabled")
+            )
+            canonical_shell_sandbox_mode = _canonical_shell_sandbox_mode_for_upgrade(
+                policy_enabled=selection.enabled,
+                capabilities=tuple(str(item.value) for item in selection.capabilities),
+                current_mode=current_shell_sandbox_mode,
+                allowed_directories=tuple(
+                    Path(item) for item in _decode_json_list(row.allowed_directories_json)
+                ),
+                default_profile_root=(
+                    effective_settings.profiles_dir / row.profile_id
+                    if getattr(effective_settings, "tool_workspace_root", None) is None
+                    else effective_settings.tool_workspace_dir
+                ),
+            )
             if (
                 current_allowed_tools == canonical_allowed_tools
                 and int(row.max_iterations_main) == resolved.max_iterations_main
                 and int(row.max_iterations_subagent) == resolved.max_iterations_subagent
+                and current_shell_sandbox_mode == canonical_shell_sandbox_mode
             ):
                 continue
             if apply_changes:
@@ -485,6 +536,7 @@ class UpgradeService:
                 )
                 row.max_iterations_main = resolved.max_iterations_main
                 row.max_iterations_subagent = resolved.max_iterations_subagent
+                row.shell_sandbox_mode = canonical_shell_sandbox_mode
             changed += 1
 
         if changed and apply_changes:
@@ -600,6 +652,33 @@ def _decode_json_list(raw: str) -> list[str]:
     if not isinstance(payload, list):
         return []
     return [str(item).strip() for item in payload if str(item).strip()]
+
+
+def _coerce_shell_sandbox_mode(value: object) -> str:
+    try:
+        return normalize_shell_sandbox_mode(value)
+    except ValueError:
+        return "disabled"
+
+
+def _canonical_shell_sandbox_mode_for_upgrade(
+    *,
+    policy_enabled: bool,
+    capabilities: tuple[str, ...],
+    current_mode: str,
+    allowed_directories: tuple[Path, ...],
+    default_profile_root: Path,
+) -> str:
+    """Backfill fail-closed shell sandboxing for legacy restricted shell profiles."""
+
+    if current_mode != "disabled":
+        return current_mode
+    if not policy_enabled or "shell" not in {item.strip().lower() for item in capabilities}:
+        return current_mode
+    effective_roots = allowed_directories or (default_profile_root.resolve(strict=False),)
+    if not scope_requires_shell_sandbox(effective_roots):
+        return current_mode
+    return "required"
 
 
 def _first_present(primary: dict[str, object], fallback: dict[str, object], key: str) -> object:

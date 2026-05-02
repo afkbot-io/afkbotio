@@ -6,8 +6,10 @@ from pathlib import Path
 
 from afkbot.cli.commands.profile_mutation_support import (
     build_policy_defaults_from_details,
+    render_profile_mutation_success,
     resolve_current_runtime_config,
 )
+from afkbot.cli.presentation.setup_prompts import PromptLanguage
 from afkbot.services.profile_runtime.contracts import (
     ProfileDetails,
     ProfilePolicyView,
@@ -15,6 +17,39 @@ from afkbot.services.profile_runtime.contracts import (
     ProfileRuntimeSecretsView,
 )
 from afkbot.services.setup.defaults import recommended_policy_capabilities
+
+
+def _profile_details(
+    *,
+    profile_root: Path,
+    policy: ProfilePolicyView,
+) -> ProfileDetails:
+    return ProfileDetails(
+        id="ops",
+        name="Ops",
+        is_default=False,
+        status="active",
+        has_runtime_config=False,
+        effective_runtime=ProfileRuntimeResolved(
+            llm_provider="openai",
+            llm_model="gpt-4o-mini",
+            enabled_tool_plugins=(),
+            provider_api_key_configured=True,
+        ),
+        profile_root=str(profile_root),
+        system_dir=str(profile_root / ".system"),
+        runtime_config=None,
+        runtime_config_path=str(profile_root / ".system/agent_config.json"),
+        runtime_secrets=ProfileRuntimeSecretsView(
+            configured_fields=("openai_api_key",),
+            has_profile_secrets=True,
+        ),
+        runtime_secrets_path=str(profile_root / ".system/runtime_secrets.enc.json"),
+        bootstrap_dir=str(profile_root / "bootstrap"),
+        skills_dir=str(profile_root / "skills"),
+        subagents_dir=str(profile_root / "subagents"),
+        policy=policy,
+    )
 
 
 def test_resolve_current_runtime_config_preserves_scoped_memory_fields_from_effective_runtime() -> None:
@@ -140,3 +175,71 @@ def test_build_policy_defaults_from_details_recognizes_recommended_setup_shape(
 
     # Assert
     assert defaults["AFKBOT_POLICY_SETUP_MODE"] == "recommended"
+
+
+def test_render_profile_mutation_success_uses_effective_scope_and_scenario(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Success preview should not label canned profile policy as custom."""
+
+    profile_root = tmp_path / "profiles/ops"
+    details = _profile_details(
+        profile_root=profile_root,
+        policy=ProfilePolicyView(
+            enabled=True,
+            preset="medium",
+            capabilities=("memory", "taskflow"),
+            file_access_mode="none",
+            allowed_directories=(str(profile_root.resolve(strict=False)),),
+            shell_sandbox_mode="disabled",
+            shell_allowed_commands=(),
+            network_allowlist=(),
+        ),
+    )
+
+    render_profile_mutation_success(
+        profile=details,
+        root_dir=tmp_path,
+        lang=PromptLanguage.EN,
+        verb_en="created",
+        verb_ru="создан",
+    )
+
+    out = capsys.readouterr().out
+    assert "Profile preview: Task Flow from a channel" in out
+    assert "scope=profile_only" in out
+    assert "Custom" not in out
+
+
+def test_render_profile_mutation_success_warns_for_full_system_scope(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Success preview should surface high-risk full-system file scope."""
+
+    details = _profile_details(
+        profile_root=tmp_path / "profiles/ops",
+        policy=ProfilePolicyView(
+            enabled=True,
+            preset="medium",
+            capabilities=("files", "shell"),
+            file_access_mode="read_write",
+            allowed_directories=("/",),
+            shell_sandbox_mode="disabled",
+            shell_allowed_commands=(),
+            network_allowlist=("*",),
+        ),
+    )
+
+    render_profile_mutation_success(
+        profile=details,
+        root_dir=tmp_path,
+        lang=PromptLanguage.EN,
+        verb_en="created",
+        verb_ru="создан",
+    )
+
+    out = capsys.readouterr().out
+    assert "scope=full_system" in out
+    assert "warning: full_system exposes all local files to the profile" in out

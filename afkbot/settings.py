@@ -139,6 +139,7 @@ class Settings(BaseSettings):
         "diffs_render",
         "bash_exec",
         "browser_control",
+        "channel_history_list",
         "channel_send",
         "debug_echo",
         "http_request",

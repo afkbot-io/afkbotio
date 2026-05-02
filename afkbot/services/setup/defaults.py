@@ -92,6 +92,12 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_POLICY_WORKSPACE_SCOPE": str(
             runtime_config.get("policy_workspace_scope", "profile_only")
         ),
+        "AFKBOT_POLICY_SHELL_SANDBOX_MODE": str(
+            runtime_config.get("policy_shell_sandbox_mode", "")
+        ),
+        "AFKBOT_POLICY_SHELL_ALLOWED_COMMANDS": ",".join(
+            normalize_runtime_string_seq(runtime_config.get("policy_shell_allowed_commands"))
+        ),
         "AFKBOT_POLICY_NETWORK_MODE": str(
             runtime_config.get("policy_network_mode", PolicyNetworkMode.UNRESTRICTED.value)
         ),

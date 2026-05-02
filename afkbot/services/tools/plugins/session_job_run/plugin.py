@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, ValidationError
 
+from afkbot.services.agent_loop.channel_tool_policy import blocked_tool_result_for_runtime
 from afkbot.services.policy import PolicyViolationError
 from afkbot.services.subagents import get_subagent_service
 from afkbot.services.subagents.contracts import SubagentResultResponse, SubagentRunAccepted
@@ -159,6 +160,17 @@ class SessionJobRunTool(ToolBase):
         job: SessionJobSpec,
         index: int,
     ) -> dict[str, object]:
+        blocked = blocked_tool_result_for_runtime(
+            tool_name="bash.exec",
+            runtime_metadata=ctx.runtime_metadata,
+        )
+        if blocked is not None:
+            return self._error_result(
+                index=index,
+                kind="bash",
+                error_code=blocked.error_code or "tool_blocked_by_channel_profile",
+                reason=blocked.reason or "Nested bash job is blocked by channel policy",
+            )
         if not str(job.cmd or "").strip():
             return self._error_result(
                 index=index,
@@ -209,6 +221,17 @@ class SessionJobRunTool(ToolBase):
         index: int,
         accepted_task_ids: set[str],
     ) -> dict[str, object]:
+        blocked = blocked_tool_result_for_runtime(
+            tool_name="subagent.run",
+            runtime_metadata=ctx.runtime_metadata,
+        )
+        if blocked is not None:
+            return self._error_result(
+                index=index,
+                kind="subagent",
+                error_code=blocked.error_code or "tool_blocked_by_channel_profile",
+                reason=blocked.reason or "Nested subagent job is blocked by channel policy",
+            )
         prompt = str(job.prompt or "").strip()
         if not prompt:
             return self._error_result(

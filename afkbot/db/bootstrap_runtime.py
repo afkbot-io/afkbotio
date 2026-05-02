@@ -106,6 +106,7 @@ def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> No
     _ensure_automation_graph_runtime_columns(conn)
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
+    _ensure_profile_policy_runtime_columns(conn)
     vault = _resolve_credentials_vault(settings)
     _guard_legacy_plaintext_webhook_tokens(conn, vault=vault)
     _backfill_encrypted_webhook_tokens(conn, vault=vault)
@@ -529,6 +530,21 @@ def _ensure_webhook_execution_columns(conn: Connection) -> None:
     for column_name, ddl in missing_columns.items():
         if column_name not in columns:
             conn.execute(text(ddl))
+
+
+def _ensure_profile_policy_runtime_columns(conn: Connection) -> None:
+    """Ensure profile policy rows expose current runtime guardrail columns."""
+
+    columns = _table_columns(conn, "profile_policy")
+    if not columns:
+        return
+    if "shell_sandbox_mode" not in columns:
+        conn.execute(
+            text(
+                "ALTER TABLE profile_policy "
+                "ADD COLUMN shell_sandbox_mode VARCHAR(16) NOT NULL DEFAULT 'disabled'"
+            )
+        )
 
 
 def _backfill_webhook_token_hashes(conn: Connection) -> None:
