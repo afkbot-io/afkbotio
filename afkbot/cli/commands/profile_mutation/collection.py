@@ -246,6 +246,7 @@ def collect_profile_mutation_inputs(
         session_compaction_keep_recent_turns=session_compaction_keep_recent_turns,
         session_compaction_max_chars=session_compaction_max_chars,
         session_compaction_prune_raw_turns=session_compaction_prune_raw_turns,
+        wizard_intent=resolved_policy.wizard_intent,
     )
     return CollectedProfileMutationInputs(
         resolved_name=resolved_name,

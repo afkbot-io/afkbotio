@@ -13,12 +13,19 @@ from afkbot.cli.presentation.setup_prompts import (
     PromptLanguage,
     msg,
     prompt_confirm,
-    prompt_profile_permission_scenario,
+    prompt_profile_intent_actions,
+    prompt_profile_intent_confirmation,
+    prompt_profile_intent_depth,
+    prompt_profile_intent_isolation,
+    prompt_profile_intent_network,
+    prompt_profile_intent_network_allowlist,
+    prompt_profile_intent_work_contexts,
     prompt_policy_shell_allowed_commands,
     prompt_policy_shell_sandbox_mode,
 )
 from afkbot.services.setup.policy_inputs import (
     default_policy_enabled_for_preset,
+    parse_policy_network_hosts,
     recommended_policy_network_hosts,
     resolve_policy_capabilities,
     resolve_policy_enabled,
@@ -51,7 +58,13 @@ from afkbot.services.tools.shell_sandbox import (
     get_shell_sandbox_backend_status,
     install_shell_sandbox_backend,
 )
-from afkbot.services.wizard.profile_catalog import profile_scenario
+from afkbot.services.wizard.profile_intent_mapper import (
+    ProfileIntentSelection,
+    map_profile_intent_to_policy,
+    profile_intent_metadata_payload,
+    profile_intent_selection_from_defaults,
+    quick_safe_profile_intent_selection,
+)
 from afkbot.settings import Settings
 
 
@@ -84,6 +97,7 @@ class ResolvedProfilePolicyInputs:
     network_allowlist: tuple[str, ...]
     shell_sandbox_mode: str = "disabled"
     shell_allowed_commands: tuple[str, ...] = ()
+    wizard_intent: ProfileIntentSelection | None = None
 
 
 def resolve_profile_thinking_level(
@@ -239,10 +253,12 @@ def build_profile_runtime_config(
     session_compaction_keep_recent_turns: int | None,
     session_compaction_max_chars: int | None,
     session_compaction_prune_raw_turns: bool | None,
+    wizard_intent: ProfileIntentSelection | None = None,
 ) -> ProfileRuntimeConfig:
     """Build one runtime config by overlaying explicit flags onto an optional baseline."""
 
     current = base_runtime
+    wizard_metadata = profile_intent_metadata_payload(wizard_intent)
     return ProfileRuntimeConfig(
         llm_provider=runtime_core.llm_provider,
         llm_model=runtime_core.llm_model,
@@ -348,6 +364,41 @@ def build_profile_runtime_config(
             session_compaction_prune_raw_turns
             if session_compaction_prune_raw_turns is not None
             else (current.session_compaction_prune_raw_turns if current else None)
+        ),
+        wizard_setup_depth=(
+            str(wizard_metadata["wizard_setup_depth"])
+            if wizard_intent is not None
+            else ((current.wizard_setup_depth if current else None) or "legacy")
+        ),
+        wizard_work_contexts=(
+            _metadata_text_tuple(wizard_metadata, "wizard_work_contexts")
+            if wizard_intent is not None
+            else (current.wizard_work_contexts if current else None)
+        ),
+        wizard_actions=(
+            _metadata_text_tuple(wizard_metadata, "wizard_actions")
+            if wizard_intent is not None
+            else (current.wizard_actions if current else None)
+        ),
+        wizard_isolation=(
+            str(wizard_metadata["wizard_isolation"])
+            if wizard_intent is not None
+            else ((current.wizard_isolation if current else None) or "")
+        ),
+        wizard_confirmation=(
+            str(wizard_metadata["wizard_confirmation"])
+            if wizard_intent is not None
+            else ((current.wizard_confirmation if current else None) or "")
+        ),
+        wizard_network=(
+            str(wizard_metadata["wizard_network"])
+            if wizard_intent is not None
+            else ((current.wizard_network if current else None) or "")
+        ),
+        wizard_network_allowlist=(
+            _metadata_text_tuple(wizard_metadata, "wizard_network_allowlist")
+            if wizard_intent is not None
+            else (current.wizard_network_allowlist if current else None)
         ),
     )
 
@@ -483,48 +534,123 @@ def resolve_profile_policy_inputs(
 ) -> ResolvedProfilePolicyInputs:
     """Resolve one full profile policy payload with shared create/update semantics."""
 
-    resolved_policy_preset = resolve_policy_preset(
-        value=policy_preset_value,
-        interactive=interactive,
-        default=str(defaults.get("AFKBOT_POLICY_PRESET", "medium")),
-        lang=lang,
-    )
-    resolved_policy_enabled = resolve_policy_enabled(
-        value=policy_enabled_value,
-        interactive=interactive,
-        default=default_policy_enabled_for_preset(
-            defaults=defaults,
-            preset=resolved_policy_preset,
-        ),
-        lang=lang,
-    )
-    policy_details_interactive = interactive and resolved_policy_enabled
-    can_use_profile_scenario = (
-        policy_details_interactive
+    can_use_intent_wizard = (
+        interactive
+        and policy_enabled_value is not False
+        and policy_preset_value is None
         and not policy_capability_values
         and policy_file_access_mode_value is None
         and policy_workspace_scope_value is None
         and not policy_allowed_dir_values
+        and not policy_network_host_values
         and policy_shell_sandbox_mode_value is None
         and not policy_shell_command_values
     )
-    selected_profile_scenario = (
-        prompt_profile_permission_scenario(
-            default=str(defaults.get("AFKBOT_WIZARD_PROFILE_SCENARIO", "taskflow_channel")),
+    wizard_intent: ProfileIntentSelection | None = None
+    intent_policy = None
+    if can_use_intent_wizard:
+        stored_intent = profile_intent_selection_from_defaults(defaults)
+        selected_depth = prompt_profile_intent_depth(
+            default=stored_intent.depth if stored_intent is not None else "guided",
+            lang=lang,
+        ).strip().lower()
+        if selected_depth in {"quick", "guided"}:
+            if selected_depth == "quick":
+                wizard_intent = quick_safe_profile_intent_selection()
+            else:
+                work_contexts = prompt_profile_intent_work_contexts(
+                    default_values=(
+                        stored_intent.work_contexts
+                        if stored_intent is not None and stored_intent.work_contexts
+                        else ("channels",)
+                    ),
+                    include_expert=False,
+                    lang=lang,
+                )
+                actions = prompt_profile_intent_actions(
+                    work_contexts=work_contexts,
+                    default_values=(
+                        stored_intent.actions
+                        if stored_intent is not None and stored_intent.actions
+                        else None
+                    ),
+                    include_expert=False,
+                    lang=lang,
+                )
+                isolation = prompt_profile_intent_isolation(
+                    default=(
+                        stored_intent.isolation
+                        if stored_intent is not None and stored_intent.isolation
+                        else _default_intent_isolation(actions)
+                    ),
+                    include_dangerous=False,
+                    lang=lang,
+                )
+                confirmation = prompt_profile_intent_confirmation(
+                    default=(
+                        stored_intent.confirmation
+                        if stored_intent is not None and stored_intent.confirmation
+                        else "balanced"
+                    ),
+                    lang=lang,
+                )
+                network = prompt_profile_intent_network(
+                    default=(
+                        stored_intent.network
+                        if stored_intent is not None and stored_intent.network
+                        else _default_intent_network(actions)
+                    ),
+                    include_dangerous=False,
+                    lang=lang,
+                )
+                network_allowlist = (
+                    parse_policy_network_hosts(
+                        raw_values=prompt_profile_intent_network_allowlist(
+                            default_values=(
+                                stored_intent.network_allowlist
+                                if stored_intent is not None
+                                else ()
+                            ),
+                            lang=lang,
+                        ),
+                        source="profile-intent-network",
+                    )
+                    if network == "custom"
+                    else ()
+                )
+                wizard_intent = ProfileIntentSelection(
+                    depth="guided",
+                    work_contexts=work_contexts,
+                    actions=actions,
+                    isolation=isolation,
+                    confirmation=confirmation,
+                    network=network,
+                    network_allowlist=network_allowlist,
+                )
+            intent_policy = map_profile_intent_to_policy(wizard_intent)
+
+    if intent_policy is not None:
+        resolved_policy_enabled = intent_policy.enabled
+        resolved_policy_preset = intent_policy.preset
+        resolved_policy_capabilities = intent_policy.capabilities
+        resolved_policy_file_access_mode = intent_policy.file_access_mode
+    else:
+        resolved_policy_preset = resolve_policy_preset(
+            value=policy_preset_value,
+            interactive=interactive,
+            default=str(defaults.get("AFKBOT_POLICY_PRESET", "medium")),
             lang=lang,
         )
-        if can_use_profile_scenario
-        else "custom"
-    )
-    scenario_defaults = (
-        profile_scenario(selected_profile_scenario)
-        if selected_profile_scenario != "custom"
-        else None
-    )
-    if scenario_defaults is not None:
-        resolved_policy_capabilities = scenario_defaults.capabilities
-        resolved_policy_file_access_mode = scenario_defaults.file_access_mode
-    else:
+        resolved_policy_enabled = resolve_policy_enabled(
+            value=policy_enabled_value,
+            interactive=interactive,
+            default=default_policy_enabled_for_preset(
+                defaults=defaults,
+                preset=resolved_policy_preset,
+            ),
+            lang=lang,
+        )
+        policy_details_interactive = interactive and resolved_policy_enabled
         resolved_policy_capabilities = resolve_policy_capabilities(
             value=policy_capability_values,
             interactive=policy_details_interactive,
@@ -542,6 +668,7 @@ def resolve_profile_policy_inputs(
                 lang=lang,
             )
         )
+    policy_details_interactive = interactive and resolved_policy_enabled and intent_policy is None
     current_workspace_scope_default = str(defaults.get("AFKBOT_POLICY_WORKSPACE_SCOPE", "profile_only"))
     if "files" not in set(resolved_policy_capabilities) or resolved_policy_file_access_mode == "none":
         resolved_policy_workspace_scope = "profile_only"
@@ -549,8 +676,8 @@ def resolve_profile_policy_inputs(
         resolved_policy_workspace_scope = normalize_policy_workspace_scope_mode_value(
             policy_workspace_scope_value
         )
-    elif scenario_defaults is not None:
-        resolved_policy_workspace_scope = scenario_defaults.workspace_scope_mode
+    elif intent_policy is not None:
+        resolved_policy_workspace_scope = intent_policy.workspace_scope_mode
     elif policy_details_interactive and not policy_allowed_dir_values:
         resolved_policy_workspace_scope = resolve_policy_workspace_scope_mode(
             value=None,
@@ -574,19 +701,19 @@ def resolve_profile_policy_inputs(
     if not shell_capability_enabled:
         resolved_shell_sandbox_mode = "disabled"
         resolved_shell_allowed_commands: tuple[str, ...] = ()
-    elif scenario_defaults is not None:
+    elif intent_policy is not None:
         resolved_shell_sandbox_mode = normalize_policy_shell_sandbox_mode_value(
-            policy_shell_sandbox_mode_value or scenario_defaults.shell_sandbox_mode
+            policy_shell_sandbox_mode_value or intent_policy.shell_sandbox_mode
         )
         resolved_shell_allowed_commands = resolve_policy_shell_allowed_commands(
             raw_values=(
                 policy_shell_command_values
                 if policy_shell_command_values
-                else scenario_defaults.default_shell_allowed_commands
+                else intent_policy.shell_allowed_commands
             ),
             defaults=defaults,
         )
-        if policy_details_interactive:
+        if interactive:
             _offer_shell_sandbox_backend_install_if_needed(
                 lang=lang,
                 shell_sandbox_mode=resolved_shell_sandbox_mode,
@@ -634,11 +761,15 @@ def resolve_profile_policy_inputs(
                 shell_sandbox_mode=resolved_shell_sandbox_mode,
                 allowed_directories=resolved_policy_allowed_directories,
             )
-    if scenario_defaults is not None and not policy_network_host_values:
-        resolved_network_mode, resolved_network_allowlist = _resolve_scenario_network_settings(
-            network_mode=scenario_defaults.network_mode,
-            capabilities=resolved_policy_capabilities,
-        )
+    if intent_policy is not None and not policy_network_host_values:
+        if intent_policy.network_mode == "custom":
+            resolved_network_mode = "custom"
+            resolved_network_allowlist = wizard_intent.network_allowlist if wizard_intent is not None else ()
+        else:
+            resolved_network_mode, resolved_network_allowlist = _resolve_scenario_network_settings(
+                network_mode=intent_policy.network_mode,
+                capabilities=resolved_policy_capabilities,
+            )
     else:
         resolved_network_mode, resolved_network_allowlist = resolve_policy_network_settings(
             value=policy_network_host_values,
@@ -658,6 +789,7 @@ def resolve_profile_policy_inputs(
         shell_allowed_commands=resolved_shell_allowed_commands,
         network_mode=resolved_network_mode,
         network_allowlist=resolved_network_allowlist,
+        wizard_intent=wizard_intent,
     )
 
 
@@ -676,6 +808,39 @@ def _resolve_scenario_network_settings(
     if normalized == "recommended":
         return "recommended", recommended_policy_network_hosts(capabilities=capabilities)
     return "recommended", recommended_policy_network_hosts(capabilities=capabilities)
+
+
+def _metadata_text_tuple(metadata: dict[str, object], key: str) -> tuple[str, ...]:
+    """Return one tuple field from wizard metadata as normalized strings."""
+
+    raw = metadata.get(key)
+    if isinstance(raw, tuple | list):
+        return tuple(str(item) for item in raw)
+    return ()
+
+
+def _default_intent_isolation(actions: tuple[str, ...]) -> str:
+    """Return a safe isolation default for guided intent answers."""
+
+    action_set = {item.strip().lower() for item in actions if item.strip()}
+    if "shell_allowlist" in action_set:
+        return "profile_shell"
+    if "project_write" in action_set:
+        return "project_write"
+    if "project_read" in action_set:
+        return "project_read"
+    if "sandbox_write" in action_set:
+        return "profile_only"
+    return "no_files"
+
+
+def _default_intent_network(actions: tuple[str, ...]) -> str:
+    """Return a safe network default for guided intent answers."""
+
+    action_set = {item.strip().lower() for item in actions if item.strip()}
+    if action_set & {"internet_docs", "browser", "external_services"}:
+        return "recommended"
+    return "deny_all"
 
 
 def _offer_shell_sandbox_backend_install_if_needed(

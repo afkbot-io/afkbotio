@@ -53,6 +53,13 @@ class SetupStateSnapshot:
     policy_workspace_scope_mode: str = "profile_only"
     wizard_schema_version: int = WIZARD_SCHEMA_VERSION
     wizard_profile_scenario: str = "custom"
+    wizard_setup_depth: str = "legacy"
+    wizard_work_contexts: tuple[str, ...] = ()
+    wizard_actions: tuple[str, ...] = ()
+    wizard_isolation: str = ""
+    wizard_confirmation: str = ""
+    wizard_network: str = ""
+    wizard_network_allowlist: tuple[str, ...] = ()
 
 
 def setup_is_complete(settings: Settings) -> bool:
@@ -158,6 +165,13 @@ def build_setup_state_payload(
             "policy_network_allowlist": list(snapshot.policy_network_allowlist),
             "wizard_schema_version": snapshot.wizard_schema_version,
             "wizard_profile_scenario": snapshot.wizard_profile_scenario,
+            "wizard_setup_depth": snapshot.wizard_setup_depth,
+            "wizard_work_contexts": list(snapshot.wizard_work_contexts),
+            "wizard_actions": list(snapshot.wizard_actions),
+            "wizard_isolation": snapshot.wizard_isolation,
+            "wizard_confirmation": snapshot.wizard_confirmation,
+            "wizard_network": snapshot.wizard_network,
+            "wizard_network_allowlist": list(snapshot.wizard_network_allowlist),
         },
     }
 

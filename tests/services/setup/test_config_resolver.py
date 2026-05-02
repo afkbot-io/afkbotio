@@ -21,7 +21,7 @@ from afkbot.settings import Settings
 def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     tmp_path: Path,
 ) -> None:
-    """Recommended setup should keep its curated capability set and local SQLite runtime."""
+    """Recommended setup should keep quick-safe no-file/no-shell policy and local runtime."""
 
     # Arrange
     settings = Settings(
@@ -72,27 +72,18 @@ def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     )
 
     # Assert
-    expected_capabilities = tuple(
-        capability.value
-        for capability in (
-            PolicyCapabilityId.MEMORY,
-            PolicyCapabilityId.CREDENTIALS,
-            PolicyCapabilityId.SUBAGENTS,
-            PolicyCapabilityId.AUTOMATION,
-            PolicyCapabilityId.TASKFLOW,
-            PolicyCapabilityId.HTTP,
-            PolicyCapabilityId.WEB,
-            PolicyCapabilityId.BROWSER,
-            PolicyCapabilityId.SKILLS,
-            PolicyCapabilityId.APPS,
-            PolicyCapabilityId.MCP,
-        )
-    )
+    expected_capabilities = (PolicyCapabilityId.MEMORY.value, PolicyCapabilityId.TASKFLOW.value)
     assert config.db_url == f"sqlite+aiosqlite:///{tmp_path / 'configured.db'}"
     assert config.policy_setup_mode == "recommended"
     assert config.policy_preset == "medium"
     assert config.policy_capabilities == expected_capabilities
     assert config.policy_capabilities == recommended_policy_capabilities()
+    assert config.policy_file_access_mode == "none"
+    assert config.policy_workspace_scope_mode == "profile_only"
+    assert config.policy_network_mode == "recommended"
+    assert config.wizard_setup_depth == "quick"
+    assert config.wizard_work_contexts == ("channels",)
+    assert config.wizard_actions == ("reply", "channel_history", "taskflow", "memory")
     assert config.llm_thinking_level == "medium"
     assert config.default_profile_runtime_config.llm_provider == "openrouter"
     assert config.default_profile_runtime_config.llm_model == "minimax/minimax-m2.5"
@@ -104,26 +95,11 @@ def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     assert config.auto_install_deps is True
 
 
-def test_recommended_policy_capabilities_keep_browser_while_dropping_high_risk_tools() -> None:
-    """Recommended capability helper should keep browser while excluding files and shell."""
+def test_recommended_policy_capabilities_are_quick_safe() -> None:
+    """Recommended capability helper should exclude broad tools until the user chooses them."""
 
     # Arrange
-    expected_capabilities = tuple(
-        capability.value
-        for capability in (
-            PolicyCapabilityId.MEMORY,
-            PolicyCapabilityId.CREDENTIALS,
-            PolicyCapabilityId.SUBAGENTS,
-            PolicyCapabilityId.AUTOMATION,
-            PolicyCapabilityId.TASKFLOW,
-            PolicyCapabilityId.HTTP,
-            PolicyCapabilityId.WEB,
-            PolicyCapabilityId.BROWSER,
-            PolicyCapabilityId.SKILLS,
-            PolicyCapabilityId.APPS,
-            PolicyCapabilityId.MCP,
-        )
-    )
+    expected_capabilities = (PolicyCapabilityId.MEMORY.value, PolicyCapabilityId.TASKFLOW.value)
 
     # Act
     capabilities = recommended_policy_capabilities()
@@ -132,7 +108,8 @@ def test_recommended_policy_capabilities_keep_browser_while_dropping_high_risk_t
     assert capabilities == expected_capabilities
     assert PolicyCapabilityId.FILES.value not in capabilities
     assert PolicyCapabilityId.SHELL.value not in capabilities
-    assert PolicyCapabilityId.BROWSER.value in capabilities
+    assert PolicyCapabilityId.BROWSER.value not in capabilities
+    assert PolicyCapabilityId.CREDENTIALS.value not in capabilities
     assert PolicyCapabilityId.DEBUG.value not in capabilities
 
 

@@ -88,10 +88,11 @@ def build_profile_configuration_preview(
         else (
             f"Предпросмотр профиля: {scenario_label}",
             f"- учётные данные: {credentials_text}",
-            f"- возможности: {capabilities_text}",
-            f"- файлы: {file_access_mode}, область={workspace_scope_mode}, директории={directories_text}",
-            f"- shell sandbox: {shell_sandbox_mode}, команды={shell_commands_text}",
-            f"- сеть: {network_text}",
+            f"- возможности: {_capabilities_label(capabilities, lang=lang)}",
+            f"- файлы: {_file_access_label(file_access_mode, lang=lang)}, "
+            f"граница={_workspace_scope_label(workspace_scope_mode, lang=lang)}, директории={directories_text}",
+            f"- терминал: {_shell_sandbox_label(shell_sandbox_mode, lang=lang)}, команды={shell_commands_text}",
+            f"- сеть: {_network_label(network_mode, network_allowlist, lang=lang)}",
         )
     )
     warnings = _profile_warning_lines(
@@ -243,3 +244,69 @@ def _profile_warning_lines(
             else "- предупреждение: full_system открывает профилю все локальные файлы"
         )
     return tuple(lines)
+
+
+def _capabilities_label(capabilities: tuple[str, ...], *, lang: PromptLanguage) -> str:
+    if lang != PromptLanguage.RU:
+        return ", ".join(capabilities) or "-"
+    labels = {
+        "files": "файлы",
+        "shell": "терминал",
+        "memory": "память",
+        "credentials": "секреты",
+        "subagents": "помощники",
+        "automation": "автоматизации",
+        "taskflow": "задачи",
+        "http": "исходящие запросы",
+        "web": "веб-страницы",
+        "browser": "браузер",
+        "skills": "навыки",
+        "apps": "интеграции",
+        "mcp": "MCP",
+    }
+    return ", ".join(labels.get(item, item) for item in capabilities) or "-"
+
+
+def _file_access_label(value: str, *, lang: PromptLanguage) -> str:
+    if lang != PromptLanguage.RU:
+        return value
+    return {
+        "none": "без доступа",
+        "read_only": "только чтение",
+        "read_write": "чтение и изменение",
+    }.get(value, value)
+
+
+def _workspace_scope_label(value: str, *, lang: PromptLanguage) -> str:
+    if lang != PromptLanguage.RU:
+        return value
+    return {
+        "profile_only": "только папка профиля",
+        "project_only": "только текущий проект",
+        "profile_and_project": "папка профиля и текущий проект",
+        "full_system": "вся локальная система",
+        "custom": "заданные директории",
+    }.get(value, value)
+
+
+def _shell_sandbox_label(value: str, *, lang: PromptLanguage) -> str:
+    if lang != PromptLanguage.RU:
+        return value
+    return {
+        "disabled": "запрещён или не нужен",
+        "required": "обязательная системная изоляция",
+        "best_effort": "изоляция при наличии backend",
+    }.get(value, value)
+
+
+def _network_label(mode: str, allowlist: tuple[str, ...], *, lang: PromptLanguage) -> str:
+    if lang != PromptLanguage.RU:
+        return ", ".join(allowlist) if allowlist else mode
+    if allowlist:
+        return ", ".join(allowlist)
+    return {
+        "deny_all": "без сетевых инструментов",
+        "recommended": "только нужные домены сервисов",
+        "unrestricted": "любые сетевые адреса",
+        "custom": "заданные домены",
+    }.get(mode, mode)

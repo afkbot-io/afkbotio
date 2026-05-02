@@ -348,6 +348,13 @@ def _finalize_setup_runtime(
                     network_mode=config.policy_network_mode,
                     network_allowlist=profile.policy.network_allowlist,
                 ),
+                wizard_setup_depth=config.wizard_setup_depth,
+                wizard_work_contexts=config.wizard_work_contexts,
+                wizard_actions=config.wizard_actions,
+                wizard_isolation=config.wizard_isolation,
+                wizard_confirmation=config.wizard_confirmation,
+                wizard_network=config.wizard_network,
+                wizard_network_allowlist=config.wizard_network_allowlist,
             ),
         )
 
@@ -423,6 +430,13 @@ def _build_runtime_config_payload(
             "policy_shell_allowed_commands": list(config.policy_shell_allowed_commands),
             "policy_network_mode": config.policy_network_mode,
             "policy_network_allowlist": list(config.policy_network_allowlist),
+            "wizard_setup_depth": config.wizard_setup_depth,
+            "wizard_work_contexts": list(config.wizard_work_contexts),
+            "wizard_actions": list(config.wizard_actions),
+            "wizard_isolation": config.wizard_isolation,
+            "wizard_confirmation": config.wizard_confirmation,
+            "wizard_network": config.wizard_network,
+            "wizard_network_allowlist": list(config.wizard_network_allowlist),
             "update_notices_enabled": config.update_notices_enabled,
         }
     )
@@ -516,6 +530,13 @@ def _build_setup_response(
             "policy_network_mode": config.policy_network_mode,
             "policy_network_allowlist": list(config.policy_network_allowlist),
             "wizard_profile_scenario": wizard_profile_scenario,
+            "wizard_setup_depth": config.wizard_setup_depth,
+            "wizard_work_contexts": list(config.wizard_work_contexts),
+            "wizard_actions": list(config.wizard_actions),
+            "wizard_isolation": config.wizard_isolation,
+            "wizard_confirmation": config.wizard_confirmation,
+            "wizard_network": config.wizard_network,
+            "wizard_network_allowlist": list(config.wizard_network_allowlist),
         },
         "default_profile": profile,
     }

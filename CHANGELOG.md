@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Setup/profile security configuration now has an intent-first guided wizard
+  with Russian/English copy for work surfaces, allowed actions, isolation,
+  confirmations, and network boundaries. The new wizard stores additive V2
+  metadata while keeping legacy scenario ids as compatibility-only labels.
+
+### Changed
+
+- Recommended setup now uses a quick-safe default for chats/channels, tasks, and
+  memory without granting file, shell, credentials, browser, app, MCP, or
+  subagent tools until the operator explicitly chooses them.
+- Channel wizard labels now avoid raw internal tokens in normal prompts for
+  access/session/tool-profile choices.
+
 ## [1.7.0] - 2026-05-02
 
 ### Added

@@ -192,8 +192,8 @@ _CHANNEL_SCENARIOS: dict[str, ChannelWizardScenario] = {
 
 _TOOL_PROFILE_LABELS: dict[str, tuple[str, str]] = {
     "inherit": (
-        "Trusted inherit - expose the profile's full tool ceiling",
-        "Доверенный inherit - открыть полный потолок прав профиля",
+        "Use the profile's full permissions - dangerous for untrusted chats",
+        "Полные права профиля - опасно для недоверенных чатов",
     ),
     "chat_minimal": (
         "Minimal chat - replies and current-channel history, no general tools",
@@ -208,8 +208,8 @@ _TOOL_PROFILE_LABELS: dict[str, tuple[str, str]] = {
         "Support только чтение - сообщения плюс чтение и поиск файлов",
     ),
     "taskflow_operator": (
-        "Task Flow operator - manage tasks from the channel, no shell or files",
-        "Оператор Task Flow - задачи из канала, без shell и файлов",
+        "Task operator - create and update tasks from the channel, no terminal or files",
+        "Задачи из канала - создавать и обновлять задачи, без терминала и файлов",
     ),
 }
 

@@ -9,11 +9,14 @@ from afkbot.services.policy import PolicyPresetLevel, infer_workspace_scope_mode
 from afkbot.services.profile_runtime import ProfileDetails, ProfileRuntimeConfig
 from afkbot.services.setup.contracts import (
     PolicyFileAccessMode,
+    PolicyNetworkMode,
     PolicySetupMode,
-    WILDCARD_NETWORK_HOST,
 )
 from afkbot.services.setup.defaults import recommended_policy_capabilities
-from afkbot.services.setup.policy_inputs import default_policy_network_mode
+from afkbot.services.setup.policy_inputs import (
+    default_policy_network_mode,
+    recommended_policy_network_hosts,
+)
 
 
 def build_profile_defaults(defaults: dict[str, str]) -> dict[str, str]:
@@ -26,6 +29,13 @@ def build_profile_defaults(defaults: dict[str, str]) -> dict[str, str]:
         "AFKBOT_POLICY_SETUP_MODE",
         "AFKBOT_POLICY_CONFIRMATION_MODE",
         "AFKBOT_POLICY_FILE_ACCESS_MODE",
+        "AFKBOT_WIZARD_SETUP_DEPTH",
+        "AFKBOT_WIZARD_WORK_CONTEXTS",
+        "AFKBOT_WIZARD_ACTIONS",
+        "AFKBOT_WIZARD_ISOLATION",
+        "AFKBOT_WIZARD_CONFIRMATION",
+        "AFKBOT_WIZARD_NETWORK",
+        "AFKBOT_WIZARD_NETWORK_ALLOWLIST",
     ):
         if os.getenv(key) is None:
             resolved.pop(key, None)
@@ -45,8 +55,9 @@ def build_policy_defaults_from_details(*, root_dir: Path, details: ProfileDetail
             details.policy.enabled is True
             and details.policy.preset == PolicyPresetLevel.MEDIUM.value
             and details.policy.capabilities == recommended_policy_capabilities()
-            and details.policy.network_allowlist == (WILDCARD_NETWORK_HOST,)
-            and details.policy.file_access_mode == PolicyFileAccessMode.READ_WRITE.value
+            and details.policy.network_allowlist
+            == recommended_policy_network_hosts(capabilities=details.policy.capabilities)
+            and details.policy.file_access_mode == PolicyFileAccessMode.NONE.value
             and infer_workspace_scope_mode(
                 root_dir=root_dir,
                 profile_root=Path(details.profile_root),
@@ -75,6 +86,29 @@ def build_policy_defaults_from_details(*, root_dir: Path, details: ProfileDetail
         defaults=defaults,
         capabilities=details.policy.capabilities,
     )
+    runtime = resolve_current_runtime_config(details)
+    defaults.update(
+        {
+            "AFKBOT_WIZARD_SETUP_DEPTH": runtime.wizard_setup_depth or "legacy",
+            "AFKBOT_WIZARD_WORK_CONTEXTS": ",".join(runtime.wizard_work_contexts or ()),
+            "AFKBOT_WIZARD_ACTIONS": ",".join(runtime.wizard_actions or ()),
+            "AFKBOT_WIZARD_ISOLATION": runtime.wizard_isolation or "",
+            "AFKBOT_WIZARD_CONFIRMATION": runtime.wizard_confirmation or "",
+            "AFKBOT_WIZARD_NETWORK": runtime.wizard_network or "",
+            "AFKBOT_WIZARD_NETWORK_ALLOWLIST": ",".join(runtime.wizard_network_allowlist or ()),
+        }
+    )
+    if (
+        policy_setup_mode == PolicySetupMode.RECOMMENDED.value
+        and defaults["AFKBOT_WIZARD_SETUP_DEPTH"] in {"", "legacy"}
+    ):
+        defaults["AFKBOT_WIZARD_SETUP_DEPTH"] = "quick"
+        defaults["AFKBOT_WIZARD_WORK_CONTEXTS"] = "channels"
+        defaults["AFKBOT_WIZARD_ACTIONS"] = "reply,channel_history,taskflow,memory"
+        defaults["AFKBOT_WIZARD_ISOLATION"] = "no_files"
+        defaults["AFKBOT_WIZARD_CONFIRMATION"] = "balanced"
+        defaults["AFKBOT_WIZARD_NETWORK"] = PolicyNetworkMode.RECOMMENDED.value
+        defaults["AFKBOT_WIZARD_NETWORK_ALLOWLIST"] = ""
     return defaults
 
 

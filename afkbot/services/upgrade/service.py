@@ -268,6 +268,13 @@ class UpgradeService:
             policy_network_allowlist=policy_network_allowlist,
             policy_workspace_scope_mode=policy_workspace_scope_mode,
             wizard_profile_scenario=wizard_profile_scenario,
+            wizard_setup_depth=_coerce_text(config.get("wizard_setup_depth"), default="legacy"),
+            wizard_work_contexts=_coerce_text_tuple(config.get("wizard_work_contexts")),
+            wizard_actions=_coerce_text_tuple(config.get("wizard_actions")),
+            wizard_isolation=_coerce_text(config.get("wizard_isolation"), default=""),
+            wizard_confirmation=_coerce_text(config.get("wizard_confirmation"), default=""),
+            wizard_network=_coerce_text(config.get("wizard_network"), default=""),
+            wizard_network_allowlist=_coerce_text_tuple(config.get("wizard_network_allowlist")),
         )
         canonical_payload = build_setup_state_payload(
             snapshot,

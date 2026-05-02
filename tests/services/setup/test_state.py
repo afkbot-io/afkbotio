@@ -85,10 +85,24 @@ def test_setup_state_payload_includes_wizard_metadata() -> None:
             policy_network_allowlist=(),
             policy_workspace_scope_mode="profile_only",
             wizard_profile_scenario="taskflow_channel",
+            wizard_setup_depth="quick",
+            wizard_work_contexts=("channels",),
+            wizard_actions=("reply", "channel_history", "taskflow", "memory"),
+            wizard_isolation="no_files",
+            wizard_confirmation="balanced",
+            wizard_network="recommended",
+            wizard_network_allowlist=("api.example.com",),
         )
     )
 
     assert payload["version"] == 2
     assert payload["config"]["wizard_schema_version"] == 1
     assert payload["config"]["wizard_profile_scenario"] == "taskflow_channel"
+    assert payload["config"]["wizard_setup_depth"] == "quick"
+    assert payload["config"]["wizard_work_contexts"] == ["channels"]
+    assert payload["config"]["wizard_actions"] == ["reply", "channel_history", "taskflow", "memory"]
+    assert payload["config"]["wizard_isolation"] == "no_files"
+    assert payload["config"]["wizard_confirmation"] == "balanced"
+    assert payload["config"]["wizard_network"] == "recommended"
+    assert payload["config"]["wizard_network_allowlist"] == ["api.example.com"]
     assert payload["config"]["policy_workspace_scope_mode"] == "profile_only"

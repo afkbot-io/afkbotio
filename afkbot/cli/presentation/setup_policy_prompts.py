@@ -42,12 +42,12 @@ def prompt_policy_setup_mode(
         text=msg(
             lang,
             en=(
-                "Choose whether AFKBOT should apply safe defaults now or walk you through every permission. "
-                "You can still edit the profile later."
+                "Choose a quick safe profile now, or open the guided wizard to choose where the bot works and "
+                "what it may do. You can still edit the profile later."
             ),
             ru=(
-                "Выберите: применить безопасные настройки сразу или пройти каждое разрешение вручную. "
-                "Профиль можно изменить позже."
+                "Выберите быструю безопасную настройку или откройте мастер, чтобы указать, где бот работает "
+                "и что ему можно делать. Профиль можно изменить позже."
             ),
         ),
         options=[
@@ -55,16 +55,16 @@ def prompt_policy_setup_mode(
                 "recommended",
                 msg(
                     lang,
-                    en="Recommended - safe defaults, fastest setup",
-                    ru="Рекомендуется - безопасные настройки, самый быстрый путь",
+                    en="Quick safe setup - chats/channels, tasks, memory; no files or shell",
+                    ru="Быстро и безопасно - чаты/каналы, задачи, память; без файлов и терминала",
                 ),
             ),
             (
                 "custom",
                 msg(
                     lang,
-                    en="Custom - review each permission",
-                    ru="Вручную - проверить каждое разрешение",
+                    en="Guided setup - choose surfaces, actions, isolation, network",
+                    ru="Мастер настройки - выбрать места работы, действия, изоляцию и сеть",
                 ),
             ),
         ],

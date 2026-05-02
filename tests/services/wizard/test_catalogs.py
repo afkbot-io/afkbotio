@@ -43,6 +43,12 @@ def test_setup_profile_plan_contains_current_security_branches() -> None:
         "reasoning_effort",
         "provider_credentials",
         "security_setup_mode",
+        "setup_depth",
+        "work_contexts",
+        "actions",
+        "isolation",
+        "confirmation",
+        "intent_network",
         "security_enforcement",
         "confirmation_mode",
         "profile_scenario",
@@ -120,7 +126,8 @@ def test_wizard_plans_expose_branch_graphs() -> None:
     partyflow = channel_plan("partyflow")
 
     assert {branch.id for branch in setup.branches} >= {
-        "custom_security",
+        "guided_security",
+        "expert_security",
         "files_enabled",
         "shell_enabled",
     }
@@ -283,7 +290,7 @@ def test_channel_tool_profile_labels_are_centralized_and_localized() -> None:
     """CLI labels should come from one catalog and remain localized."""
 
     assert channel_tool_profile_label("taskflow_operator", lang=PromptLanguage.EN) == (
-        "Task Flow operator - manage tasks from the channel, no shell or files"
+        "Task operator - create and update tasks from the channel, no terminal or files"
     )
     assert channel_tool_profile_label("chat_minimal", lang=PromptLanguage.RU) == (
         "Минимальный чат - ответы и история текущего канала, без общих инструментов"

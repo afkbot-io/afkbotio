@@ -208,32 +208,32 @@ def _channel_choice_label(
 
     labels: dict[str, tuple[str, str]] = {
         "main": (
-            "main - one shared conversation for the whole binding",
-            "main - одна общая беседа для всей привязки",
+            "One shared conversation for this binding",
+            "Одна общая беседа для этой привязки",
         ),
         "per-chat": (
-            "per-chat - separate conversation for each Telegram chat",
-            "per-chat - отдельная беседа для каждого Telegram-чата",
+            "Separate conversation for each Telegram chat",
+            "Отдельная беседа для каждого Telegram-чата",
         ),
         "per-thread": (
-            "per-thread - separate conversation for each group topic/thread",
-            "per-thread - отдельная беседа для каждой темы или треда группы",
+            "Separate conversation for each group topic or thread",
+            "Отдельная беседа для каждой темы или треда группы",
         ),
         "per-user-in-group": (
-            "per-user-in-group - separate conversation per user inside groups",
-            "per-user-in-group - отдельная беседа для каждого пользователя в группе",
+            "Separate conversation for each group member",
+            "Отдельная беседа для каждого участника группы",
         ),
         "open": (
-            "open - allow this chat type unless another rule blocks it",
-            "open - разрешить этот тип чата, если другая проверка не блокирует",
+            "Allow this chat type unless another rule blocks it",
+            "Разрешить этот тип чата, если другая проверка не блокирует",
         ),
         "allowlist": (
-            "allowlist - allow only the IDs you enter in the next question",
-            "allowlist - разрешить только ID, которые вы введёте дальше",
+            "Allow only the IDs entered in the next question",
+            "Разрешить только ID, которые вы введёте дальше",
         ),
         "disabled": (
-            "disabled - reject this chat type completely",
-            "disabled - полностью запретить этот тип чата",
+            "Reject this chat type completely",
+            "Полностью запретить этот тип чата",
         ),
         "mention_or_reply": (
             "mention_or_reply - trigger in groups on bot mentions or replies",

@@ -27,3 +27,4 @@ Execution rules:
 - For side effects, report success only after the confirming tool or runtime result exists in the current turn.
 - If execution did not happen, say that it did not happen.
 - Ask follow-up questions only when blocked on missing required input, missing credentials, or authorization.
+- Treat local planning and scratch artifacts as local-only by default. Do not stage or commit `plans/`, `docs/`, root `AGENTS.md` / `agents.md`, or other ignored local planning files unless the user explicitly asks to include them in git.
