@@ -15,16 +15,7 @@ from afkbot.settings import Settings
 
 _RECOMMENDED_POLICY_CAPABILITY_IDS: tuple[PolicyCapabilityId, ...] = (
     PolicyCapabilityId.MEMORY,
-    PolicyCapabilityId.CREDENTIALS,
-    PolicyCapabilityId.SUBAGENTS,
-    PolicyCapabilityId.AUTOMATION,
     PolicyCapabilityId.TASKFLOW,
-    PolicyCapabilityId.HTTP,
-    PolicyCapabilityId.WEB,
-    PolicyCapabilityId.BROWSER,
-    PolicyCapabilityId.SKILLS,
-    PolicyCapabilityId.APPS,
-    PolicyCapabilityId.MCP,
 )
 
 
@@ -92,10 +83,29 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_POLICY_WORKSPACE_SCOPE": str(
             runtime_config.get("policy_workspace_scope", "profile_only")
         ),
+        "AFKBOT_POLICY_SHELL_SANDBOX_MODE": str(
+            runtime_config.get("policy_shell_sandbox_mode", "")
+        ),
+        "AFKBOT_POLICY_SHELL_ALLOWED_COMMANDS": ",".join(
+            normalize_runtime_string_seq(runtime_config.get("policy_shell_allowed_commands"))
+        ),
         "AFKBOT_POLICY_NETWORK_MODE": str(
             runtime_config.get("policy_network_mode", PolicyNetworkMode.UNRESTRICTED.value)
         ),
         "AFKBOT_POLICY_NETWORK_ALLOWLIST": ",".join(policy_network_allowlist_default),
+        "AFKBOT_WIZARD_SETUP_DEPTH": str(runtime_config.get("wizard_setup_depth", "legacy") or "legacy"),
+        "AFKBOT_WIZARD_WORK_CONTEXTS": ",".join(
+            normalize_runtime_string_seq(runtime_config.get("wizard_work_contexts"))
+        ),
+        "AFKBOT_WIZARD_ACTIONS": ",".join(
+            normalize_runtime_string_seq(runtime_config.get("wizard_actions"))
+        ),
+        "AFKBOT_WIZARD_ISOLATION": str(runtime_config.get("wizard_isolation", "") or ""),
+        "AFKBOT_WIZARD_CONFIRMATION": str(runtime_config.get("wizard_confirmation", "") or ""),
+        "AFKBOT_WIZARD_NETWORK": str(runtime_config.get("wizard_network", "") or ""),
+        "AFKBOT_WIZARD_NETWORK_ALLOWLIST": ",".join(
+            normalize_runtime_string_seq(runtime_config.get("wizard_network_allowlist"))
+        ),
         "AFKBOT_AUTO_INSTALL_DEPS": (
             "1" if coerce_bool(runtime_config.get("auto_install_deps"), default=True) else "0"
         ),
@@ -128,6 +138,15 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_OPENAI_API_KEY": str(runtime_secrets.get("openai_api_key", settings.openai_api_key or "")),
         "AFKBOT_OPENAI_CODEX_API_KEY": str(
             runtime_secrets.get("openai_codex_api_key", settings.openai_codex_api_key or "")
+        ),
+        "AFKBOT_OPENAI_CODEX_API_KEY_SOURCE": str(
+            runtime_secrets.get(
+                "openai_codex_api_key_source",
+                settings.openai_codex_api_key_source,
+            )
+        ),
+        "AFKBOT_OPENAI_CODEX_API_KEY_FILE": str(
+            runtime_secrets.get("openai_codex_api_key_file", settings.openai_codex_api_key_file or "")
         ),
         "AFKBOT_CLAUDE_API_KEY": str(runtime_secrets.get("claude_api_key", settings.claude_api_key or "")),
         "AFKBOT_MOONSHOT_API_KEY": str(
@@ -210,8 +229,8 @@ def normalize_runtime_string_seq(raw: object) -> tuple[str, ...]:
 def recommended_policy_capabilities() -> tuple[str, ...]:
     """Return recommended capability ids used by setup defaults and prompts.
 
-    Recommended setup keeps medium preset guardrails while excluding the
-    highest-risk capability groups from the default capability set.
+    Recommended setup keeps medium preset guardrails while excluding local
+    files, shell, credentials, integrations, browser, and broad network tools.
     """
 
     return tuple(capability.value for capability in _RECOMMENDED_POLICY_CAPABILITY_IDS)

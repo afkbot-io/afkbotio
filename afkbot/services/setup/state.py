@@ -12,7 +12,9 @@ from afkbot.services.setup.runtime_store import read_runtime_config
 from afkbot.settings import Settings
 
 
-SETUP_STATE_VERSION = 1
+SETUP_STATE_VERSION = 2
+SETUP_STATE_COMPATIBLE_VERSIONS = {1, SETUP_STATE_VERSION}
+WIZARD_SCHEMA_VERSION = 1
 LEGACY_SETUP_STATE_RELPATH = "profiles/.system/install_state.json"
 
 
@@ -44,8 +46,20 @@ class SetupStateSnapshot:
     policy_allowed_tools: tuple[str, ...]
     policy_file_access_mode: str
     policy_allowed_directories: tuple[str, ...]
+    policy_shell_sandbox_mode: str
+    policy_shell_allowed_commands: tuple[str, ...]
     policy_network_mode: str
     policy_network_allowlist: tuple[str, ...]
+    policy_workspace_scope_mode: str = "profile_only"
+    wizard_schema_version: int = WIZARD_SCHEMA_VERSION
+    wizard_profile_scenario: str = "custom"
+    wizard_setup_depth: str = "legacy"
+    wizard_work_contexts: tuple[str, ...] = ()
+    wizard_actions: tuple[str, ...] = ()
+    wizard_isolation: str = ""
+    wizard_confirmation: str = ""
+    wizard_network: str = ""
+    wizard_network_allowlist: tuple[str, ...] = ()
 
 
 def setup_is_complete(settings: Settings) -> bool:
@@ -54,7 +68,7 @@ def setup_is_complete(settings: Settings) -> bool:
     payload = read_setup_state_payload(settings)
     if payload is None:
         return False
-    if payload.get("version") != SETUP_STATE_VERSION:
+    if payload.get("version") not in SETUP_STATE_COMPATIBLE_VERSIONS:
         return False
     if payload.get("completed") is not True:
         return False
@@ -143,9 +157,21 @@ def build_setup_state_payload(
             "policy_capabilities": list(snapshot.policy_capabilities),
             "policy_allowed_tools": list(snapshot.policy_allowed_tools),
             "policy_file_access_mode": snapshot.policy_file_access_mode,
+            "policy_workspace_scope_mode": snapshot.policy_workspace_scope_mode,
             "policy_allowed_directories": list(snapshot.policy_allowed_directories),
+            "policy_shell_sandbox_mode": snapshot.policy_shell_sandbox_mode,
+            "policy_shell_allowed_commands": list(snapshot.policy_shell_allowed_commands),
             "policy_network_mode": snapshot.policy_network_mode,
             "policy_network_allowlist": list(snapshot.policy_network_allowlist),
+            "wizard_schema_version": snapshot.wizard_schema_version,
+            "wizard_profile_scenario": snapshot.wizard_profile_scenario,
+            "wizard_setup_depth": snapshot.wizard_setup_depth,
+            "wizard_work_contexts": list(snapshot.wizard_work_contexts),
+            "wizard_actions": list(snapshot.wizard_actions),
+            "wizard_isolation": snapshot.wizard_isolation,
+            "wizard_confirmation": snapshot.wizard_confirmation,
+            "wizard_network": snapshot.wizard_network,
+            "wizard_network_allowlist": list(snapshot.wizard_network_allowlist),
         },
     }
 

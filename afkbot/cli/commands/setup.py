@@ -151,6 +151,16 @@ def register(app: typer.Typer) -> None:
             "--policy-workspace-scope",
             help="Workspace scope: profile_only, project_only, profile_and_project, full_system, or custom.",
         ),
+        policy_shell_sandbox_mode: str | None = typer.Option(
+            None,
+            "--policy-shell-sandbox-mode",
+            help="Shell OS sandbox mode for the default profile: disabled, best_effort, or required.",
+        ),
+        policy_shell_command: list[str] = typer.Option(
+            [],
+            "--policy-shell-command",
+            help="Repeatable command basename allowed for default-profile shell calls.",
+        ),
         policy_network_host: list[str] = typer.Option(
             [],
             "--policy-network-host",
@@ -227,6 +237,8 @@ def register(app: typer.Typer) -> None:
                 policy_capability=tuple(policy_capability),
                 policy_file_access_mode=policy_file_access_mode,
                 policy_workspace_scope=policy_workspace_scope,
+                policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+                policy_shell_command=tuple(policy_shell_command),
                 policy_network_host=tuple(policy_network_host),
             )
         config = collect_setup_config(
@@ -292,6 +304,8 @@ def register(app: typer.Typer) -> None:
             policy_capability=tuple(policy_capability),
             policy_file_access_mode=policy_file_access_mode,
             policy_workspace_scope=policy_workspace_scope,
+            policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+            policy_shell_command=tuple(policy_shell_command),
             policy_network_host=tuple(policy_network_host),
             auto_install_deps=auto_install_deps if bootstrap_only else None,
             update_notices_enabled=update_notices_enabled,

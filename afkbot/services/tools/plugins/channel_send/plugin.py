@@ -6,12 +6,24 @@ from typing import Any
 
 from pydantic import Field, model_validator
 
+from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.services.channel_routing.service import (
+    ChannelBindingService,
+    ChannelBindingServiceError,
+    get_channel_binding_service,
+)
+from afkbot.services.channels.active_context import (
+    ActiveChannelContext,
+    active_channel_context_from_trusted,
+)
 from afkbot.services.channels.contracts import (
     ChannelDeliveryTarget,
     ChannelOutboundAttachment,
     ChannelOutboundMessage,
 )
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
+from afkbot.services.channels.delivery_runtime import ResolvedDeliveryTarget
+from afkbot.services.channels.delivery_runtime import resolve_delivery_target
 from afkbot.services.channels.endpoint_contracts import ChannelEndpointConfig
 from afkbot.services.channels.endpoint_service import (
     ChannelEndpointService,
@@ -29,7 +41,7 @@ _SUPPORTED_CHANNEL_SEND_TRANSPORTS = {"telegram", "telegram_user", "partyflow"}
 class ChannelSendParams(ToolParameters):
     """Parameters for channel.send."""
 
-    transport: str = Field(min_length=1, max_length=64)
+    transport: str | None = Field(default=None, min_length=1, max_length=64)
     text: str = Field(default="", max_length=200000)
     parse_mode: str | None = Field(default=None, min_length=1, max_length=32)
     disable_web_page_preview: bool = False
@@ -49,12 +61,12 @@ class ChannelSendParams(ToolParameters):
 
     @model_validator(mode="after")
     def _normalize_aliases(self) -> "ChannelSendParams":
-        transport = self.transport.strip().lower()
+        transport = None if self.transport is None else self.transport.strip().lower()
         self.transport = transport
         if (
             self.peer_id is None
             and self.chat_id is not None
-            and transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS
+            and (transport is None or transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS)
         ):
             self.peer_id = self.chat_id
         return self
@@ -70,7 +82,7 @@ class ChannelSendTool(ToolBase):
         "PartyFlow supports plain text plus optional thread_id. Use transport=telegram for Bot API channels, "
         "transport=telegram_user for Telethon userbot channels, and transport=partyflow for PartyFlow bot channels. "
         "Targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id unless endpoint_id/binding_id supplies it. "
-        "Optional credential_profile_key selects the sender credential profile."
+        "Sender credentials always come from the selected endpoint; credential_profile_key is accepted only when it matches that endpoint."
     )
     parameters_model = ChannelSendParams
 
@@ -80,10 +92,12 @@ class ChannelSendTool(ToolBase):
         *,
         delivery_service: ChannelDeliveryService | None = None,
         endpoint_service: ChannelEndpointService | None = None,
+        binding_service: ChannelBindingService | None = None,
     ) -> None:
         self._settings = settings
         self._delivery_service = delivery_service or ChannelDeliveryService(settings)
         self._endpoint_service = endpoint_service or get_channel_endpoint_service(settings)
+        self._binding_service = binding_service or get_channel_binding_service(settings)
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         payload = (
@@ -91,9 +105,24 @@ class ChannelSendTool(ToolBase):
             if isinstance(params, ChannelSendParams)
             else ChannelSendParams.model_validate(params.model_dump())
         )
+        active_context = active_channel_context_from_trusted(ctx.trusted_runtime_context)
+        active_defaults_error = self._apply_active_channel_defaults(
+            payload=payload,
+            active_context=active_context,
+        )
+        if active_defaults_error is not None:
+            return active_defaults_error
         scope_error = self._ensure_profile_scope(ctx=ctx, payload=payload)
         if scope_error is not None:
             return scope_error
+        if payload.transport is None:
+            return ToolResult.error(
+                error_code="channel_send_transport_required",
+                reason=(
+                    "channel.send requires transport outside an active channel turn. "
+                    "Pass transport=telegram, telegram_user, or partyflow."
+                ),
+            )
         if payload.transport not in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
             return ToolResult.error(
                 error_code="channel_send_transport_not_supported",
@@ -126,18 +155,39 @@ class ChannelSendTool(ToolBase):
             )
             if isinstance(endpoint_or_error, ToolResult):
                 return endpoint_or_error
+            binding_error = await self._validate_binding_matches_endpoint(
+                endpoint=endpoint_or_error,
+                ctx=ctx,
+                binding_id=payload.binding_id,
+            )
+            if binding_error is not None:
+                return binding_error
+            resolved_target_or_error = await self._resolve_target_for_policy(target=target)
+            if isinstance(resolved_target_or_error, ToolResult):
+                return resolved_target_or_error
             outbound_policy_error = self._validate_outbound_policy(
                 endpoint=endpoint_or_error,
-                target=target,
+                target=resolved_target_or_error,
             )
             if outbound_policy_error is not None:
                 return outbound_policy_error
-            target = target.model_copy(
-                update={"account_id": target.account_id or endpoint_or_error.account_id}
+            target = ChannelDeliveryTarget(
+                transport=resolved_target_or_error.transport,
+                binding_id=resolved_target_or_error.binding_id,
+                account_id=resolved_target_or_error.account_id or endpoint_or_error.account_id,
+                peer_id=resolved_target_or_error.peer_id,
+                thread_id=resolved_target_or_error.thread_id,
+                user_id=resolved_target_or_error.user_id,
+                address=resolved_target_or_error.address,
+                subject=resolved_target_or_error.subject,
             )
-            credential_profile_key = (
-                payload.credential_profile_key or endpoint_or_error.credential_profile_key
+            credential_override_error = self._validate_credential_profile_override(
+                endpoint=endpoint_or_error,
+                credential_profile_key=payload.credential_profile_key,
             )
+            if credential_override_error is not None:
+                return credential_override_error
+            credential_profile_key = endpoint_or_error.credential_profile_key
             if _is_plain_text_message(message):
                 result = await self._delivery_service.deliver_text(
                     profile_id=ctx.profile_id,
@@ -169,11 +219,36 @@ class ChannelSendTool(ToolBase):
             )
         return ToolResult(ok=True, payload=_delivery_result_payload(result))
 
+    @staticmethod
+    def _apply_active_channel_defaults(
+        *,
+        payload: ChannelSendParams,
+        active_context: ActiveChannelContext | None,
+    ) -> ToolResult | None:
+        if active_context is None:
+            return None
+        if payload.endpoint_id is not None and payload.endpoint_id != active_context.endpoint_id:
+            return ToolResult.error(
+                error_code="channel_send_endpoint_not_active",
+                reason="channel.send may only use the active inbound channel endpoint in this turn.",
+                metadata={
+                    "requested_endpoint_id": payload.endpoint_id,
+                    "active_endpoint_id": active_context.endpoint_id,
+                },
+            )
+        payload.transport = payload.transport or active_context.transport
+        payload.endpoint_id = payload.endpoint_id or active_context.endpoint_id
+        payload.account_id = payload.account_id or active_context.account_id
+        payload.peer_id = payload.peer_id or active_context.peer_id
+        payload.thread_id = payload.thread_id or active_context.thread_id
+        payload.user_id = payload.user_id or active_context.user_id
+        return None
+
     def _validate_outbound_policy(
         self,
         *,
         endpoint: ChannelEndpointConfig,
-        target: ChannelDeliveryTarget,
+        target: ResolvedDeliveryTarget,
     ) -> ToolResult | None:
         allow_to = endpoint.access_policy.outbound_allow_to
         if not allow_to:
@@ -193,6 +268,100 @@ class ChannelSendTool(ToolBase):
                 "endpoint_id": endpoint.endpoint_id,
                 "transport": target.transport,
                 "peer_id": peer_id,
+            },
+        )
+
+    async def _resolve_target_for_policy(
+        self,
+        *,
+        target: ChannelDeliveryTarget,
+    ) -> ResolvedDeliveryTarget | ToolResult:
+        try:
+            return await resolve_delivery_target(
+                settings=self._settings,
+                target=target,
+                binding_service=self._binding_service,
+            )
+        except ChannelDeliveryServiceError as exc:
+            return ToolResult.error(
+                error_code=exc.error_code,
+                reason=exc.reason,
+                metadata=exc.metadata,
+            )
+
+    async def _validate_binding_matches_endpoint(
+        self,
+        *,
+        endpoint: ChannelEndpointConfig,
+        ctx: ToolContext,
+        binding_id: str | None,
+    ) -> ToolResult | None:
+        if binding_id is None:
+            return None
+        try:
+            binding = await self._binding_service.get(binding_id=binding_id)
+        except ChannelBindingServiceError as exc:
+            return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
+        if binding.profile_id != ctx.profile_id or binding.profile_id != endpoint.profile_id:
+            return ToolResult.error(
+                error_code="channel_send_binding_not_in_profile",
+                reason="channel.send binding does not belong to the active profile.",
+                metadata={
+                    "binding_id": binding.binding_id,
+                    "binding_profile_id": binding.profile_id,
+                    "profile_id": ctx.profile_id,
+                },
+            )
+        if binding.transport != endpoint.transport:
+            return ToolResult.error(
+                error_code="channel_send_binding_transport_mismatch",
+                reason="channel.send binding transport does not match the selected endpoint.",
+                metadata={
+                    "binding_id": binding.binding_id,
+                    "binding_transport": binding.transport,
+                    "endpoint_transport": endpoint.transport,
+                },
+            )
+        if not _binding_matches_endpoint_id(binding=binding, endpoint=endpoint):
+            return ToolResult.error(
+                error_code="channel_send_binding_endpoint_mismatch",
+                reason="channel.send binding does not belong to the selected endpoint.",
+                metadata={
+                    "binding_id": binding.binding_id,
+                    "endpoint_id": endpoint.endpoint_id,
+                },
+            )
+        if binding.account_id is not None and binding.account_id != endpoint.account_id:
+            return ToolResult.error(
+                error_code="channel_send_binding_account_mismatch",
+                reason="channel.send binding account_id does not match the selected endpoint.",
+                metadata={
+                    "binding_id": binding.binding_id,
+                    "binding_account_id": binding.account_id,
+                    "endpoint_account_id": endpoint.account_id,
+                },
+            )
+        return None
+
+    @staticmethod
+    def _validate_credential_profile_override(
+        *,
+        endpoint: ChannelEndpointConfig,
+        credential_profile_key: str | None,
+    ) -> ToolResult | None:
+        if credential_profile_key is None:
+            return None
+        if credential_profile_key == endpoint.credential_profile_key:
+            return None
+        return ToolResult.error(
+            error_code="channel_send_credential_profile_mismatch",
+            reason=(
+                "channel.send cannot override the sender credential profile configured "
+                "on the selected channel endpoint."
+            ),
+            metadata={
+                "endpoint_id": endpoint.endpoint_id,
+                "endpoint_credential_profile_key": endpoint.credential_profile_key,
             },
         )
 
@@ -328,6 +497,16 @@ def _is_plain_text_message(message: ChannelOutboundMessage) -> bool:
         and not message.attachments
         and not message.stream_draft
     )
+
+
+def _binding_matches_endpoint_id(
+    *,
+    binding: ChannelBindingRule,
+    endpoint: ChannelEndpointConfig,
+) -> bool:
+    binding_id = binding.binding_id.strip()
+    endpoint_id = endpoint.endpoint_id.strip()
+    return binding_id == endpoint_id or binding_id.startswith(f"{endpoint_id}:")
 
 
 def _jsonish(value: Any) -> object:

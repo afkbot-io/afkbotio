@@ -336,3 +336,46 @@ def test_profile_add_resolves_session_job_run_for_shell_and_subagent_capabilitie
     assert result.exit_code == 0
     allowed_tools = _load_allowed_tools(profile_id="ops")
     assert "session.job.run" in allowed_tools
+
+
+def test_profile_add_persists_shell_sandbox_and_command_allowlist(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Profile CLI should persist shell sandbox and command allowlist settings."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "sandbox",
+            "--name",
+            "Sandbox",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--policy-capability",
+            "shell",
+            "--policy-shell-sandbox-mode",
+            "best_effort",
+            "--policy-shell-command",
+            "git,ls",
+            "--policy-shell-command",
+            "echo",
+        ],
+    )
+    show = runner.invoke(app, ["profile", "show", "sandbox", "--json"])
+
+    assert result.exit_code == 0
+    assert show.exit_code == 0
+    payload = json.loads(show.stdout)
+    assert payload["profile"]["policy"]["shell_sandbox_mode"] == "best_effort"
+    assert payload["profile"]["policy"]["shell_allowed_commands"] == ["echo", "git", "ls"]
+    assert payload["effective_permissions"]["shell_sandbox_mode"] == "best_effort"

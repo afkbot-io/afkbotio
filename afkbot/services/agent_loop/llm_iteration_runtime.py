@@ -105,6 +105,7 @@ class LLMIterationRuntime:
         runtime_metadata: dict[str, object] | None = None,
         trusted_runtime_context: dict[str, object] | None = None,
         approved_tool_names: tuple[str, ...] | None = None,
+        channel_owned_tool_names: tuple[str, ...] | None = None,
         approval_required_tool_names: tuple[str, ...] | None = None,
     ) -> LLMIterationResult:
         """Execute one iterative LLM loop with sequential guarded tool calls."""
@@ -195,6 +196,11 @@ class LLMIterationRuntime:
                     None
                     if approved_tool_names is None
                     else set(approved_tool_names)
+                ),
+                channel_owned_tool_names=(
+                    None
+                    if channel_owned_tool_names is None
+                    else set(channel_owned_tool_names)
                 ),
                 approval_required_tool_names=(
                     None

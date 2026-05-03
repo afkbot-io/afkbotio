@@ -27,6 +27,7 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "automation.update",
         "bash.exec",
         "browser.control",
+        "channel.history.list",
         "channel.send",
         "credentials.create",
         "credentials.delete",

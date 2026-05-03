@@ -17,6 +17,8 @@ from afkbot.services.profile_runtime import (
     provider_oauth_metadata_fields,
     provider_secret_field,
 )
+from afkbot.services.llm.provider_catalog import LLMProviderId
+from afkbot.services.llm.token_file_sources import openai_codex_secret_token_runtime_secrets
 from afkbot.settings import get_settings
 
 
@@ -185,6 +187,8 @@ def _build_secret_updates(
     if llm_api_key is not None and llm_api_key.strip():
         updates["llm_api_key"] = llm_api_key.strip()
     if provider_api_key is not None and provider_api_key.strip():
+        if llm_provider.strip().lower() == LLMProviderId.OPENAI_CODEX.value:
+            updates.update(openai_codex_secret_token_runtime_secrets())
         updates[provider_secret_field(llm_provider)] = provider_api_key.strip()
     if brave_api_key is not None and brave_api_key.strip():
         updates["brave_api_key"] = brave_api_key.strip()

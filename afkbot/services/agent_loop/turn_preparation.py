@@ -207,9 +207,15 @@ class TurnPreparationRuntime:
                 skill_route=skill_route,
                 automation_intent=automation_intent,
                 runtime_metadata=runtime_metadata,
+                trusted_runtime_context=(
+                    None if context_overrides is None else context_overrides.trusted_runtime_context
+                ),
                 tool_access_mode=tool_access_mode,
                 approved_tool_names=(
                     None if context_overrides is None else context_overrides.approved_tool_names
+                ),
+                channel_owned_tool_names=(
+                    None if context_overrides is None else context_overrides.channel_owned_tool_names
                 ),
                 cli_approval_surface_enabled=(
                     False
@@ -228,8 +234,16 @@ class TurnPreparationRuntime:
                     skill_route=skill_route,
                     automation_intent=automation_intent,
                     runtime_metadata=runtime_metadata,
+                    trusted_runtime_context=(
+                        None if context_overrides is None else context_overrides.trusted_runtime_context
+                    ),
                     approved_tool_names=(
                         None if context_overrides is None else context_overrides.approved_tool_names
+                    ),
+                    channel_owned_tool_names=(
+                        None
+                        if context_overrides is None
+                        else context_overrides.channel_owned_tool_names
                     ),
                     cli_approval_surface_enabled=(
                         False
@@ -247,8 +261,16 @@ class TurnPreparationRuntime:
                     skill_route=skill_route,
                     automation_intent=automation_intent,
                     runtime_metadata=runtime_metadata,
+                    trusted_runtime_context=(
+                        None if context_overrides is None else context_overrides.trusted_runtime_context
+                    ),
                     approved_tool_names=(
                         None if context_overrides is None else context_overrides.approved_tool_names
+                    ),
+                    channel_owned_tool_names=(
+                        None
+                        if context_overrides is None
+                        else context_overrides.channel_owned_tool_names
                     ),
                     cli_approval_surface_enabled=(
                         False
@@ -322,7 +344,9 @@ class TurnPreparationRuntime:
         skill_route: SkillRoute,
         automation_intent: bool,
         runtime_metadata: dict[str, object] | None,
+        trusted_runtime_context: dict[str, object] | None,
         approved_tool_names: tuple[str, ...] | None,
+        channel_owned_tool_names: tuple[str, ...] | None,
         cli_approval_surface_enabled: bool,
         planning_mode: str,
         current_visible_tool_names: tuple[str, ...],
@@ -337,8 +361,10 @@ class TurnPreparationRuntime:
             skill_route=skill_route,
             automation_intent=automation_intent,
             runtime_metadata=runtime_metadata,
+            trusted_runtime_context=trusted_runtime_context,
             tool_access_mode="default",
             approved_tool_names=approved_tool_names,
+            channel_owned_tool_names=channel_owned_tool_names,
             cli_approval_surface_enabled=cli_approval_surface_enabled,
         )
         current_names = set(current_visible_tool_names)
@@ -381,7 +407,9 @@ class TurnPreparationRuntime:
         skill_route: SkillRoute,
         automation_intent: bool,
         runtime_metadata: dict[str, object] | None,
+        trusted_runtime_context: dict[str, object] | None,
         approved_tool_names: tuple[str, ...] | None,
+        channel_owned_tool_names: tuple[str, ...] | None,
         cli_approval_surface_enabled: bool,
         planning_mode: str,
         current_visible_tool_names: tuple[str, ...],
@@ -397,8 +425,10 @@ class TurnPreparationRuntime:
                 skill_route=skill_route,
                 automation_intent=automation_intent,
                 runtime_metadata=runtime_metadata,
+                trusted_runtime_context=trusted_runtime_context,
                 tool_access_mode="default",
                 approved_tool_names=approved_tool_names,
+                channel_owned_tool_names=channel_owned_tool_names,
                 cli_approval_surface_enabled=cli_approval_surface_enabled,
             )
             future_names = {

@@ -18,6 +18,7 @@ ToolAccessMode = Literal["default", "read_only", "none"]
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         "app.list",
+        "channel.history.list",
         "credentials.list",
         "debug.echo",
         "file.list",

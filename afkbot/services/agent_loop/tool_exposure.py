@@ -12,6 +12,10 @@ from afkbot.services.agent_loop.sensitive_tool_policy import blocked_tool_names_
 from afkbot.services.agent_loop.thinking import READ_ONLY_TOOL_NAMES, ToolAccessMode
 from afkbot.services.agent_loop.skill_router import SkillRoute
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
+from afkbot.services.channels.active_context import (
+    filter_channel_owned_approved_tool_names,
+    filter_generic_approved_tool_names,
+)
 from afkbot.services.llm.contracts import LLMToolDefinition
 from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.tools.registry import ToolRegistry
@@ -60,8 +64,10 @@ class ToolExposureBuilder:
         skill_route: SkillRoute | None = None,
         automation_intent: bool,
         runtime_metadata: dict[str, object] | None = None,
+        trusted_runtime_context: dict[str, object] | None = None,
         tool_access_mode: ToolAccessMode = "default",
         approved_tool_names: tuple[str, ...] | None = None,
+        channel_owned_tool_names: tuple[str, ...] | None = None,
         cli_approval_surface_enabled: bool = False,
     ) -> ToolSurface:
         """Return visible tools plus the subset executable without extra approval."""
@@ -100,6 +106,8 @@ class ToolExposureBuilder:
             approved_tool_names=approved_tool_names,
             policy=policy,
             runtime_metadata=runtime_metadata,
+            trusted_runtime_context=trusted_runtime_context,
+            channel_owned_tool_names=channel_owned_tool_names,
             tool_access_mode=tool_access_mode,
         )
         approval_visible_names = self._approval_visible_tool_names(
@@ -172,11 +180,21 @@ class ToolExposureBuilder:
         approved_tool_names: tuple[str, ...] | None,
         policy: ProfilePolicy,
         runtime_metadata: dict[str, object] | None,
+        trusted_runtime_context: dict[str, object] | None,
+        channel_owned_tool_names: tuple[str, ...] | None,
         tool_access_mode: ToolAccessMode,
     ) -> tuple[str, ...]:
         """Merge explicitly approved tool names into the directly executable surface."""
 
-        if self._tool_registry is None or not approved_tool_names:
+        if self._tool_registry is None:
+            return filtered_names
+        generic_approved_names = filter_generic_approved_tool_names(approved_tool_names)
+        channel_owned_approved_names = filter_channel_owned_approved_tool_names(
+            trusted_runtime_context=trusted_runtime_context,
+            approved_tool_names=channel_owned_tool_names,
+        )
+        candidate_names = tuple(generic_approved_names) + tuple(channel_owned_approved_names)
+        if not candidate_names:
             return filtered_names
 
         blocked_sensitive_names = set(
@@ -184,7 +202,7 @@ class ToolExposureBuilder:
         )
         merged = list(filtered_names)
         seen = set(filtered_names)
-        for raw_name in approved_tool_names:
+        for raw_name in candidate_names:
             name = str(raw_name).strip()
             if (
                 not name

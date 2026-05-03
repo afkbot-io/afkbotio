@@ -112,3 +112,230 @@ def test_resolve_profile_policy_inputs_skips_follow_up_prompts_when_policy_disab
     assert resolved.capabilities == ("files", "shell", "memory")
     assert resolved.file_access_mode == "read_write"
     assert resolved.workspace_scope_mode == "profile_only"
+    assert resolved.shell_sandbox_mode == "disabled"
+
+
+def test_resolve_profile_policy_inputs_defaults_shell_sandbox_for_restricted_shell(
+    tmp_path,
+) -> None:
+    """Profiles that allow shell in a restricted workspace should fail closed by default."""
+
+    resolved = resolve_profile_policy_inputs(
+        interactive=False,
+        lang=PromptLanguage.EN,
+        root_dir=tmp_path,
+        profile_root=tmp_path / "profiles/default",
+        defaults={
+            "AFKBOT_POLICY_PRESET": "medium",
+            "AFKBOT_POLICY_NETWORK_MODE": "deny_all",
+        },
+        policy_enabled_value=True,
+        policy_preset_value=None,
+        policy_capability_values=("shell",),
+        policy_file_access_mode_value="none",
+        policy_workspace_scope_value=None,
+        policy_allowed_dir_values=(),
+        policy_network_host_values=(),
+    )
+
+    assert resolved.shell_sandbox_mode == "required"
+    assert resolved.shell_allowed_commands == ()
+
+
+def test_resolve_profile_policy_inputs_parses_shell_command_allowlist(tmp_path) -> None:
+    """Shell command allowlists should accept repeatable and comma-separated inputs."""
+
+    resolved = resolve_profile_policy_inputs(
+        interactive=False,
+        lang=PromptLanguage.EN,
+        root_dir=tmp_path,
+        profile_root=tmp_path / "profiles/default",
+        defaults={
+            "AFKBOT_POLICY_PRESET": "medium",
+            "AFKBOT_POLICY_NETWORK_MODE": "deny_all",
+        },
+        policy_enabled_value=True,
+        policy_preset_value=None,
+        policy_capability_values=("shell",),
+        policy_file_access_mode_value="none",
+        policy_workspace_scope_value=None,
+        policy_allowed_dir_values=(),
+        policy_network_host_values=(),
+        policy_shell_sandbox_mode_value="best-effort",
+        policy_shell_command_values=("git,ls", "/bin/echo"),
+    )
+
+    assert resolved.shell_sandbox_mode == "best_effort"
+    assert resolved.shell_allowed_commands == ("git", "ls", "echo")
+
+
+def test_resolve_profile_policy_inputs_uses_interactive_scenario_defaults(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Guided interactive policy flow should map product choices before raw knobs."""
+
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_depth",
+        lambda **_kwargs: "guided",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_work_contexts",
+        lambda **_kwargs: ("sandbox",),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_actions",
+        lambda **_kwargs: ("memory", "sandbox_write", "shell_allowlist"),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_isolation",
+        lambda **_kwargs: "profile_shell",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_confirmation",
+        lambda **_kwargs: "strict",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_network",
+        lambda **_kwargs: "deny_all",
+    )
+
+    def _fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("raw policy prompts should not run for guided intent selection")
+
+    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_capabilities", _fail)
+    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_file_access_mode", _fail)
+    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_workspace_scope_mode", _fail)
+    monkeypatch.setattr("afkbot.services.setup.profile_resolution.prompt_policy_shell_sandbox_mode", _fail)
+    monkeypatch.setattr("afkbot.services.setup.profile_resolution.prompt_policy_shell_allowed_commands", _fail)
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution._offer_shell_sandbox_backend_install_if_needed",
+        lambda **_kwargs: None,
+    )
+
+    resolved = resolve_profile_policy_inputs(
+        interactive=True,
+        lang=PromptLanguage.EN,
+        root_dir=tmp_path,
+        profile_root=tmp_path / "profiles/default",
+        defaults={
+            "AFKBOT_POLICY_PRESET": "medium",
+        },
+        policy_enabled_value=True,
+        policy_preset_value=None,
+        policy_capability_values=(),
+        policy_file_access_mode_value=None,
+        policy_workspace_scope_value=None,
+        policy_allowed_dir_values=(),
+        policy_network_host_values=(),
+    )
+
+    assert resolved.capabilities == ("files", "shell", "memory")
+    assert resolved.file_access_mode == "read_write"
+    assert resolved.workspace_scope_mode == "profile_only"
+    assert resolved.shell_sandbox_mode == "required"
+    assert "rg" in resolved.shell_allowed_commands
+    assert resolved.preset == "strict"
+    assert resolved.network_mode == "deny_all"
+
+
+def test_resolve_profile_policy_inputs_custom_scenario_keeps_raw_prompts(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Choosing expert details should preserve the old detailed interactive policy flow."""
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_depth",
+        lambda **_kwargs: "expert",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_capabilities",
+        lambda **_kwargs: calls.append("capabilities") or ("memory",),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_file_access_mode",
+        lambda **_kwargs: calls.append("file_access") or "none",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_network_mode",
+        lambda **_kwargs: calls.append("network") or "deny_all",
+    )
+
+    resolved = resolve_profile_policy_inputs(
+        interactive=True,
+        lang=PromptLanguage.EN,
+        root_dir=tmp_path,
+        profile_root=tmp_path / "profiles/default",
+        defaults={
+            "AFKBOT_POLICY_PRESET": "medium",
+        },
+        policy_enabled_value=True,
+        policy_preset_value=None,
+        policy_capability_values=(),
+        policy_file_access_mode_value=None,
+        policy_workspace_scope_value=None,
+        policy_allowed_dir_values=(),
+        policy_network_host_values=(),
+    )
+
+    assert calls == ["capabilities", "file_access", "network"]
+    assert resolved.capabilities == ("memory",)
+    assert resolved.file_access_mode == "none"
+
+
+def test_resolve_profile_policy_inputs_guided_custom_network_allowlist(
+    tmp_path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Guided wizard should support explicit network domains without raw policy prompts."""
+
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_depth",
+        lambda **_kwargs: "guided",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_work_contexts",
+        lambda **_kwargs: ("automations",),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_actions",
+        lambda **_kwargs: ("memory", "automation", "external_services"),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_isolation",
+        lambda **_kwargs: "no_files",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_confirmation",
+        lambda **_kwargs: "balanced",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_network",
+        lambda **_kwargs: "custom",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_profile_intent_network_allowlist",
+        lambda **_kwargs: ("api.example.com", "api.example.com"),
+    )
+
+    resolved = resolve_profile_policy_inputs(
+        interactive=True,
+        lang=PromptLanguage.EN,
+        root_dir=tmp_path,
+        profile_root=tmp_path / "profiles/default",
+        defaults={"AFKBOT_POLICY_PRESET": "medium"},
+        policy_enabled_value=True,
+        policy_preset_value=None,
+        policy_capability_values=(),
+        policy_file_access_mode_value=None,
+        policy_workspace_scope_value=None,
+        policy_allowed_dir_values=(),
+        policy_network_host_values=(),
+    )
+
+    assert resolved.network_mode == "custom"
+    assert resolved.network_allowlist == ("api.example.com",)
+    assert resolved.wizard_intent is not None
+    assert resolved.wizard_intent.network_allowlist == ("api.example.com",)

@@ -17,6 +17,7 @@ from afkbot.services.policy.evaluation_helpers import (
     parse_string_set,
 )
 _FIXED_OUTBOUND_HOSTS_BY_TOOL: dict[str, tuple[str, ...]] = {
+    "channel.history.list": ("api.partyflow.ru",),
     "web.search": ("api.search.brave.com",),
 }
 

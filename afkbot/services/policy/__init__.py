@@ -29,6 +29,13 @@ from afkbot.services.policy.presets_resolver import (
     resolve_policy,
 )
 from afkbot.services.policy.profile_files_lock import ProfileFilesLock, get_profile_files_lock
+from afkbot.services.policy.shell_sandbox import (
+    SHELL_SANDBOX_MODE_VALUES,
+    ShellSandboxMode,
+    default_shell_sandbox_mode,
+    normalize_shell_sandbox_mode,
+    scope_requires_shell_sandbox,
+)
 
 __all__ = [
     "PolicySelection",
@@ -40,18 +47,23 @@ __all__ = [
     "ProfileFilesLock",
     "ProfileFilesLockedError",
     "ResolvedPolicy",
+    "SHELL_SANDBOX_MODE_VALUES",
+    "ShellSandboxMode",
     "apply_file_access_mode",
     "capability_choice_items",
     "default_allowed_directories",
     "default_capabilities_for_preset",
+    "default_shell_sandbox_mode",
     "get_profile_files_lock",
     "infer_file_access_mode",
     "infer_workspace_scope_mode",
     "list_capability_specs",
     "list_preset_levels",
+    "normalize_shell_sandbox_mode",
     "normalize_workspace_scope_mode",
     "parse_capability_ids",
     "parse_preset_level",
     "resolve_allowed_directories_for_scope_mode",
     "resolve_policy",
+    "scope_requires_shell_sandbox",
 ]

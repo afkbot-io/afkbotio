@@ -87,6 +87,8 @@ class ProfileService:
         policy_capabilities: tuple[str, ...],
         policy_file_access_mode: str = "read_write",
         policy_allowed_directories: tuple[str, ...] | None = None,
+        policy_shell_sandbox_mode: str = "disabled",
+        policy_shell_allowed_commands: tuple[str, ...] = (),
         policy_network_allowlist: tuple[str, ...],
     ) -> ProfileDetails:
         """Create one profile with persisted runtime config and initial policy."""
@@ -135,6 +137,8 @@ class ProfileService:
                 policy_capabilities=tuple(item.value for item in resolved_policy.capabilities),
                 allowed_tools=effective_allowed_tools,
                 allowed_directories=effective_allowed_directories,
+                shell_sandbox_mode=policy_shell_sandbox_mode,
+                shell_allowed_commands=policy_shell_allowed_commands,
                 max_iterations_main=resolved_policy.max_iterations_main,
                 max_iterations_subagent=resolved_policy.max_iterations_subagent,
                 network_allowlist=policy_network_allowlist,
@@ -182,6 +186,8 @@ class ProfileService:
         policy_capabilities: tuple[str, ...],
         policy_file_access_mode: str = "read_write",
         policy_allowed_directories: tuple[str, ...] | None = None,
+        policy_shell_sandbox_mode: str = "disabled",
+        policy_shell_allowed_commands: tuple[str, ...] = (),
         policy_network_allowlist: tuple[str, ...],
     ) -> ProfileDetails:
         """Create or replace the canonical default profile from setup answers."""
@@ -215,6 +221,8 @@ class ProfileService:
                 policy_capabilities=tuple(item.value for item in resolved_policy.capabilities),
                 allowed_tools=effective_allowed_tools,
                 allowed_directories=effective_allowed_directories,
+                shell_sandbox_mode=policy_shell_sandbox_mode,
+                shell_allowed_commands=policy_shell_allowed_commands,
                 max_iterations_main=resolved_policy.max_iterations_main,
                 max_iterations_subagent=resolved_policy.max_iterations_subagent,
                 network_allowlist=policy_network_allowlist,
@@ -243,6 +251,8 @@ class ProfileService:
         policy_capabilities: tuple[str, ...],
         policy_file_access_mode: str = "read_write",
         policy_allowed_directories: tuple[str, ...] | None = None,
+        policy_shell_sandbox_mode: str = "disabled",
+        policy_shell_allowed_commands: tuple[str, ...] = (),
         policy_network_allowlist: tuple[str, ...],
     ) -> ProfileDetails:
         """Update one profile row, runtime config, and effective policy."""
@@ -283,6 +293,8 @@ class ProfileService:
                 policy_capabilities=tuple(item.value for item in resolved_policy.capabilities),
                 allowed_tools=effective_allowed_tools,
                 allowed_directories=effective_allowed_directories,
+                shell_sandbox_mode=policy_shell_sandbox_mode,
+                shell_allowed_commands=policy_shell_allowed_commands,
                 max_iterations_main=resolved_policy.max_iterations_main,
                 max_iterations_subagent=resolved_policy.max_iterations_subagent,
                 network_allowlist=policy_network_allowlist,
@@ -405,6 +417,10 @@ class ProfileService:
             allowed_directories=self._load_string_tuple(
                 row.allowed_directories_json,
                 lowercase=False,
+            ),
+            shell_sandbox_mode=str(getattr(row, "shell_sandbox_mode", "disabled") or "disabled"),
+            shell_allowed_commands=self._load_string_tuple(
+                getattr(row, "shell_allowed_commands_json", "[]")
             ),
             network_allowlist=self._load_string_tuple(row.network_allowlist_json),
         )

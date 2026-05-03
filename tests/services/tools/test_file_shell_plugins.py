@@ -22,6 +22,9 @@ from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.credential_placeholders import redact_secret_fragments
 from afkbot.services.tools.plugins.bash_exec.plugin import BashExecTool, _StreamingOutputTail
 from afkbot.services.tools.registry import ToolRegistry
+from afkbot.services.tools.shell_sandbox import build_shell_sandbox_launch
+from afkbot.services.tools.trusted_executables import TrustedExecutableError
+from afkbot.services.tools.trusted_executables import resolve_trusted_executable
 from afkbot.settings import Settings
 
 
@@ -40,12 +43,95 @@ def _registry(settings: Settings) -> ToolRegistry:
     )
 
 
+def test_shell_sandbox_builds_linux_bwrap_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Linux shell sandbox should bind allowed roots and pin HOME/TMP inside the sandbox."""
+
+    sandbox_root = tmp_path / "sandbox"
+    sandbox_root.mkdir()
+    monkeypatch.setattr("afkbot.services.tools.shell_sandbox.sys.platform", "linux")
+    monkeypatch.setattr(
+        "afkbot.services.tools.shell_sandbox.resolve_trusted_executable",
+        lambda _names, *, candidate_dirs: Path("/usr/bin/bwrap"),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.tools.shell_sandbox._linux_readonly_system_roots",
+        lambda: (),
+    )
+
+    launch = build_shell_sandbox_launch(
+        base_argv=("/bin/sh", "-c", "pwd"),
+        cwd=sandbox_root,
+        env={"HOME": "/root", "TMPDIR": "/tmp/host", "PATH": "/usr/bin:/bin"},
+        scope_roots=(sandbox_root,),
+        shell_sandbox_mode="required",
+    )
+
+    assert launch.sandbox_kind == "linux-bwrap"
+    assert launch.argv[0] == "/usr/bin/bwrap"
+    assert ("--bind", str(sandbox_root), str(sandbox_root)) in tuple(
+        launch.argv[index : index + 3] for index in range(len(launch.argv) - 2)
+    )
+    assert "--setenv" in launch.argv
+    assert "/workspace" in launch.argv
+    assert launch.env == {}
+
+
+def test_shell_sandbox_macos_profile_does_not_write_workspace_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """macOS sandbox profile creation should not overwrite user-controlled workspace paths."""
+
+    sandbox_root = tmp_path / "sandbox"
+    sandbox_root.mkdir()
+    outside_target = tmp_path / "outside-profile-target"
+    workspace_profile = sandbox_root / ".afkbot-shell-sandbox.sb"
+    workspace_profile.symlink_to(outside_target)
+    monkeypatch.setattr("afkbot.services.tools.shell_sandbox.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "afkbot.services.tools.shell_sandbox.resolve_trusted_executable",
+        lambda _names, *, candidate_dirs: Path("/usr/bin/sandbox-exec"),
+    )
+
+    launch = build_shell_sandbox_launch(
+        base_argv=("/bin/sh", "-c", "pwd"),
+        cwd=sandbox_root,
+        env={"PATH": "/usr/bin:/bin"},
+        scope_roots=(sandbox_root,),
+        shell_sandbox_mode="required",
+    )
+
+    assert launch.sandbox_kind == "macos-sandbox-exec"
+    assert launch.argv[1] == "-p"
+    assert "(deny default)" in launch.argv[2]
+    assert launch.profile_path is None
+    assert outside_target.exists() is False
+
+
+def test_trusted_executable_resolver_rejects_user_writable_directory(tmp_path: Path) -> None:
+    """Trusted executable resolution should reject user-owned temp/workspace directories."""
+
+    user_bin = tmp_path / "bin"
+    user_bin.mkdir()
+    executable = user_bin / "safe"
+    executable.write_text("#!/bin/sh\nprintf unsafe\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    with pytest.raises(TrustedExecutableError):
+        resolve_trusted_executable(("safe",), candidate_dirs=(user_bin,))
+
+
 async def _set_allowed_directories(
     *,
     settings: Settings,
     profile_id: str,
     directories: list[Path],
     enabled: bool | None = None,
+    shell_sandbox_mode: str | None = None,
+    shell_allowed_commands: tuple[str, ...] = (),
 ) -> None:
     engine = create_engine(settings)
     await create_schema(engine)
@@ -60,6 +146,13 @@ async def _set_allowed_directories(
                 [str(path.resolve(strict=False)) for path in directories],
                 ensure_ascii=True,
             )
+            if shell_sandbox_mode is not None:
+                policy.shell_sandbox_mode = shell_sandbox_mode
+            if shell_allowed_commands:
+                policy.shell_allowed_commands_json = json.dumps(
+                    list(shell_allowed_commands),
+                    ensure_ascii=True,
+                )
             await session.flush()
     finally:
         await engine.dispose()
@@ -414,6 +507,168 @@ async def test_bash_exec_runs_command(tmp_path: Path) -> None:
     assert result.payload["cwd"] == "."
 
 
+async def test_bash_exec_enforces_shell_command_allowlist_direct_mode(tmp_path: Path) -> None:
+    """Profile shell command allowlists should run direct argv instead of shell strings."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'shell-command-allowlist.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        shell_allowed_commands=("printf",),
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "printf 'ok'",
+            "cwd": ".",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["exit_code"] == 0
+    assert result.payload["stdout"] == "ok"
+    assert result.payload["execution_mode"] == "direct"
+    assert Path(str(result.payload["shell"])).name == "printf"
+    assert Path(str(result.payload["shell"])).is_absolute()
+
+
+async def test_bash_exec_allowlist_ignores_user_controlled_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allowlisted direct mode should not resolve executables through inherited PATH."""
+
+    trusted_bin = tmp_path / "trusted-bin"
+    user_bin = tmp_path / "user-bin"
+    trusted_bin.mkdir()
+    user_bin.mkdir()
+    trusted_executable = trusted_bin / "safe"
+    user_executable = user_bin / "safe"
+    trusted_executable.write_text("#!/bin/sh\nprintf '%s' \"$PATH\"\n", encoding="utf-8")
+    user_executable.write_text("#!/bin/sh\nprintf user\n", encoding="utf-8")
+    trusted_executable.chmod(0o755)
+    user_executable.chmod(0o755)
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.bash_exec.plugin.resolve_trusted_executable",
+        lambda names: trusted_executable if tuple(names) == ("safe",) else user_executable,
+    )
+    monkeypatch.setenv("PATH", f"{user_bin}{os.pathsep}{trusted_bin}")
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'shell-command-path-env.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        shell_allowed_commands=("safe",),
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "safe",
+            "cwd": ".",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert str(user_bin) not in str(result.payload["stdout"])
+    assert str(trusted_bin) not in str(result.payload["stdout"])
+    assert result.payload["shell"] == str(trusted_executable)
+
+
+async def test_bash_exec_denies_unlisted_shell_command(tmp_path: Path) -> None:
+    """Profile shell command allowlists should reject commands outside the allowlist."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'shell-command-deny.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        shell_allowed_commands=("printf",),
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "python -c 'print(1)'",
+            "cwd": ".",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_invalid"
+    assert "python" in str(result.reason)
+
+
+async def test_bash_exec_allowlist_rejects_command_paths(tmp_path: Path) -> None:
+    """Allowlisted shell commands should not be replaceable via workspace-relative paths."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'shell-command-path.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        shell_allowed_commands=("printf",),
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "./printf 'ok'",
+            "cwd": ".",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_invalid"
+    assert "bare command names" in str(result.reason)
+
+
 async def test_bash_exec_pwd_defaults_to_profile_workspace(tmp_path: Path) -> None:
     """bash.exec should treat the profile workspace as the default cwd."""
 
@@ -438,6 +693,76 @@ async def test_bash_exec_pwd_defaults_to_profile_workspace(tmp_path: Path) -> No
     assert result.ok is True
     assert str(result.payload["stdout"]).strip() == str((tmp_path / "profiles/default").resolve())
     assert result.payload["cwd"] == "."
+
+
+async def test_bash_exec_required_sandbox_fails_closed_without_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restricted shell profiles should not silently run without an OS sandbox backend."""
+
+    monkeypatch.setattr(
+        "afkbot.services.tools.shell_sandbox.resolve_trusted_executable",
+        lambda _names, *, candidate_dirs: (_ for _ in ()).throw(
+            TrustedExecutableError("missing")
+        ),
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'required-sandbox.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        shell_sandbox_mode="required",
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "printf 'unsafe'",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_sandbox_unavailable"
+    assert "sandbox is required" in str(result.reason)
+
+
+async def test_bash_exec_rejects_shell_startup_env_overrides(tmp_path: Path) -> None:
+    """Shell startup and directory env vars should not be user-overridable."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'protected-env.db'}",
+        root_dir=tmp_path,
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "printf 'unsafe'",
+            "env": {"BASH_ENV": str(tmp_path / "evil.sh")},
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_invalid"
+    assert "BASH_ENV" in str(result.reason)
 
 
 async def test_full_access_invocation_cwd_sets_relative_base_without_narrowing_scope(
@@ -1239,57 +1564,59 @@ def test_bash_exec_resolve_shell_path_skips_fallback_lookups_when_requested_shel
     assert Path(resolved_shell).name == Path(requested_shell).name
 
 
-def test_bash_exec_resolve_shell_path_builds_trusted_directory_snapshot_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """bash.exec should reuse one trusted-directory snapshot during shell path resolution."""
-
-    # Arrange
-    requested_shell = shutil.which("bash") or shutil.which("sh")
-    if requested_shell is None:
-        pytest.skip("No supported shell available")
-
-    calls = 0
-    original = BashExecTool._trusted_shell_directories
-
-    def _counted() -> set[Path]:
-        nonlocal calls
-        calls += 1
-        return original()
-
-    monkeypatch.setattr(BashExecTool, "_trusted_shell_directories", staticmethod(_counted))
-
-    # Act
-    resolved_shell = BashExecTool._resolve_shell_path(requested_shell=requested_shell)
-
-    # Assert
-    assert Path(resolved_shell).name == Path(requested_shell).name
-    assert calls == 1
-
-
-def test_bash_exec_resolve_shell_path_accepts_busybox_style_shell_alias(
+async def test_bash_exec_shell_mode_ignores_user_controlled_shell_and_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """bash.exec should preserve shell aliases such as sh -> busybox on Alpine-like systems."""
+    """Shell mode should not resolve the shell or subcommands through inherited env paths."""
 
-    # Arrange
+    user_bin = tmp_path / "user-bin"
+    user_bin.mkdir()
+    fake_shell = user_bin / "bash"
+    fake_shell.write_text("#!/bin/sh\nprintf fake-shell\n", encoding="utf-8")
+    fake_shell.chmod(0o755)
+    fake_git = user_bin / "git"
+    fake_git.write_text("#!/bin/sh\nprintf fake-git\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("SHELL", str(fake_shell))
+    monkeypatch.setenv("PATH", str(user_bin))
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("bash.exec")
+    assert tool is not None
+
+    result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "cmd": "printf '%s|%s' \"$SHELL\" \"$PATH\"",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is True
+    assert "fake-shell" not in str(result.payload["stdout"])
+    assert str(user_bin) not in str(result.payload["stdout"])
+    assert str(user_bin) not in str(result.payload["shell"])
+
+
+def test_bash_exec_resolve_shell_path_rejects_untrusted_busybox_style_shell_alias(
+    tmp_path: Path,
+) -> None:
+    """User-controlled shell aliases should not be accepted as trusted shells."""
+
     busybox_binary = tmp_path / "busybox"
     busybox_binary.write_text("#!/bin/sh\nprintf busybox\n", encoding="utf-8")
     busybox_binary.chmod(0o755)
     shell_alias = tmp_path / "sh"
     shell_alias.symlink_to(busybox_binary)
-    monkeypatch.setattr(
-        BashExecTool,
-        "_trusted_shell_directories",
-        staticmethod(lambda: {tmp_path}),
-    )
 
-    # Act
-    resolved_shell = BashExecTool._resolve_shell_path(requested_shell=str(shell_alias))
-
-    # Assert
-    assert resolved_shell == str(shell_alias)
+    with pytest.raises(ValueError):
+        BashExecTool._resolve_shell_path(requested_shell=str(shell_alias))
 
 
 async def test_file_tools_reject_absolute_paths_outside_profile_workspace_by_default(

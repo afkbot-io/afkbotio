@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 
 from afkbot.services.profile_runtime.service import ProfileServiceError, get_profile_service
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
@@ -18,6 +19,14 @@ class WorkspacePathResolutionError(ValueError):
         self.code = code
         self.raw_path = raw_path
         self.reason = reason
+
+
+@dataclass(frozen=True, slots=True)
+class ToolShellPolicy:
+    """Shell-specific profile policy fields needed by tool runtime."""
+
+    shell_sandbox_mode: str = "disabled"
+    shell_allowed_commands: tuple[str, ...] = ()
 
 
 def resolve_tool_workspace_base_dir(*, settings: Settings, profile_id: str) -> Path:
@@ -53,6 +62,19 @@ async def resolve_tool_workspace_scope_roots(*, settings: Settings, profile_id: 
             return _prepend_scope_root(primary=base_dir, roots=resolved_roots)
         return resolved_roots
     return (settings.tool_workspace_dir.resolve(strict=False),)
+
+
+async def resolve_tool_shell_policy(*, settings: Settings, profile_id: str) -> ToolShellPolicy:
+    """Return shell policy fields for one profile, with safe defaults on missing profiles."""
+
+    try:
+        profile = await get_profile_service(settings).get(profile_id=profile_id)
+    except ProfileServiceError:
+        return ToolShellPolicy()
+    return ToolShellPolicy(
+        shell_sandbox_mode=profile.policy.shell_sandbox_mode,
+        shell_allowed_commands=profile.policy.shell_allowed_commands,
+    )
 
 
 def _normalize_scope_roots(raw_roots: tuple[str, ...]) -> tuple[Path, ...]:

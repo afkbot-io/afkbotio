@@ -145,6 +145,9 @@ def register(app: typer.Typer) -> None:
             f"- effective_workspace_root: {inspection.effective_permissions.default_workspace_root}"
         )
         typer.echo(
+            f"- effective_shell_sandbox_mode: {inspection.effective_permissions.shell_sandbox_mode}"
+        )
+        typer.echo(
             f"- effective_file_scope_mode: {inspection.effective_permissions.file_scope_mode}"
         )
         typer.echo(f"- effective_file_access: {inspection.effective_permissions.file_access_mode}")

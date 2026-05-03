@@ -1663,11 +1663,11 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
         await engine.dispose()
 
 
-async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target_with_flag(
+async def test_task_plugins_runtime_profile_scope_ignores_env_override_in_taskflow(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Explicit profile override should require an opt-in feature flag in runtime scope."""
+    """Process-wide override flags must not widen trusted Task Flow runtime scope."""
 
     monkeypatch.setenv("AFKBOT_TASKFLOW_ALLOW_RUNTIME_PROFILE_OVERRIDE", "1")
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
@@ -1698,7 +1698,7 @@ async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target
                 {
                     "profile_id": "analyst",
                     "title": "Runtime override note",
-                    "description": "Allow explicit profile target via guarded override.",
+                    "description": "Keep trusted runtime scope even when env override is set.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
                 },
@@ -1709,7 +1709,7 @@ async def test_task_plugins_runtime_profile_scope_allows_explicit_profile_target
         assert create_result.ok is True
         task_payload = create_result.payload["task"]
         assert isinstance(task_payload, dict)
-        assert task_payload["profile_id"] == "analyst"
+        assert task_payload["profile_id"] == "default"
     finally:
         await engine.dispose()
 

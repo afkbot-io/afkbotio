@@ -54,6 +54,8 @@ def has_explicit_policy_overrides(
     policy_file_access_mode: str | None,
     policy_workspace_scope: str | None,
     policy_network_host: tuple[str, ...],
+    policy_shell_sandbox_mode: str | None = None,
+    policy_shell_command: tuple[str, ...] = (),
 ) -> bool:
     """Return whether setup flags force the custom policy path."""
 
@@ -63,6 +65,8 @@ def has_explicit_policy_overrides(
         or bool(policy_capability)
         or policy_file_access_mode is not None
         or policy_workspace_scope is not None
+        or policy_shell_sandbox_mode is not None
+        or bool(policy_shell_command)
         or bool(policy_network_host)
     )
 

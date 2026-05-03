@@ -14,6 +14,7 @@ from afkbot.services.channel_routing.runtime_target import (
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.ingress_journal import get_channel_ingress_journal_service
 from afkbot.services.channels.reply_policy import should_suppress_channel_reply
@@ -223,6 +224,12 @@ async def flush_watcher_batch(
                 account_id=service._endpoint.account_id,
                 events=batch,
                 delivery_target=delivery_target,
+            ),
+            build_active_channel_context_overrides(
+                endpoint=service._endpoint,
+                peer_id=delivery_target.peer_id,
+                thread_id=delivery_target.thread_id,
+                user_id=delivery_target.user_id,
             ),
             build_channel_tool_profile_context_overrides(service._endpoint.tool_profile),
         )

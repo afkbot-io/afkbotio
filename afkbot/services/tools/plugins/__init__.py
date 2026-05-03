@@ -13,6 +13,9 @@ from afkbot.services.tools.plugins.automation_update import create_tool as creat
 from afkbot.services.tools.plugins.bash_exec import create_tool as create_bash_exec_tool
 from afkbot.services.tools.plugins.browser_control import create_tool as create_browser_control_tool
 from afkbot.services.tools.plugins.channel_send import create_tool as create_channel_send_tool
+from afkbot.services.tools.plugins.channel_history_list import (
+    create_tool as create_channel_history_list_tool,
+)
 from afkbot.services.tools.plugins.credentials_create import (
     create_tool as create_credentials_create,
 )
@@ -190,6 +193,7 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "app_run": create_app_run_tool,
     "bash_exec": create_bash_exec_tool,
     "browser_control": create_browser_control_tool,
+    "channel_history_list": create_channel_history_list_tool,
     "channel_send": create_channel_send_tool,
     "automation_create": create_automation_create,
     "automation_list": create_automation_list,
