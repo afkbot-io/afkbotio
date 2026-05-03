@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from afkbot.services.llm.provider_catalog import LLMProviderId
-from afkbot.services.llm.token_file_sources import resolve_openai_codex_file_backed_api_key
+from afkbot.services.llm.token_file_sources import (
+    TOKEN_SOURCE_FILE,
+    resolve_openai_codex_file_backed_api_key,
+)
 from afkbot.settings import Settings
 
 
@@ -45,8 +48,8 @@ def resolve_api_key(*, settings: Settings, provider_id: LLMProviderId) -> str | 
             source=settings.openai_codex_api_key_source,
             path=settings.openai_codex_api_key_file,
         )
-        if file_backed_key:
-            return file_backed_key
+        if settings.openai_codex_api_key_source == TOKEN_SOURCE_FILE:
+            return file_backed_key or None
         return _normalized_optional_text(settings.openai_codex_api_key) or _normalized_optional_text(
             settings.llm_api_key,
         )

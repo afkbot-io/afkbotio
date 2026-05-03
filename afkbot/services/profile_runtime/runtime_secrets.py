@@ -92,6 +92,7 @@ class ProfileRuntimeSecretsService:
         """Persist encrypted runtime secrets for one profile, or remove empty payloads."""
 
         normalized = self._normalize_secrets(secrets)
+        self._apply_token_source_cleanup(normalized, update=normalized)
         if not normalized:
             self.remove(profile_id)
             return None
@@ -116,8 +117,10 @@ class ProfileRuntimeSecretsService:
     def merge(self, profile_id: str, secrets: Mapping[str, str]) -> dict[str, str]:
         """Merge provided secrets with current payload and persist the result."""
 
+        normalized_update = self._normalize_secrets(secrets)
         merged = self.load(profile_id)
-        merged.update(self._normalize_secrets(secrets))
+        merged.update(normalized_update)
+        self._apply_token_source_cleanup(merged, update=normalized_update)
         self.write(profile_id, merged)
         return self.load(profile_id)
 
@@ -206,6 +209,15 @@ class ProfileRuntimeSecretsService:
                 continue
             normalized[key] = stripped
         return normalized
+
+    @staticmethod
+    def _apply_token_source_cleanup(secrets: dict[str, str], *, update: Mapping[str, str]) -> None:
+        source = update.get("openai_codex_api_key_source")
+        if source == TOKEN_SOURCE_FILE:
+            secrets.pop("openai_codex_api_key", None)
+            secrets.pop("llm_api_key", None)
+        elif source == TOKEN_SOURCE_SECRET:
+            secrets.pop("openai_codex_api_key_file", None)
 
     @staticmethod
     def _read_json_object(path: Path) -> dict[str, Any]:

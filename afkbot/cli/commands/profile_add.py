@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import typer
 
@@ -91,6 +92,15 @@ def register_add(profile_app: typer.Typer) -> None:
             "--llm-api-key",
             help="Optional generic provider credential fallback (API key or OAuth token) for this profile.",
             hide_input=True,
+        ),
+        llm_api_key_file: Path | None = typer.Option(
+            None,
+            "--llm-api-key-file",
+            "--openrouter-api-key-file",
+            dir_okay=False,
+            file_okay=True,
+            exists=True,
+            help="Path to file containing provider credential (API key or OAuth token).",
         ),
         provider_api_key: str | None = typer.Option(
             None,
@@ -301,7 +311,7 @@ def register_add(profile_app: typer.Typer) -> None:
                 custom_interface=custom_interface,
                 llm_proxy_type=llm_proxy_type,
                 llm_proxy_url=llm_proxy_url,
-                llm_api_key_file=None,
+                llm_api_key_file=llm_api_key_file,
                 llm_api_key=llm_api_key,
                 provider_api_key=provider_api_key,
                 minimax_region=minimax_region,

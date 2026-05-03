@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import typer
 
@@ -22,6 +23,7 @@ from afkbot.services.profile_runtime import (
     get_profile_runtime_secrets_service,
     get_profile_service,
 )
+from afkbot.services.llm.token_file_sources import TOKEN_SOURCE_FILE, provider_token_source_field
 from afkbot.settings import get_settings
 
 
@@ -90,6 +92,15 @@ def register_update(profile_app: typer.Typer) -> None:
             "--llm-api-key",
             help="Optional generic provider credential fallback (API key or OAuth token) for this profile.",
             hide_input=True,
+        ),
+        llm_api_key_file: Path | None = typer.Option(
+            None,
+            "--llm-api-key-file",
+            "--openrouter-api-key-file",
+            dir_okay=False,
+            file_okay=True,
+            exists=True,
+            help="Path to file containing provider credential (API key or OAuth token).",
         ),
         provider_api_key: str | None = typer.Option(
             None,
@@ -287,7 +298,7 @@ def register_update(profile_app: typer.Typer) -> None:
                 custom_interface=custom_interface,
                 llm_proxy_type=llm_proxy_type,
                 llm_proxy_url=llm_proxy_url,
-                llm_api_key_file=None,
+                llm_api_key_file=llm_api_key_file,
                 llm_api_key=llm_api_key,
                 provider_api_key=provider_api_key,
                 minimax_region=minimax_region,
@@ -339,8 +350,9 @@ def register_update(profile_app: typer.Typer) -> None:
                 },
                 skip_verify=skip_llm_token_verify,
             )
+            profile_service = get_profile_service(settings)
             updated_profile = asyncio.run(
-                get_profile_service(settings).update(
+                profile_service.update(
                     profile_id=normalized_profile_id,
                     name=mutation_inputs.resolved_name,
                     runtime_config=mutation_inputs.runtime_config,
@@ -355,10 +367,19 @@ def register_update(profile_app: typer.Typer) -> None:
                 )
             )
             if mutation_inputs.runtime_secrets_update:
-                get_profile_runtime_secrets_service(settings).merge(
+                secrets_service = get_profile_runtime_secrets_service(settings)
+                if _uses_file_backed_provider_token(
+                    llm_provider=mutation_inputs.runtime_core.llm_provider,
+                    runtime_secrets=mutation_inputs.runtime_secrets_update,
+                ):
+                    # merge() fails closed for source=file, but clearing first makes the
+                    # persisted secret set immediately reflect the selected source mode.
+                    secrets_service.clear(normalized_profile_id, fields=("openai_codex_api_key", "llm_api_key"))
+                secrets_service.merge(
                     normalized_profile_id,
                     mutation_inputs.runtime_secrets_update,
                 )
+                updated_profile = asyncio.run(profile_service.get(profile_id=normalized_profile_id))
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -375,3 +396,8 @@ def register_update(profile_app: typer.Typer) -> None:
             return
         typer.echo(json.dumps({"profile": updated_profile.model_dump(mode="json")}, ensure_ascii=True))
         reload_install_managed_runtime_notice(settings)
+
+
+def _uses_file_backed_provider_token(*, llm_provider: str, runtime_secrets: dict[str, str]) -> bool:
+    source_field = provider_token_source_field(llm_provider)
+    return source_field is not None and runtime_secrets.get(source_field) == TOKEN_SOURCE_FILE

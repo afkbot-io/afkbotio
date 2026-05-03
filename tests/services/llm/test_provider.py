@@ -340,6 +340,26 @@ def test_build_llm_provider_reads_openai_codex_token_from_file_each_time(tmp_pat
     assert rebuilt._api_key == "refreshed-file-token"  # noqa: SLF001
 
 
+def test_build_llm_provider_codex_file_source_fails_closed_when_file_missing(tmp_path: Path) -> None:
+    """Codex source=file should not fall back to stale copied secrets."""
+
+    missing_token_path = tmp_path / "missing-auth.json"
+    settings = Settings(
+        llm_provider="openai-codex",
+        llm_model="gpt-5.4",
+        llm_api_key="stale-generic-token",
+        openai_codex_api_key="stale-copied-token",
+        openai_codex_api_key_source="file",
+        openai_codex_api_key_file=str(missing_token_path),
+        openai_codex_base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == ""  # noqa: SLF001
+
+
 def test_build_llm_provider_supports_minimax_portal_provider_specific_settings() -> None:
     """MiniMax Portal provider should resolve provider-specific OAuth token/base URL fields."""
 

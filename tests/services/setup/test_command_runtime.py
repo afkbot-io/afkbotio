@@ -65,7 +65,10 @@ def test_codex_file_backed_setup_secrets_do_not_copy_effective_token(tmp_path: P
 
     runtime_secrets = _build_runtime_secrets_payload(
         config=config,
-        existing_runtime_secrets={},
+        existing_runtime_secrets={
+            "llm_api_key": "legacy-generic-token",
+            "openai_codex_api_key": "legacy-copied-token",
+        },
     )
     profile_secrets = _build_default_profile_runtime_secrets(config=config)
 
@@ -75,6 +78,7 @@ def test_codex_file_backed_setup_secrets_do_not_copy_effective_token(tmp_path: P
     }
     assert profile_secrets == runtime_secrets
     assert "openai_codex_api_key" not in runtime_secrets
+    assert "llm_api_key" not in runtime_secrets
 
 
 def _setup_config(tmp_path: Path, *, runtime_secrets_update: dict[str, str]) -> SetupConfig:

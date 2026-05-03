@@ -157,14 +157,27 @@ def resolve_profile_provider_api_key(
         provider_id=provider_id,
         values=current_secrets,
     )
+    file_backed_source_requested = _file_backed_source_requested(
+        provider_id=provider_id,
+        values=current_secrets,
+    )
     existing_local_key = (
         file_backed_key
-        or str(current_secrets.get(provider_field, "")).strip()
-        or str(current_secrets.get("llm_api_key", "")).strip()
+        if file_backed_source_requested
+        else (
+            file_backed_key
+            or str(current_secrets.get(provider_field, "")).strip()
+            or str(current_secrets.get("llm_api_key", "")).strip()
+        )
     )
-    existing_effective_key = existing_local_key or peek_existing_api_key(
-        provider_id=provider_id,
-        defaults=defaults,
+    existing_effective_key = (
+        existing_local_key
+        if file_backed_source_requested
+        else existing_local_key
+        or peek_existing_api_key(
+            provider_id=provider_id,
+            defaults=defaults,
+        )
     )
     explicit_minimax_region = (minimax_region or "").strip().lower()
     existing_minimax_region = str(current_secrets.get("minimax_portal_region", "")).strip().lower()
@@ -268,6 +281,8 @@ def peek_existing_api_key(
 ) -> str:
     """Return the currently available provider API key without prompting."""
 
+    if _peek_file_backed_source_requested(provider_id=provider_id, defaults=defaults):
+        return _peek_file_backed_api_key(provider_id=provider_id, defaults=defaults)
     file_backed_key = _peek_file_backed_api_key(provider_id=provider_id, defaults=defaults)
     if file_backed_key:
         return file_backed_key
@@ -311,6 +326,22 @@ def _peek_file_backed_api_key(*, provider_id: LLMProviderId, defaults: Mapping[s
         "",
     )
     return resolve_openai_codex_file_backed_api_key(source=source, path=path)
+
+
+def _peek_file_backed_source_requested(*, provider_id: LLMProviderId, defaults: Mapping[str, str]) -> bool:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return False
+    source = (os.getenv("AFKBOT_OPENAI_CODEX_API_KEY_SOURCE") or "").strip() or defaults.get(
+        "AFKBOT_OPENAI_CODEX_API_KEY_SOURCE",
+        "",
+    )
+    return source.strip().lower() == TOKEN_SOURCE_FILE
+
+
+def _file_backed_source_requested(*, provider_id: LLMProviderId, values: Mapping[str, object]) -> bool:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return False
+    return str(values.get("openai_codex_api_key_source") or "").strip().lower() == TOKEN_SOURCE_FILE
 
 
 def _manual_provider_secret_source_update(provider_id: LLMProviderId) -> dict[str, str]:
@@ -443,8 +474,8 @@ def _resolve_interactive_provider_credential_with_metadata(
         if local_codex_token is not None and prompt_confirm(
             question=msg(
                 lang,
-                en=f"Use locally detected Codex token from {local_codex_token.path}?",
-                ru=f"Использовать локально найденный токен Codex из {local_codex_token.path}?",
+                en="Use the locally detected Codex auth file as a live token source?",
+                ru="Использовать локально найденный auth-файл Codex как живой источник токена?",
             ),
             title=provider_prompt_title,
             default=True,
@@ -582,8 +613,8 @@ def _run_codex_login_and_load_token(*, lang: PromptLanguage) -> str:
         typer.echo(
             msg(
                 lang,
-                en=f"Detected a fresh token in {refreshed.path}.",
-                ru=f"Обнаружен обновлённый токен в {refreshed.path}.",
+                en="Detected a fresh token in the local Codex auth file.",
+                ru="Обнаружен обновлённый токен в локальном auth-файле Codex.",
             )
         )
         return refreshed.token

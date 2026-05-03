@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-05-03
+
 ### Added
 
 - Setup/profile security configuration now has an intent-first guided wizard
@@ -21,6 +23,10 @@ All notable changes to this project will be documented in this file.
   subagent tools until the operator explicitly chooses them.
 - Channel wizard labels now avoid raw internal tokens in normal prompts for
   access/session/tool-profile choices.
+
+### Fixed
+
+- Release metadata and lockfile package metadata are aligned to `1.7.1`.
 
 ## [1.7.0] - 2026-05-02
 

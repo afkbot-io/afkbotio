@@ -168,6 +168,44 @@ def test_profile_runtime_config_applies_codex_file_backed_token_source(tmp_path:
     assert summary.provider_api_key_configured is True
 
 
+def test_profile_runtime_secrets_cleanup_codex_token_source_switches(tmp_path: Path) -> None:
+    """Profile secrets should not keep stale Codex token material across source mode switches."""
+
+    settings = Settings(root_dir=tmp_path)
+    secrets_service = ProfileRuntimeSecretsService(settings)
+    secrets_service.write(
+        "codex",
+        {
+            "llm_api_key": "legacy-generic-token",
+            "openai_codex_api_key": "legacy-copied-token",
+        },
+    )
+
+    file_mode = secrets_service.merge(
+        "codex",
+        {
+            "openai_codex_api_key_source": "file",
+            "openai_codex_api_key_file": str(tmp_path / "auth.json"),
+        },
+    )
+    secret_mode = secrets_service.merge(
+        "codex",
+        {
+            "openai_codex_api_key_source": "secret",
+            "openai_codex_api_key": "manual-token",
+        },
+    )
+
+    assert file_mode == {
+        "openai_codex_api_key_source": "file",
+        "openai_codex_api_key_file": str(tmp_path / "auth.json"),
+    }
+    assert secret_mode == {
+        "openai_codex_api_key_source": "secret",
+        "openai_codex_api_key": "manual-token",
+    }
+
+
 def test_profile_runtime_config_applies_profile_local_brave_search_key(tmp_path: Path) -> None:
     """Profile-local Brave key should flow into effective settings and resolved summary."""
 
