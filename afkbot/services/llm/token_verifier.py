@@ -216,6 +216,7 @@ def verify_provider_token(
                 provider_id=provider_id,
                 status_code=status_code,
                 lang=normalized_lang,
+                provider_detail=_extract_safe_error_message(body_text=body_text, api_key=api_key),
             ),
             status_code=status_code,
         )
@@ -427,8 +428,12 @@ def _provider_rejected_credentials_reason(
     provider_id: LLMProviderId,
     status_code: int,
     lang: str,
+    provider_detail: str | None = None,
 ) -> str:
     spec = get_provider_spec(provider_id)
+    normalized_detail = (provider_detail or "").strip()
+    en_detail = f" Provider detail: {normalized_detail}" if normalized_detail else ""
+    ru_detail = f" Ответ провайдера: {normalized_detail}" if normalized_detail else ""
     if provider_id in {LLMProviderId.MOONSHOT, LLMProviderId.MOONSHOT_CN}:
         provider_value = provider_id.value
         expected_base_url = (
@@ -440,23 +445,19 @@ def _provider_rejected_credentials_reason(
             lang,
             en=(
                 f"{spec.label} rejected the configured API key (HTTP {status_code}). "
-                f"Use a direct Moonshot/Kimi API key with provider={provider_value} and "
-                f"{expected_base_url}, and make sure the API key platform matches the base URL. "
-                "If this is an OpenRouter key, use provider=openrouter and an OpenRouter model id "
-                "such as moonshotai/kimi-k2.5."
+                f"provider={provider_value}, base URL={expected_base_url}."
+                f"{en_detail}"
             ),
             ru=(
                 f"{spec.label} отклонил настроенный API key (HTTP {status_code}). "
-                f"Для provider={provider_value} нужен прямой Moonshot/Kimi API key и "
-                f"{expected_base_url}; платформа ключа должна совпадать с base URL. "
-                "Если это ключ OpenRouter, используйте provider=openrouter и model id OpenRouter, "
-                "например moonshotai/kimi-k2.5."
+                f"provider={provider_value}, base URL={expected_base_url}."
+                f"{ru_detail}"
             ),
         )
     return _msg(
         lang,
-        en=f"{spec.label} rejected the configured credentials (HTTP {status_code}).",
-        ru=f"{spec.label} отклонил настроенные учетные данные (HTTP {status_code}).",
+        en=f"{spec.label} rejected the configured credentials (HTTP {status_code}).{en_detail}",
+        ru=f"{spec.label} отклонил настроенные учетные данные (HTTP {status_code}).{ru_detail}",
     )
 
 

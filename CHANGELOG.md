@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-05-04
+
+### Changed
+
+- Moonshot/Kimi API key errors now report the provider rejection, HTTP status,
+  configured provider/base URL, and provider response detail without suggesting
+  alternate providers.
+
 ## [1.7.2] - 2026-05-03
 
 ### Added

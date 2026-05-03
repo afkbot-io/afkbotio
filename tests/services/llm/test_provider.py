@@ -873,7 +873,9 @@ def test_moonshot_http_status_401_maps_to_kimi_auth_hint() -> None:
     assert response.error_code == "llm_provider_auth_error"
     assert response.error_detail == "HTTP 401"
     assert "moonshot" in (response.final_message or "").lower()
-    assert "openrouter" in (response.final_message or "").lower()
+    assert "provider=moonshot" in (response.final_message or "")
+    assert "https://api.moonshot.ai/v1" in (response.final_message or "")
+    assert "openrouter" not in (response.final_message or "").lower()
 
 
 def test_moonshot_http_status_401_uses_russian_request_language() -> None:
@@ -891,7 +893,8 @@ def test_moonshot_http_status_401_uses_russian_request_language() -> None:
 
     assert response.error_code == "llm_provider_auth_error"
     assert "отклонил" in (response.final_message or "").lower()
-    assert "openrouter" in (response.final_message or "").lower()
+    assert "provider=moonshot" in (response.final_message or "")
+    assert "openrouter" not in (response.final_message or "").lower()
 
 
 def test_moonshot_cn_http_status_401_points_to_cn_base_url() -> None:
