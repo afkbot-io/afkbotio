@@ -179,6 +179,7 @@ class Settings(BaseSettings):
         "openai-codex",
         "claude",
         "moonshot",
+        "moonshot-cn",
         "deepseek",
         "xai",
         "qwen",
@@ -201,6 +202,8 @@ class Settings(BaseSettings):
     claude_base_url: str = "https://api.anthropic.com/v1"
     moonshot_api_key: str | None = None
     moonshot_base_url: str = "https://api.moonshot.ai/v1"
+    moonshot_cn_api_key: str | None = None
+    moonshot_cn_base_url: str = "https://api.moonshot.cn/v1"
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     xai_api_key: str | None = None
@@ -371,6 +374,7 @@ class Settings(BaseSettings):
         "openai_codex_api_key_file",
         "claude_api_key",
         "moonshot_api_key",
+        "moonshot_cn_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
@@ -862,6 +866,7 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
         "openai_codex_api_key",
         "claude_api_key",
         "moonshot_api_key",
+        "moonshot_cn_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",

@@ -61,6 +61,10 @@ def resolve_api_key(*, settings: Settings, provider_id: LLMProviderId) -> str | 
         return _normalized_optional_text(settings.moonshot_api_key) or _normalized_optional_text(
             settings.llm_api_key,
         )
+    if provider_id == LLMProviderId.MOONSHOT_CN:
+        return _normalized_optional_text(settings.moonshot_cn_api_key) or _normalized_optional_text(
+            settings.llm_api_key,
+        )
     if provider_id == LLMProviderId.DEEPSEEK:
         return _normalized_optional_text(settings.deepseek_api_key) or _normalized_optional_text(
             settings.llm_api_key,
@@ -109,6 +113,10 @@ def resolve_base_url(*, settings: Settings, provider_id: LLMProviderId) -> str:
         ) or ""
     if provider_id == LLMProviderId.MOONSHOT:
         return _normalized_optional_text(settings.moonshot_base_url) or _normalized_optional_text(
+            settings.llm_base_url,
+        ) or ""
+    if provider_id == LLMProviderId.MOONSHOT_CN:
+        return _normalized_optional_text(settings.moonshot_cn_base_url) or _normalized_optional_text(
             settings.llm_base_url,
         ) or ""
     if provider_id == LLMProviderId.DEEPSEEK:

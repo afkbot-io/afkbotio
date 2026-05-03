@@ -20,6 +20,7 @@ class ProfileRuntimeConfig(BaseModel):
         "openai-codex",
         "claude",
         "moonshot",
+        "moonshot-cn",
         "deepseek",
         "xai",
         "qwen",

@@ -118,6 +118,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         ),
         "AFKBOT_CLAUDE_BASE_URL": str(runtime_config.get("claude_base_url", settings.claude_base_url)),
         "AFKBOT_MOONSHOT_BASE_URL": str(runtime_config.get("moonshot_base_url", settings.moonshot_base_url)),
+        "AFKBOT_MOONSHOT_CN_BASE_URL": str(
+            runtime_config.get("moonshot_cn_base_url", settings.moonshot_cn_base_url)
+        ),
         "AFKBOT_DEEPSEEK_BASE_URL": str(
             runtime_config.get("deepseek_base_url", settings.deepseek_base_url)
         ),
@@ -151,6 +154,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_CLAUDE_API_KEY": str(runtime_secrets.get("claude_api_key", settings.claude_api_key or "")),
         "AFKBOT_MOONSHOT_API_KEY": str(
             runtime_secrets.get("moonshot_api_key", settings.moonshot_api_key or "")
+        ),
+        "AFKBOT_MOONSHOT_CN_API_KEY": str(
+            runtime_secrets.get("moonshot_cn_api_key", settings.moonshot_cn_api_key or "")
         ),
         "AFKBOT_DEEPSEEK_API_KEY": str(
             runtime_secrets.get("deepseek_api_key", settings.deepseek_api_key or "")

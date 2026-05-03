@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg
 from afkbot.cli.commands.profile_mutation import (
     CollectedProfileMutationInputs,
     ResolvedProfilePolicyInputs,
@@ -64,6 +65,7 @@ def verify_profile_provider_token(
     proxy_url: str,
     runtime_secrets: dict[str, str],
     skip_verify: bool,
+    lang: PromptLanguage = PromptLanguage.EN,
 ) -> None:
     """Verify the effective provider token when profile mutation collected or reused one."""
 
@@ -82,7 +84,15 @@ def verify_profile_provider_token(
         base_url=base_url,
         model=model,
         proxy_url=proxy_url if proxy_type != "none" else None,
+        lang=lang.value,
     )
     if verification.ok:
         return
-    raise typer.BadParameter(verification.reason or "LLM token verification failed.")
+    raise typer.BadParameter(
+        verification.reason
+        or msg(
+            lang,
+            en="LLM token verification failed.",
+            ru="Проверка LLM токена завершилась ошибкой.",
+        )
+    )

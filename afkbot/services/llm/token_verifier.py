@@ -39,15 +39,21 @@ def verify_provider_token(
     model: str | None = None,
     proxy_url: str | None = None,
     timeout_sec: float = 10.0,
+    lang: str = "en",
 ) -> TokenVerificationResult:
     """Verify provider API key using provider-specific verification endpoint."""
 
+    normalized_lang = _normalize_lang(lang)
     normalized_key = api_key.strip()
     if not normalized_key:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_missing",
-            reason="LLM provider credential is required.",
+            reason=_msg(
+                normalized_lang,
+                en="LLM provider credential is required.",
+                ru="Требуется credential LLM-провайдера.",
+            ),
             status_code=None,
         )
 
@@ -61,6 +67,7 @@ def verify_provider_token(
             model=model or "gpt-5.3-codex",
             proxy_url=proxy_url,
             timeout_sec=timeout_sec,
+            lang=normalized_lang,
         )
     if verify_mode == "github_copilot_exchange":
         try:
@@ -73,7 +80,11 @@ def verify_provider_token(
             return TokenVerificationResult(
                 ok=False,
                 error_code="llm_token_verify_timeout",
-                reason="LLM token verification timed out.",
+                reason=_msg(
+                    normalized_lang,
+                    en="LLM token verification timed out.",
+                    ru="Проверка LLM токена превысила таймаут.",
+                ),
                 status_code=None,
             )
         except httpx.HTTPStatusError as exc:
@@ -82,27 +93,43 @@ def verify_provider_token(
                 return TokenVerificationResult(
                     ok=False,
                     error_code="llm_token_invalid",
-                    reason=f"Provider rejected credentials (HTTP {status}).",
+                    reason=_provider_rejected_credentials_reason(
+                        provider_id=provider_id,
+                        status_code=status,
+                        lang=normalized_lang,
+                    ),
                     status_code=status,
                 )
             return TokenVerificationResult(
                 ok=False,
                 error_code="llm_token_verify_failed",
-                reason=f"LLM token verification failed (HTTP {status}).",
+                reason=_msg(
+                    normalized_lang,
+                    en=f"LLM token verification failed (HTTP {status}).",
+                    ru=f"Проверка LLM токена завершилась ошибкой (HTTP {status}).",
+                ),
                 status_code=status,
             )
         except (httpx.RequestError, OSError) as exc:
             return TokenVerificationResult(
                 ok=False,
                 error_code="llm_token_verify_network_error",
-                reason=f"LLM token verification failed due to network error: {exc}",
+                reason=_msg(
+                    normalized_lang,
+                    en=f"LLM token verification failed due to network error: {exc}",
+                    ru=f"Проверка LLM токена не удалась из-за сетевой ошибки: {exc}",
+                ),
                 status_code=None,
             )
         except ValueError as exc:
             return TokenVerificationResult(
                 ok=False,
                 error_code="llm_token_verify_failed",
-                reason=f"LLM token verification failed: {exc}",
+                reason=_msg(
+                    normalized_lang,
+                    en=f"LLM token verification failed: {exc}",
+                    ru=f"Проверка LLM токена завершилась ошибкой: {exc}",
+                ),
                 status_code=None,
             )
         return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=200)
@@ -112,7 +139,11 @@ def verify_provider_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_base_url_insecure",
-            reason="LLM base URL must use https:// (http:// is allowed only for localhost).",
+            reason=_msg(
+                normalized_lang,
+                en="LLM base URL must use https:// (http:// is allowed only for localhost).",
+                ru="LLM base URL должен использовать https:// (http:// разрешен только для localhost).",
+            ),
             status_code=None,
         )
 
@@ -134,28 +165,44 @@ def verify_provider_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_timeout",
-            reason="LLM token verification timed out.",
+            reason=_msg(
+                normalized_lang,
+                en="LLM token verification timed out.",
+                ru="Проверка LLM токена превысила таймаут.",
+            ),
             status_code=None,
         )
     except httpx.RequestError as exc:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_network_error",
-            reason=f"LLM token verification failed due to network error: {exc}",
+            reason=_msg(
+                normalized_lang,
+                en=f"LLM token verification failed due to network error: {exc}",
+                ru=f"Проверка LLM токена не удалась из-за сетевой ошибки: {exc}",
+            ),
             status_code=None,
         )
     except TimeoutError:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_timeout",
-            reason="LLM token verification timed out.",
+            reason=_msg(
+                normalized_lang,
+                en="LLM token verification timed out.",
+                ru="Проверка LLM токена превысила таймаут.",
+            ),
             status_code=None,
         )
     except OSError as exc:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_network_error",
-            reason=f"LLM token verification failed due to network error: {exc}",
+            reason=_msg(
+                normalized_lang,
+                en=f"LLM token verification failed due to network error: {exc}",
+                ru=f"Проверка LLM токена не удалась из-за сетевой ошибки: {exc}",
+            ),
             status_code=None,
         )
 
@@ -165,14 +212,22 @@ def verify_provider_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_invalid",
-            reason=f"Provider rejected credentials (HTTP {status_code}).",
+            reason=_provider_rejected_credentials_reason(
+                provider_id=provider_id,
+                status_code=status_code,
+                lang=normalized_lang,
+            ),
             status_code=status_code,
         )
     if status_code == 404:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_verify_endpoint_not_found",
-            reason=f"Verification endpoint not found (HTTP 404): {verify_url}",
+            reason=_msg(
+                normalized_lang,
+                en=f"Verification endpoint not found (HTTP 404): {verify_url}",
+                ru=f"Endpoint проверки не найден (HTTP 404): {verify_url}",
+            ),
             status_code=status_code,
         )
 
@@ -180,7 +235,11 @@ def verify_provider_token(
     return TokenVerificationResult(
         ok=False,
         error_code="llm_token_verify_failed",
-        reason=f"LLM token verification failed (HTTP {status_code}): {error_message}",
+        reason=_msg(
+            normalized_lang,
+            en=f"LLM token verification failed (HTTP {status_code}): {error_message}",
+            ru=f"Проверка LLM токена завершилась ошибкой (HTTP {status_code}): {error_message}",
+        ),
         status_code=status_code,
     )
 
@@ -211,13 +270,18 @@ def _verify_openai_codex_token(
     model: str,
     proxy_url: str | None,
     timeout_sec: float,
+    lang: str,
 ) -> TokenVerificationResult:
     normalized_base_url = base_url.strip().rstrip("/")
     if not _is_allowed_base_url(normalized_base_url):
         return TokenVerificationResult(
             ok=False,
             error_code="llm_base_url_insecure",
-            reason="LLM base URL must use https:// (http:// is allowed only for localhost).",
+            reason=_msg(
+                lang,
+                en="LLM base URL must use https:// (http:// is allowed only for localhost).",
+                ru="LLM base URL должен использовать https:// (http:// разрешен только для localhost).",
+            ),
             status_code=None,
         )
     body = json.dumps(
@@ -260,28 +324,44 @@ def _verify_openai_codex_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_timeout",
-            reason="LLM token verification timed out.",
+            reason=_msg(
+                lang,
+                en="LLM token verification timed out.",
+                ru="Проверка LLM токена превысила таймаут.",
+            ),
             status_code=None,
         )
     except httpx.RequestError as exc:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_network_error",
-            reason=f"LLM token verification failed due to network error: {exc}",
+            reason=_msg(
+                lang,
+                en=f"LLM token verification failed due to network error: {exc}",
+                ru=f"Проверка LLM токена не удалась из-за сетевой ошибки: {exc}",
+            ),
             status_code=None,
         )
     except TimeoutError:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_timeout",
-            reason="LLM token verification timed out.",
+            reason=_msg(
+                lang,
+                en="LLM token verification timed out.",
+                ru="Проверка LLM токена превысила таймаут.",
+            ),
             status_code=None,
         )
     except OSError as exc:
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_network_error",
-            reason=f"LLM token verification failed due to network error: {exc}",
+            reason=_msg(
+                lang,
+                en=f"LLM token verification failed due to network error: {exc}",
+                ru=f"Проверка LLM токена не удалась из-за сетевой ошибки: {exc}",
+            ),
             status_code=None,
         )
     if status_code in {200, 204}:
@@ -290,9 +370,16 @@ def _verify_openai_codex_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_verify_rate_limited",
-            reason=(
-                "OpenAI Codex rate-limited token verification before auth could be confirmed. "
-                "Retry the verification in a few moments."
+            reason=_msg(
+                lang,
+                en=(
+                    "OpenAI Codex rate-limited token verification before auth could be confirmed. "
+                    "Retry the verification in a few moments."
+                ),
+                ru=(
+                    "OpenAI Codex ограничил проверку токена до подтверждения авторизации. "
+                    "Повторите проверку через несколько минут."
+                ),
             ),
             status_code=status_code,
         )
@@ -300,9 +387,16 @@ def _verify_openai_codex_token(
         return TokenVerificationResult(
             ok=False,
             error_code="llm_token_invalid",
-            reason=(
-                "OpenAI Codex rejected the configured ChatGPT OAuth token. "
-                "Run `codex login` again or paste a fresh access token."
+            reason=_msg(
+                lang,
+                en=(
+                    "OpenAI Codex rejected the configured ChatGPT OAuth token. "
+                    "Run `codex login` again or paste a fresh access token."
+                ),
+                ru=(
+                    "OpenAI Codex отклонил настроенный ChatGPT OAuth токен. "
+                    "Запустите `codex login` заново или вставьте свежий access token."
+                ),
             ),
             status_code=status_code,
         )
@@ -310,8 +404,59 @@ def _verify_openai_codex_token(
     return TokenVerificationResult(
         ok=False,
         error_code="llm_token_verify_failed",
-        reason=f"LLM token verification failed (HTTP {status_code}): {error_message}",
+        reason=_msg(
+            lang,
+            en=f"LLM token verification failed (HTTP {status_code}): {error_message}",
+            ru=f"Проверка LLM токена завершилась ошибкой (HTTP {status_code}): {error_message}",
+        ),
         status_code=status_code,
+    )
+
+
+def _normalize_lang(value: str) -> str:
+    normalized = value.strip().lower()
+    return "ru" if normalized.startswith("ru") else "en"
+
+
+def _msg(lang: str, *, en: str, ru: str) -> str:
+    return ru if _normalize_lang(lang) == "ru" else en
+
+
+def _provider_rejected_credentials_reason(
+    *,
+    provider_id: LLMProviderId,
+    status_code: int,
+    lang: str,
+) -> str:
+    spec = get_provider_spec(provider_id)
+    if provider_id in {LLMProviderId.MOONSHOT, LLMProviderId.MOONSHOT_CN}:
+        provider_value = provider_id.value
+        expected_base_url = (
+            "https://api.moonshot.cn/v1"
+            if provider_id == LLMProviderId.MOONSHOT_CN
+            else "https://api.moonshot.ai/v1"
+        )
+        return _msg(
+            lang,
+            en=(
+                f"{spec.label} rejected the configured API key (HTTP {status_code}). "
+                f"Use a direct Moonshot/Kimi API key with provider={provider_value} and "
+                f"{expected_base_url}, and make sure the API key platform matches the base URL. "
+                "If this is an OpenRouter key, use provider=openrouter and an OpenRouter model id "
+                "such as moonshotai/kimi-k2.5."
+            ),
+            ru=(
+                f"{spec.label} отклонил настроенный API key (HTTP {status_code}). "
+                f"Для provider={provider_value} нужен прямой Moonshot/Kimi API key и "
+                f"{expected_base_url}; платформа ключа должна совпадать с base URL. "
+                "Если это ключ OpenRouter, используйте provider=openrouter и model id OpenRouter, "
+                "например moonshotai/kimi-k2.5."
+            ),
+        )
+    return _msg(
+        lang,
+        en=f"{spec.label} rejected the configured credentials (HTTP {status_code}).",
+        ru=f"{spec.label} отклонил настроенные учетные данные (HTTP {status_code}).",
     )
 
 

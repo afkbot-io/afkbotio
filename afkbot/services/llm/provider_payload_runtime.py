@@ -32,6 +32,9 @@ class OpenAICompatiblePayloadRuntime:
                     item.tool_calls,
                     encode_tool_name=encode_tool_name,
                 )
+                reasoning_content = self._extract_chat_reasoning_content(item.provider_items)
+                if reasoning_content:
+                    message["reasoning_content"] = reasoning_content
                 if item.content:
                     message["content"] = item.content
                 elif assistant_tool_call_content_mode == "null":
@@ -253,7 +256,8 @@ class OpenAICompatiblePayloadRuntime:
                     )
                 )
             if calls:
-                return LLMResponse.tool_calls_response(calls)
+                provider_items = self._chat_provider_items_from_message(message)
+                return LLMResponse.tool_calls_response(calls, provider_items=provider_items)
 
         content = message.get("content")
         if isinstance(content, str) and content.strip():
@@ -360,6 +364,21 @@ class OpenAICompatiblePayloadRuntime:
         return cls._normalize_provider_items(items)
 
     @classmethod
+    def _chat_provider_items_from_message(cls, message: Mapping[str, Any]) -> list[dict[str, object]]:
+        reasoning_content = message.get("reasoning_content")
+        if not isinstance(reasoning_content, str) or not reasoning_content.strip():
+            return []
+        return [{"reasoning_content": reasoning_content.strip()}]
+
+    @classmethod
+    def _extract_chat_reasoning_content(cls, items: list[dict[str, object]]) -> str:
+        for item in cls._normalize_provider_items(items):
+            reasoning_content = item.get("reasoning_content")
+            if isinstance(reasoning_content, str) and reasoning_content.strip():
+                return reasoning_content.strip()
+        return ""
+
+    @classmethod
     def _extract_responses_message_text(cls, items: list[dict[str, object]]) -> str:
         chunks: list[str] = []
         for item in items:
@@ -392,10 +411,15 @@ class OpenAICompatiblePayloadRuntime:
         request: LLMRequest,
         *,
         error_code: str = "llm_provider_unavailable",
-        message: str = "LLM provider is temporarily unavailable. Please try again shortly.",
+        message: str | None = None,
         error_detail: str | None = None,
     ) -> LLMResponse:
-        _ = request
+        if message is None:
+            message = OpenAICompatiblePayloadRuntime._localized_message(
+                request,
+                en="LLM provider is temporarily unavailable. Please try again shortly.",
+                ru="LLM-провайдер временно недоступен. Попробуйте еще раз чуть позже.",
+            )
         return LLMResponse.final(
             message,
             error_code=error_code,
@@ -405,3 +429,19 @@ class OpenAICompatiblePayloadRuntime:
     @staticmethod
     def _identity_tool_name(name: str) -> str:
         return name
+
+    @staticmethod
+    def _localized_message(request: LLMRequest, *, en: str, ru: str) -> str:
+        """Return user-facing provider fallback copy in the request language."""
+
+        return ru if OpenAICompatiblePayloadRuntime._request_language(request) == "ru" else en
+
+    @staticmethod
+    def _request_language(request: LLMRequest) -> str:
+        configured = str(request.response_language or "").strip().lower()
+        if configured in {"en", "ru"}:
+            return configured
+        context = " ".join(str(request.context or "").lower().split())
+        if "prompt_language: ru" in context or "prompt language: ru" in context:
+            return "ru"
+        return "en"

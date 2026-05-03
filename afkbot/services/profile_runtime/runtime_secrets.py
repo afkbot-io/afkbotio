@@ -35,6 +35,7 @@ _PROFILE_RUNTIME_SECRET_FIELDS = frozenset(
         "openai_codex_api_key_file",
         "claude_api_key",
         "moonshot_api_key",
+        "moonshot_cn_api_key",
         "deepseek_api_key",
         "xai_api_key",
         "qwen_api_key",
@@ -247,6 +248,8 @@ def provider_secret_field(provider_id: str) -> str:
         return "claude_api_key"
     if normalized == "moonshot":
         return "moonshot_api_key"
+    if normalized == "moonshot-cn":
+        return "moonshot_cn_api_key"
     if normalized == "deepseek":
         return "deepseek_api_key"
     if normalized == "xai":

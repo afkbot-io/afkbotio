@@ -57,6 +57,7 @@ class LLMRequest(BaseModel):
     available_tools: tuple[LLMToolDefinition, ...] = Field(default_factory=tuple)
     reasoning_effort: ReasoningEffort | None = None
     request_timeout_sec: float | None = Field(default=None, gt=0)
+    response_language: Literal["en", "ru"] | None = None
 
 
 class LLMResponse(BaseModel):

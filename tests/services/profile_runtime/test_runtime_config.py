@@ -168,6 +168,39 @@ def test_profile_runtime_config_applies_codex_file_backed_token_source(tmp_path:
     assert summary.provider_api_key_configured is True
 
 
+def test_profile_runtime_config_applies_moonshot_cn_base_url_and_secret(tmp_path: Path) -> None:
+    """Moonshot China profile settings should stay separate from Moonshot international."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        llm_provider="moonshot",
+        llm_model="kimi-k2.6",
+        moonshot_api_key="international-key",
+        moonshot_cn_api_key=None,
+    )
+    config_service = ProfileRuntimeConfigService(settings)
+    secrets_service = ProfileRuntimeSecretsService(settings)
+    config_service.write(
+        "kimi-cn",
+        ProfileRuntimeConfig(
+            llm_provider="moonshot-cn",
+            llm_model="kimi-k2.6",
+            llm_base_url="https://api.moonshot.cn/v1",
+        ),
+    )
+    secrets_service.write("kimi-cn", {"moonshot_cn_api_key": "china-key"})
+
+    resolved = config_service.build_effective_settings(profile_id="kimi-cn", base_settings=settings)
+    summary = config_service.resolved_runtime(resolved)
+
+    assert resolved.llm_provider == "moonshot-cn"
+    assert resolved.moonshot_api_key == "international-key"
+    assert resolved.moonshot_cn_api_key == "china-key"
+    assert resolved.moonshot_cn_base_url == "https://api.moonshot.cn/v1"
+    assert summary.llm_base_url == "https://api.moonshot.cn/v1"
+    assert summary.provider_api_key_configured is True
+
+
 def test_profile_runtime_secrets_cleanup_codex_token_source_switches(tmp_path: Path) -> None:
     """Profile secrets should not keep stale Codex token material across source mode switches."""
 
