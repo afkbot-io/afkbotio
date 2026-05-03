@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import cast
+from typing import Literal, cast
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -351,7 +351,7 @@ class LLMIterationRuntime:
         return f"finalized: runtime_budget_reached ({wall_clock_budget_sec:.2f}s)"
 
     @staticmethod
-    def _resolve_response_language(context: str) -> str | None:
+    def _resolve_response_language(context: str) -> Literal["en", "ru"] | None:
         """Resolve provider fallback language from trusted runtime facts in the prompt."""
 
         normalized = " ".join(str(context or "").lower().split())
