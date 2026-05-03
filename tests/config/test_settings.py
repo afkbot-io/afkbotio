@@ -130,6 +130,8 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.openai_api_key is None
     assert settings.openai_base_url == "https://api.openai.com/v1"
     assert settings.openai_codex_api_key is None
+    assert settings.openai_codex_api_key_source == "secret"
+    assert settings.openai_codex_api_key_file is None
     assert settings.openai_codex_base_url == "https://chatgpt.com/backend-api/codex"
     assert settings.claude_api_key is None
     assert settings.claude_base_url == "https://api.anthropic.com/v1"

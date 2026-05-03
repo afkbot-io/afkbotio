@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import httpx
 import time
+from pathlib import Path
 from pytest import CaptureFixture
 
 from afkbot.services.llm.contracts import (
@@ -313,6 +314,30 @@ def test_build_llm_provider_supports_openai_codex_provider_specific_settings() -
     assert provider is not None
     assert provider._api_key == "chatgpt-oauth-token"  # noqa: SLF001
     assert provider._base_url == "https://chatgpt.com/backend-api/codex"  # noqa: SLF001
+
+
+def test_build_llm_provider_reads_openai_codex_token_from_file_each_time(tmp_path: Path) -> None:
+    """OpenAI Codex file-backed token source should avoid stale copied OAuth tokens."""
+
+    token_path = tmp_path / "auth.json"
+    token_path.write_text('{"tokens": {"access_token": "fresh-file-token"}}', encoding="utf-8")
+    settings = Settings(
+        llm_provider="openai-codex",
+        llm_model="gpt-5.4",
+        openai_codex_api_key="stale-copied-token",
+        openai_codex_api_key_source="file",
+        openai_codex_api_key_file=str(token_path),
+        openai_codex_base_url="https://chatgpt.com/backend-api/codex",
+    )
+
+    provider = build_llm_provider(settings)
+    token_path.write_text('{"tokens": {"access_token": "refreshed-file-token"}}', encoding="utf-8")
+    rebuilt = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "fresh-file-token"  # noqa: SLF001
+    assert rebuilt is not None
+    assert rebuilt._api_key == "refreshed-file-token"  # noqa: SLF001
 
 
 def test_build_llm_provider_supports_minimax_portal_provider_specific_settings() -> None:

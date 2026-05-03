@@ -26,6 +26,7 @@ from afkbot.services.llm.provider_catalog import (
     parse_provider,
     provider_uses_oauth_token,
 )
+from afkbot.services.llm.token_file_sources import TOKEN_SOURCE_FILE, provider_token_source_field
 from afkbot.services.profile_runtime import provider_secret_field, run_profile_service_sync
 from afkbot.services.profile_runtime.service import reset_profile_services_async
 from afkbot.services.update_runtime import resolve_install_source_target
@@ -464,9 +465,13 @@ def _build_runtime_secrets_payload(
     )
     provider_id = parse_provider(config.llm_provider)
     uses_oauth = provider_uses_oauth_token(provider_id)
+    uses_file_backed_provider_token = _uses_file_backed_provider_token(
+        llm_provider=config.llm_provider,
+        runtime_secrets=payload,
+    )
     if config.credentials_master_keys:
         payload["credentials_master_keys"] = config.credentials_master_keys
-    if config.llm_api_key:
+    if config.llm_api_key and not uses_file_backed_provider_token:
         if not uses_oauth:
             payload["llm_api_key"] = config.llm_api_key
         payload[provider_secret_field(config.llm_provider)] = config.llm_api_key
@@ -480,13 +485,22 @@ def _build_default_profile_runtime_secrets(*, config: SetupConfig) -> dict[str, 
         if isinstance(value, str) and value.strip()
     }
     provider_id = parse_provider(config.llm_provider)
-    if config.llm_api_key:
+    uses_file_backed_provider_token = _uses_file_backed_provider_token(
+        llm_provider=config.llm_provider,
+        runtime_secrets=payload,
+    )
+    if config.llm_api_key and not uses_file_backed_provider_token:
         payload[provider_secret_field(config.llm_provider)] = config.llm_api_key
         if not provider_uses_oauth_token(provider_id):
             payload["llm_api_key"] = config.llm_api_key
     if not payload:
         return None
     return payload
+
+
+def _uses_file_backed_provider_token(*, llm_provider: str, runtime_secrets: dict[str, str]) -> bool:
+    source_field = provider_token_source_field(llm_provider)
+    return source_field is not None and runtime_secrets.get(source_field) == TOKEN_SOURCE_FILE
 
 
 def _build_setup_response(

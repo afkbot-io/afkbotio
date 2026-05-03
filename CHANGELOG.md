@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
   with Russian/English copy for work surfaces, allowed actions, isolation,
   confirmations, and network boundaries. The new wizard stores additive V2
   metadata while keeping legacy scenario ids as compatibility-only labels.
+- OpenAI Codex profile setup now supports file-backed OAuth tokens: AFKBOT can
+  store the local Codex auth file path and reread the latest access token at
+  runtime instead of copying the token into profile secrets.
 
 ### Changed
 

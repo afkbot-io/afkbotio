@@ -12,6 +12,11 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from afkbot.services.atomic_writes import atomic_json_write
+from afkbot.services.llm.token_file_sources import (
+    TOKEN_SOURCE_FILE,
+    TOKEN_SOURCE_SECRET,
+    provider_token_file_secret_fields,
+)
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.profile_runtime.contracts import ProfileRuntimeSecretsView
 from afkbot.settings import Settings
@@ -26,6 +31,8 @@ _PROFILE_RUNTIME_SECRET_FIELDS = frozenset(
         "openrouter_api_key",
         "openai_api_key",
         "openai_codex_api_key",
+        "openai_codex_api_key_source",
+        "openai_codex_api_key_file",
         "claude_api_key",
         "moonshot_api_key",
         "deepseek_api_key",
@@ -195,6 +202,8 @@ class ProfileRuntimeSecretsService:
             stripped = value.strip()
             if not stripped:
                 continue
+            if key.endswith("_api_key_source") and stripped not in {TOKEN_SOURCE_SECRET, TOKEN_SOURCE_FILE}:
+                continue
             normalized[key] = stripped
         return normalized
 
@@ -252,7 +261,7 @@ def provider_oauth_metadata_fields(provider_id: str) -> tuple[str, ...]:
             "minimax_portal_resource_url",
             "minimax_portal_region",
         )
-    return ()
+    return provider_token_file_secret_fields(normalized)
 
 
 def get_profile_runtime_secrets_service(settings: Settings) -> ProfileRuntimeSecretsService:

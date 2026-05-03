@@ -112,6 +112,49 @@ def test_profile_add_and_profile_secrets_commands_manage_local_provider_keys(
     assert clear_all_payload["runtime_secrets"]["has_profile_secrets"] is False
 
 
+def test_profile_codex_provider_secret_uses_secret_source_and_clears_file_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Manual Codex provider tokens should override and clear file-backed source metadata."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    add_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "codex",
+            "--name",
+            "Codex",
+            "--llm-provider",
+            "openai-codex",
+            "--chat-model",
+            "gpt-5.4",
+            "--provider-api-key",
+            "manual-codex-token",
+            "--skip-llm-token-verify",
+        ],
+    )
+    clear_result = runner.invoke(app, ["profile", "secrets", "clear", "codex", "--provider-api-key"])
+
+    assert add_result.exit_code == 0
+    add_payload = json.loads(add_result.stdout)
+    assert add_payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "openai_codex_api_key",
+        "openai_codex_api_key_source",
+    ]
+    assert "manual-codex-token" not in add_result.stdout
+
+    assert clear_result.exit_code == 0
+    clear_payload = json.loads(clear_result.stdout)
+    assert clear_payload["runtime_secrets"]["configured_fields"] == []
+
+
 def test_profile_add_interactive_prompts_for_provider_api_key(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

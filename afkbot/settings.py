@@ -194,6 +194,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_codex_api_key: str | None = None
+    openai_codex_api_key_source: Literal["secret", "file"] = "secret"
+    openai_codex_api_key_file: str | None = None
     openai_codex_base_url: str = "https://chatgpt.com/backend-api/codex"
     claude_api_key: str | None = None
     claude_base_url: str = "https://api.anthropic.com/v1"
@@ -366,6 +368,7 @@ class Settings(BaseSettings):
         "openrouter_api_key",
         "openai_api_key",
         "openai_codex_api_key",
+        "openai_codex_api_key_file",
         "claude_api_key",
         "moonshot_api_key",
         "deepseek_api_key",
@@ -388,6 +391,14 @@ class Settings(BaseSettings):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("openai_codex_api_key_source", mode="before")
+    @classmethod
+    def _normalize_openai_codex_api_key_source(cls, value: str | None) -> str:
+        """Normalize Codex token source mode."""
+
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in {"secret", "file"} else "secret"
 
     @field_validator(
         "minimax_portal_token_expires_at", "minimax_portal_resource_url", mode="before"

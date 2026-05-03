@@ -139,6 +139,15 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_OPENAI_CODEX_API_KEY": str(
             runtime_secrets.get("openai_codex_api_key", settings.openai_codex_api_key or "")
         ),
+        "AFKBOT_OPENAI_CODEX_API_KEY_SOURCE": str(
+            runtime_secrets.get(
+                "openai_codex_api_key_source",
+                settings.openai_codex_api_key_source,
+            )
+        ),
+        "AFKBOT_OPENAI_CODEX_API_KEY_FILE": str(
+            runtime_secrets.get("openai_codex_api_key_file", settings.openai_codex_api_key_file or "")
+        ),
         "AFKBOT_CLAUDE_API_KEY": str(runtime_secrets.get("claude_api_key", settings.claude_api_key or "")),
         "AFKBOT_MOONSHOT_API_KEY": str(
             runtime_secrets.get("moonshot_api_key", settings.moonshot_api_key or "")
