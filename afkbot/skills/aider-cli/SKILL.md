@@ -72,11 +72,9 @@ Official aider docs describe several supported installation paths:
 curl -LsSf https://aider.chat/install.sh | sh
 uv tool install --force --python python3.12 --with pip aider-chat@latest
 pipx install aider-chat
-python -m pip install aider-install && aider-install
-python -m pip install -U --upgrade-strategy only-if-needed aider-chat
 ```
 
-- The docs recommend the uv-based installer paths as the safer default.
+- For AFKBOT-managed environments, use the uv-based installer path.
 
 ## Authentication
 

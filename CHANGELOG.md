@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `afk browser install` now uses `uv pip install --python ...` when uv is
+  available, avoiding `pip` module failures in isolated uv-tool environments.
+
 ## [1.7.1] - 2026-05-03
 
 ### Added

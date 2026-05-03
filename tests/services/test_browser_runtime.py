@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
+import sys
 
 from afkbot.services.browser_runtime import (
     BrowserRuntimeStatus,
@@ -157,10 +159,11 @@ def test_get_browser_runtime_status_keeps_missing_package_signal_for_lightpanda(
 def test_install_browser_runtime_installs_missing_package_and_browser(
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Install helper should run pip and browser install when package is missing."""
+    """Install helper should fall back to pip when uv is not available."""
 
     # Arrange
     calls: list[list[str]] = []
+    monkeypatch.setattr("afkbot.services.browser_runtime._resolve_uv_executable", lambda: None)
     monkeypatch.setattr(
         "afkbot.services.browser_runtime._browser_install_commands",
         lambda: [["python", "-m", "playwright", "install", "chromium"]],
@@ -217,6 +220,108 @@ def test_install_browser_runtime_installs_missing_package_and_browser(
     assert result.browser_installed is True
     assert calls[1][-1] == "playwright"
     assert calls[2][-2:] == ["install", "chromium"]
+
+
+def test_install_browser_runtime_uses_uv_when_tool_env_has_no_pip(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """uv tool installs should avoid invoking a missing pip module."""
+
+    # Arrange
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime._resolve_uv_executable",
+        lambda: Path("/root/.local/bin/uv"),
+    )
+    outputs = iter(
+        [
+            subprocess.CompletedProcess(
+                args=["python", "-c", "..."],
+                returncode=1,
+                stdout=json.dumps(
+                    {
+                        "ok": False,
+                        "error_code": "browser_runtime_missing_package",
+                        "reason": "Playwright is not installed: ModuleNotFoundError",
+                        "remediation": "Run `afk browser install`.",
+                        "backend": "lightpanda_cdp",
+                    }
+                ),
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["uv", "pip", "install", "--python", sys.executable, "playwright"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["python", "-c", "..."],
+                returncode=1,
+                stdout=json.dumps(
+                    {
+                        "ok": False,
+                        "error_code": "browser_cdp_unavailable",
+                        "reason": "Configured CDP browser is unavailable: ConnectionRefusedError",
+                        "remediation": "Start Lightpanda and retry.",
+                        "backend": "lightpanda_cdp",
+                    }
+                ),
+                stderr="",
+            ),
+        ]
+    )
+
+    def _fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        calls.append(list(command))
+        return next(outputs)
+
+    monkeypatch.setattr("afkbot.services.browser_runtime.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime.get_lightpanda_managed_status",
+        lambda settings: LightpandaManagedStatus(
+            supported=True,
+            endpoint_url="http://127.0.0.1:9222",
+            endpoint_is_local=True,
+            binary_path="/tmp/lightpanda",
+            binary_installed=True,
+            pid=None,
+            running=False,
+            log_path="/tmp/lightpanda.log",
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime.install_lightpanda_binary",
+        lambda settings, force=False: LightpandaInstallResult(
+            ok=True,
+            error_code=None,
+            reason="Managed Lightpanda binary is already installed.",
+            changed=False,
+            binary_path="/tmp/lightpanda",
+        ),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime.lightpanda_runtime_hint",
+        lambda settings: "Run `afk browser start` to launch the managed Lightpanda CDP server.",
+    )
+    settings = Settings(browser_backend="lightpanda_cdp", browser_cdp_url="http://127.0.0.1:9222")
+
+    # Act
+    result = install_browser_runtime(settings=settings)
+
+    # Assert
+    assert result.ok is True
+    assert result.package_installed is True
+    assert calls[1] == [
+        "/root/.local/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "playwright",
+    ]
+    assert all(command[:3] != [sys.executable, "-m", "pip"] for command in calls)
 
 
 def test_install_browser_runtime_retries_browser_install_commands(
@@ -293,6 +398,10 @@ def test_install_browser_runtime_prepares_lightpanda_even_when_endpoint_is_down(
 
     # Arrange
     calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime._resolve_uv_executable",
+        lambda: Path("/root/.local/bin/uv"),
+    )
     outputs = iter(
         [
             subprocess.CompletedProcess(
@@ -310,7 +419,7 @@ def test_install_browser_runtime_prepares_lightpanda_even_when_endpoint_is_down(
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["python", "-m", "pip", "install", "playwright"],
+                args=["uv", "pip", "install", "--python", sys.executable, "playwright"],
                 returncode=0,
                 stdout="",
                 stderr="",
@@ -375,7 +484,14 @@ def test_install_browser_runtime_prepares_lightpanda_even_when_endpoint_is_down(
     assert result.package_installed is True
     assert result.browser_installed is True
     assert "afk browser start" in result.reason
-    assert calls[1][-1] == "playwright"
+    assert calls[1] == [
+        "/root/.local/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        "playwright",
+    ]
 
 
 def test_install_browser_runtime_requires_cdp_url_for_lightpanda(
@@ -418,6 +534,10 @@ def test_install_browser_runtime_skips_lightpanda_binary_install_until_cdp_is_co
     """Lightpanda install should not download the managed binary before CDP URL is configured."""
 
     # Arrange
+    monkeypatch.setattr(
+        "afkbot.services.browser_runtime._resolve_uv_executable",
+        lambda: Path("/root/.local/bin/uv"),
+    )
     outputs = iter(
         [
             subprocess.CompletedProcess(
@@ -435,7 +555,7 @@ def test_install_browser_runtime_skips_lightpanda_binary_install_until_cdp_is_co
                 stderr="",
             ),
             subprocess.CompletedProcess(
-                args=["python", "-m", "pip", "install", "playwright"],
+                args=["uv", "pip", "install", "--python", sys.executable, "playwright"],
                 returncode=0,
                 stdout="",
                 stderr="",

@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -300,10 +302,15 @@ def install_browser_runtime(
 
     should_install_package = force or initial_status.error_code == "browser_runtime_missing_package"
     if should_install_package:
-        package_result = _run_command(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", _PLAYWRIGHT_PACKAGE]
-        )
-        if package_result.returncode != 0:
+        package_result = None
+        package_installed = False
+        for command in _package_install_commands():
+            package_result = _run_command(command)
+            if package_result.returncode == 0:
+                package_installed = True
+                break
+        if not package_installed:
+            assert package_result is not None
             return BrowserRuntimeInstallResult(
                 ok=False,
                 error_code="browser_package_install_failed",
@@ -312,7 +319,6 @@ def install_browser_runtime(
                 browser_installed=False,
                 backend=backend,
             )
-        package_installed = True
 
     if backend == PLAYWRIGHT_CHROMIUM and (force or not initial_status.ok):
         browser_result = None
@@ -433,6 +439,58 @@ def _run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def _package_install_commands() -> list[list[str]]:
+    """Return package install commands for the current Python environment."""
+
+    uv_executable = _resolve_uv_executable()
+    if uv_executable is not None:
+        return [
+            [
+                str(uv_executable),
+                "pip",
+                "install",
+                "--python",
+                sys.executable,
+                _PLAYWRIGHT_PACKAGE,
+            ]
+        ]
+    return [
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            _PLAYWRIGHT_PACKAGE,
+        ]
+    ]
+
+
+def _resolve_uv_executable() -> Path | None:
+    """Return the uv executable when available for pip-less uv tool environments."""
+
+    discovered = shutil.which("uv")
+    if discovered:
+        return Path(discovered).resolve(strict=False)
+    suffix = "uv.exe" if os.name == "nt" else "uv"
+    candidate = _default_user_bin_dir() / suffix
+    if candidate.exists():
+        return candidate.resolve(strict=False)
+    return None
+
+
+def _default_user_bin_dir() -> Path:
+    """Return the expected user-local executable directory used by uv."""
+
+    xdg_bin_home = os.getenv("XDG_BIN_HOME")
+    if xdg_bin_home:
+        return Path(xdg_bin_home).expanduser()
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        return (Path(xdg_data_home).expanduser() / ".." / "bin").resolve(strict=False)
+    return (Path.home() / ".local" / "bin").resolve(strict=False)
 
 
 def _is_linux() -> bool:
