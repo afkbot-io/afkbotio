@@ -137,6 +137,8 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.claude_base_url == "https://api.anthropic.com/v1"
     assert settings.moonshot_api_key is None
     assert settings.moonshot_base_url == "https://api.moonshot.ai/v1"
+    assert settings.moonshot_cn_api_key is None
+    assert settings.moonshot_cn_base_url == "https://api.moonshot.cn/v1"
     assert settings.deepseek_api_key is None
     assert settings.deepseek_base_url == "https://api.deepseek.com"
     assert settings.xai_api_key is None

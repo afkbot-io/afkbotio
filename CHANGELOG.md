@@ -4,10 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-05-03
+
+### Added
+
+- Added a separate `moonshot-cn` provider for the Kimi China API endpoint
+  (`https://api.moonshot.cn/v1`) with its own base URL and API key settings.
+- Refreshed setup model presets for OpenRouter, OpenAI, Claude, DeepSeek, xAI,
+  Qwen, MiniMax, and GitHub Copilot based on current provider catalogs.
+
 ### Fixed
 
 - `afk browser install` now uses `uv pip install --python ...` when uv is
   available, avoiding `pip` module failures in isolated uv-tool environments.
+- Moonshot/Kimi authentication failures now surface as credential errors with
+  localized setup/profile messages and guidance for direct Kimi keys versus
+  OpenRouter keys.
+- Release metadata and lockfile package metadata are aligned to `1.7.2`.
 
 ## [1.7.1] - 2026-05-03
 

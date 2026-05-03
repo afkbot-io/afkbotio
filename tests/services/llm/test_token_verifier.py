@@ -67,6 +67,70 @@ def test_verify_provider_token_invalid_key(monkeypatch) -> None:
     assert result.status_code == 401
 
 
+def test_verify_provider_token_invalid_moonshot_key_mentions_direct_kimi_key(monkeypatch) -> None:
+    """Moonshot verification should explain direct Kimi vs OpenRouter credentials."""
+
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        _ = request, proxy_url, timeout_sec
+        return 401, '{"error":{"message":"bad key"}}'
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.MOONSHOT,
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "llm_token_invalid"
+    assert result.reason is not None
+    assert "direct Moonshot/Kimi API key" in result.reason
+    assert "provider=openrouter" in result.reason
+
+
+def test_verify_provider_token_invalid_moonshot_key_supports_russian_reason(monkeypatch) -> None:
+    """Token verifier reasons should follow setup/profile language."""
+
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        _ = request, proxy_url, timeout_sec
+        return 401, '{"error":{"message":"bad key"}}'
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.MOONSHOT,
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+        lang="ru",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "llm_token_invalid"
+    assert result.reason is not None
+    assert "отклонил" in result.reason
+    assert "provider=openrouter" in result.reason
+
+
+def test_verify_provider_token_invalid_moonshot_cn_key_mentions_cn_provider(monkeypatch) -> None:
+    """Moonshot China verification should identify the China provider/base URL pair."""
+
+    def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
+        _ = request, proxy_url, timeout_sec
+        return 401, '{"error":{"message":"bad key"}}'
+
+    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    result = verify_provider_token(
+        provider_id=LLMProviderId.MOONSHOT_CN,
+        api_key="token",
+        base_url="https://api.moonshot.cn/v1",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "llm_token_invalid"
+    assert result.reason is not None
+    assert "provider=moonshot-cn" in result.reason
+    assert "https://api.moonshot.cn/v1" in result.reason
+
+
 def test_verify_provider_token_rejects_invalid_base_url() -> None:
     """Verifier should reject non-http(s) base URLs before request execution."""
 

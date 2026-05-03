@@ -50,6 +50,21 @@ def test_resolve_provider_base_url_default_prefers_moonshot_provider_value(tmp_p
     assert resolved == "https://moonshot.example/v1"
 
 
+def test_resolve_provider_base_url_default_prefers_moonshot_cn_provider_value(
+    tmp_path: Path,
+) -> None:
+    """Moonshot China setup should read provider-specific base URL default first."""
+
+    settings = Settings(root_dir=tmp_path)
+    resolved = resolve_provider_base_url_default(
+        defaults={"AFKBOT_MOONSHOT_CN_BASE_URL": "https://moonshot-cn.example/v1"},
+        settings=settings,
+        provider_id=LLMProviderId.MOONSHOT_CN,
+    )
+
+    assert resolved == "https://moonshot-cn.example/v1"
+
+
 def test_resolve_provider_base_url_default_falls_back_to_global_override(tmp_path: Path) -> None:
     """Global base URL override should apply when provider-specific value is empty."""
 

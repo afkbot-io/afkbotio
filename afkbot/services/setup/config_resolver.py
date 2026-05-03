@@ -289,6 +289,7 @@ def collect_setup_config(
             base_url=base_url,
             model=model,
             proxy_url=proxy_url if proxy_type != "none" else None,
+            lang=lang.value,
         )
         if not verification.ok:
             raise typer.BadParameter(

@@ -140,6 +140,7 @@ class ProfileRuntimeConfigService:
                 "openai-codex": "openai_codex_base_url",
                 "claude": "claude_base_url",
                 "moonshot": "moonshot_base_url",
+                "moonshot-cn": "moonshot_cn_base_url",
                 "deepseek": "deepseek_base_url",
                 "xai": "xai_base_url",
                 "qwen": "qwen_base_url",

@@ -602,15 +602,49 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         )
         if self._is_context_window_error(status_code=status_code, provider_detail=provider_detail_raw):
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
-            message_text = (
-                "LLM request was rejected because the input exceeded the model context window."
-                f"{detail_suffix} The runtime may need to compact older context before retrying."
+            message_text = self._localized_message(
+                request,
+                en=(
+                    "LLM request was rejected because the input exceeded the model context window."
+                    f"{detail_suffix} The runtime may need to compact older context before retrying."
+                ),
+                ru=(
+                    "LLM-провайдер отклонил запрос: входные данные превысили контекстное окно модели."
+                    f"{detail_suffix} Runtime может потребоваться сжать старый контекст перед повтором."
+                ),
             )
             return self._fallback_response(
                 request,
                 error_code="llm_context_window_exceeded",
                 error_detail=provider_detail,
                 message=message_text,
+            )
+        if status_code in {401, 403}:
+            if self._provider_id == LLMProviderId.OPENAI_CODEX:
+                return self._fallback_response(
+                    request,
+                    error_code="llm_provider_auth_error",
+                    message=self._localized_message(
+                        request,
+                        en=(
+                            "OpenAI Codex rejected the configured ChatGPT OAuth token. "
+                            "Run `codex login` again or update the profile with a fresh access token."
+                        ),
+                        ru=(
+                            "OpenAI Codex отклонил настроенный ChatGPT OAuth токен. "
+                            "Запустите `codex login` заново или обновите профиль свежим access token."
+                        ),
+                    ),
+                )
+            return self._fallback_response(
+                request,
+                error_code="llm_provider_auth_error",
+                error_detail=f"HTTP {status_code}" + (f": {provider_detail}" if provider_detail else ""),
+                message=self._provider_auth_error_message(
+                    request,
+                    status_code=status_code,
+                    provider_detail=provider_detail,
+                ),
             )
         if self._provider_id not in {
             LLMProviderId.OPENAI,
@@ -622,27 +656,19 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_code=f"llm_provider_http_{status_code}",
                 error_detail=provider_detail,
             )
-        if status_code in {401, 403}:
-            if self._provider_id == LLMProviderId.OPENAI_CODEX:
-                return self._fallback_response(
-                    request,
-                    error_code="llm_provider_auth_error",
-                    message=(
-                        "OpenAI Codex rejected the configured ChatGPT OAuth token. "
-                        "Run `codex login` again or update the profile with a fresh access token."
-                    ),
-                )
-            return self._fallback_response(
-                request,
-                error_code="llm_provider_auth_error",
-                message="LLM provider rejected the configured credentials. Check provider auth settings.",
-            )
         if status_code == 404:
             if self._is_codex_stateless_item_replay_error(provider_detail=provider_detail_raw):
                 detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
-                message_text = (
-                    "LLM request was rejected by the provider."
-                    f"{detail_suffix} Check the configured model, API surface, and tool payload."
+                message_text = self._localized_message(
+                    request,
+                    en=(
+                        "LLM request was rejected by the provider."
+                        f"{detail_suffix} Check the configured model, API surface, and tool payload."
+                    ),
+                    ru=(
+                        "LLM-провайдер отклонил запрос."
+                        f"{detail_suffix} Проверьте модель, API surface и payload инструментов."
+                    ),
                 )
                 return self._fallback_response(
                     request,
@@ -653,19 +679,34 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             return self._fallback_response(
                 request,
                 error_code="llm_provider_model_not_found",
-                message="LLM model or endpoint was not found. Check the configured model name and base URL.",
+                message=self._localized_message(
+                    request,
+                    en="LLM model or endpoint was not found. Check the configured model name and base URL.",
+                    ru="Модель LLM или endpoint не найдены. Проверьте имя модели и base URL.",
+                ),
             )
         if status_code == 429:
             return self._fallback_response(
                 request,
                 error_code="llm_provider_rate_limited",
-                message="LLM provider rate-limited this request. Please try again shortly.",
+                message=self._localized_message(
+                    request,
+                    en="LLM provider rate-limited this request. Please try again shortly.",
+                    ru="LLM-провайдер ограничил частоту запросов. Попробуйте еще раз чуть позже.",
+                ),
             )
         if 400 <= status_code < 500:
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
-            message_text = (
-                "LLM request was rejected by the provider."
-                f"{detail_suffix} Check the configured model, API surface, and tool payload."
+            message_text = self._localized_message(
+                request,
+                en=(
+                    "LLM request was rejected by the provider."
+                    f"{detail_suffix} Check the configured model, API surface, and tool payload."
+                ),
+                ru=(
+                    "LLM-провайдер отклонил запрос."
+                    f"{detail_suffix} Проверьте модель, API surface и payload инструментов."
+                ),
             )
             return self._fallback_response(
                 request,
@@ -680,6 +721,51 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             request,
             error_code="llm_provider_unavailable",
             error_detail=detail,
+        )
+
+    def _provider_auth_error_message(
+        self,
+        request: LLMRequest,
+        *,
+        status_code: int,
+        provider_detail: str | None,
+    ) -> str:
+        detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
+        status_text = f"HTTP {status_code}"
+        if self._provider_id in {LLMProviderId.MOONSHOT, LLMProviderId.MOONSHOT_CN}:
+            provider_value = self._provider_id.value
+            expected_base_url = (
+                "https://api.moonshot.cn/v1"
+                if self._provider_id == LLMProviderId.MOONSHOT_CN
+                else "https://api.moonshot.ai/v1"
+            )
+            return self._localized_message(
+                request,
+                en=(
+                    f"Moonshot (Kimi) rejected the configured API key ({status_text})."
+                    f"{detail_suffix} Check that this profile uses a direct Moonshot/Kimi API key "
+                    f"with provider={provider_value} for {expected_base_url}, and that the API key "
+                    "platform matches the base URL. OpenRouter keys only work with provider=openrouter "
+                    "and OpenRouter model ids such as moonshotai/kimi-k2.5."
+                ),
+                ru=(
+                    f"Moonshot (Kimi) отклонил настроенный API key ({status_text})."
+                    f"{detail_suffix} Проверьте, что в профиле указан прямой Moonshot/Kimi API key "
+                    f"с provider={provider_value} для {expected_base_url}, и что платформа ключа "
+                    "совпадает с base URL. Ключи OpenRouter работают только с provider=openrouter "
+                    "и model id OpenRouter, например moonshotai/kimi-k2.5."
+                ),
+            )
+        return self._localized_message(
+            request,
+            en=(
+                f"LLM provider rejected the configured credentials ({status_text})."
+                f"{detail_suffix} Check provider auth settings."
+            ),
+            ru=(
+                f"LLM-провайдер отклонил настроенные учетные данные ({status_text})."
+                f"{detail_suffix} Проверьте настройки авторизации провайдера."
+            ),
         )
 
     @staticmethod

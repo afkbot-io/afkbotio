@@ -50,7 +50,7 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
                 "на обычный чат, Task Flow и сообщения из каналов, попавшие в этот профиль."
             ),
         ),
-        options=[(item, item) for item in LLM_PROVIDER_CHOICES],
+        options=[(item, _provider_option_label(item)) for item in LLM_PROVIDER_CHOICES],
         default_value=selected_default,
         hint_text=single_hint(lang),
     )
@@ -79,6 +79,16 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
                 ru=f"Некорректный провайдер: выберите один из {options}.",
             )
         )
+
+
+def _provider_option_label(provider: str) -> str:
+    """Return a provider selector label that keeps the stable id visible."""
+
+    try:
+        spec = get_provider_spec(parse_provider(provider))
+    except ValueError:
+        return provider
+    return f"{provider} - {spec.label}"
 
 
 def prompt_chat_model(

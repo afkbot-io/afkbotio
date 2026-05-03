@@ -53,8 +53,8 @@ def register_update(profile_app: typer.Typer) -> None:
             None,
             "--llm-provider",
             help=(
-                "Chat provider: openrouter, openai, openai-codex, claude, moonshot, deepseek, "
-                "xai, qwen, minimax-portal, github-copilot, or custom."
+                "Chat provider: openrouter, openai, openai-codex, claude, moonshot, moonshot-cn, "
+                "deepseek, xai, qwen, minimax-portal, github-copilot, or custom."
             ),
         ),
         chat_model: str | None = typer.Option(
@@ -349,6 +349,7 @@ def register_update(profile_app: typer.Typer) -> None:
                     "llm_api_key": mutation_inputs.provider_api_key,
                 },
                 skip_verify=skip_llm_token_verify,
+                lang=prompt_language,
             )
             profile_service = get_profile_service(settings)
             updated_profile = asyncio.run(

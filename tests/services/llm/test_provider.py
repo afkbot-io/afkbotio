@@ -192,6 +192,83 @@ def test_build_messages_includes_assistant_tool_calls_and_tool_call_id() -> None
     assert "name" not in messages[2]
 
 
+def test_chat_payload_replays_kimi_reasoning_content_with_tool_calls() -> None:
+    """Kimi thinking/tool-call follow-ups must preserve assistant reasoning_content."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MOONSHOT,
+        model="kimi-k2.5",
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+    )
+    request = LLMRequest(
+        profile_id="default",
+        session_id="s-1",
+        context="ctx",
+        history=[
+            LLMMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCallRequest(
+                        name="debug.echo",
+                        params={"message": "hello"},
+                        call_id="call_debug_1",
+                    )
+                ],
+                provider_items=[{"reasoning_content": "I need to call a tool."}],
+            ),
+            LLMMessage(
+                role="tool",
+                tool_name="debug.echo",
+                tool_call_id="call_debug_1",
+                content='{"ok":true}',
+            ),
+        ],
+        available_tools=_request().available_tools,
+    )
+
+    messages = provider._build_messages(request)  # noqa: SLF001
+
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["reasoning_content"] == "I need to call a tool."
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "debug.echo"
+
+
+def test_parse_chat_tool_calls_preserves_kimi_reasoning_content() -> None:
+    """Kimi reasoning_content should survive from provider response into turn history."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MOONSHOT,
+        model="kimi-k2.5",
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+    )
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "reasoning_content": "Need a calculation.",
+                    "tool_calls": [
+                        {
+                            "id": "call_debug_1",
+                            "function": {
+                                "name": "debug.echo",
+                                "arguments": '{"message": "ok"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+    response = provider._parse_response(payload, _request())  # noqa: SLF001
+
+    assert response.kind == "tool_calls"
+    assert response.provider_items == [{"reasoning_content": "Need a calculation."}]
+
+
 def test_openai_chat_payload_replays_assistant_tool_calls_with_null_content() -> None:
     """OpenAI chat-completions payload should send explicit null assistant content for tool-calls."""
 
@@ -434,6 +511,25 @@ def test_build_llm_provider_supports_moonshot_provider_specific_settings() -> No
     assert provider is not None
     assert provider._api_key == "moonshot-key"  # noqa: SLF001
     assert provider._base_url == "https://api.moonshot.ai/v1"  # noqa: SLF001
+
+
+def test_build_llm_provider_supports_moonshot_cn_provider_specific_settings() -> None:
+    """Moonshot China provider should use its own API key/base URL fields."""
+
+    settings = Settings(
+        llm_provider="moonshot-cn",
+        llm_model="kimi-k2.6",
+        llm_api_key="stale-global-key",
+        llm_base_url="https://stale-global.example/v1",
+        moonshot_cn_api_key="moonshot-cn-key",
+        moonshot_cn_base_url="https://api.moonshot.cn/v1",
+    )
+
+    provider = build_llm_provider(settings)
+
+    assert provider is not None
+    assert provider._api_key == "moonshot-cn-key"  # noqa: SLF001
+    assert provider._base_url == "https://api.moonshot.cn/v1"  # noqa: SLF001
 
 
 def test_minimax_provider_refreshes_expired_token_and_persists_runtime_secrets(monkeypatch) -> None:
@@ -760,6 +856,59 @@ def test_openai_http_status_401_maps_to_auth_error() -> None:
 
     assert response.error_code == "llm_provider_auth_error"
     assert "credentials" in (response.final_message or "").lower()
+
+
+def test_moonshot_http_status_401_maps_to_kimi_auth_hint() -> None:
+    """Direct Kimi auth failures should not surface as generic provider_http_401."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MOONSHOT,
+        model="kimi-k2.5",
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(401))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_auth_error"
+    assert response.error_detail == "HTTP 401"
+    assert "moonshot" in (response.final_message or "").lower()
+    assert "openrouter" in (response.final_message or "").lower()
+
+
+def test_moonshot_http_status_401_uses_russian_request_language() -> None:
+    """Provider fallback errors should follow the configured prompt language."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MOONSHOT,
+        model="kimi-k2.5",
+        api_key="token",
+        base_url="https://api.moonshot.ai/v1",
+    )
+    request = _request().model_copy(update={"response_language": "ru"})
+
+    response = provider._fallback_http_status(request, _http_status_error(401))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_auth_error"
+    assert "отклонил" in (response.final_message or "").lower()
+    assert "openrouter" in (response.final_message or "").lower()
+
+
+def test_moonshot_cn_http_status_401_points_to_cn_base_url() -> None:
+    """Kimi China auth failures should point to the China provider and base URL."""
+
+    provider = OpenAICompatibleChatProvider(
+        provider_id=LLMProviderId.MOONSHOT_CN,
+        model="kimi-k2.6",
+        api_key="token",
+        base_url="https://api.moonshot.cn/v1",
+    )
+
+    response = provider._fallback_http_status(_request(), _http_status_error(401))  # noqa: SLF001
+
+    assert response.error_code == "llm_provider_auth_error"
+    assert "provider=moonshot-cn" in (response.final_message or "")
+    assert "https://api.moonshot.cn/v1" in (response.final_message or "")
 
 
 def test_openai_codex_http_status_401_maps_to_relogin_hint() -> None:
