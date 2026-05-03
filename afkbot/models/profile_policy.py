@@ -26,6 +26,7 @@ class ProfilePolicy(Base, TimestampMixin):
     allowed_tools_json: Mapped[str] = mapped_column(Text, default="[]")
     denied_tools_json: Mapped[str] = mapped_column(Text, default="[]")
     allowed_directories_json: Mapped[str] = mapped_column(Text, default="[]")
+    shell_sandbox_mode: Mapped[str] = mapped_column(String(16), default="disabled")
     shell_allowed_commands_json: Mapped[str] = mapped_column(Text, default="[]")
     shell_denied_commands_json: Mapped[str] = mapped_column(Text, default="[]")
     network_allowlist_json: Mapped[str] = mapped_column(Text, default="[]")

@@ -17,6 +17,7 @@ class TurnContextOverrides:
     trusted_runtime_context: dict[str, object] | None = None
     cli_approval_surface_enabled: bool = False
     approved_tool_names: tuple[str, ...] | None = None
+    channel_owned_tool_names: tuple[str, ...] | None = None
     prompt_overlay: str | None = None
     planning_mode: PlanningMode = "off"
     execution_planning_mode: ChatPlanningMode | None = None
@@ -34,6 +35,7 @@ def merge_turn_context_overrides(
     merged_trusted_runtime_context: dict[str, object] = {}
     cli_approval_surface_enabled = False
     merged_approved_tool_names: list[str] = []
+    merged_channel_owned_tool_names: list[str] = []
     merged_prompt: str | None = None
     planning_mode: PlanningMode = "off"
     execution_planning_mode: ChatPlanningMode | None = None
@@ -56,6 +58,10 @@ def merge_turn_context_overrides(
             target=merged_approved_tool_names,
             source=part.approved_tool_names,
         )
+        _extend_unique_names(
+            target=merged_channel_owned_tool_names,
+            source=part.channel_owned_tool_names,
+        )
         merged_prompt = combine_prompt_overlays(merged_prompt, part.prompt_overlay)
         if part.planning_mode != "off":
             planning_mode = part.planning_mode
@@ -75,6 +81,7 @@ def merge_turn_context_overrides(
         and not merged_trusted_runtime_context
         and not cli_approval_surface_enabled
         and not merged_approved_tool_names
+        and not merged_channel_owned_tool_names
         and merged_prompt is None
         and planning_mode == "off"
         and execution_planning_mode is None
@@ -88,6 +95,7 @@ def merge_turn_context_overrides(
         trusted_runtime_context=merged_trusted_runtime_context or None,
         cli_approval_surface_enabled=cli_approval_surface_enabled,
         approved_tool_names=tuple(merged_approved_tool_names) or None,
+        channel_owned_tool_names=tuple(merged_channel_owned_tool_names) or None,
         prompt_overlay=merged_prompt,
         planning_mode=planning_mode,
         execution_planning_mode=execution_planning_mode,

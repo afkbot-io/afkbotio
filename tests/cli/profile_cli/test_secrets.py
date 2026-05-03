@@ -112,6 +112,156 @@ def test_profile_add_and_profile_secrets_commands_manage_local_provider_keys(
     assert clear_all_payload["runtime_secrets"]["has_profile_secrets"] is False
 
 
+def test_profile_codex_provider_secret_uses_secret_source_and_clears_file_metadata(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Manual Codex provider tokens should override and clear file-backed source metadata."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    add_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "codex",
+            "--name",
+            "Codex",
+            "--llm-provider",
+            "openai-codex",
+            "--chat-model",
+            "gpt-5.4",
+            "--provider-api-key",
+            "manual-codex-token",
+            "--skip-llm-token-verify",
+        ],
+    )
+    clear_result = runner.invoke(app, ["profile", "secrets", "clear", "codex", "--provider-api-key"])
+
+    assert add_result.exit_code == 0
+    add_payload = json.loads(add_result.stdout)
+    assert add_payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "openai_codex_api_key",
+        "openai_codex_api_key_source",
+    ]
+    assert "manual-codex-token" not in add_result.stdout
+
+    assert clear_result.exit_code == 0
+    clear_payload = json.loads(clear_result.stdout)
+    assert clear_payload["runtime_secrets"]["configured_fields"] == []
+
+
+def test_profile_codex_key_file_does_not_copy_token(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Profile add should support Codex file-backed OAuth tokens in --yes mode."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    token_file = tmp_path / "codex-token.txt"
+    token_file.write_text("codex-file-token\n", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "codex-file",
+            "--name",
+            "Codex File",
+            "--llm-provider",
+            "openai-codex",
+            "--chat-model",
+            "gpt-5.4",
+            "--llm-api-key-file",
+            str(token_file),
+            "--skip-llm-token-verify",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "openai_codex_api_key_file",
+        "openai_codex_api_key_source",
+    ]
+    assert "codex-file-token" not in result.stdout
+
+
+def test_profile_update_codex_key_file_clears_legacy_copied_token(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Profile update should switch Codex secret mode to file mode without stale tokens."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    token_file = tmp_path / "codex-token.txt"
+    token_file.write_text("codex-file-token\n", encoding="utf-8")
+    runner = CliRunner()
+    create_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "codex-switch",
+            "--name",
+            "Codex Switch",
+            "--llm-provider",
+            "openai-codex",
+            "--chat-model",
+            "gpt-5.4",
+            "--provider-api-key",
+            "legacy-copied-token",
+            "--skip-llm-token-verify",
+        ],
+    )
+    assert create_result.exit_code == 0
+    get_profile_runtime_secrets_service(get_settings()).merge(
+        "codex-switch",
+        {"llm_api_key": "legacy-generic-token"},
+    )
+
+    update_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "update",
+            "codex-switch",
+            "--yes",
+            "--llm-provider",
+            "openai-codex",
+            "--chat-model",
+            "gpt-5.4",
+            "--llm-api-key-file",
+            str(token_file),
+            "--skip-llm-token-verify",
+        ],
+    )
+    runtime_secrets = get_profile_runtime_secrets_service(get_settings()).load("codex-switch")
+
+    assert update_result.exit_code == 0
+    payload = json.loads(update_result.stdout)
+    assert payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "openai_codex_api_key_file",
+        "openai_codex_api_key_source",
+    ]
+    assert runtime_secrets == {
+        "openai_codex_api_key_file": str(token_file.resolve(strict=False)),
+        "openai_codex_api_key_source": "file",
+    }
+    assert "legacy-copied-token" not in update_result.stdout
+    assert "codex-file-token" not in update_result.stdout
+
+
 def test_profile_add_interactive_prompts_for_provider_api_key(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -432,3 +582,9 @@ def test_profile_update_verifies_provider_api_key_over_stale_saved_fallback(
     # Assert
     assert update_result.exit_code == 0
     assert captured == ["fresh-provider-key"]
+    update_payload = json.loads(update_result.stdout)
+    assert update_payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "llm_api_key",
+        "openai_api_key",
+    ]
+    assert update_payload["profile"]["effective_runtime"]["provider_api_key_configured"] is True

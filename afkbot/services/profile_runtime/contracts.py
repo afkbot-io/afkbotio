@@ -60,6 +60,13 @@ class ProfileRuntimeConfig(BaseModel):
     session_compaction_keep_recent_turns: int | None = None
     session_compaction_max_chars: int | None = None
     session_compaction_prune_raw_turns: bool | None = None
+    wizard_setup_depth: str | None = None
+    wizard_work_contexts: tuple[str, ...] | None = None
+    wizard_actions: tuple[str, ...] | None = None
+    wizard_isolation: str | None = None
+    wizard_confirmation: str | None = None
+    wizard_network: str | None = None
+    wizard_network_allowlist: tuple[str, ...] | None = None
 
     @field_validator("llm_model", "llm_base_url", "llm_proxy_url", mode="before")
     @classmethod
@@ -69,7 +76,14 @@ class ProfileRuntimeConfig(BaseModel):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("enabled_tool_plugins", "taskflow_team_profile_ids", mode="before")
+    @field_validator(
+        "enabled_tool_plugins",
+        "taskflow_team_profile_ids",
+        "wizard_work_contexts",
+        "wizard_actions",
+        "wizard_network_allowlist",
+        mode="before",
+    )
     @classmethod
     def _normalize_enabled_tool_plugins(
         cls,
@@ -197,6 +211,8 @@ class ProfilePolicyView(BaseModel):
     capabilities: tuple[str, ...] = ()
     file_access_mode: str = "read_write"
     allowed_directories: tuple[str, ...] = ()
+    shell_sandbox_mode: str = "disabled"
+    shell_allowed_commands: tuple[str, ...] = ()
     network_allowlist: tuple[str, ...] = ()
 
 

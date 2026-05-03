@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import base64
 import hashlib
@@ -27,7 +26,15 @@ from afkbot.services.llm.provider_catalog import (
     provider_supports_device_code_flow,
     provider_uses_oauth_token,
 )
-from afkbot.services.llm.token_verifier import token_expired_or_expiring_soon
+from afkbot.services.llm.token_file_sources import (
+    TOKEN_SOURCE_FILE,
+    discover_local_openai_codex_access_token_file,
+    load_openai_codex_access_token_file,
+    openai_codex_file_token_runtime_secrets,
+    openai_codex_secret_token_runtime_secrets,
+    provider_supports_file_backed_token,
+    resolve_openai_codex_file_backed_api_key,
+)
 from afkbot.services.llm.minimax_portal_oauth import (
     MINIMAX_PORTAL_OAUTH_CLIENT_ID,
     MINIMAX_PORTAL_REGION_CHOICES,
@@ -77,7 +84,11 @@ def resolve_api_key(
         provider_id=provider_id,
         defaults=defaults,
     )
-    key_from_file = read_secret_file(key_file, lang=lang) if key_file is not None else ""
+    key_from_file = (
+        read_provider_secret_file(provider_id=provider_id, path=key_file, lang=lang)
+        if key_file is not None
+        else ""
+    )
 
     if interactive:
         if key_from_file:
@@ -142,13 +153,31 @@ def resolve_profile_provider_api_key(
     provider_field = provider_secret_field(provider_name)
     current_secrets = current_runtime_secrets or {}
     preferred_base_url: str | None = None
-    existing_local_key = (
-        str(current_secrets.get(provider_field, "")).strip()
-        or str(current_secrets.get("llm_api_key", "")).strip()
-    )
-    existing_effective_key = existing_local_key or peek_existing_api_key(
+    file_backed_key = _resolve_file_backed_provider_key(
         provider_id=provider_id,
-        defaults=defaults,
+        values=current_secrets,
+    )
+    file_backed_source_requested = _file_backed_source_requested(
+        provider_id=provider_id,
+        values=current_secrets,
+    )
+    existing_local_key = (
+        file_backed_key
+        if file_backed_source_requested
+        else (
+            file_backed_key
+            or str(current_secrets.get(provider_field, "")).strip()
+            or str(current_secrets.get("llm_api_key", "")).strip()
+        )
+    )
+    existing_effective_key = (
+        existing_local_key
+        if file_backed_source_requested
+        else existing_local_key
+        or peek_existing_api_key(
+            provider_id=provider_id,
+            defaults=defaults,
+        )
     )
     explicit_minimax_region = (minimax_region or "").strip().lower()
     existing_minimax_region = str(current_secrets.get("minimax_portal_region", "")).strip().lower()
@@ -181,6 +210,8 @@ def resolve_profile_provider_api_key(
         effective_key = explicit_provider
     elif explicit_generic:
         effective_key = explicit_generic
+    elif key_file is not None and provider_supports_file_backed_token(provider_id):
+        effective_key = read_provider_secret_file(provider_id=provider_id, path=key_file, lang=lang)
     elif not required and key_file is None and not existing_effective_key:
         effective_key = ""
     elif interactive and provider_uses_oauth_token(provider_id) and key_file is None:
@@ -209,16 +240,25 @@ def resolve_profile_provider_api_key(
     is_oauth_provider = provider_uses_oauth_token(provider_id)
     if explicit_generic:
         runtime_secrets_update["llm_api_key"] = explicit_generic
+        runtime_secrets_update.update(_manual_provider_secret_source_update(provider_id))
     if explicit_provider:
+        runtime_secrets_update.update(_manual_provider_secret_source_update(provider_id))
         runtime_secrets_update[provider_field] = explicit_provider
     if key_file is not None and effective_key:
         if not is_oauth_provider:
             runtime_secrets_update["llm_api_key"] = effective_key
-        runtime_secrets_update[provider_field] = effective_key
+            runtime_secrets_update[provider_field] = effective_key
+        elif provider_supports_file_backed_token(provider_id):
+            runtime_secrets_update.update(openai_codex_file_token_runtime_secrets(key_file))
+        else:
+            runtime_secrets_update[provider_field] = effective_key
     elif interactive and effective_key and effective_key != existing_effective_key:
         if not is_oauth_provider:
             runtime_secrets_update["llm_api_key"] = effective_key
-        runtime_secrets_update[provider_field] = effective_key
+            runtime_secrets_update[provider_field] = effective_key
+        elif not _is_file_backed_provider_update(provider_id=provider_id, update=oauth_runtime_updates):
+            runtime_secrets_update.update(_manual_provider_secret_source_update(provider_id))
+            runtime_secrets_update[provider_field] = effective_key
     if oauth_runtime_updates:
         runtime_secrets_update.update(oauth_runtime_updates)
     if provider_id == LLMProviderId.MINIMAX_PORTAL:
@@ -241,6 +281,11 @@ def peek_existing_api_key(
 ) -> str:
     """Return the currently available provider API key without prompting."""
 
+    if _peek_file_backed_source_requested(provider_id=provider_id, defaults=defaults):
+        return _peek_file_backed_api_key(provider_id=provider_id, defaults=defaults)
+    file_backed_key = _peek_file_backed_api_key(provider_id=provider_id, defaults=defaults)
+    if file_backed_key:
+        return file_backed_key
     spec = get_provider_spec(provider_id)
     for env_name in spec.api_key_env_names:
         candidate = (os.getenv(env_name) or "").strip()
@@ -254,6 +299,61 @@ def peek_existing_api_key(
     if global_env:
         return global_env
     return (defaults.get("AFKBOT_LLM_API_KEY", "") or "").strip()
+
+
+def _resolve_file_backed_provider_key(
+    *,
+    provider_id: LLMProviderId,
+    values: Mapping[str, object],
+) -> str:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return ""
+    return resolve_openai_codex_file_backed_api_key(
+        source=values.get("openai_codex_api_key_source"),
+        path=values.get("openai_codex_api_key_file"),
+    )
+
+
+def _peek_file_backed_api_key(*, provider_id: LLMProviderId, defaults: Mapping[str, str]) -> str:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return ""
+    source = (os.getenv("AFKBOT_OPENAI_CODEX_API_KEY_SOURCE") or "").strip() or defaults.get(
+        "AFKBOT_OPENAI_CODEX_API_KEY_SOURCE",
+        "",
+    )
+    path = (os.getenv("AFKBOT_OPENAI_CODEX_API_KEY_FILE") or "").strip() or defaults.get(
+        "AFKBOT_OPENAI_CODEX_API_KEY_FILE",
+        "",
+    )
+    return resolve_openai_codex_file_backed_api_key(source=source, path=path)
+
+
+def _peek_file_backed_source_requested(*, provider_id: LLMProviderId, defaults: Mapping[str, str]) -> bool:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return False
+    source = (os.getenv("AFKBOT_OPENAI_CODEX_API_KEY_SOURCE") or "").strip() or defaults.get(
+        "AFKBOT_OPENAI_CODEX_API_KEY_SOURCE",
+        "",
+    )
+    return source.strip().lower() == TOKEN_SOURCE_FILE
+
+
+def _file_backed_source_requested(*, provider_id: LLMProviderId, values: Mapping[str, object]) -> bool:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return False
+    return str(values.get("openai_codex_api_key_source") or "").strip().lower() == TOKEN_SOURCE_FILE
+
+
+def _manual_provider_secret_source_update(provider_id: LLMProviderId) -> dict[str, str]:
+    if provider_id == LLMProviderId.OPENAI_CODEX:
+        return openai_codex_secret_token_runtime_secrets()
+    return {}
+
+
+def _is_file_backed_provider_update(*, provider_id: LLMProviderId, update: Mapping[str, str]) -> bool:
+    if provider_id != LLMProviderId.OPENAI_CODEX:
+        return False
+    return update.get("openai_codex_api_key_source") == TOKEN_SOURCE_FILE
 
 
 def _provider_credential_label(*, provider_id: LLMProviderId, lang: PromptLanguage) -> str:
@@ -357,7 +457,7 @@ def _resolve_interactive_provider_credential_with_metadata(
                 raise typer.BadParameter(f"GitHub Copilot device login failed: {exc}") from exc
 
     if provider_id == LLMProviderId.OPENAI_CODEX:
-        local_codex_token = _load_local_codex_access_token()
+        local_codex_token = discover_local_openai_codex_access_token_file()
         typer.echo(
             msg(
                 lang,
@@ -371,19 +471,19 @@ def _resolve_interactive_provider_credential_with_metadata(
                 ),
             )
         )
-        if local_codex_token and prompt_confirm(
+        if local_codex_token is not None and prompt_confirm(
             question=msg(
                 lang,
-                en="Use locally detected Codex token from ~/.codex/auth.json?",
-                ru="Использовать локально найденный токен Codex из ~/.codex/auth.json?",
+                en="Use the locally detected Codex auth file as a live token source?",
+                ru="Использовать локально найденный auth-файл Codex как живой источник токена?",
             ),
             title=provider_prompt_title,
             default=True,
             lang=lang,
         ):
             return _InteractiveProviderCredential(
-                token=local_codex_token,
-                runtime_secrets_update={},
+                token=local_codex_token.token,
+                runtime_secrets_update=openai_codex_file_token_runtime_secrets(local_codex_token.path),
             )
         if prompt_confirm(
             question=msg(
@@ -397,9 +497,14 @@ def _resolve_interactive_provider_credential_with_metadata(
         ):
             refreshed_codex_token = _run_codex_login_and_load_token(lang=lang)
             if refreshed_codex_token:
+                refreshed_file = discover_local_openai_codex_access_token_file()
                 return _InteractiveProviderCredential(
                     token=refreshed_codex_token,
-                    runtime_secrets_update={},
+                    runtime_secrets_update=(
+                        openai_codex_file_token_runtime_secrets(refreshed_file.path)
+                        if refreshed_file is not None and refreshed_file.token == refreshed_codex_token
+                        else openai_codex_secret_token_runtime_secrets()
+                    ),
                 )
     return _InteractiveProviderCredential(
         token=_prompt_hidden_credential_input(provider_id=provider_id, lang=lang),
@@ -445,29 +550,8 @@ def _prompt_minimax_region(*, lang: PromptLanguage) -> MiniMaxRegion:
 
 
 def _load_local_codex_access_token() -> str:
-    candidates: list[Path] = []
-    codex_home = (os.getenv("CODEX_HOME") or "").strip()
-    if codex_home:
-        candidates.append(Path(codex_home) / "auth.json")
-    candidates.append(Path.home() / ".codex" / "auth.json")
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        tokens = payload.get("tokens")
-        if isinstance(tokens, dict):
-            access = str(tokens.get("access_token") or "").strip()
-            if access and not token_expired_or_expiring_soon(token=access):
-                return access
-        access = str(payload.get("access_token") or payload.get("OPENAI_API_KEY") or "").strip()
-        if access and not token_expired_or_expiring_soon(token=access):
-            return access
-    return ""
+    detected = discover_local_openai_codex_access_token_file()
+    return detected.token if detected is not None else ""
 
 
 def _run_codex_login_and_load_token(*, lang: PromptLanguage) -> str:
@@ -524,26 +608,26 @@ def _run_codex_login_and_load_token(*, lang: PromptLanguage) -> str:
         )
         return ""
 
-    refreshed = _load_local_codex_access_token()
-    if refreshed:
+    refreshed = discover_local_openai_codex_access_token_file()
+    if refreshed is not None:
         typer.echo(
             msg(
                 lang,
-                en="Detected a fresh token in ~/.codex/auth.json.",
-                ru="Обнаружен обновлённый токен в ~/.codex/auth.json.",
+                en="Detected a fresh token in the local Codex auth file.",
+                ru="Обнаружен обновлённый токен в локальном auth-файле Codex.",
             )
         )
-        return refreshed
+        return refreshed.token
 
     typer.echo(
         msg(
             lang,
             en=(
-                "Login completed, but no access token was found in ~/.codex/auth.json. "
+                "Login completed, but no access token was found in the local Codex auth file. "
                 "Paste the OAuth token manually."
             ),
             ru=(
-                "Логин завершён, но access token не найден в ~/.codex/auth.json. "
+                "Логин завершён, но access token не найден в локальном auth-файле Codex. "
                 "Вставьте OAuth токен вручную."
             ),
         )
@@ -805,6 +889,28 @@ def read_secret_file(path: Path, *, lang: PromptLanguage = PromptLanguage.EN) ->
             )
         )
     return value
+
+
+def read_provider_secret_file(
+    *,
+    provider_id: LLMProviderId,
+    path: Path,
+    lang: PromptLanguage = PromptLanguage.EN,
+) -> str:
+    """Read one provider credential from file, using provider-specific parsers when available."""
+
+    if provider_id == LLMProviderId.OPENAI_CODEX:
+        token = load_openai_codex_access_token_file(path)
+        if token:
+            return token
+        raise typer.BadParameter(
+            msg(
+                lang,
+                en=f"Codex token file does not contain a usable access token: {path}",
+                ru=f"Файл токена Codex не содержит пригодный access token: {path}",
+            )
+        )
+    return read_secret_file(path, lang=lang)
 
 
 def resolve_credentials_master_keys(

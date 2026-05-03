@@ -199,6 +199,15 @@ class _EchoTool(ToolBase):
         return ToolResult(ok=True, payload={"ok": True})
 
 
+class _ChannelHistoryTool(ToolBase):
+    name = "channel.history.list"
+    description = "Channel history tool"
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        return ToolResult(ok=True, payload={"ok": True})
+
+
 class _ExplodingExecuteTool(ToolBase):
     name = "debug.echo"
     description = "Tool that raises during execute"
@@ -285,6 +294,46 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
     assert len(results) == 1
     assert results[0].ok is True
     assert policy_engine.calls == [("bash.exec", {"bash.exec"})]
+
+
+async def test_execute_requested_tool_calls_filters_channel_owned_generic_approval() -> None:
+    """Reserved channel-owned tools should not use the generic approval bypass."""
+
+    policy_engine = _PolicyCaptureEngine()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_ChannelHistoryTool()),
+        actor="main",
+        policy_engine=policy_engine,
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-policy-override-channel-tool",
+        profile_id="default",
+        tool_calls=[ToolCall(name="channel.history.list", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"channel.history.list"},
+        approved_tool_names={"channel.history.list"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert policy_engine.calls == [("channel.history.list", set())]
 
 
 async def test_execute_tool_call_logs_unexpected_tool_exception(tmp_path, monkeypatch) -> None:

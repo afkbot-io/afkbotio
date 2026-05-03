@@ -25,6 +25,7 @@ from afkbot.services.policy import (
     list_capability_specs,
     parse_preset_level,
 )
+from afkbot.services.wizard.profile_catalog import list_profile_scenarios
 
 POLICY_PRESET_CHOICES: Final[tuple[str, ...]] = ("simple", "medium", "strict")
 
@@ -41,12 +42,12 @@ def prompt_policy_setup_mode(
         text=msg(
             lang,
             en=(
-                "Choose whether AFKBOT should apply safe defaults now or walk you through every permission. "
-                "You can still edit the profile later."
+                "Choose a quick safe profile now, or open the guided wizard to choose where the bot works and "
+                "what it may do. You can still edit the profile later."
             ),
             ru=(
-                "Выберите: применить безопасные настройки сразу или пройти каждое разрешение вручную. "
-                "Профиль можно изменить позже."
+                "Выберите быструю безопасную настройку или откройте мастер, чтобы указать, где бот работает "
+                "и что ему можно делать. Профиль можно изменить позже."
             ),
         ),
         options=[
@@ -54,16 +55,16 @@ def prompt_policy_setup_mode(
                 "recommended",
                 msg(
                     lang,
-                    en="Recommended - safe defaults, fastest setup",
-                    ru="Рекомендуется - безопасные настройки, самый быстрый путь",
+                    en="Quick safe setup - chats/channels, tasks, memory; no files or shell",
+                    ru="Быстро и безопасно - чаты/каналы, задачи, память; без файлов и терминала",
                 ),
             ),
             (
                 "custom",
                 msg(
                     lang,
-                    en="Custom - review each permission",
-                    ru="Вручную - проверить каждое разрешение",
+                    en="Guided setup - choose surfaces, actions, isolation, network",
+                    ru="Мастер настройки - выбрать места работы, действия, изоляцию и сеть",
                 ),
             ),
         ],
@@ -92,6 +93,52 @@ def prompt_policy_enabled(*, default: bool, lang: PromptLanguage = PromptLanguag
         yes_label=yes_label(lang),
         no_label=no_label(lang),
         hint_text=single_hint(lang),
+    )
+
+
+def prompt_profile_permission_scenario(
+    *,
+    default: str = "taskflow_channel",
+    lang: PromptLanguage = PromptLanguage.EN,
+) -> str:
+    """Prompt scenario-level policy intent before raw capability knobs."""
+
+    scenarios = list_profile_scenarios()
+    scenario_ids = {scenario.id for scenario in scenarios}
+    options = [
+        (
+            scenario.id,
+            scenario.label_ru if lang == PromptLanguage.RU else scenario.label_en,
+        )
+        for scenario in scenarios
+    ]
+    options.append(
+        (
+            "custom",
+            msg(
+                lang,
+                en="Custom - choose each capability, file, shell, and network setting",
+                ru="Вручную - выбрать каждую возможность, файлы, shell и сеть",
+            ),
+        )
+    )
+    resolved_default = default if default in scenario_ids or default == "custom" else "taskflow_channel"
+    return select_value_dialog(
+        title=msg(lang, en="Setup: Profile scenario", ru="Настройка: Сценарий профиля"),
+        text=msg(
+            lang,
+            en=(
+                "Choose what this profile should be able to do. AFKBOT will map the scenario to the same "
+                "policy fields used by flags; choose Custom to review every low-level permission."
+            ),
+            ru=(
+                "Выберите, что должен уметь этот профиль. AFKBOT переведёт сценарий в те же поля политики, "
+                "что и CLI-флаги; выберите «Вручную», чтобы проверить каждое низкоуровневое разрешение."
+            ),
+        ),
+        options=options,
+        default=resolved_default,
+        lang=lang,
     )
 
 
@@ -318,6 +365,88 @@ def prompt_policy_workspace_scope_mode(
         default=resolved_default,
         lang=lang,
     )
+
+
+def prompt_policy_shell_sandbox_mode(
+    *,
+    default: str,
+    lang: PromptLanguage = PromptLanguage.EN,
+) -> str:
+    """Prompt shell OS sandbox mode for profiles that allow shell execution."""
+
+    return select_value_dialog(
+        title=msg(lang, en="Setup: Shell sandbox", ru="Настройка: Sandbox для shell"),
+        text=msg(
+            lang,
+            en=(
+                "Choose how bash.exec is confined when file/shell scope is restricted. "
+                "`required` fails closed if the host sandbox backend is unavailable. "
+                "If the backend is missing, the wizard will offer to install it before saving."
+            ),
+            ru=(
+                "Выберите, как ограничивать bash.exec при ограниченной файловой области. "
+                "`required` безопасно падает, если на хосте нет sandbox-backend. "
+                "Если backend не найден, мастер предложит установить его до сохранения."
+            ),
+        ),
+        options=[
+            (
+                "required",
+                msg(
+                    lang,
+                    en="required - OS sandbox is mandatory for restricted shell",
+                    ru="required - OS sandbox обязателен для ограниченного shell",
+                ),
+            ),
+            (
+                "best_effort",
+                msg(
+                    lang,
+                    en="best_effort - sandbox when backend is available",
+                    ru="best_effort - sandbox, если backend доступен",
+                ),
+            ),
+            (
+                "disabled",
+                msg(
+                    lang,
+                    en="disabled - trusted shell, only cwd/policy checks",
+                    ru="disabled - доверенный shell, только cwd/policy проверки",
+                ),
+            ),
+        ],
+        default=default if default in {"disabled", "best_effort", "required"} else "required",
+        lang=lang,
+    )
+
+
+def prompt_policy_shell_allowed_commands(
+    *,
+    default: tuple[str, ...] = (),
+    lang: PromptLanguage = PromptLanguage.EN,
+) -> tuple[str, ...]:
+    """Prompt optional command allowlist for shell execution."""
+
+    rendered_default = ",".join(default)
+    value = str(
+        typer.prompt(
+            msg(
+                lang,
+                en=(
+                    "Allowed shell commands (comma-separated, empty = no command allowlist; "
+                    "directory sandbox still applies)"
+                ),
+                ru=(
+                    "Разрешённые shell-команды (через запятую, пусто = без allowlist команд; "
+                    "sandbox директории всё равно применяется)"
+                ),
+            ),
+            default=rendered_default,
+        )
+    ).strip()
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def select_value_dialog(

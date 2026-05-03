@@ -139,6 +139,91 @@ async def test_upgrade_service_recomputes_profile_policy_runtime_surface_for_new
     await engine.dispose()
 
 
+async def test_upgrade_service_enforces_required_shell_sandbox_for_legacy_restricted_shell(
+    tmp_path: Path,
+) -> None:
+    """Legacy restricted shell profiles should fail closed after upgrade."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    engine = create_engine(settings)
+    await create_schema(engine)
+    session_factory = create_session_factory(engine)
+    profile_root = tmp_path / "profiles/default"
+    async with session_scope(session_factory) as session:
+        session.add(Profile(id="default", name="Default", is_default=True, status="active"))
+        session.add(
+            ProfilePolicy(
+                profile_id="default",
+                policy_enabled=True,
+                policy_preset="medium",
+                policy_capabilities_json=json.dumps(["shell"], ensure_ascii=True),
+                allowed_tools_json=json.dumps(["bash.exec"], ensure_ascii=True),
+                denied_tools_json="[]",
+                allowed_directories_json=json.dumps([str(profile_root.resolve())], ensure_ascii=True),
+                shell_sandbox_mode="disabled",
+                shell_allowed_commands_json="[]",
+                shell_denied_commands_json="[]",
+                network_allowlist_json="[]",
+            )
+        )
+
+    service = UpgradeService(settings)
+    try:
+        report = await service.apply()
+    finally:
+        await service.shutdown()
+
+    step = next(item for item in report.steps if item.name == "profile_policy_runtime_surface")
+    assert step.changed is True
+    async with session_scope(session_factory) as session:
+        row = await session.get(ProfilePolicy, "default")
+        assert row is not None
+        assert row.shell_sandbox_mode == "required"
+    await engine.dispose()
+
+
+async def test_upgrade_service_enforces_required_shell_sandbox_for_empty_legacy_scope(
+    tmp_path: Path,
+) -> None:
+    """Empty legacy allowed dirs still resolve to profile-only shell scope at runtime."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    engine = create_engine(settings)
+    await create_schema(engine)
+    session_factory = create_session_factory(engine)
+    async with session_scope(session_factory) as session:
+        session.add(Profile(id="default", name="Default", is_default=True, status="active"))
+        session.add(
+            ProfilePolicy(
+                profile_id="default",
+                policy_enabled=True,
+                policy_preset="medium",
+                policy_capabilities_json=json.dumps(["shell"], ensure_ascii=True),
+                allowed_tools_json=json.dumps(["bash.exec"], ensure_ascii=True),
+                denied_tools_json="[]",
+                allowed_directories_json="[]",
+                shell_sandbox_mode="disabled",
+                shell_allowed_commands_json="[]",
+                shell_denied_commands_json="[]",
+                network_allowlist_json="[]",
+            )
+        )
+
+    service = UpgradeService(settings)
+    try:
+        report = await service.apply()
+    finally:
+        await service.shutdown()
+
+    step = next(item for item in report.steps if item.name == "profile_policy_runtime_surface")
+    assert step.changed is True
+    async with session_scope(session_factory) as session:
+        row = await session.get(ProfilePolicy, "default")
+        assert row is not None
+        assert row.shell_sandbox_mode == "required"
+    await engine.dispose()
+
+
 async def test_upgrade_service_canonicalizes_profile_runtime_config_payload(tmp_path: Path) -> None:
     """Upgrade runner should rewrite unversioned profile config payloads to canonical shape."""
 
@@ -251,6 +336,101 @@ async def test_upgrade_service_migrates_legacy_install_state_marker(tmp_path: Pa
     assert step.changed is True
     assert not legacy_path.exists()
     assert settings.setup_state_path.exists()
+
+
+async def test_upgrade_service_migrates_setup_state_to_wizard_metadata(tmp_path: Path) -> None:
+    """Upgrade runner should add wizard metadata to legacy setup-state payloads."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    settings.setup_state_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.setup_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "completed": True,
+                "installed_at": "2026-05-01T00:00:00+00:00",
+                "config": {
+                    "env_file": ".unused",
+                    "db_url": settings.db_url,
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-4o-mini",
+                    "llm_thinking_level": "medium",
+                    "runtime_host": "127.0.0.1",
+                    "runtime_port": 8080,
+                    "policy_setup_mode": "recommended",
+                    "policy_enabled": True,
+                    "policy_preset": "medium",
+                    "policy_confirmation_mode": "destructive_files",
+                    "policy_capabilities": ["memory", "taskflow"],
+                    "policy_file_access_mode": "none",
+                    "policy_workspace_scope": "profile_only",
+                    "policy_allowed_directories": [str((tmp_path / "profiles/default").resolve())],
+                    "policy_shell_sandbox_mode": "disabled",
+                    "policy_network_mode": "recommended",
+                    "policy_network_allowlist": [],
+                },
+            },
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = UpgradeService(settings)
+    try:
+        report = await service.apply()
+    finally:
+        await service.shutdown()
+
+    step = next(item for item in report.steps if item.name == "setup_state")
+    assert step.changed is True
+    payload = json.loads(settings.setup_state_path.read_text(encoding="utf-8"))
+    config = payload["config"]
+    assert payload["version"] == 2
+    assert config["wizard_schema_version"] == 1
+    assert config["wizard_profile_scenario"] == "taskflow_channel"
+    assert config["policy_workspace_scope_mode"] == "profile_only"
+
+
+async def test_upgrade_service_keeps_custom_setup_state_scenario_when_network_differs(
+    tmp_path: Path,
+) -> None:
+    """Wizard metadata should not overlabel custom legacy policies as canned scenarios."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    settings.setup_state_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.setup_state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "completed": True,
+                "installed_at": "2026-05-01T00:00:00+00:00",
+                "config": {
+                    "db_url": settings.db_url,
+                    "llm_provider": "openai",
+                    "llm_model": "gpt-4o-mini",
+                    "policy_capabilities": ["memory", "taskflow"],
+                    "policy_file_access_mode": "none",
+                    "policy_workspace_scope": "profile_only",
+                    "policy_shell_sandbox_mode": "disabled",
+                    "policy_network_mode": "custom",
+                    "policy_network_allowlist": ["api.partyflow.ru"],
+                },
+            },
+            ensure_ascii=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = UpgradeService(settings)
+    try:
+        await service.apply()
+    finally:
+        await service.shutdown()
+
+    payload = json.loads(settings.setup_state_path.read_text(encoding="utf-8"))
+    assert payload["config"]["wizard_profile_scenario"] == "custom"
 
 
 async def test_upgrade_service_inspect_reports_pending_without_mutating(tmp_path: Path) -> None:

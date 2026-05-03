@@ -174,7 +174,8 @@ def render_channel_add_intro(
                     f"- `Channel id` is your local AFKBOT id for later `show`, `update`, and `delete` commands. "
                     f"Press Enter there to accept `{suggested_channel_id}`.\n"
                     "- PartyFlow does not support Telegram-style polling here; webhook is the only ingress mode.\n"
-                    "- You will need the bot token and the webhook signing secret from PartyFlow UI."
+                    "- You will need the bot token from PartyFlow UI. The webhook signing secret is optional; "
+                    "if you leave it blank, AFKBOT accepts deliveries without signature validation."
                 ),
                 ru=(
                     "Настройка PartyFlow webhook-канала\n"
@@ -182,7 +183,8 @@ def render_channel_add_intro(
                     f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update` и `delete`. "
                     f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
                     "- Polling в стиле Telegram здесь не поддерживается; сейчас доступен только режим webhook.\n"
-                    "- Понадобятся токен бота и секрет подписи webhook из UI PartyFlow."
+                    "- Понадобится токен бота из UI PartyFlow. Секрет подписи webhook необязателен; "
+                    "если оставить его пустым, AFKBOT примет доставки без проверки подписи."
                 ),
             )
         )
@@ -266,20 +268,24 @@ def collect_channel_add_base_inputs(
         resolve_channel_choice(
             value=tool_profile,
             interactive=interactive,
-            prompt_en="Channel tool profile",
-            prompt_ru="Профиль инструментов канала",
+            prompt_en="What can the agent do from this channel?",
+            prompt_ru="Что агент может делать из этого канала?",
             default=default_tool_profile,
             allowed=CHANNEL_TOOL_PROFILE_VALUES,
             lang=lang,
             detail_en=(
-                "Choose the tool set visible from this channel. This cannot grant more than the profile allows; "
-                "it only narrows the profile ceiling. For private admin support use `support_readonly`. "
-                "Use `inherit` only for a fully trusted channel."
+                "Choose the tools visible during turns started by this channel. The profile remains the "
+                "maximum permission ceiling; this setting mostly narrows it. Fixed current-channel tools "
+                "such as PartyFlow history can still be exposed for the active endpoint without opening "
+                "generic app.run, shell, or filesystem access. For private admin support use "
+                "`support_readonly`. Use `inherit` only for a fully trusted channel."
             ),
             detail_ru=(
-                "Выберите набор инструментов, видимый из этого канала. Это не может дать больше прав, "
-                "чем разрешает профиль; настройка только сужает потолок профиля. Для личного support/admin-бота "
-                "обычно подходит `support_readonly`. `inherit` выбирайте только для полностью доверенного канала."
+                "Выберите инструменты, видимые в диалогах, запущенных из этого канала. Профиль остаётся "
+                "максимальным потолком прав; эта настройка в основном сужает его. Фиксированные инструменты "
+                "текущего канала, например история PartyFlow, могут быть доступны только для активного endpoint "
+                "без открытия общего app.run, shell или файловой системы. Для личного support/admin-бота обычно "
+                "подходит `support_readonly`. `inherit` выбирайте только для полностью доверенного канала."
             ),
         )
     )
@@ -290,22 +296,23 @@ def collect_channel_add_base_inputs(
         prompt_ru="Создать привязку маршрутизации?",
         default=True,
         lang=lang,
-        detail_en=(
-            "A binding connects inbound channel events to this profile and defines how sessions are grouped. "
-            "Leave this on for normal setup. Turn it off only if you plan to manage channel routing manually."
-        ),
-        detail_ru=(
-            "Привязка маршрутизации соединяет входящие события канала с этим профилем и задаёт, "
-            "как сообщения группируются в диалоги. Для обычной настройки оставьте включённым. "
-            "Отключайте только если будете настраивать маршрутизацию вручную."
-        ),
+            detail_en=(
+                "Leave this on for normal setup. AFKBOT will connect inbound events to the selected profile "
+                "and create the conversation grouping rule automatically. Turn it off only if you manage "
+                "routing manually."
+            ),
+            detail_ru=(
+                "Для обычной настройки оставьте включённым. AFKBOT сам соединит входящие события с выбранным "
+                "профилем и создаст правило группировки диалогов. Отключайте только если будете настраивать "
+                "маршрутизацию вручную."
+            ),
     )
     resolved_session_policy: SessionPolicy = (
         normalize_session_policy(
             resolve_channel_choice(
                 value=session_policy,
                 interactive=interactive,
-                prompt_en="Binding session policy",
+                prompt_en="How should conversations be grouped?",
                 prompt_ru="Как группировать диалоги",
                 default=binding_session_policy_default,
                 allowed=binding_session_policy_allowed,
@@ -579,19 +586,20 @@ def collect_channel_access_policy_inputs(
         restrict_outbound = resolve_channel_bool(
             value=None,
             interactive=True,
-            prompt_en="Restrict channel.send outbound targets?",
-            prompt_ru="Ограничить, куда channel.send может отправлять сообщения?",
+            prompt_en="Limit proactive channel.send targets?",
+            prompt_ru="Ограничить цели проактивного channel.send?",
             default=bool(outbound_default_values),
             lang=lang,
             detail_en=(
-                "`channel.send` lets the agent initiate channel messages through this endpoint. "
-                "Choose Yes to limit it to specific chat/user IDs. Choose No only for fully trusted "
-                "profiles and credentials."
+                "`channel.send` can initiate messages through this endpoint. Choose Yes to limit proactive "
+                "messages to specific chat/user IDs. Choose No only for fully trusted profiles and credentials. "
+                "Normal same-conversation replies still use the active inbound channel."
             ),
             detail_ru=(
-                "`channel.send` позволяет агенту самому отправлять сообщения через этот канал. "
-                "Выберите Да, чтобы ограничить отправку конкретными chat/user ID. Нет выбирайте только "
-                "для полностью доверенных профилей и учётных данных."
+                "`channel.send` может сам отправлять сообщения через этот endpoint. Выберите Да, чтобы "
+                "ограничить проактивную отправку конкретными chat/user ID. Нет выбирайте только для полностью "
+                "доверенных профилей и учётных данных. Обычные ответы в тот же диалог всё равно идут через "
+                "активный входящий канал."
             ),
         )
         if restrict_outbound:

@@ -12,6 +12,7 @@ from afkbot.services.channel_routing.runtime_target import (
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
+from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.contracts import ChannelDeliveryTarget, ChannelOutboundMessage
 from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
@@ -125,6 +126,12 @@ async def flush_inbound_batch(
         return
     context_overrides = merge_turn_context_overrides(
         build_routing_context_overrides(target=target, selectors=selectors),
+        build_active_channel_context_overrides(
+            endpoint=service._endpoint,
+            peer_id=batch.peer_id,
+            thread_id=batch.thread_id,
+            user_id=batch.user_id,
+        ),
         build_ingress_batch_context_overrides(batch),
         build_channel_tool_profile_context_overrides(service._endpoint.tool_profile),
     )

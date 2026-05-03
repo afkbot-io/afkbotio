@@ -17,6 +17,7 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_bool,
     resolve_channel_choice,
     resolve_channel_int,
+    resolve_channel_setup_scenario,
     resolve_channel_text,
 )
 from afkbot.cli.commands.channel_shared import (
@@ -52,8 +53,7 @@ from afkbot.services.channel_routing.service import (
     ChannelBindingServiceError,
     run_channel_binding_service_sync,
 )
-from afkbot.services.apps.contracts import AppRuntimeContext
-from afkbot.services.apps.runtime import AppRuntime
+from afkbot.services.apps.partyflow.http_api import PartyFlowApiError, _get_me
 from afkbot.services.channels.endpoint_contracts import (
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MAX,
     CHANNEL_INGRESS_BATCH_BUFFER_CHARS_MIN,
@@ -76,6 +76,10 @@ from afkbot.services.channels.tool_profiles import (
 )
 from afkbot.services.profile_runtime import ProfileDetails, run_profile_service_sync
 from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
+from afkbot.services.wizard.preview import (
+    build_channel_surface_preview,
+    current_channel_tool_names_for_transport,
+)
 from afkbot.settings import Settings, get_settings
 
 _PARTYFLOW_INGRESS_MODES = ("webhook",)
@@ -85,6 +89,7 @@ _PRIVATE_HOST_SUFFIXES = (".internal", ".local", ".lan", ".home", ".localhost", 
 _PARTYFLOW_BOT_TOKEN = "partyflow_bot_token"
 _PARTYFLOW_WEBHOOK_SIGNING_SECRET = "partyflow_webhook_signing_secret"
 _PARTYFLOW_WEBHOOK_PATH_PREFIX = "/v1/channels/partyflow"
+_PARTYFLOW_BOT_REST_BASE_URL = "https://api.partyflow.ru"
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +272,15 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     lang=prompt_language,
                     suggested_channel_id=generated_channel_id,
                 )
+            channel_scenario = resolve_channel_setup_scenario(
+                transport="partyflow",
+                interactive=interactive,
+                lang=prompt_language,
+            )
+            binding_session_policy_default: SessionPolicy = cast(
+                SessionPolicy,
+                channel_scenario.session_policy if channel_scenario else "per-thread",
+            )
             base_inputs = collect_channel_add_base_inputs(
                 settings=settings,
                 interactive=interactive,
@@ -276,10 +290,10 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 credential_profile_key=credential_profile_key,
                 account_id=account_id,
                 enabled=enabled,
-                tool_profile=tool_profile,
+                tool_profile=tool_profile or (channel_scenario.tool_profile if channel_scenario else None),
                 create_binding=create_binding,
                 session_policy=session_policy,
-                binding_session_policy_default="per-thread",
+                binding_session_policy_default=binding_session_policy_default,
                 binding_session_policy_allowed=(
                     "main",
                     "per-chat",
@@ -300,7 +314,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 detail_ru="Polling для PartyFlow здесь пока недоступен; сейчас поддерживается только webhook.",
             )
             resolved_trigger_mode = resolve_channel_choice(
-                value=trigger_mode,
+                value=trigger_mode or (channel_scenario.trigger_mode if channel_scenario else None),
                 interactive=interactive,
                 prompt_en="PartyFlow trigger mode",
                 prompt_ru="Режим триггера PartyFlow",
@@ -329,9 +343,9 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             access_policy = collect_channel_access_policy_inputs(
                 interactive=interactive,
                 lang=prompt_language,
-                private_policy=private_policy,
+                private_policy=private_policy or (channel_scenario.private_policy if channel_scenario else None),
                 allow_from=allow_from,
-                group_policy=group_policy,
+                group_policy=group_policy or (channel_scenario.group_policy if channel_scenario else None),
                 groups=groups,
                 group_allow_from=group_allow_from,
                 outbound_allow_to=outbound_allow_to,
@@ -339,7 +353,11 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 private_policy_default="disabled",
             )
             resolved_include_context = resolve_channel_bool(
-                value=include_context,
+                value=(
+                    include_context
+                    if include_context is not None
+                    else (channel_scenario.include_context if channel_scenario else None)
+                ),
                 interactive=interactive,
                 prompt_en="Include PartyFlow context?",
                 prompt_ru="Подтягивать контекст из PartyFlow?",
@@ -349,7 +367,11 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 detail_ru="Если включено, payload webhook должен содержать недавние сообщения канала, чтобы AFKBOT видел короткую локальную историю без дополнительных вызовов API чтения.",
             )
             resolved_context_size = resolve_channel_int(
-                value=context_size,
+                value=(
+                    context_size
+                    if context_size is not None
+                    else (channel_scenario.context_size if channel_scenario else None)
+                ),
                 interactive=interactive and resolved_include_context,
                 prompt_en="PartyFlow context size",
                 prompt_ru="Размер контекста PartyFlow",
@@ -361,7 +383,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 detail_ru="Сколько последних сообщений PartyFlow нужно прикладывать к каждой доставке webhook.",
             )
             resolved_reply_mode = resolve_channel_choice(
-                value=reply_mode,
+                value=reply_mode or (channel_scenario.reply_mode if channel_scenario else None),
                 interactive=interactive,
                 prompt_en="PartyFlow reply mode",
                 prompt_ru="Режим ответа PartyFlow",
@@ -492,6 +514,19 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
             typer.echo(f"- trigger_keywords: {', '.join(saved.trigger_keywords)}")
         if base_inputs.create_binding:
             typer.echo(f"- matching_bindings: {binding_count}")
+        for line in build_channel_surface_preview(
+            transport=saved.transport,
+            scenario_id=None if channel_scenario is None else channel_scenario.id,
+            tool_profile=saved.tool_profile,
+            trigger_mode=saved.trigger_mode,
+            reply_mode=saved.reply_mode,
+            private_policy=saved.access_policy.private_policy,
+            group_policy=saved.access_policy.group_policy,
+            current_channel_tools=current_channel_tool_names_for_transport(saved.transport),
+            credential_status=("bot_token_configured_or_prompted", "signing_secret_optional"),
+            lang=prompt_language,
+        ).lines:
+            typer.echo(f"- {line}" if not line.startswith("-") else line)
         typer.echo(f"- access.private_policy: {saved.access_policy.private_policy}")
         typer.echo("- access.allow_from: " + (", ".join(saved.access_policy.allow_from) or "-"))
         typer.echo(f"- access.group_policy: {saved.access_policy.group_policy}")
@@ -1429,26 +1464,41 @@ async def _probe_partyflow_endpoint(
     settings: Settings,
     endpoint: PartyFlowWebhookEndpointConfig,
 ) -> dict[str, object]:
-    result = await AppRuntime(settings).run(
-        app="partyflow",
-        action="get_me",
-        ctx=AppRuntimeContext(
+    try:
+        token = await get_credentials_service(settings).resolve_plaintext_for_app_tool(
             profile_id=endpoint.profile_id,
-            session_id="partyflow-status",
-            run_id=0,
+            tool_name="app.run",
+            integration_name="partyflow",
             credential_profile_key=endpoint.credential_profile_key,
+            credential_name=_PARTYFLOW_BOT_TOKEN,
+        )
+        result = await _get_me(
+            base_url=_PARTYFLOW_BOT_REST_BASE_URL,
+            token=token,
             timeout_sec=min(10, settings.tool_timeout_max_sec),
-        ),
-        params={},
-    )
-    if not result.ok:
+        )
+    except CredentialsServiceError as exc:
         return {
             "ok": False,
-            "error_code": result.error_code or "partyflow_probe_failed",
-            "reason": result.reason or "PartyFlow get_me probe failed.",
-            "metadata": result.metadata,
+            "error_code": exc.error_code,
+            "reason": exc.reason,
+            "metadata": exc.details,
         }
-    bot = result.payload.get("bot")
+    except PartyFlowApiError as exc:
+        return {
+            "ok": False,
+            "error_code": exc.error_code,
+            "reason": exc.reason,
+            "metadata": exc.metadata,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error_code": "partyflow_probe_failed",
+            "reason": f"{exc.__class__.__name__}: {exc}",
+            "metadata": {},
+        }
+    bot = result.get("bot")
     payload: dict[str, object] = {"ok": True}
     if isinstance(bot, dict):
         payload["bot_id"] = str(bot.get("id") or "")

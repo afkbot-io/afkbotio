@@ -13,6 +13,11 @@ from afkbot.cli.commands.channel_telethon_commands.legacy import (
 )
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.tool_profiles import CHANNEL_TOOL_PROFILE_HELP
+from afkbot.services.wizard.preview import (
+    build_channel_surface_preview,
+    current_channel_tool_names_for_transport,
+)
+from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
 from afkbot.settings import get_settings
 
 
@@ -327,6 +332,7 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
         except Exception as exc:
             raise_legacy_telethon_channel_error(exc)
         settings = get_settings()
+        prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
         if json_output:
             payload: dict[str, object] = {"channel": result.saved.model_dump(mode="json")}
             if result.binding_warning:
@@ -351,6 +357,19 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
             typer.secho(result.binding_warning, fg=typer.colors.YELLOW, err=True)
         if result.policy_warning:
             typer.secho(result.policy_warning, fg=typer.colors.YELLOW, err=True)
+        for line in build_channel_surface_preview(
+            transport=result.saved.transport,
+            scenario_id=result.scenario_id,
+            tool_profile=result.saved.tool_profile,
+            trigger_mode=result.saved.group_invocation_mode,
+            reply_mode=result.saved.reply_mode,
+            private_policy=result.saved.access_policy.private_policy,
+            group_policy=result.saved.access_policy.group_policy,
+            current_channel_tools=current_channel_tool_names_for_transport(result.saved.transport),
+            credential_status=("telethon_credentials_configured_or_prompted",),
+            lang=prompt_language,
+        ).lines:
+            typer.echo(line)
         reload_legacy_managed_runtime_notice(settings)
 
 

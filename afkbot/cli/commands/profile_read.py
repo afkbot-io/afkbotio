@@ -135,6 +135,12 @@ def register_read(profile_app: typer.Typer) -> None:
         )
         typer.echo(f"- default_workspace_root: {effective_permissions.default_workspace_root}")
         typer.echo(f"- shell_default_cwd: {effective_permissions.shell_default_cwd}")
+        typer.echo(f"- shell_sandbox_mode: {effective_permissions.shell_sandbox_mode}")
+        if effective_permissions.shell_allowed_commands:
+            typer.echo(
+                "- shell_allowed_commands: "
+                + ", ".join(effective_permissions.shell_allowed_commands)
+            )
         typer.echo(f"- file_scope_mode: {effective_permissions.file_scope_mode}")
         typer.echo(f"- file_access: {effective_permissions.file_access_mode}")
         typer.echo(f"- network_access: {effective_permissions.network_access}")

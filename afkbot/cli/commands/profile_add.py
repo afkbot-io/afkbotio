@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import typer
 
@@ -91,6 +92,15 @@ def register_add(profile_app: typer.Typer) -> None:
             "--llm-api-key",
             help="Optional generic provider credential fallback (API key or OAuth token) for this profile.",
             hide_input=True,
+        ),
+        llm_api_key_file: Path | None = typer.Option(
+            None,
+            "--llm-api-key-file",
+            "--openrouter-api-key-file",
+            dir_okay=False,
+            file_okay=True,
+            exists=True,
+            help="Path to file containing provider credential (API key or OAuth token).",
         ),
         provider_api_key: str | None = typer.Option(
             None,
@@ -254,6 +264,16 @@ def register_add(profile_app: typer.Typer) -> None:
             "--policy-allowed-dir",
             help="Repeatable custom file access allowlist directory for this profile.",
         ),
+        policy_shell_sandbox_mode: str | None = typer.Option(
+            None,
+            "--policy-shell-sandbox-mode",
+            help="Shell OS sandbox mode: disabled, best_effort, or required.",
+        ),
+        policy_shell_command: list[str] = typer.Option(
+            [],
+            "--policy-shell-command",
+            help="Repeatable command basename allowed for bash.exec/session.job.run shell calls.",
+        ),
         policy_network_host: list[str] = typer.Option(
             [],
             "--policy-network-host",
@@ -291,7 +311,7 @@ def register_add(profile_app: typer.Typer) -> None:
                 custom_interface=custom_interface,
                 llm_proxy_type=llm_proxy_type,
                 llm_proxy_url=llm_proxy_url,
-                llm_api_key_file=None,
+                llm_api_key_file=llm_api_key_file,
                 llm_api_key=llm_api_key,
                 provider_api_key=provider_api_key,
                 minimax_region=minimax_region,
@@ -304,6 +324,8 @@ def register_add(profile_app: typer.Typer) -> None:
                 policy_file_access_mode=policy_file_access_mode,
                 policy_workspace_scope=policy_workspace_scope,
                 policy_allowed_dir=tuple(policy_allowed_dir),
+                policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+                policy_shell_command=tuple(policy_shell_command),
                 policy_network_host=tuple(policy_network_host),
                 llm_history_turns=llm_history_turns,
                 tool_plugins=tuple(tool_plugin),
@@ -353,6 +375,8 @@ def register_add(profile_app: typer.Typer) -> None:
                     policy_capabilities=mutation_inputs.resolved_policy.capabilities,
                     policy_file_access_mode=mutation_inputs.resolved_policy.file_access_mode,
                     policy_allowed_directories=mutation_inputs.resolved_policy.allowed_directories or None,
+                    policy_shell_sandbox_mode=mutation_inputs.resolved_policy.shell_sandbox_mode,
+                    policy_shell_allowed_commands=mutation_inputs.resolved_policy.shell_allowed_commands,
                     policy_network_allowlist=mutation_inputs.resolved_policy.network_allowlist,
                 )
             )
@@ -363,6 +387,7 @@ def register_add(profile_app: typer.Typer) -> None:
         if interactive:
             render_profile_mutation_success(
                 profile=profile,
+                root_dir=settings.root_dir,
                 lang=prompt_language,
                 verb_en="created",
                 verb_ru="создан",

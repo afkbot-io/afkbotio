@@ -826,6 +826,82 @@ def test_channel_partyflow_status_allows_missing_optional_signing_secret(
     assert "webhook signature validation is disabled" in row["signing_secret_notice"]
 
 
+def test_channel_partyflow_status_probe_is_not_blocked_by_profile_app_policy(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Operator readiness probes must not require exposing generic app.run to channel AI."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+    settings = get_settings()
+    profile_service = _new_profile_service(settings)
+    asyncio.run(
+        profile_service.create(
+            profile_id="ops",
+            name="Ops",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="strict",
+            policy_capabilities=("memory", "taskflow"),
+            policy_network_allowlist=(),
+        )
+    )
+    asyncio.run(
+        get_credentials_service(settings).create(
+            profile_id="ops",
+            tool_name="app.run",
+            integration_name="partyflow",
+            credential_profile_key="ops-policy-probe",
+            credential_name="partyflow_bot_token",
+            secret_value="fri_bot_test",
+        )
+    )
+    monkeypatch.setenv("AFKBOT_PUBLIC_CHAT_API_URL", "https://bot.example.com")
+    get_settings.cache_clear()
+
+    async def fake_get_me(**kwargs: object) -> dict[str, object]:
+        assert kwargs["token"] == "fri_bot_test"
+        return {"bot": {"id": "bot-ops", "display_name": "AFK Bot", "is_active": True}}
+
+    monkeypatch.setattr("afkbot.cli.commands.channel_partyflow._get_me", fake_get_me)
+
+    created = runner.invoke(
+        app,
+        [
+            "channel",
+            "partyflow",
+            "add",
+            "ops-policy-probe",
+            "--profile",
+            "ops",
+            "--credential-profile",
+            "ops-policy-probe",
+            "--no-binding",
+            "--yes",
+        ],
+    )
+    assert created.exit_code == 0
+
+    status = runner.invoke(
+        app,
+        ["channel", "partyflow", "status", "ops-policy-probe", "--probe", "--json"],
+    )
+
+    assert status.exit_code == 0
+    row = json.loads(status.stdout)["partyflow_webhooks"][0]
+    assert row["probe"] == {
+        "ok": True,
+        "bot_id": "bot-ops",
+        "display_name": "AFK Bot",
+        "is_active": True,
+    }
+
+
 def test_channel_partyflow_show_falls_back_to_local_for_private_hostname_suffixes(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

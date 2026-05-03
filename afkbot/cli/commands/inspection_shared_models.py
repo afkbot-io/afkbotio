@@ -32,6 +32,8 @@ class EffectivePermissionSummary(BaseModel):
     capability_ids: tuple[str, ...]
     default_workspace_root: str
     shell_default_cwd: str
+    shell_sandbox_mode: str
+    shell_allowed_commands: tuple[str, ...]
     file_scope_mode: str
     file_access_mode: str
     network_access: str

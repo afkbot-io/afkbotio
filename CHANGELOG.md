@@ -9,6 +9,60 @@ All notable changes to this project will be documented in this file.
 - `afk browser install` now uses `uv pip install --python ...` when uv is
   available, avoiding `pip` module failures in isolated uv-tool environments.
 
+## [1.7.1] - 2026-05-03
+
+### Added
+
+- Setup/profile security configuration now has an intent-first guided wizard
+  with Russian/English copy for work surfaces, allowed actions, isolation,
+  confirmations, and network boundaries. The new wizard stores additive V2
+  metadata while keeping legacy scenario ids as compatibility-only labels.
+- OpenAI Codex profile setup now supports file-backed OAuth tokens: AFKBOT can
+  store the local Codex auth file path and reread the latest access token at
+  runtime instead of copying the token into profile secrets.
+
+### Changed
+
+- Recommended setup now uses a quick-safe default for chats/channels, tasks, and
+  memory without granting file, shell, credentials, browser, app, MCP, or
+  subagent tools until the operator explicitly chooses them.
+- Channel wizard labels now avoid raw internal tokens in normal prompts for
+  access/session/tool-profile choices.
+
+### Fixed
+
+- Release metadata and lockfile package metadata are aligned to `1.7.1`.
+
+## [1.7.0] - 2026-05-02
+
+### Added
+
+- Setup/profile/channel wizards now have a shared tested scenario catalog and
+  renderer-neutral question inventory, including profile security scenarios,
+  Telegram/Telethon/PartyFlow channel scenarios, and localized preview text.
+- Channel-owned tools now include current-channel `channel.send` defaults for
+  Telegram, Telethon, and PartyFlow turns without exposing generic `app.run`,
+  shell, or filesystem tools.
+- `afk sandbox status` reports the active OS sandbox backend so operators can
+  verify shell isolation before enabling shell-capable profiles.
+
+### Changed
+
+- Interactive channel setup can start from high-level safe defaults while keeping
+  explicit CLI flags and persisted endpoint values as the compatibility source of
+  truth.
+- Setup state migration now additively records wizard metadata and workspace
+  scope so older installs can be upgraded without manual config edits.
+- Legacy restricted-shell profile policies are upgraded to fail closed with a
+  required OS shell sandbox, including older empty allowed-directory snapshots.
+
+### Fixed
+
+- PartyFlow operator readiness probes no longer require opening generic
+  `app.run` to safe channel profiles; the CLI probe validates bot credentials
+  directly while channel AI permissions remain scoped.
+- Release metadata and lockfile package metadata are aligned to `1.7.0`.
+
 ## [1.6.2] - 2026-05-01
 
 ### Changed

@@ -50,6 +50,8 @@ async def apply_setup_policy(
                     profile_root=settings.profiles_dir / profile_id,
                     profile_id=profile_id,
                 ),
+                shell_sandbox_mode="disabled",
+                shell_allowed_commands=(),
                 max_iterations_main=resolved.max_iterations_main,
                 max_iterations_subagent=resolved.max_iterations_subagent,
                 network_allowlist=network_allowlist,

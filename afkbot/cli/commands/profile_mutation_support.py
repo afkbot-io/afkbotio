@@ -22,6 +22,7 @@ from afkbot.services.profile_runtime import provider_secret_field
 from afkbot.services.setup.profile_resolution import (
     build_profile_runtime_config,
     normalize_policy_file_access_mode_value,
+    normalize_policy_shell_sandbox_mode_value,
     normalize_policy_workspace_scope_mode_value,
     resolve_policy_allowed_directories,
     resolve_policy_allowed_directories_from_scope,
@@ -41,6 +42,7 @@ __all__ = [
     "collect_profile_mutation_inputs",
     "collect_setup_profile_inputs",
     "normalize_policy_file_access_mode_value",
+    "normalize_policy_shell_sandbox_mode_value",
     "normalize_policy_workspace_scope_mode_value",
     "render_profile_mutation_success",
     "resolve_current_runtime_config",

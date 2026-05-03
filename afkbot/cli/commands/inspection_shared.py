@@ -308,6 +308,8 @@ def _build_permission_summary(
         capability_ids=capabilities,
         default_workspace_root=_display_path(settings=settings, path=profile_root),
         shell_default_cwd=_display_path(settings=settings, path=profile_root),
+        shell_sandbox_mode=policy.shell_sandbox_mode,
+        shell_allowed_commands=policy.shell_allowed_commands,
         file_scope_mode=_infer_file_scope_mode(
             settings=settings,
             policy=policy,
@@ -530,6 +532,8 @@ def _profile_current_policy_overrides(profile: ProfileDetails) -> dict[str, obje
         "capabilities": list(profile.policy.capabilities),
         "file_access_mode": profile.policy.file_access_mode,
         "allowed_directories": list(profile.policy.allowed_directories),
+        "shell_sandbox_mode": profile.policy.shell_sandbox_mode,
+        "shell_allowed_commands": list(profile.policy.shell_allowed_commands),
         "network_allowlist": list(profile.policy.network_allowlist),
     }
 

@@ -77,9 +77,18 @@ class SetupConfig:
     policy_file_access_mode: str
     policy_workspace_scope_mode: str
     policy_allowed_directories: tuple[str, ...]
+    policy_shell_sandbox_mode: str
+    policy_shell_allowed_commands: tuple[str, ...]
     policy_network_mode: str
     policy_network_allowlist: tuple[str, ...]
     default_profile_runtime_config: ProfileRuntimeConfig
     auto_install_deps: bool
     update_notices_enabled: bool
+    wizard_setup_depth: str = "legacy"
+    wizard_work_contexts: tuple[str, ...] = ()
+    wizard_actions: tuple[str, ...] = ()
+    wizard_isolation: str = ""
+    wizard_confirmation: str = ""
+    wizard_network: str = ""
+    wizard_network_allowlist: tuple[str, ...] = ()
     runtime_secrets_update: dict[str, str] = field(default_factory=dict)

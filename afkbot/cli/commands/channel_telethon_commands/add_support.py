@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import cast
 
 from afkbot.cli.commands.channel_credentials_support import (
     configure_telethon_channel_credentials,
@@ -12,6 +13,7 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_bool,
     resolve_channel_choice,
     resolve_channel_int,
+    resolve_channel_setup_scenario,
     resolve_channel_text,
 )
 from afkbot.cli.commands.channel_shared import (
@@ -75,6 +77,7 @@ class TelethonCreateResult:
     binding_created: bool
     binding_warning: str | None
     policy_warning: str | None
+    scenario_id: str | None = None
 
 
 def create_telethon_channel(
@@ -148,6 +151,15 @@ def create_telethon_channel(
             lang=prompt_language,
             suggested_channel_id=generated_channel_id,
         )
+    channel_scenario = resolve_channel_setup_scenario(
+        transport="telethon",
+        interactive=interactive,
+        lang=prompt_language,
+    )
+    binding_session_policy_default: SessionPolicy = cast(
+        SessionPolicy,
+        channel_scenario.session_policy if channel_scenario else "per-chat",
+    )
     base_inputs = collect_channel_add_base_inputs(
         settings=settings,
         interactive=interactive,
@@ -157,16 +169,16 @@ def create_telethon_channel(
         credential_profile_key=credential_profile_key,
         account_id=account_id,
         enabled=enabled,
-        tool_profile=tool_profile,
+        tool_profile=tool_profile or (channel_scenario.tool_profile if channel_scenario else None),
         create_binding=create_binding,
         session_policy=session_policy,
-        binding_session_policy_default="per-chat",
+        binding_session_policy_default=binding_session_policy_default,
         binding_session_policy_allowed=("main", "per-chat", "per-thread", "per-user-in-group"),
         generated_channel_id=generated_channel_id,
     )
     resolved_reply_mode = normalize_telethon_reply_mode(
         resolve_channel_choice(
-            value=reply_mode,
+            value=reply_mode or (channel_scenario.reply_mode if channel_scenario else None),
             interactive=interactive,
             prompt_en="Telethon reply mode",
             prompt_ru="Режим ответов Telethon",
@@ -187,9 +199,9 @@ def create_telethon_channel(
     access_policy = collect_channel_access_policy_inputs(
         interactive=interactive,
         lang=prompt_language,
-        private_policy=private_policy,
+        private_policy=private_policy or (channel_scenario.private_policy if channel_scenario else None),
         allow_from=allow_from,
-        group_policy=group_policy,
+        group_policy=group_policy or (channel_scenario.group_policy if channel_scenario else None),
         groups=groups,
         group_allow_from=group_allow_from,
         outbound_allow_to=outbound_allow_to,
@@ -197,7 +209,8 @@ def create_telethon_channel(
     )
     resolved_group_invocation_mode = normalize_telethon_group_invocation_mode(
         resolve_channel_choice(
-            value=group_invocation_mode,
+            value=group_invocation_mode
+            or (channel_scenario.trigger_mode if channel_scenario else None),
             interactive=interactive,
             prompt_en="Telethon group invocation mode",
             prompt_ru="Режим вызова Telethon в группах",
@@ -372,12 +385,17 @@ def create_telethon_channel(
             "как обычный пользователь; выключите, если отметки прочтения нежелательны."
         ),
     )
+    watcher_enabled_default = (
+        channel_scenario.watcher_enabled
+        if channel_scenario is not None and channel_scenario.watcher_enabled is not None
+        else False
+    )
     resolved_watcher_enabled = resolve_channel_bool(
         value=watcher_enabled,
         interactive=interactive,
         prompt_en="Enable watcher digests?",
         prompt_ru="Включить дайджесты наблюдателя?",
-        default=False,
+        default=watcher_enabled_default,
         lang=prompt_language,
         detail_en=(
             "Watcher mode collects activity from selected dialogs and sends periodic digest turns to the agent "
@@ -573,6 +591,7 @@ def create_telethon_channel(
         binding_created=base_inputs.create_binding and binding_count > 0,
         binding_warning=binding_warning,
         policy_warning=policy_warning,
+        scenario_id=None if channel_scenario is None else channel_scenario.id,
     )
 
 

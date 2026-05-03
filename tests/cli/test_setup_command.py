@@ -164,11 +164,11 @@ def test_setup_cli_seeds_global_bootstrap_files(
         assert (tmp_path / "afkbot/bootstrap" / file_name).exists()
 
 
-def test_setup_cli_recommended_policy_includes_session_job_run(
+def test_setup_cli_recommended_policy_excludes_subagent_session_job_run(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Default setup policy should grant session.job.run through recommended subagent capability."""
+    """Quick-safe default setup should not grant subagent/background shell surfaces."""
 
     prepare_root(tmp_path, monkeypatch)
     monkeypatch.setattr(
@@ -183,7 +183,7 @@ def test_setup_cli_recommended_policy_includes_session_job_run(
     allowed_tools = _load_allowed_tools(
         profile_id="default",
     )
-    assert "session.job.run" in allowed_tools
+    assert "session.job.run" not in allowed_tools
 
 
 def test_policy_capability_help_lists_taskflow_and_mcp_for_setup_and_profile_commands(

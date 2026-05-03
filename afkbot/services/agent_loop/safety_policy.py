@@ -25,6 +25,7 @@ _STRICT_READ_ONLY_TOOL_NAMES = frozenset(
         "app.list",
         "automation.get",
         "automation.list",
+        "channel.history.list",
         "credentials.list",
         "debug.echo",
         "file.list",

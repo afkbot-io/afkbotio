@@ -28,7 +28,7 @@ def resolve_task_target_profile(
     if (
         explicit_profile
         and requested_profile_id != runtime_task_profile_id
-        and _runtime_profile_override_allowed()
+        and _runtime_profile_override_allowed(ctx=ctx)
     ):
         return requested_profile_id
     return runtime_task_profile_id
@@ -46,7 +46,7 @@ def ensure_task_target_scope(
     if runtime_task_profile_id is not None:
         allowed_profiles = (
             {runtime_task_profile_id, ctx.profile_id}
-            if _runtime_profile_override_allowed()
+            if _runtime_profile_override_allowed(ctx=ctx)
             else {runtime_task_profile_id}
         )
     if target_profile_id in allowed_profiles:
@@ -72,7 +72,11 @@ def _runtime_task_profile_id(*, ctx: ToolContext) -> str | None:
     return value or None
 
 
-def _runtime_profile_override_allowed() -> bool:
+def _runtime_profile_override_allowed(*, ctx: ToolContext) -> bool:
+    # Channel and detached Task Flow runtimes are already scoped by trusted metadata.
+    # Do not let a process-wide env flag widen their target profile at tool time.
+    if _runtime_taskflow_payload(ctx=ctx) is not None:
+        return False
     raw_value = str(os.getenv(_RUNTIME_PROFILE_OVERRIDE_ENV) or "").strip().lower()
     return raw_value in _TRUTHY_ENV_VALUES
 

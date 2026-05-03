@@ -48,6 +48,8 @@ class ProfilePolicyRepository:
         policy_capabilities: tuple[str, ...],
         allowed_tools: tuple[str, ...],
         allowed_directories: tuple[str, ...],
+        shell_sandbox_mode: str,
+        shell_allowed_commands: tuple[str, ...],
         max_iterations_main: int,
         max_iterations_subagent: int,
         network_allowlist: tuple[str, ...],
@@ -78,6 +80,12 @@ class ProfilePolicyRepository:
         )
         row.allowed_directories_json = json.dumps(
             normalized_allowed_directories,
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        row.shell_sandbox_mode = shell_sandbox_mode.strip().lower() or "disabled"
+        row.shell_allowed_commands_json = json.dumps(
+            sorted({item.strip() for item in shell_allowed_commands if item and item.strip()}),
             ensure_ascii=True,
             sort_keys=True,
         )

@@ -34,10 +34,17 @@ from afkbot.services.setup.profile_resolution import (
     resolve_profile_policy_inputs,
     resolve_profile_runtime_core,
 )
+from afkbot.services.wizard.profile_intent_mapper import (
+    ProfileIntentSelection,
+    map_profile_intent_to_policy,
+    profile_intent_metadata_payload,
+    quick_safe_profile_intent_selection,
+)
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.setup.policy_inputs import (
     confirmation_mode_for_preset,
     has_explicit_policy_overrides,
+    recommended_policy_network_hosts,
     resolve_policy_setup_mode,
 )
 from afkbot.services.setup.provider_inputs import (
@@ -82,9 +89,10 @@ def _infer_policy_setup_mode_from_resolved_policy(
         resolved_policy.enabled is True
         and resolved_policy.preset == PolicyPresetLevel.MEDIUM.value
         and resolved_policy.capabilities == recommended_policy_capabilities()
-        and resolved_policy.network_mode == PolicyNetworkMode.UNRESTRICTED.value
-        and resolved_policy.network_allowlist == (WILDCARD_NETWORK_HOST,)
-        and resolved_policy.file_access_mode == PolicyFileAccessMode.READ_WRITE.value
+        and resolved_policy.network_mode == PolicyNetworkMode.RECOMMENDED.value
+        and resolved_policy.network_allowlist
+        == recommended_policy_network_hosts(capabilities=resolved_policy.capabilities)
+        and resolved_policy.file_access_mode == PolicyFileAccessMode.NONE.value
         and resolved_policy.workspace_scope_mode == "profile_only"
     )
     return (
@@ -94,10 +102,31 @@ def _infer_policy_setup_mode_from_resolved_policy(
     )
 
 
+def _network_allowlist_for_policy(*, network_mode: str, capabilities: tuple[str, ...]) -> tuple[str, ...]:
+    """Resolve one network allowlist for already-mapped high-level policy."""
+
+    normalized = network_mode.strip().lower()
+    if normalized == PolicyNetworkMode.UNRESTRICTED.value:
+        return cast(tuple[str, ...], (WILDCARD_NETWORK_HOST,))
+    if normalized == PolicyNetworkMode.DENY_ALL.value:
+        return ()
+    return recommended_policy_network_hosts(capabilities=capabilities)
+
+
+def _metadata_text_tuple(metadata: dict[str, object], key: str) -> tuple[str, ...]:
+    """Return one tuple/list metadata value as normalized strings."""
+
+    raw = metadata.get(key)
+    if isinstance(raw, tuple | list):
+        return tuple(str(item) for item in raw)
+    return ()
+
+
 def build_default_profile_runtime_config(
     *,
     runtime_core: ResolvedProfileRuntimeCore,
     base_runtime: ProfileRuntimeConfig | None = None,
+    wizard_intent: ProfileIntentSelection | None = None,
 ) -> ProfileRuntimeConfig:
     """Build the persisted default-profile runtime config for one setup run.
 
@@ -130,6 +159,7 @@ def build_default_profile_runtime_config(
         session_compaction_keep_recent_turns=None,
         session_compaction_max_chars=None,
         session_compaction_prune_raw_turns=None,
+        wizard_intent=wizard_intent,
     )
 
 
@@ -186,6 +216,8 @@ def collect_setup_config(
     policy_capability: tuple[str, ...],
     policy_file_access_mode: str | None,
     policy_workspace_scope: str | None,
+    policy_shell_sandbox_mode: str | None = None,
+    policy_shell_command: tuple[str, ...] = (),
     policy_network_host: tuple[str, ...],
     auto_install_deps: bool | None,
     update_notices_enabled: bool | None = None,
@@ -268,6 +300,7 @@ def collect_setup_config(
                 )
             )
 
+    wizard_intent_resolved: ProfileIntentSelection | None = None
     if platform_seed_only:
         policy_setup_mode_resolved = PolicySetupMode.RECOMMENDED.value
         policy_preset_resolved = PolicyPresetLevel.MEDIUM.value
@@ -277,6 +310,8 @@ def collect_setup_config(
         policy_network_allowlist_resolved = cast(tuple[str, ...], (WILDCARD_NETWORK_HOST,))
         policy_file_access_mode_resolved = PolicyFileAccessMode.READ_WRITE.value
         policy_workspace_scope_mode_resolved = "profile_only"
+        policy_shell_sandbox_mode_resolved = "disabled"
+        policy_shell_allowed_commands_resolved: tuple[str, ...] = ()
     else:
         explicit_policy_overrides = has_explicit_policy_overrides(
             policy_enabled=policy_enabled,
@@ -284,6 +319,8 @@ def collect_setup_config(
             policy_capability=policy_capability,
             policy_file_access_mode=policy_file_access_mode,
             policy_workspace_scope=policy_workspace_scope,
+            policy_shell_sandbox_mode=policy_shell_sandbox_mode,
+            policy_shell_command=policy_shell_command,
             policy_network_host=policy_network_host,
         )
         if resolved_policy_inputs is not None:
@@ -297,6 +334,9 @@ def collect_setup_config(
             policy_network_allowlist_resolved = resolved_policy_inputs.network_allowlist
             policy_file_access_mode_resolved = resolved_policy_inputs.file_access_mode
             policy_workspace_scope_mode_resolved = resolved_policy_inputs.workspace_scope_mode
+            policy_shell_sandbox_mode_resolved = resolved_policy_inputs.shell_sandbox_mode
+            policy_shell_allowed_commands_resolved = resolved_policy_inputs.shell_allowed_commands
+            wizard_intent_resolved = resolved_policy_inputs.wizard_intent
         else:
             policy_setup_mode_resolved = resolve_policy_setup_mode(
                 interactive=interactive,
@@ -308,13 +348,20 @@ def collect_setup_config(
                 policy_setup_mode_resolved == PolicySetupMode.RECOMMENDED.value
                 and not explicit_policy_overrides
             ):
-                policy_preset_resolved = PolicyPresetLevel.MEDIUM.value
-                policy_enabled_resolved = True
-                policy_capabilities_resolved = recommended_policy_capabilities()
-                policy_network_mode_resolved = PolicyNetworkMode.UNRESTRICTED.value
-                policy_network_allowlist_resolved = cast(tuple[str, ...], (WILDCARD_NETWORK_HOST,))
-                policy_file_access_mode_resolved = PolicyFileAccessMode.READ_WRITE.value
-                policy_workspace_scope_mode_resolved = "profile_only"
+                wizard_intent_resolved = quick_safe_profile_intent_selection()
+                quick_policy = map_profile_intent_to_policy(wizard_intent_resolved)
+                policy_preset_resolved = quick_policy.preset
+                policy_enabled_resolved = quick_policy.enabled
+                policy_capabilities_resolved = quick_policy.capabilities
+                policy_network_mode_resolved = quick_policy.network_mode
+                policy_network_allowlist_resolved = _network_allowlist_for_policy(
+                    network_mode=quick_policy.network_mode,
+                    capabilities=quick_policy.capabilities,
+                )
+                policy_file_access_mode_resolved = quick_policy.file_access_mode
+                policy_workspace_scope_mode_resolved = quick_policy.workspace_scope_mode
+                policy_shell_sandbox_mode_resolved = quick_policy.shell_sandbox_mode
+                policy_shell_allowed_commands_resolved = quick_policy.shell_allowed_commands
             else:
                 resolved_policy = resolve_profile_policy_inputs(
                     interactive=interactive,
@@ -329,6 +376,8 @@ def collect_setup_config(
                     policy_workspace_scope_value=policy_workspace_scope,
                     policy_allowed_dir_values=(),
                     policy_network_host_values=policy_network_host,
+                    policy_shell_sandbox_mode_value=policy_shell_sandbox_mode,
+                    policy_shell_command_values=policy_shell_command,
                     allow_custom_workspace_scope=False,
                 )
                 policy_preset_resolved = resolved_policy.preset
@@ -338,6 +387,9 @@ def collect_setup_config(
                 policy_network_allowlist_resolved = resolved_policy.network_allowlist
                 policy_file_access_mode_resolved = resolved_policy.file_access_mode
                 policy_workspace_scope_mode_resolved = resolved_policy.workspace_scope_mode
+                policy_shell_sandbox_mode_resolved = resolved_policy.shell_sandbox_mode
+                policy_shell_allowed_commands_resolved = resolved_policy.shell_allowed_commands
+                wizard_intent_resolved = resolved_policy.wizard_intent
     policy_confirmation_mode_resolved = confirmation_mode_for_preset(policy_preset_resolved)
     if (
         policy_setup_mode_resolved == PolicySetupMode.RECOMMENDED.value
@@ -498,6 +550,7 @@ def collect_setup_config(
         )
         auto_install_deps_resolved = True if auto_install_deps is None else auto_install_deps
 
+    wizard_metadata_resolved = profile_intent_metadata_payload(wizard_intent_resolved)
     return SetupConfig(
         env_file=env_file,
         db_url=db_url_resolved,
@@ -532,6 +585,8 @@ def collect_setup_config(
         policy_file_access_mode=policy_file_access_mode_resolved,
         policy_workspace_scope_mode=policy_workspace_scope_mode_resolved,
         policy_allowed_directories=policy_allowed_directories_resolved,
+        policy_shell_sandbox_mode=policy_shell_sandbox_mode_resolved,
+        policy_shell_allowed_commands=policy_shell_allowed_commands_resolved,
         policy_network_mode=policy_network_mode_resolved,
         policy_network_allowlist=policy_network_allowlist_resolved,
         default_profile_runtime_config=(
@@ -539,9 +594,17 @@ def collect_setup_config(
             or build_default_profile_runtime_config(
                 runtime_core=runtime_core,
                 base_runtime=default_profile_base_runtime_config,
+                wizard_intent=wizard_intent_resolved,
             )
         ),
         auto_install_deps=auto_install_deps_resolved,
         update_notices_enabled=update_notices_enabled_resolved,
+        wizard_setup_depth=str(wizard_metadata_resolved["wizard_setup_depth"]),
+        wizard_work_contexts=_metadata_text_tuple(wizard_metadata_resolved, "wizard_work_contexts"),
+        wizard_actions=_metadata_text_tuple(wizard_metadata_resolved, "wizard_actions"),
+        wizard_isolation=str(wizard_metadata_resolved["wizard_isolation"]),
+        wizard_confirmation=str(wizard_metadata_resolved["wizard_confirmation"]),
+        wizard_network=str(wizard_metadata_resolved["wizard_network"]),
+        wizard_network_allowlist=_metadata_text_tuple(wizard_metadata_resolved, "wizard_network_allowlist"),
         runtime_secrets_update=dict(resolved_runtime_secrets_update or {}),
     )
