@@ -67,8 +67,8 @@ def test_verify_provider_token_invalid_key(monkeypatch) -> None:
     assert result.status_code == 401
 
 
-def test_verify_provider_token_invalid_moonshot_key_mentions_direct_kimi_key(monkeypatch) -> None:
-    """Moonshot verification should explain direct Kimi vs OpenRouter credentials."""
+def test_verify_provider_token_invalid_moonshot_key_reports_provider_error(monkeypatch) -> None:
+    """Moonshot verification should report the provider auth error directly."""
 
     def _fake_execute_request(*, request, proxy_url, timeout_sec):  # noqa: ANN001
         _ = request, proxy_url, timeout_sec
@@ -84,8 +84,10 @@ def test_verify_provider_token_invalid_moonshot_key_mentions_direct_kimi_key(mon
     assert result.ok is False
     assert result.error_code == "llm_token_invalid"
     assert result.reason is not None
-    assert "direct Moonshot/Kimi API key" in result.reason
-    assert "provider=openrouter" in result.reason
+    assert "provider=moonshot" in result.reason
+    assert "https://api.moonshot.ai/v1" in result.reason
+    assert "bad key" in result.reason
+    assert "openrouter" not in result.reason.lower()
 
 
 def test_verify_provider_token_invalid_moonshot_key_supports_russian_reason(monkeypatch) -> None:
@@ -107,7 +109,8 @@ def test_verify_provider_token_invalid_moonshot_key_supports_russian_reason(monk
     assert result.error_code == "llm_token_invalid"
     assert result.reason is not None
     assert "отклонил" in result.reason
-    assert "provider=openrouter" in result.reason
+    assert "Ответ провайдера: bad key" in result.reason
+    assert "openrouter" not in result.reason.lower()
 
 
 def test_verify_provider_token_invalid_moonshot_cn_key_mentions_cn_provider(monkeypatch) -> None:

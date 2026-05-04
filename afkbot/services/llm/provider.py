@@ -743,17 +743,11 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 request,
                 en=(
                     f"Moonshot (Kimi) rejected the configured API key ({status_text})."
-                    f"{detail_suffix} Check that this profile uses a direct Moonshot/Kimi API key "
-                    f"with provider={provider_value} for {expected_base_url}, and that the API key "
-                    "platform matches the base URL. OpenRouter keys only work with provider=openrouter "
-                    "and OpenRouter model ids such as moonshotai/kimi-k2.5."
+                    f"{detail_suffix} provider={provider_value}, base URL={expected_base_url}."
                 ),
                 ru=(
                     f"Moonshot (Kimi) отклонил настроенный API key ({status_text})."
-                    f"{detail_suffix} Проверьте, что в профиле указан прямой Moonshot/Kimi API key "
-                    f"с provider={provider_value} для {expected_base_url}, и что платформа ключа "
-                    "совпадает с base URL. Ключи OpenRouter работают только с provider=openrouter "
-                    "и model id OpenRouter, например moonshotai/kimi-k2.5."
+                    f"{detail_suffix} provider={provider_value}, base URL={expected_base_url}."
                 ),
             )
         return self._localized_message(
