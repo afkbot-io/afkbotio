@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import typer
 
 from afkbot.cli.command_errors import raise_usage_error
 from afkbot.services.profile_id import validate_profile_id
-from afkbot.services.profile_runtime import ProfileServiceError, get_profile_service
+from afkbot.services.profile_runtime import ProfileServiceError, run_profile_service_sync
 from afkbot.settings import get_settings
 
 
@@ -39,7 +37,10 @@ def register_delete(profile_app: typer.Typer) -> None:
             if not confirmed:
                 raise_usage_error("Profile deletion cancelled.", code=1)
         try:
-            deleted = asyncio.run(get_profile_service(settings).delete(profile_id=normalized_profile_id))
+            deleted = run_profile_service_sync(
+                settings,
+                lambda service: service.delete(profile_id=normalized_profile_id),
+            )
         except ProfileServiceError as exc:
             raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
         typer.echo(f"Profile `{deleted.id}` deleted.")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_i
 from afkbot.services.profile_runtime import (
     ProfileServiceError,
     get_profile_runtime_secrets_service,
-    get_profile_service,
+    run_profile_service_sync,
 )
 from afkbot.services.llm.token_file_sources import TOKEN_SOURCE_FILE, provider_token_source_field
 from afkbot.settings import get_settings
@@ -280,7 +279,10 @@ def register_update(profile_app: typer.Typer) -> None:
         interactive = not yes
         try:
             normalized_profile_id = validate_profile_id(profile_id)
-            details = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            details = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
             existing_runtime_secrets = get_profile_runtime_secrets_service(settings).load(normalized_profile_id)
             prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
             mutation_inputs = collect_profile_mutation_inputs(
@@ -351,9 +353,9 @@ def register_update(profile_app: typer.Typer) -> None:
                 skip_verify=skip_llm_token_verify,
                 lang=prompt_language,
             )
-            profile_service = get_profile_service(settings)
-            updated_profile = asyncio.run(
-                profile_service.update(
+            updated_profile = run_profile_service_sync(
+                settings,
+                lambda service: service.update(
                     profile_id=normalized_profile_id,
                     name=mutation_inputs.resolved_name,
                     runtime_config=mutation_inputs.runtime_config,
@@ -365,7 +367,7 @@ def register_update(profile_app: typer.Typer) -> None:
                     policy_shell_sandbox_mode=mutation_inputs.resolved_policy.shell_sandbox_mode,
                     policy_shell_allowed_commands=mutation_inputs.resolved_policy.shell_allowed_commands,
                     policy_network_allowlist=mutation_inputs.resolved_policy.network_allowlist,
-                )
+                ),
             )
             if mutation_inputs.runtime_secrets_update:
                 secrets_service = get_profile_runtime_secrets_service(settings)
@@ -380,7 +382,10 @@ def register_update(profile_app: typer.Typer) -> None:
                     normalized_profile_id,
                     mutation_inputs.runtime_secrets_update,
                 )
-                updated_profile = asyncio.run(profile_service.get(profile_id=normalized_profile_id))
+                updated_profile = run_profile_service_sync(
+                    settings,
+                    lambda service: service.get(profile_id=normalized_profile_id),
+                )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None

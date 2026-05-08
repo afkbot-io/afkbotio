@@ -45,6 +45,54 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             runtime_secrets.get("credentials_master_keys", settings.credentials_master_keys or "")
         ),
         "AFKBOT_DB_URL": str(runtime_config.get("db_url", settings.db_url)),
+        "AFKBOT_DB_POOL_SIZE": str(runtime_config.get("db_pool_size", settings.db_pool_size)),
+        "AFKBOT_DB_MAX_OVERFLOW": str(runtime_config.get("db_max_overflow", settings.db_max_overflow)),
+        "AFKBOT_DB_POOL_TIMEOUT_SEC": str(
+            runtime_config.get("db_pool_timeout_sec", settings.db_pool_timeout_sec)
+        ),
+        "AFKBOT_DB_STATEMENT_TIMEOUT_MS": str(
+            runtime_config.get("db_statement_timeout_ms", settings.db_statement_timeout_ms)
+        ),
+        "AFKBOT_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS": str(
+            runtime_config.get(
+                "db_idle_in_transaction_timeout_ms",
+                settings.db_idle_in_transaction_timeout_ms,
+            )
+        ),
+        "AFKBOT_DB_APPLICATION_NAME": str(
+            runtime_config.get("db_application_name", settings.db_application_name)
+        ),
+        "AFKBOT_DEPLOYMENT_MODE": str(
+            runtime_config.get("deployment_mode", settings.deployment_mode)
+        ),
+        "AFKBOT_RUNTIME_PUBLIC_BIND_POLICY": str(
+            runtime_config.get(
+                "runtime_public_bind_policy",
+                settings.runtime_public_bind_policy,
+            )
+        ),
+        "AFKBOT_PLUGIN_API_AUTH_REQUIRED": (
+            "1"
+            if coerce_bool(
+                runtime_config.get("plugin_api_auth_required"),
+                default=settings.plugin_api_auth_required,
+            )
+            else "0"
+        ),
+        "AFKBOT_PARTYFLOW_WEBHOOK_SIGNING_REQUIRED": (
+            "1"
+            if coerce_bool(
+                runtime_config.get("partyflow_webhook_signing_required"),
+                default=settings.partyflow_webhook_signing_required,
+            )
+            else "0"
+        ),
+        "AFKBOT_MANAGED_DATABASE_ISOLATION_MODE": str(
+            runtime_config.get(
+                "managed_database_isolation_mode",
+                settings.managed_database_isolation_mode,
+            )
+        ),
         "AFKBOT_RUNTIME_HOST": str(runtime_config.get("runtime_host", settings.runtime_host)),
         "AFKBOT_RUNTIME_PORT": str(runtime_config.get("runtime_port", settings.runtime_port)),
         "AFKBOT_NGINX_ENABLED": (

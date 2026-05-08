@@ -311,7 +311,7 @@ class BashExecTool(ToolBase):
                 raw_path=payload.cwd,
                 must_exist=True,
             )
-            if not cwd.is_dir():
+            if not await asyncio.to_thread(cwd.is_dir):
                 raise ValueError(f"cwd is not a directory: {payload.cwd}")
 
             resolved_values: set[str] = set()

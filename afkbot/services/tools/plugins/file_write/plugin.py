@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 from pydantic import Field
 
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
@@ -54,26 +57,28 @@ class FileWriteTool(ToolBase):
                 raw_path=payload.path,
                 must_exist=False,
             )
-            if path.exists() and not path.is_file():
+            path_exists = await asyncio.to_thread(path.exists)
+            if path_exists and not await asyncio.to_thread(path.is_file):
                 raise ValueError(f"Path is not a file: {payload.path}")
             parent = path.parent
             if payload.create_dirs:
-                parent.mkdir(parents=True, exist_ok=True)
-            elif not parent.exists():
+                await asyncio.to_thread(parent.mkdir, parents=True, exist_ok=True)
+            elif not await asyncio.to_thread(parent.exists):
                 raise ValueError(f"Parent directory does not exist: {parent}")
 
             preview_limit = min(self._settings.runtime_max_body_bytes, 32_768)
-            if path.exists():
-                previous_text, before_truncated, before_size_bytes = snapshot_path_text(
+            if await asyncio.to_thread(path.exists):
+                previous_text, before_truncated, before_size_bytes = await asyncio.to_thread(
+                    snapshot_path_text,
                     path=path,
                     max_bytes=preview_limit,
                 )
             else:
                 previous_text, before_truncated, before_size_bytes = "", False, 0
             write_mode = "a" if payload.mode == "append" else "w"
-            with path.open(write_mode, encoding="utf-8") as handle:
-                handle.write(payload.content)
-            after_text, after_truncated, after_size_bytes = snapshot_path_text(
+            await asyncio.to_thread(_write_text, path=path, mode=write_mode, content=payload.content)
+            after_text, after_truncated, after_size_bytes = await asyncio.to_thread(
+                snapshot_path_text,
                 path=path,
                 max_bytes=preview_limit,
             )
@@ -112,3 +117,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create file.write tool instance."""
 
     return FileWriteTool(settings=settings)
+
+
+def _write_text(*, path: Path, mode: str, content: str) -> None:
+    """Write text in a worker thread for the async file.write tool."""
+
+    with path.open(mode, encoding="utf-8") as handle:
+        handle.write(content)

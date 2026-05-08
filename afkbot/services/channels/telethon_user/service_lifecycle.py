@@ -249,9 +249,9 @@ async def probe_identity(
 async def reset_state(service: TelethonUserService) -> bool:
     """Delete the persisted Telethon runtime state file when present."""
 
-    if not service._state_path.exists():
+    if not await asyncio.to_thread(service._state_path.exists):
         return False
-    service._state_path.unlink()
+    await asyncio.to_thread(service._state_path.unlink)
     return True
 
 

@@ -379,6 +379,11 @@ def _build_platform_runtime_config_payload(*, config: SetupConfig) -> dict[str, 
         resolved_install_target = resolve_install_source_target(install_source)
     payload = {
         "db_url": config.db_url,
+        "deployment_mode": "self_hosted",
+        "runtime_public_bind_policy": "local_only",
+        "plugin_api_auth_required": True,
+        "partyflow_webhook_signing_required": False,
+        "managed_database_isolation_mode": "database_per_bot",
         "runtime_host": config.runtime_host,
         "runtime_port": config.runtime_port,
         "nginx_enabled": config.nginx_enabled,

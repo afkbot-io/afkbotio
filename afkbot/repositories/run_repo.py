@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from sqlalchemy import Select, select, update
-from sqlalchemy.exc import InvalidRequestError, PendingRollbackError
+from sqlalchemy.exc import InvalidRequestError, OperationalError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from afkbot.db.sqlite_resilience import is_sqlite_lock_error, run_with_sqlite_lock_retry
 from afkbot.models.chat_turn import ChatTurn
 from afkbot.models.run import Run
 
@@ -46,23 +47,30 @@ class RunRepository:
     async def update_status(self, run_id: int, status: str) -> None:
         """Update run status by primary key."""
 
-        try:
-            run = await self._session.get(Run, run_id)
-        except (InvalidRequestError, PendingRollbackError):
-            await self._session.rollback()
-            run = await self._session.get(Run, run_id)
-        if run is None:
-            return
-        run.status = status
-        try:
-            await self._session.flush()
-        except (InvalidRequestError, PendingRollbackError):
-            await self._session.rollback()
-            run = await self._session.get(Run, run_id)
+        async def _update_once() -> None:
+            try:
+                run = await self._session.get(Run, run_id)
+            except (InvalidRequestError, PendingRollbackError):
+                await self._session.rollback()
+                run = await self._session.get(Run, run_id)
             if run is None:
                 return
             run.status = status
-            await self._session.flush()
+            try:
+                await self._session.flush()
+            except (InvalidRequestError, PendingRollbackError):
+                await self._session.rollback()
+                run = await self._session.get(Run, run_id)
+                if run is None:
+                    return
+                run.status = status
+                await self._session.flush()
+            except OperationalError as exc:
+                if is_sqlite_lock_error(exc):
+                    await self._session.rollback()
+                raise
+
+        await run_with_sqlite_lock_retry(_update_once, attempts=5)
 
     async def is_cancel_requested(self, run_id: int) -> bool:
         """Return true when run cancellation has been requested in storage."""

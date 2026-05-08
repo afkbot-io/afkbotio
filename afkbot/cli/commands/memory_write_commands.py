@@ -20,7 +20,7 @@ from afkbot.services.memory import (
     MemoryServiceError,
     MemorySourceKind,
     MemoryVisibility,
-    get_memory_service,
+    run_memory_service_sync,
 )
 from afkbot.services.memory.runtime_scope import MemoryScopeResolutionError
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
@@ -116,8 +116,9 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
             details_md = resolve_optional_text_or_file(text=details_text, from_file=details_file)
             if content is None and summary is None and details_md is None:
                 raise_usage_error("Provide semantic content via --text/--from-file or summary/details.")
-            item = asyncio.run(
-                get_memory_service(settings).upsert(
+            item = run_memory_service_sync(
+                settings,
+                lambda service: service.upsert(
                     profile_id=normalized_profile_id,
                     scope=resolved_scope,
                     memory_key=memory_key,
@@ -128,7 +129,7 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
                     source_kind=source_kind,
                     memory_kind=memory_kind,
                     visibility=visibility,
-                )
+                ),
             )
         except (
             InvalidProfileIdError,
@@ -185,12 +186,13 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
                     session_id=session_id,
                 )
             )
-            deleted = asyncio.run(
-                get_memory_service(settings).delete(
+            deleted = run_memory_service_sync(
+                settings,
+                lambda service: service.delete(
                     profile_id=normalized_profile_id,
                     memory_key=memory_key,
                     scope=resolved_scope,
-                )
+                ),
             )
         except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
@@ -247,13 +249,14 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
                     session_id=session_id,
                 )
             )
-            item = asyncio.run(
-                get_memory_service(settings).promote(
+            item = run_memory_service_sync(
+                settings,
+                lambda service: service.promote(
                     profile_id=normalized_profile_id,
                     memory_key=memory_key,
                     from_scope=resolved_scope,
                     target_memory_key=target_memory_key,
-                )
+                ),
             )
         except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
@@ -282,8 +285,9 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id) if profile_id is not None else None
-            deleted = asyncio.run(
-                get_memory_service(settings).garbage_collect(profile_id=normalized_profile_id)
+            deleted = run_memory_service_sync(
+                settings,
+                lambda service: service.garbage_collect(profile_id=normalized_profile_id),
             )
         except (InvalidProfileIdError, MemoryServiceError, ValueError) as exc:
             emit_structured_error(exc, default_error_code="memory_error")

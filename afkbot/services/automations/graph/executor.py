@@ -349,10 +349,10 @@ class CodePythonNodeAdapter:
             return NodeAdapterResult.failure(
                 error_code="graph_node_resource_limit",
                 reason=f"Code node request exceeded {io_limit} bytes",
-            )
+        )
         with tempfile.TemporaryDirectory(prefix="afkbot-graph-node-") as temp_dir:
             source_path = Path(temp_dir) / "node_impl.py"
-            source_path.write_text(version.source_code or "", encoding="utf-8")
+            await asyncio.to_thread(source_path.write_text, version.source_code or "", encoding="utf-8")
             try:
                 launch = build_code_node_launch(
                     base_argv=(sys.executable, "-I", "-B", str(worker_path), str(source_path)),

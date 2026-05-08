@@ -40,6 +40,22 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
         if not surface.protected:
             return await call_next(request)
 
+        if not surface.auth_configured:
+            if surface.api_request:
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={
+                        "ok": False,
+                        "error_code": "ui_auth_not_configured",
+                        "reason": "Operator authentication is required but is not configured.",
+                    },
+                )
+            return Response(
+                content="Operator authentication is required but is not configured.",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                media_type="text/plain",
+            )
+
         session = read_ui_auth_session(request, self._settings)
         if session is None:
             if surface.api_request:

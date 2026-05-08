@@ -8,21 +8,193 @@ import sqlite3
 import warnings
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.dialects import postgresql, sqlite
 
+import afkbot.db.engine as db_engine_module
 from afkbot.db.bootstrap import create_schema, list_applied_migrations, ping
-from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema, prune_runtime_history
+from afkbot.db.bootstrap_runtime import (
+    ManagedRuntimeSchemaError,
+    _requires_managed_runtime_schema_validation,
+    ensure_task_runtime_schema,
+    prune_runtime_history,
+)
 from afkbot.db.engine import create_engine
+from afkbot.db.postgres_contract import (
+    PostgresBootstrapContractError,
+    build_database_per_bot_contract,
+    render_database_per_bot_bootstrap_plan,
+    validate_managed_postgres_settings,
+)
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.db.upsert import upsert_insert_for_dialect
+from afkbot.models.chat_session_compaction import ChatSessionCompaction
 from afkbot.models.runlog_event import RunlogEvent
+from afkbot.models.task import Task
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_run import TaskRun
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
+from afkbot.repositories.task_flow_repo import _apply_task_claim_locking_for_dialect
 from afkbot.settings import Settings
 from afkbot.services.task_flow import TaskFlowServiceError
 from afkbot.services.task_flow.service import TaskFlowService
+
+
+def test_postgres_database_per_bot_contract_renders_safe_role_plan() -> None:
+    """Cloud bootstrap contract should keep admin SQL outside runtime settings."""
+
+    contract = build_database_per_bot_contract(bot_id="Bot-42")
+    plan = render_database_per_bot_bootstrap_plan(contract)
+
+    assert contract.database_name == "afkbot_bot_42"
+    assert contract.migrator_role_name == "afkbot_bot_42_migrator"
+    assert contract.runtime_role_name == "afkbot_bot_42_runtime"
+    assert "PASSWORD :migrator_role_password" in plan.cluster_statements[0]
+    assert "PASSWORD :runtime_role_password" in plan.cluster_statements[1]
+    assert "NOSUPERUSER NOCREATEDB NOCREATEROLE" in plan.cluster_statements[1]
+    assert 'CREATE DATABASE "afkbot_bot_42" OWNER "afkbot_bot_42_migrator"' in plan.cluster_statements[2]
+    assert 'GRANT CONNECT ON DATABASE "afkbot_bot_42" TO "afkbot_bot_42_runtime"' in plan.cluster_statements[3]
+    assert plan.migration_statements[0] == "SELECT pg_advisory_lock(hashtext(current_database()))"
+    assert "CREATE TABLE IF NOT EXISTS afkbot_schema_migration" in plan.migration_statements[1]
+    assert "version INTEGER PRIMARY KEY" in plan.migration_statements[1]
+    assert plan.database_statements[0] == "REVOKE ALL ON SCHEMA public FROM PUBLIC"
+    assert 'GRANT USAGE ON SCHEMA "public" TO "afkbot_bot_42_runtime"' in plan.database_statements
+    assert "GRANT USAGE, CREATE" not in "\n".join(plan.database_statements)
+
+
+def test_postgres_database_per_bot_contract_rejects_unsafe_identifiers() -> None:
+    """Identifier validation should reject SQL injection-shaped names."""
+
+    with pytest.raises(PostgresBootstrapContractError) as exc:
+        build_database_per_bot_contract(
+            bot_id="bot-1",
+            database_name='afkbot";DROP DATABASE postgres;--',
+        )
+
+    assert exc.value.error_code == "postgres_identifier_invalid"
+
+
+def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_path: Path) -> None:
+    """Managed mode must not accept local SQLite or schema-per-bot for first Cloud launch."""
+
+    sqlite_settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
+    )
+    with pytest.raises(PostgresBootstrapContractError) as sqlite_exc:
+        validate_managed_postgres_settings(sqlite_settings)
+    assert sqlite_exc.value.error_code == "managed_database_postgres_required"
+
+    wrong_driver_settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        db_url="postgresql+psycopg://bot_role:secret@db.example.com/afkbot_bot_1",
+    )
+    with pytest.raises(PostgresBootstrapContractError) as wrong_driver_exc:
+        validate_managed_postgres_settings(wrong_driver_settings)
+    assert wrong_driver_exc.value.error_code == "managed_database_postgres_required"
+
+    schema_settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        managed_database_isolation_mode="schema_per_bot",
+        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+    )
+    with pytest.raises(PostgresBootstrapContractError) as schema_exc:
+        validate_managed_postgres_settings(schema_settings)
+    assert schema_exc.value.error_code == "managed_database_per_bot_required"
+
+    validate_managed_postgres_settings(
+        Settings(
+            root_dir=tmp_path,
+            deployment_mode="managed",
+            db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        )
+    )
+
+
+def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: Path) -> None:
+    """Managed runtimes must validate a prepared Postgres schema instead of running DDL."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+    )
+
+    assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="postgresql") is True
+    with pytest.raises(ManagedRuntimeSchemaError) as exc:
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite")
+    assert exc.value.error_code == "managed_database_postgres_required"
+    assert (
+        _requires_managed_runtime_schema_validation(
+            settings=Settings(root_dir=tmp_path),
+            dialect_name="sqlite",
+        )
+        is False
+    )
+
+
+def test_dialect_aware_upsert_insert_compiles_for_sqlite_and_postgres() -> None:
+    """Hot-path upserts should not be tied to the SQLite insert implementation."""
+
+    payload = {
+        "profile_id": "default",
+        "session_id": "session-1",
+        "summary_text": "summary",
+        "compacted_until_turn_id": 1,
+        "source_turn_count": 3,
+        "strategy": "rolling",
+    }
+    sqlite_statement = upsert_insert_for_dialect(
+        dialect_name="sqlite",
+        model=ChatSessionCompaction,
+    ).values(**payload)
+    sqlite_statement = sqlite_statement.on_conflict_do_update(
+        index_elements=[
+            ChatSessionCompaction.session_id,
+            ChatSessionCompaction.profile_id,
+        ],
+        set_={"summary_text": payload["summary_text"]},
+    )
+    postgres_statement = upsert_insert_for_dialect(
+        dialect_name="postgresql",
+        model=ChatSessionCompaction,
+    ).values(**payload)
+    postgres_statement = postgres_statement.on_conflict_do_update(
+        index_elements=[
+            ChatSessionCompaction.session_id,
+            ChatSessionCompaction.profile_id,
+        ],
+        set_={"summary_text": payload["summary_text"]},
+    )
+
+    assert "ON CONFLICT" in str(sqlite_statement.compile(dialect=sqlite.dialect()))
+    assert "ON CONFLICT" in str(postgres_statement.compile(dialect=postgresql.dialect()))
+
+
+def test_task_claim_uses_skip_locked_only_for_postgres() -> None:
+    """Cloud Task Flow workers should avoid waiting on the same candidate row."""
+
+    base_statement = select(Task.id).limit(1)
+
+    postgres_statement = _apply_task_claim_locking_for_dialect(
+        base_statement,
+        dialect_name="postgresql",
+    )
+    sqlite_statement = _apply_task_claim_locking_for_dialect(
+        base_statement,
+        dialect_name="sqlite",
+    )
+
+    postgres_sql = str(postgres_statement.compile(dialect=postgresql.dialect()))
+    sqlite_sql = str(sqlite_statement.compile(dialect=sqlite.dialect()))
+    assert "FOR UPDATE" in postgres_sql
+    assert "SKIP LOCKED" in postgres_sql
+    assert "FOR UPDATE" not in sqlite_sql
 
 
 async def test_create_schema_and_ping(tmp_path: Path) -> None:
@@ -71,6 +243,53 @@ async def test_create_engine_registers_explicit_sqlite_datetime_adapters(tmp_pat
         assert not [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
     finally:
         await engine.dispose()
+
+
+def test_create_engine_configures_postgres_pool_and_timeouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Managed Postgres connections should have bounded pool and server-side timeouts."""
+
+    captured: dict[str, object] = {}
+
+    class _DummySyncEngine:
+        pass
+
+    class _DummyEngine:
+        sync_engine = _DummySyncEngine()
+
+    def _fake_create_async_engine(db_url: str, **kwargs: object) -> _DummyEngine:
+        captured["db_url"] = db_url
+        captured.update(kwargs)
+        return _DummyEngine()
+
+    monkeypatch.setattr(db_engine_module, "create_async_engine", _fake_create_async_engine)
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_pool_size=8,
+        db_max_overflow=2,
+        db_pool_timeout_sec=7,
+        db_statement_timeout_ms=12_000,
+        db_idle_in_transaction_timeout_ms=9_000,
+        db_application_name="afkbot-test",
+    )
+
+    db_engine_module.create_engine(settings)
+
+    connect_args = captured["connect_args"]
+    assert captured["pool_pre_ping"] is True
+    assert captured["pool_size"] == 8
+    assert captured["max_overflow"] == 2
+    assert captured["pool_timeout"] == 7
+    assert isinstance(connect_args, dict)
+    server_settings = connect_args["server_settings"]
+    assert isinstance(server_settings, dict)
+    assert server_settings["application_name"] == "afkbot-test"
+    assert server_settings["statement_timeout"] == "12000"
+    assert server_settings["idle_in_transaction_session_timeout"] == "9000"
 
 
 async def test_create_schema_is_idempotent_without_migration_side_state(tmp_path: Path) -> None:

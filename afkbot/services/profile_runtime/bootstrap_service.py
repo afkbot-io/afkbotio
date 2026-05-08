@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from afkbot.db.bootstrap import create_schema
@@ -32,10 +33,12 @@ class ProfileBootstrapService:
 
         normalized_profile_id = validate_profile_id(profile_id)
         await self._ensure_profile_exists(profile_id=normalized_profile_id)
-        return [
-            self._build_record(profile_id=normalized_profile_id, file_name=file_name)
-            for file_name in self._settings.bootstrap_files
-        ]
+        return await asyncio.gather(
+            *(
+                self._build_record(profile_id=normalized_profile_id, file_name=file_name)
+                for file_name in self._settings.bootstrap_files
+            )
+        )
 
     async def get(
         self,
@@ -50,11 +53,12 @@ class ProfileBootstrapService:
         await self._ensure_profile_exists(profile_id=normalized_profile_id)
         resolved_name = self._resolve_name(file_name or name or "")
         path = self._path(profile_id=normalized_profile_id, file_name=resolved_name)
+        exists = await asyncio.to_thread(path.exists)
         return ProfileBootstrapRecord(
             file_name=resolved_name,
             path=self._to_relative(path),
-            content=path.read_text(encoding="utf-8") if path.exists() else None,
-            exists=path.exists(),
+            content=await asyncio.to_thread(path.read_text, encoding="utf-8") if exists else None,
+            exists=exists,
         )
 
     async def upsert(self, *, profile_id: str, name: str, content: str) -> ProfileBootstrapRecord:
@@ -76,8 +80,8 @@ class ProfileBootstrapService:
             )
         path = self._path(profile_id=normalized_profile_id, file_name=resolved_name)
         async with self._profile_files_lock.acquire(normalized_profile_id):
-            self._runtime_configs.ensure_layout(normalized_profile_id)
-            atomic_text_write(path, normalized_content + "\n", mode=0o600)
+            await asyncio.to_thread(self._runtime_configs.ensure_layout, normalized_profile_id)
+            await asyncio.to_thread(atomic_text_write, path, normalized_content + "\n", mode=0o600)
         return await self.get(profile_id=normalized_profile_id, file_name=resolved_name)
 
     async def delete(self, *, profile_id: str, name: str) -> ProfileBootstrapRecord:
@@ -93,9 +97,10 @@ class ProfileBootstrapService:
         resolved_name = self._resolve_name(file_name)
         path = self._path(profile_id=normalized_profile_id, file_name=resolved_name)
         async with self._profile_files_lock.acquire(normalized_profile_id):
-            if path.exists():
-                path.unlink()
-                self._prune_empty_dirs(
+            if await asyncio.to_thread(path.exists):
+                await asyncio.to_thread(path.unlink)
+                await asyncio.to_thread(
+                    self._prune_empty_dirs,
                     start=path.parent,
                     stop_at=self._runtime_configs.bootstrap_dir(normalized_profile_id).parent,
                 )
@@ -116,12 +121,12 @@ class ProfileBootstrapService:
         finally:
             await engine.dispose()
 
-    def _build_record(self, *, profile_id: str, file_name: str) -> ProfileBootstrapFileView:
+    async def _build_record(self, *, profile_id: str, file_name: str) -> ProfileBootstrapFileView:
         path = self._path(profile_id=profile_id, file_name=file_name)
         return ProfileBootstrapFileView(
             file_name=file_name,
             path=self._to_relative(path),
-            exists=path.exists(),
+            exists=await asyncio.to_thread(path.exists),
         )
 
     def _path(self, *, profile_id: str, file_name: str) -> Path:

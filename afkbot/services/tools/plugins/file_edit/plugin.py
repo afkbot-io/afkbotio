@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic import Field
 
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
@@ -54,10 +56,10 @@ class FileEditTool(ToolBase):
                 raw_path=payload.path,
                 must_exist=True,
             )
-            if not path.is_file():
+            if not await asyncio.to_thread(path.is_file):
                 raise ValueError(f"Path is not a file: {payload.path}")
 
-            content = path.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(path.read_text, encoding="utf-8")
             if payload.search not in content:
                 return ToolResult.error(
                     error_code="file_edit_pattern_not_found",
@@ -72,7 +74,7 @@ class FileEditTool(ToolBase):
                 updated = content.replace(payload.search, payload.replace, 1)
                 replacements = 1
 
-            path.write_text(updated, encoding="utf-8")
+            await asyncio.to_thread(path.write_text, updated, encoding="utf-8")
             preview_limit = min(self._settings.runtime_max_body_bytes, 32_768)
             before_text, before_truncated, before_size_bytes = snapshot_inline_text(
                 text=content,

@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.7.4] - 2026-05-08
+
+### Added
+
+- Added runtime exposure guardrails for public binds and public runtime/chat API
+  URLs. Exposed starts now require explicit auth-required posture, configured UI
+  auth, and plugin API auth.
+- Added managed PostgreSQL foundation for future Cloud Server launches:
+  `database_per_bot` validation, `postgresql+asyncpg` dependency, bounded
+  Postgres pool/timeouts, a bootstrap SQL contract with separate migrator/runtime
+  roles, and a migration ledger contract.
+
+### Changed
+
+- Core plugin API routes now require operator auth when UI auth is configured,
+  and operator-required plugin surfaces fail closed when auth is missing.
+- Managed PostgreSQL runtime bootstrap validates pre-migrated schema and critical
+  indexes instead of running DDL from the runtime role. Local SQLite bootstrap and
+  legacy idempotent upgrades remain unchanged.
+- Task Flow claim selection uses PostgreSQL `FOR UPDATE SKIP LOCKED` when running
+  on Postgres while preserving the existing SQLite optimistic-claim behavior.
+- Async CLI/service lifecycle paths now dispose fresh database engines for sync
+  command invocations instead of leaking async resources across event loops.
+- File, browser, channel, profile, skill, subagent, and automation runtime paths
+  now offload filesystem work from async hot paths to worker threads.
+
+### Security
+
+- PartyFlow webhook signing can now be made mandatory with
+  `AFKBOT_PARTYFLOW_WEBHOOK_SIGNING_REQUIRED=1`; the default remains compatible
+  with existing local/self-hosted installs that intentionally left the secret
+  blank.
+
 ## [1.7.3] - 2026-05-04
 
 ### Changed

@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from sqlalchemy import Delete, Select, and_, case, delete, false, func, literal, not_, or_, select, true, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
+from afkbot.db.dialect import session_dialect_name
+from afkbot.db.upsert import upsert_insert_for_session
 from afkbot.models.task import Task
 from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
@@ -665,7 +666,7 @@ class TaskFlowRepository:
     ) -> TaskNotificationCursor:
         """Create or update one notification cursor row."""
 
-        statement = sqlite_insert(TaskNotificationCursor).values(
+        statement = upsert_insert_for_session(self._session, TaskNotificationCursor).values(
             profile_id=profile_id,
             actor_type=actor_type,
             actor_ref=actor_ref,
@@ -975,6 +976,10 @@ class TaskFlowRepository:
                 runnable_candidates.c.id.asc(),
             )
             .limit(1)
+        )
+        eligible_statement = _apply_task_claim_locking_for_dialect(
+            eligible_statement,
+            dialect_name=session_dialect_name(self._session),
         )
         for _attempt in range(3):
             candidate_row = (await self._session.execute(eligible_statement)).first()
@@ -1400,6 +1405,16 @@ class TaskFlowRepository:
 def _result_succeeded(result: object) -> bool:
     rowcount = int(getattr(result, "rowcount", 0) or 0)
     return rowcount > 0
+
+
+def _apply_task_claim_locking_for_dialect(
+    statement: Select[Any],
+    *,
+    dialect_name: str,
+) -> Select[Any]:
+    if dialect_name == "postgresql":
+        return statement.with_for_update(skip_locked=True, of=Task)
+    return statement
 
 
 def _task_claim_base_ordering(task_ref: Any) -> tuple[ColumnElement[object], ...]:

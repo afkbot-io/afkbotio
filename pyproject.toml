@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "afkbotio"
-version = "1.7.3"
+version = "1.7.4"
 description = "Source-available local AI runtime and CLI for AFKBOT"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,6 +22,7 @@ dependencies = [
   "sqlalchemy>=2.0",
   "greenlet>=3.0",
   "aiosqlite>=0.20",
+  "asyncpg>=0.29",
   "cryptography>=42.0",
   "pydantic-settings>=2.2",
   "qrcode>=8.2",

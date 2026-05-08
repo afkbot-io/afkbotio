@@ -258,14 +258,15 @@ async def logout_telethon_endpoint(
         credential_name=TELETHON_CREDENTIAL_SESSION_STRING,
     )
     state_path = telethon_user_state_path_for(settings, endpoint_id=endpoint.endpoint_id)
-    if state_path.exists():
-        state_path.unlink()
+    if await asyncio.to_thread(state_path.exists):
+        await asyncio.to_thread(state_path.unlink)
+    state_present = await asyncio.to_thread(state_path.exists)
     return {
         "logged_out": logged_out,
         "network_logout_skipped": network_logout_skipped,
         "session_removed": removed_session,
         "state_path": str(state_path),
-        "state_present": state_path.exists(),
+        "state_present": state_present,
     }
 
 

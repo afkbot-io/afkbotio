@@ -8,18 +8,16 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
-from afkbot.services.channel_routing.service import reset_channel_binding_services_async
 from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.services.channels.endpoint_service import (
     get_channel_endpoint_service,
-    reset_channel_endpoint_services_async,
+    run_channel_endpoint_service_sync,
 )
 from afkbot.services.health import (
     DoctorChannelsReport,
     TelethonUserEndpointReport,
 )
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
-from afkbot.services.profile_runtime.service import reset_profile_services_async
 from afkbot.services.setup.runtime_store import write_runtime_config
 from afkbot.settings import get_settings
 from tests.cli.channels._harness import _new_profile_service, _prepare_env
@@ -318,9 +316,6 @@ def test_channel_telethon_add_warns_when_no_binding_keeps_existing_binding(
     )
 
     assert updated.exit_code == 0
-    asyncio.run(reset_channel_endpoint_services_async())
-    asyncio.run(reset_channel_binding_services_async())
-    asyncio.run(reset_profile_services_async())
 
 def test_channel_telethon_add_interactive_uses_profile_defaults(
     tmp_path: Path,
@@ -439,7 +434,10 @@ def test_channel_telethon_add_interactive_accepts_generated_channel_id(
     assert result.exit_code == 0
     assert "Telethon user-account channel setup" in result.stdout
     assert "Press Enter there to accept `telethon-" in result.stdout
-    channels = asyncio.run(get_channel_endpoint_service(settings).list(transport="telegram_user"))
+    channels = run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram_user"),
+    )
     assert len(channels) == 1
     saved = channels[0]
     assert saved.endpoint_id.startswith("telethon-")

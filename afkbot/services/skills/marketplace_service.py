@@ -192,14 +192,15 @@ class SkillMarketplaceService:
             ) from exc
 
         async with self._profile_files_lock.acquire(profile_id):
-            if path.exists() and not overwrite:
+            if await asyncio.to_thread(path.exists) and not overwrite:
                 raise SkillMarketplaceError(
                     error_code="skill_marketplace_already_exists",
                     reason=f"Skill already exists: {install_name}",
                 )
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(markdown, encoding="utf-8")
-            materialized = self._loader.materialize_manifest(
+            await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(path.write_text, markdown, encoding="utf-8")
+            materialized = await asyncio.to_thread(
+                self._loader.materialize_manifest,
                 skill_path=path,
                 name=install_name,
                 content=markdown,
@@ -207,7 +208,12 @@ class SkillMarketplaceService:
                 source_id=resolved_source,
                 source_url=resolved_source,
             )
-            skill_info = self._loader._build_skill_info(name=install_name, path=path, origin="profile")  # noqa: SLF001
+            skill_info = await asyncio.to_thread(
+                self._loader._build_skill_info,  # noqa: SLF001
+                name=install_name,
+                path=path,
+                origin="profile",
+            )
 
         return SkillMarketplaceInstallRecord(
             name=install_name,

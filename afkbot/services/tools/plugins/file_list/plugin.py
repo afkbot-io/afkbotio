@@ -59,7 +59,7 @@ class FileListTool(ToolBase):
                 raw_path=payload.path,
                 must_exist=True,
             )
-            if not base.is_dir():
+            if not await asyncio.to_thread(base.is_dir):
                 raise ValueError(f"Path is not a directory: {payload.path}")
 
             entries = await asyncio.to_thread(

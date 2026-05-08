@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AFKBOT_", extra="ignore")
 
     db_url: str = "sqlite+aiosqlite:///./afkbot.db"
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    db_pool_timeout_sec: int = 30
+    db_statement_timeout_ms: int = 30_000
+    db_idle_in_transaction_timeout_ms: int = 30_000
+    db_application_name: str = "afkbot"
     root_dir: Path = Field(default_factory=_default_runtime_root)
     app_dir: Path = Field(default_factory=_default_app_root)
     tool_workspace_root: Path | None = None
@@ -222,6 +228,11 @@ class Settings(BaseSettings):
     brave_api_key: str | None = None
     custom_base_url: str = ""
     custom_interface: Literal["openai"] = "openai"
+    deployment_mode: Literal["self_hosted", "managed"] = "self_hosted"
+    runtime_public_bind_policy: Literal["local_only", "auth_required"] = "local_only"
+    plugin_api_auth_required: bool = True
+    partyflow_webhook_signing_required: bool = False
+    managed_database_isolation_mode: Literal["database_per_bot", "schema_per_bot"] = "database_per_bot"
     llm_proxy_type: Literal["none", "http", "socks5", "socks5h"] = "none"
     llm_proxy_url: str | None = None
     llm_debug_diagnostics_enabled: bool = False

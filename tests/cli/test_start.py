@@ -104,6 +104,79 @@ def test_start_invokes_full_stack(monkeypatch) -> None:  # type: ignore[no-untyp
     get_settings.cache_clear()
 
 
+def test_start_rejects_public_bind_without_explicit_auth_policy(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Public or wildcard binds should fail closed unless auth-required mode is configured."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["start", "--host", "0.0.0.0", "--runtime-port", "18080", "--api-port", "18081"],
+    )
+
+    assert result.exit_code != 0
+    assert "runtime_public_exposure_blocked" in result.stderr
+    get_settings.cache_clear()
+
+
+def test_start_allows_public_bind_only_with_auth_required_policy(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Explicit public mode requires configured UI/plugin auth before startup proceeds."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_RUNTIME_PUBLIC_BIND_POLICY", "auth_required")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_MODE", "password")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_USERNAME", "operator")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_PASSWORD_HASH", "sha256:test")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_COOKIE_KEY", "cookie-key")
+    get_settings.cache_clear()
+    calls: list[tuple[str, int, int]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        persist_runtime_bind: bool,
+        settings,
+    ) -> None:
+        del start_channels, channel_ids, strict_channels, persist_runtime_bind, settings
+        calls.append((host, runtime_port, api_port))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["start", "--host", "0.0.0.0", "--runtime-port", "18080", "--api-port", "18081"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("0.0.0.0", 18080, 18081)]
+    get_settings.cache_clear()
+
+
+def test_start_rejects_managed_runtime_without_postgres_database_per_bot(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Managed runtime must not silently use the local SQLite default."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_DEPLOYMENT_MODE", "managed")
+    monkeypatch.setenv("AFKBOT_DB_URL", "sqlite+aiosqlite:///managed-local.db")
+    get_settings.cache_clear()
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "--runtime-port", "18080", "--api-port", "18081"])
+
+    assert result.exit_code != 0
+    assert "managed_database_postgres_required" in result.stderr
+    get_settings.cache_clear()
+
+
 def test_start_supports_structured_taskflow_owner_selector(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Start should normalize structured Task Flow owner selectors into owner_ref sharding."""
 

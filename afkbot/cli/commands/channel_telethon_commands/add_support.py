@@ -35,7 +35,7 @@ from afkbot.cli.commands.channel_telethon_commands.common import (
     split_csv_patterns,
 )
 from afkbot.cli.commands.channel_telethon_commands.legacy import (
-    get_legacy_channel_endpoint_service,
+    run_legacy_channel_endpoint_service_sync,
 )
 from afkbot.cli.commands.channel_telethon_commands.watcher import build_watcher_config
 from afkbot.cli.presentation.setup_prompts import resolve_prompt_language
@@ -543,7 +543,10 @@ def create_telethon_channel(
             lang=prompt_language,
         )
     saved = TelethonUserEndpointConfig.model_validate(
-        asyncio.run(get_legacy_channel_endpoint_service(settings).create(endpoint)).model_dump()
+        run_legacy_channel_endpoint_service_sync(
+            settings,
+            lambda service: service.create(endpoint),
+        ).model_dump()
     )
     if base_inputs.create_binding:
         binding_count = put_access_policy_bindings(

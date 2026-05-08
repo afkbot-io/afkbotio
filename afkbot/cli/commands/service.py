@@ -14,6 +14,10 @@ from afkbot.services.managed_runtime_service import (
     stop_managed_runtime_service,
 )
 from afkbot.services.runtime_ports import is_runtime_port_pair_available, probe_runtime_stack
+from afkbot.services.runtime_exposure_guard import (
+    RuntimeExposureGuardError,
+    validate_runtime_exposure,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.setup.state import setup_is_complete
 from afkbot.settings import get_settings
@@ -270,6 +274,14 @@ def _persist_runtime_bind_and_reload_service(
         runtime_config=runtime_config,
         fallback_port=settings.runtime_port,
     )
+    try:
+        validate_runtime_exposure(
+            settings=settings,
+            host=target_host,
+            context="afk service bind",
+        )
+    except RuntimeExposureGuardError as exc:
+        raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
     _validate_requested_runtime_bind(
         host=target_host,
         runtime_port=target_runtime_port,

@@ -16,6 +16,7 @@ from afkbot.services.memory.service import (
     get_memory_service,
     reset_memory_services,
     reset_memory_services_async,
+    run_memory_service_sync,
 )
 from afkbot.services.memory.consolidation import (
     MemoryConsolidationPlan,
@@ -52,6 +53,7 @@ __all__ = [
     "MemoryService",
     "MemoryServiceError",
     "get_memory_service",
+    "run_memory_service_sync",
     "MemoryConsolidationPlan",
     "MemoryConsolidationService",
     "get_memory_consolidation_service",

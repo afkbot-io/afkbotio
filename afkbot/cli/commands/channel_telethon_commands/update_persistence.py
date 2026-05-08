@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from afkbot.cli.commands.channel_prompt_support import resolve_channel_text
 from afkbot.cli.presentation.setup_prompts import PromptLanguage
 from afkbot.cli.commands.channel_shared import (
@@ -11,7 +9,7 @@ from afkbot.cli.commands.channel_shared import (
     resolve_binding_update_inputs,
 )
 from afkbot.cli.commands.channel_telethon_commands.common import split_csv_patterns
-from afkbot.cli.commands.channel_telethon_commands.legacy import get_legacy_channel_endpoint_service
+from afkbot.cli.commands.channel_telethon_commands.legacy import run_legacy_channel_endpoint_service_sync
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,
@@ -97,7 +95,10 @@ def save_updated_telethon_channel(
         watcher=watcher,
     )
     saved = TelethonUserEndpointConfig.model_validate(
-        asyncio.run(get_legacy_channel_endpoint_service(settings).update(endpoint)).model_dump()
+        run_legacy_channel_endpoint_service_sync(
+            settings,
+            lambda service: service.update(endpoint),
+        ).model_dump()
     )
     if sync_binding:
         resolved_binding_inputs = resolve_binding_update_inputs(

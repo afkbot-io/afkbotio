@@ -57,7 +57,7 @@ class FileReadTool(ToolBase):
                 raw_path=payload.path,
                 must_exist=True,
             )
-            if not path.is_file():
+            if not await asyncio.to_thread(path.is_file):
                 raise ValueError(f"Path is not a file: {payload.path}")
 
             max_bytes = min(payload.max_bytes, self._settings.runtime_max_body_bytes)

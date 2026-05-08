@@ -120,7 +120,8 @@ def test_protected_plugin_surfaces_require_login_and_accept_cookie(
                 "configured": True,
             },
         }
-        assert plugins_response.status_code == 200
+        assert plugins_response.status_code == 401
+        assert plugins_response.json()["error_code"] == "ui_auth_required"
         assert api_response.status_code == 401
         assert api_response.json()["error_code"] == "ui_auth_required"
         assert web_response.status_code == 303
@@ -145,12 +146,14 @@ def test_protected_plugin_surfaces_require_login_and_accept_cookie(
         assert good_login.json()["ok"] is True
 
         session_response = client.get("/v1/auth/session")
+        plugins_authed = client.get("/v1/plugins")
         api_authed = client.get("/v1/plugins/demo/ping")
         web_authed = client.get("/plugins/demo/")
 
         assert session_response.status_code == 200
         assert session_response.json()["authenticated"] is True
         assert session_response.json()["auth"] == {"mode": "password", "configured": True}
+        assert plugins_authed.status_code == 200
         assert api_authed.status_code == 200
         assert api_authed.json() == {"plugin": "demo"}
         assert web_authed.status_code == 200
@@ -163,11 +166,34 @@ def test_protected_plugin_surfaces_require_login_and_accept_cookie(
         assert api_after_logout.status_code == 401
 
 
-def test_unprotected_plugin_surfaces_stay_public_when_ui_auth_is_enabled(
+def test_operator_required_plugin_fails_closed_when_ui_auth_is_not_configured(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Auth-enabled runtimes must not block plugin surfaces that never opted in."""
+    """Operator-only plugin routes should return 503 instead of becoming public."""
+
+    source_root = tmp_path / "operator-plugin-src"
+    _write_api_demo_plugin(source_root, plugin_id="operatoronly", operator_required=True)
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    get_settings.cache_clear()
+    settings = get_settings()
+    get_plugin_service(settings).install(source=str(source_root))
+
+    with TestClient(create_app()) as client:
+        api_response = client.get("/v1/plugins/operatoronly/ping")
+        web_response = client.get("/plugins/operatoronly/")
+
+        assert api_response.status_code == 503
+        assert api_response.json()["error_code"] == "ui_auth_not_configured"
+        assert web_response.status_code == 503
+
+
+def test_unprotected_plugin_web_surface_stays_public_but_default_api_prefix_requires_auth(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Auth-enabled runtimes keep web opt-in policy but protect the shared plugin API prefix."""
 
     source_root = tmp_path / "public-plugin-src"
     _write_api_demo_plugin(source_root, plugin_id="publicdemo", operator_required=False)
@@ -195,8 +221,8 @@ def test_unprotected_plugin_surfaces_stay_public_when_ui_auth_is_enabled(
         api_response = client.get("/v1/plugins/publicdemo/ping")
         web_response = client.get("/plugins/publicdemo/")
 
-        assert api_response.status_code == 200
-        assert api_response.json() == {"plugin": "publicdemo"}
+        assert api_response.status_code == 401
+        assert api_response.json()["error_code"] == "ui_auth_required"
         assert web_response.status_code == 200
         assert "publicdemo mounted" in web_response.text
 

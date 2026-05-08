@@ -12,7 +12,7 @@ import typer
 
 from afkbot.cli.commands.runtime_assets_common import emit_structured_error, resolve_inline_or_file_text
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
-from afkbot.services.profile_runtime.service import ProfileServiceError, get_profile_service
+from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
 from afkbot.services.skills import get_skill_doctor_service
 from afkbot.services.skills.marketplace_contracts import (
     SkillMarketplaceError,
@@ -24,7 +24,7 @@ from afkbot.services.skills.marketplace_payloads import (
 )
 from afkbot.services.skills.marketplace_service import get_skill_marketplace_service
 from afkbot.services.skills.profile_service import get_profile_skill_service
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 
 SkillScope = Literal["all", "profile", "core"]
 
@@ -53,7 +53,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             items = asyncio.run(
                 get_profile_skill_service(settings).list(
                     profile_id=normalized_profile_id,
@@ -82,7 +82,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_skill_service(settings).get(
                     profile_id=normalized_profile_id,
@@ -109,7 +109,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             repairs: list[dict[str, object]] = []
             if repair_manifests:
                 repaired = asyncio.run(
@@ -152,7 +152,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             items = asyncio.run(
                 get_profile_skill_service(settings).normalize_manifests(
                     profile_id=normalized_profile_id,
@@ -209,7 +209,7 @@ def register(app: typer.Typer) -> None:
             markdown = resolve_inline_or_file_text(text=text, from_file=from_file)
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_skill_service(settings).upsert(
                     profile_id=normalized_profile_id,
@@ -232,7 +232,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_skill_service(settings).delete(
                     profile_id=normalized_profile_id,
@@ -268,7 +268,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             listing = asyncio.run(
                 get_skill_marketplace_service(settings).list_source(
                     source=source,
@@ -315,7 +315,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             listing = asyncio.run(
                 get_skill_marketplace_service(settings).search_source(
                     source=source,
@@ -368,7 +368,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_skill_marketplace_service(settings).install(
                     profile_id=normalized_profile_id,
@@ -387,3 +387,10 @@ def register(app: typer.Typer) -> None:
                 ensure_ascii=True,
             )
         )
+
+
+def _assert_profile_exists(*, settings: Settings, profile_id: str) -> None:
+    run_profile_service_sync(
+        settings,
+        lambda service: service.get(profile_id=profile_id),
+    )

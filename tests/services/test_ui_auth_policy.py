@@ -50,12 +50,42 @@ def test_plugin_api_surface_uses_combined_runtime_and_manifest_protection() -> N
     )
 
     assert surface_without_protection.api_request is True
-    assert surface_without_protection.protected is False
+    assert surface_without_protection.protected is True
+    assert surface_without_protection.plugin_id is None
 
     assert surface_manifest_protected.api_request is True
-    assert surface_manifest_protected.plugin_id == "demo"
+    assert surface_manifest_protected.plugin_id is None
     assert surface_manifest_protected.protected is True
 
     assert surface_runtime_protected.api_request is True
-    assert surface_runtime_protected.plugin_id == "runtime-only"
+    assert surface_runtime_protected.plugin_id is None
     assert surface_runtime_protected.protected is True
+
+
+def test_operator_required_plugin_mount_fails_closed_when_ui_auth_is_not_configured() -> None:
+    """Operator-only plugin mounts must not become public when UI auth is absent."""
+
+    mount = PluginAuthMount(
+        plugin_id="demo",
+        api_prefix="/internal/demo",
+        web_prefix="/plugins/demo",
+        operator_required=True,
+    )
+
+    api_surface = resolve_ui_auth_surface(
+        "/internal/demo/ping",
+        Settings(),
+        plugin_auth_mounts=(mount,),
+    )
+    web_surface = resolve_ui_auth_surface(
+        "/plugins/demo/",
+        Settings(),
+        plugin_auth_mounts=(mount,),
+    )
+
+    assert api_surface.protected is True
+    assert api_surface.api_request is True
+    assert api_surface.auth_configured is False
+    assert web_surface.protected is True
+    assert web_surface.api_request is False
+    assert web_surface.auth_configured is False

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -88,6 +90,7 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             else False
         )
         binding_count = sum(1 for item in telegram_bindings if item.enabled and item.account_id == account_id)
+        state_path = endpoint_service.telegram_polling_state_path(endpoint_id=endpoint.endpoint_id)
         telegram_reports.append(
             TelegramPollingEndpointReport(
                 endpoint_id=endpoint.endpoint_id,
@@ -99,10 +102,8 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
                 profile_exists=profile_exists,
                 token_configured=token_configured,
                 binding_count=binding_count,
-                state_path=str(endpoint_service.telegram_polling_state_path(endpoint_id=endpoint.endpoint_id)),
-                state_present=endpoint_service.telegram_polling_state_path(
-                    endpoint_id=endpoint.endpoint_id
-                ).exists(),
+                state_path=str(state_path),
+                state_present=await asyncio.to_thread(state_path.exists),
             )
         )
     for endpoint in telethon_endpoints:
@@ -125,6 +126,7 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             else set()
         )
         binding_count = sum(1 for item in telethon_bindings if item.enabled and item.account_id == account_id)
+        state_path = endpoint_service.telethon_user_state_path(endpoint_id=endpoint.endpoint_id)
         telethon_reports.append(
             TelethonUserEndpointReport(
                 endpoint_id=endpoint.endpoint_id,
@@ -144,10 +146,8 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
                     else False
                 ),
                 binding_count=binding_count,
-                state_path=str(endpoint_service.telethon_user_state_path(endpoint_id=endpoint.endpoint_id)),
-                state_present=endpoint_service.telethon_user_state_path(
-                    endpoint_id=endpoint.endpoint_id
-                ).exists(),
+                state_path=str(state_path),
+                state_present=await asyncio.to_thread(state_path.exists),
             )
         )
     return DoctorChannelsReport(

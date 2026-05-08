@@ -34,7 +34,10 @@ from afkbot.services.channels.ingress_persistence import (
 from afkbot.services.channels.partyflow_runtime_registry import (
     reset_partyflow_webhook_runtime_registries,
 )
-from afkbot.services.channels.partyflow_webhook import PartyFlowWebhookService
+from afkbot.services.channels.partyflow_webhook import (
+    PartyFlowWebhookService,
+    PartyFlowWebhookServiceError,
+)
 from afkbot.services.credentials.errors import CredentialsServiceError
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import ProfileService, reset_profile_services_async
@@ -902,6 +905,41 @@ async def test_partyflow_webhook_bootstrap_treats_missing_signing_secret_as_opti
 
     assert service._signing_secret is None  # type: ignore[attr-defined]
     assert service._bot_id == "bot-42"  # type: ignore[attr-defined]
+
+
+async def test_partyflow_webhook_bootstrap_requires_signing_secret_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strict runtimes should fail startup when PartyFlow webhook signing is absent."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'partyflow_webhook_required_secret.db'}",
+        partyflow_webhook_signing_required=True,
+    )
+    service = PartyFlowWebhookService(
+        settings,
+        endpoint=_endpoint(reply_mode="disabled"),
+        app_runtime=_FakePartyFlowIdentityRuntime(),  # type: ignore[arg-type]
+    )
+
+    class _MissingSigningSecretCredentials:
+        async def resolve_plaintext_for_app_tool(self, **_kwargs: object) -> str:
+            raise CredentialsServiceError(
+                error_code="credentials_missing",
+                reason="PartyFlow signing secret is not configured.",
+            )
+
+    monkeypatch.setattr(
+        "afkbot.services.channels.partyflow_webhook.get_credentials_service",
+        lambda _settings: _MissingSigningSecretCredentials(),
+    )
+
+    with pytest.raises(PartyFlowWebhookServiceError) as exc:
+        await service._bootstrap_identity()  # type: ignore[attr-defined]
+
+    assert exc.value.error_code == "partyflow_signing_secret_required"
 
 
 async def test_partyflow_webhook_keyword_trigger_uses_token_boundaries(

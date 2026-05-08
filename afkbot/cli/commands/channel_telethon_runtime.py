@@ -203,8 +203,8 @@ async def telethon_reset_state_payload(*, channel_id: str) -> dict[str, object]:
     endpoint_service = get_channel_endpoint_service(settings)
     state_path = endpoint_service.telethon_user_state_path(endpoint_id=endpoint.endpoint_id)
     removed = False
-    if state_path.exists():
-        state_path.unlink()
+    if await asyncio.to_thread(state_path.exists):
+        await asyncio.to_thread(state_path.unlink)
         removed = True
     return {
         "ok": True,

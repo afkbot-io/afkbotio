@@ -19,10 +19,10 @@ from afkbot.cli.commands.channel_shared import (
     render_reply_humanization_summary,
 )
 from afkbot.cli.commands.channel_telethon_commands.legacy import (
-    get_legacy_channel_endpoint_service,
     load_legacy_telethon_endpoint,
     raise_legacy_telethon_channel_error,
     reload_legacy_managed_runtime_notice,
+    run_legacy_channel_endpoint_service_sync,
 )
 from afkbot.cli.commands.channel_telethon_commands.watcher import render_watcher_list_summary
 from afkbot.cli.commands.channel_telethon_runtime import (
@@ -39,6 +39,7 @@ from afkbot.services.channel_routing.service import (
     run_channel_binding_service_sync,
 )
 from afkbot.services.channels.endpoint_contracts import TelethonUserEndpointConfig
+from afkbot.services.channels.endpoint_service import telethon_user_state_path_for
 from afkbot.services.channels.telethon_user.runtime_support import evaluate_telethon_profile_policy
 from afkbot.services.channels.telethon_user.watcher import resolve_watcher_delivery_target
 from afkbot.services.profile_runtime import run_profile_service_sync
@@ -56,7 +57,10 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            channels = asyncio.run(get_legacy_channel_endpoint_service(settings).list(transport="telegram_user"))
+            channels = run_legacy_channel_endpoint_service_sync(
+                settings,
+                lambda service: service.list(transport="telegram_user"),
+            )
         except Exception as exc:
             raise_legacy_telethon_channel_error(exc)
         if json_output:
@@ -93,9 +97,7 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             channel = asyncio.run(load_legacy_telethon_endpoint(channel_id=channel_id))
-            state_path = get_legacy_channel_endpoint_service(settings).telethon_user_state_path(
-                endpoint_id=channel.endpoint_id
-            )
+            state_path = telethon_user_state_path_for(settings, endpoint_id=channel.endpoint_id)
             profile = run_profile_service_sync(
                 settings,
                 lambda service: service.get(profile_id=channel.profile_id),
@@ -294,7 +296,10 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             asyncio.run(load_legacy_telethon_endpoint(channel_id=channel_id))
-            asyncio.run(get_legacy_channel_endpoint_service(settings).delete(endpoint_id=channel_id))
+            run_legacy_channel_endpoint_service_sync(
+                settings,
+                lambda service: service.delete(endpoint_id=channel_id),
+            )
             binding_removed = False
             if not keep_binding:
                 try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 
@@ -124,7 +125,7 @@ async def resolve_channel_outbound_media_path(
         if exc.code == "missing_path":
             raise ValueError(f"{label} path does not exist: {normalized}") from None
         raise ValueError(exc.reason) from None
-    if not path.is_file():
+    if not await asyncio.to_thread(path.is_file):
         raise ValueError(f"{label} path is not a file: {normalized}")
     return path
 

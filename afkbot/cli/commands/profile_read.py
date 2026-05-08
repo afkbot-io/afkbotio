@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import typer
@@ -18,9 +17,9 @@ from afkbot.cli.commands.inspection_shared import (
     render_merge_order_brief,
     render_tool_access_brief,
 )
-from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channels.endpoint_service import run_channel_endpoint_service_sync
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
-from afkbot.services.profile_runtime import ProfileServiceError, get_profile_service
+from afkbot.services.profile_runtime import ProfileServiceError, run_profile_service_sync
 from afkbot.settings import get_settings
 
 
@@ -35,7 +34,7 @@ def register_read(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            profiles = asyncio.run(get_profile_service(settings).list())
+            profiles = run_profile_service_sync(settings, lambda service: service.list())
         except ProfileServiceError as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -66,12 +65,16 @@ def register_read(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            profile = asyncio.run(get_profile_service(settings).get(profile_id=validate_profile_id(profile_id)))
+            profile = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=validate_profile_id(profile_id)),
+            )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
-        linked_channels = asyncio.run(
-            get_channel_endpoint_service(settings).list(profile_id=profile.id)
+        linked_channels = run_channel_endpoint_service_sync(
+            settings,
+            lambda service: service.list(profile_id=profile.id),
         )
         linked_channel_inspections = [
             build_linked_channel_inspection_summary(
