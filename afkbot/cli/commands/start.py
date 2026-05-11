@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import os
 import signal
 from contextlib import suppress
-from typing import Final
+from typing import Any, Final
 
 import typer
 import uvicorn
@@ -21,6 +21,7 @@ from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManagerError,
     ChannelRuntimeStartReport,
 )
+from afkbot.services.cloud_runtime import CloudRuntimeCommandDispatcher, CloudRuntimeGatewayClient
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.runtime_ports import (
     find_available_runtime_port,
@@ -327,11 +328,16 @@ async def _run_full_stack(
     registered_signals: list[signal.Signals] = []
     api_task: asyncio.Task[object] | None = None
     stop_wait_task: asyncio.Task[object] | None = None
+    cloud_gateway_task: asyncio.Task[object] | None = None
+    cloud_gateway_client: CloudRuntimeGatewayClient | None = None
+    cloud_command_dispatcher: CloudRuntimeCommandDispatcher | None = None
 
     def _request_shutdown() -> None:
         automation_daemon.begin_shutdown()
         taskflow_daemon.begin_shutdown()
         server.should_exit = True
+        if cloud_gateway_client is not None:
+            cloud_gateway_client.request_stop()
         stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -357,12 +363,48 @@ async def _run_full_stack(
                 strict_channels=strict_channels,
             )
             _render_channel_start_report(channel_report)
+        cloud_gateway_client = CloudRuntimeGatewayClient.from_settings(settings=settings)
+        if cloud_gateway_client is not None:
+            cloud_command_dispatcher = CloudRuntimeCommandDispatcher(
+                gateway=cloud_gateway_client,
+                request_shutdown=_request_shutdown,
+            )
+            cloud_gateway_client.set_command_handler(cloud_command_dispatcher.handle)
+            cloud_gateway_task = asyncio.create_task(
+                cloud_gateway_client.run(),
+                name="afk-cloud-runtime-gateway",
+            )
+            cloud_ready_task = asyncio.create_task(
+                cloud_gateway_client.wait_until_ready(
+                    timeout_sec=max(5.0, settings.cloud_gateway_reconnect_initial_sec + 1.0),
+                ),
+                name="afk-cloud-runtime-gateway-ready",
+            )
+            cloud_ready_done, _ = await asyncio.wait(
+                {cloud_ready_task, cloud_gateway_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cloud_gateway_task in cloud_ready_done:
+                error = cloud_gateway_task.exception()
+                if error is not None:
+                    raise error
+                raise RuntimeError("Cloud runtime gateway exited before readiness.")
+            await cloud_ready_task
         api_task = asyncio.create_task(server.serve(), name="afk-api-server")
         stop_wait_task = asyncio.create_task(stop_event.wait(), name="afk-shutdown-wait")
+        wait_tasks: set[asyncio.Task[Any]] = {api_task, stop_wait_task}
+        if cloud_gateway_task is not None:
+            wait_tasks.add(cloud_gateway_task)
         done, _ = await asyncio.wait(
-            {api_task, stop_wait_task},
+            wait_tasks,
             return_when=asyncio.FIRST_COMPLETED,
         )
+        if cloud_gateway_task is not None and cloud_gateway_task in done:
+            error = cloud_gateway_task.exception()
+            if error is not None:
+                raise error
+            if not stop_event.is_set():
+                raise RuntimeError("Cloud runtime gateway exited before shutdown was requested.")
         if api_task in done:
             error = api_task.exception()
             if error is not None:
@@ -381,6 +423,14 @@ async def _run_full_stack(
             stop_wait_task.cancel()
             with suppress(asyncio.CancelledError):
                 await stop_wait_task
+        if cloud_gateway_client is not None:
+            cloud_gateway_client.request_stop()
+        if cloud_command_dispatcher is not None:
+            await cloud_command_dispatcher.close()
+        if cloud_gateway_task is not None:
+            cloud_gateway_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cloud_gateway_task
         await taskflow_daemon.stop()
         await automation_daemon.stop()
 

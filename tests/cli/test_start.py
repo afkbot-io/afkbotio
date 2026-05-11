@@ -167,6 +167,8 @@ def test_start_rejects_managed_runtime_without_postgres_database_per_bot(monkeyp
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     monkeypatch.setenv("AFKBOT_DEPLOYMENT_MODE", "managed")
     monkeypatch.setenv("AFKBOT_DB_URL", "sqlite+aiosqlite:///managed-local.db")
+    monkeypatch.setenv("AFKBOT_CONTROL_WS_URL", "wss://api.example.test/ws/runtime/connect/")
+    monkeypatch.setenv("AFKBOT_RUNTIME_WS_TOKEN", "runtime-token")
     get_settings.cache_clear()
     runner = CliRunner()
 
@@ -771,6 +773,118 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     assert "taskflow:start" in lifecycle
     assert "api:serve" in lifecycle
     assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]
+
+
+async def test_run_full_stack_starts_cloud_gateway_only_in_managed_mode(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Internal launcher should attach cloud gateway only for managed cloud runtimes."""
+
+    lifecycle: list[str] = []
+    real_event_cls = asyncio.Event
+
+    class _AutoStopEvent:
+        def __init__(self) -> None:
+            self._event = real_event_cls()
+            asyncio.get_running_loop().call_later(0.01, self._event.set)
+
+        def set(self) -> None:
+            self._event.set()
+
+        async def wait(self) -> bool:
+            await self._event.wait()
+            return True
+
+    class _FakeDaemon:
+        def begin_shutdown(self) -> None:
+            return
+
+        async def start(self) -> None:
+            return
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeAutomationDaemon(_FakeDaemon):
+        def __init__(self, *, host: str, port: int) -> None:
+            del host, port
+
+    class _FakeTaskFlowDaemon(_FakeDaemon):
+        def __init__(self, *, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+    class _FakeChannelManager:
+        def __init__(self, settings) -> None:  # type: ignore[no-untyped-def]
+            del settings
+
+        async def stop(self) -> None:
+            return
+
+    class _FakeServer:
+        def __init__(self, config) -> None:  # type: ignore[no-untyped-def]
+            del config
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            while not self.should_exit:
+                await asyncio.sleep(0)
+
+    class _FakeGateway:
+        @classmethod
+        def from_settings(cls, *, settings):  # type: ignore[no-untyped-def]
+            if not settings.cloud_gateway_enabled:
+                lifecycle.append("cloud:disabled")
+                return None
+            lifecycle.append("cloud:init")
+            return cls()
+
+        def set_command_handler(self, command_handler) -> None:  # type: ignore[no-untyped-def]
+            del command_handler
+            lifecycle.append("cloud:handler")
+
+        def request_stop(self) -> None:
+            lifecycle.append("cloud:request_stop")
+
+        async def wait_until_ready(self, *, timeout_sec: float) -> None:
+            del timeout_sec
+            lifecycle.append("cloud:ready")
+
+        async def run(self) -> None:
+            lifecycle.append("cloud:run")
+            await asyncio.sleep(60)
+
+    monkeypatch.setattr("afkbot.cli.commands.start.asyncio.Event", _AutoStopEvent)
+    monkeypatch.setattr("afkbot.cli.commands.start.RuntimeDaemon", _FakeAutomationDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.TaskFlowRuntimeDaemon", _FakeTaskFlowDaemon)
+    monkeypatch.setattr("afkbot.cli.commands.start.ChannelRuntimeManager", _FakeChannelManager)
+    monkeypatch.setattr("afkbot.cli.commands.start._ManagedUvicornServer", _FakeServer)
+    monkeypatch.setattr("afkbot.cli.commands.start.CloudRuntimeGatewayClient", _FakeGateway)
+    monkeypatch.setattr("afkbot.cli.commands.start.create_app", lambda: object())
+
+    from afkbot.cli.commands.start import _run_full_stack
+    from afkbot.settings import Settings
+
+    settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
+    )
+    await _run_full_stack(
+        host="127.0.0.1",
+        runtime_port=18080,
+        api_port=18081,
+        start_channels=False,
+        channel_ids=(),
+        strict_channels=False,
+        persist_runtime_bind=False,
+        settings=settings,
+    )
+
+    assert "cloud:init" in lifecycle
+    assert "cloud:handler" in lifecycle
+    assert "cloud:ready" in lifecycle
+    assert "cloud:run" in lifecycle
+    assert "cloud:request_stop" in lifecycle
 
 
 async def test_run_full_stack_fails_when_api_server_exits_unexpectedly(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]

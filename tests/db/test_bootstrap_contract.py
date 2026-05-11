@@ -83,6 +83,8 @@ def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_pat
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
     )
     with pytest.raises(PostgresBootstrapContractError) as sqlite_exc:
         validate_managed_postgres_settings(sqlite_settings)
@@ -92,6 +94,8 @@ def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_pat
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url="postgresql+psycopg://bot_role:secret@db.example.com/afkbot_bot_1",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
     )
     with pytest.raises(PostgresBootstrapContractError) as wrong_driver_exc:
         validate_managed_postgres_settings(wrong_driver_settings)
@@ -102,6 +106,8 @@ def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_pat
         deployment_mode="managed",
         managed_database_isolation_mode="schema_per_bot",
         db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
     )
     with pytest.raises(PostgresBootstrapContractError) as schema_exc:
         validate_managed_postgres_settings(schema_settings)
@@ -112,8 +118,26 @@ def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_pat
             root_dir=tmp_path,
             deployment_mode="managed",
             db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+            control_ws_url="wss://api.example.test/ws/runtime/connect/",
+            runtime_ws_token="runtime-token",
         )
     )
+
+
+def test_legacy_managed_mode_still_activates_managed_database_guard(tmp_path: Path) -> None:
+    """The compatibility flag must not bypass managed database isolation checks."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        managed_mode=True,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
+    )
+
+    with pytest.raises(PostgresBootstrapContractError) as exc:
+        validate_managed_postgres_settings(settings)
+    assert exc.value.error_code == "managed_database_postgres_required"
 
 
 def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: Path) -> None:
@@ -123,6 +147,8 @@ def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: 
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
     )
 
     assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="postgresql") is True
@@ -135,6 +161,20 @@ def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: 
             dialect_name="sqlite",
         )
         is False
+    )
+    legacy_settings = Settings(
+        root_dir=tmp_path,
+        managed_mode=True,
+        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        control_ws_url="wss://api.example.test/ws/runtime/connect/",
+        runtime_ws_token="runtime-token",
+    )
+    assert (
+        _requires_managed_runtime_schema_validation(
+            settings=legacy_settings,
+            dialect_name="postgresql",
+        )
+        is True
     )
 
 

@@ -88,7 +88,7 @@ def _requires_managed_runtime_schema_validation(
 ) -> bool:
     """Return True when runtime bootstrap must be read-only schema validation."""
 
-    if settings is None or settings.deployment_mode != "managed":
+    if settings is None or not settings.cloud_gateway_enabled:
         return False
     if dialect_name != "postgresql":
         raise ManagedRuntimeSchemaError(

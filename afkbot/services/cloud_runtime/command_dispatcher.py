@@ -1,0 +1,345 @@
+"""Control-plane command dispatcher for cloud-managed AFKBOT runtimes."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+import json
+import logging
+from typing import Any
+
+from afkbot.services.agent_loop.action_contracts import TurnResult
+from afkbot.services.agent_loop.api_runtime import run_chat_turn
+from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand, CloudRuntimeGatewayClient
+from afkbot.services.error_logging import redact_log_text
+from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
+from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
+
+logger = logging.getLogger(__name__)
+
+RunChatTurn = Callable[..., Awaitable[TurnResult]]
+
+_STOP_COMMANDS = frozenset({"shutdown", "runtime.stop"})
+_ASYNC_COMMANDS = frozenset({"chat.message", "task.create", "task.retry", "task.cancel"})
+_DEFAULT_PROFILE_ID = "default"
+
+
+class CloudRuntimeCommandDispatcher:
+    """Dispatch cloud control-plane commands onto safe AFKBOT service entrypoints."""
+
+    def __init__(
+        self,
+        *,
+        gateway: CloudRuntimeGatewayClient,
+        request_shutdown: Callable[[], None],
+        run_chat_turn_fn: RunChatTurn = run_chat_turn,
+    ) -> None:
+        """Create a dispatcher.
+
+        :param gateway: Connected cloud runtime gateway client.
+        :param request_shutdown: Callback that starts local runtime shutdown.
+        :param run_chat_turn_fn: Agent-loop entrypoint used for chat and task commands.
+        :return: None.
+        """
+
+        self._gateway = gateway
+        self._request_shutdown = request_shutdown
+        self._run_chat_turn = run_chat_turn_fn
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._task_commands_by_id: dict[str, asyncio.Task[None]] = {}
+
+    async def handle(self, command: CloudRuntimeCommand) -> None:
+        """Handle one control-plane command without blocking gateway reads.
+
+        :param command: Parsed cloud runtime command.
+        :return: None.
+        """
+
+        if command.command in _STOP_COMMANDS:
+            await self._gateway.send_event(
+                event_type="runtime.command.shutdown",
+                message="Cloud control plane requested runtime shutdown.",
+                payload={"command_id": command.command_id or "", "command": command.command},
+            )
+            self._request_shutdown()
+            return
+
+        if command.command not in _ASYNC_COMMANDS:
+            await self._gateway.send_event(
+                event_type="runtime.command.unsupported",
+                severity="warning",
+                message=f"Unsupported cloud command: {command.command}",
+                payload={"command_id": command.command_id or "", "command": command.command},
+            )
+            return
+
+        task = asyncio.create_task(
+            self._handle_async_command(command),
+            name=f"afk-cloud-command-{command.command}",
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def close(self) -> None:
+        """Cancel in-flight cloud command work.
+
+        :param: None.
+        :return: None.
+        """
+
+        for task in tuple(self._tasks):
+            task.cancel()
+        for task in tuple(self._tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        self._tasks.clear()
+        self._task_commands_by_id.clear()
+
+    async def _handle_async_command(self, command: CloudRuntimeCommand) -> None:
+        try:
+            if command.command == "chat.message":
+                await self._handle_chat_message(command)
+            elif command.command in {"task.create", "task.retry"}:
+                await self._handle_task_run(command)
+            elif command.command == "task.cancel":
+                await self._handle_task_cancel(command)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Cloud command failed: %s", redact_log_text(str(exc)))
+            await self._gateway.send_event(
+                event_type="runtime.command.failed",
+                severity="error",
+                message="Cloud command failed.",
+                payload={
+                    "command_id": command.command_id or "",
+                    "command": command.command,
+                    "error": redact_log_text(str(exc)),
+                },
+            )
+
+    async def _handle_chat_message(self, command: CloudRuntimeCommand) -> None:
+        payload = command.payload
+        content = _string_payload(payload, "content") or _string_payload(payload, "message")
+        message_id = _string_payload(payload, "message_id") or command.command_id or ""
+        if not content.strip():
+            await self._gateway.send_chat_result(
+                command_id=command.command_id,
+                message_id=message_id,
+                content="",
+                payload={"error_code": "cloud_chat_message_empty"},
+            )
+            return
+
+        result = await self._run_agent_turn(
+            message=content,
+            profile_id=_profile_id_from_payload(payload),
+            session_id=_session_id("cloud-chat", message_id or content),
+            client_msg_id=message_id or command.command_id,
+            command=command,
+        )
+        await self._gateway.send_chat_result(
+            command_id=command.command_id,
+            message_id=message_id,
+            content=result.envelope.message,
+            payload={
+                "action": result.envelope.action,
+                "run_id": result.run_id,
+                "profile_id": result.profile_id,
+                "session_id": result.session_id,
+            },
+        )
+
+    async def _handle_task_run(self, command: CloudRuntimeCommand) -> None:
+        payload = command.payload
+        task_key = _task_key(payload=payload, fallback=command.command_id or command.command)
+        title = _string_payload(payload, "title") or "Cloud task"
+        description = _string_payload(payload, "description")
+        task_payload = _task_payload(
+            payload=payload,
+            command=command,
+            status="running",
+            title=title,
+            description=description,
+        )
+        await self._gateway.send_task_update(
+            command_id=command.command_id,
+            message="Task started.",
+            payload=task_payload,
+        )
+
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._task_commands_by_id[task_key] = current_task
+        try:
+            result = await self._run_agent_turn(
+                message=_task_prompt(title=title, description=description, payload=payload),
+                profile_id=_profile_id_from_payload(payload),
+                session_id=_session_id("cloud-task", task_key),
+                client_msg_id=command.command_id or task_key,
+                command=command,
+            )
+        except asyncio.CancelledError:
+            await self._gateway.send_task_result(
+                command_id=command.command_id,
+                message="Task canceled.",
+                payload={
+                    **task_payload,
+                    "status": "canceled",
+                    "result": {"canceled": True},
+                },
+            )
+            raise
+        except Exception as exc:
+            await self._gateway.send_task_result(
+                command_id=command.command_id,
+                message="Task failed.",
+                payload={
+                    **task_payload,
+                    "status": "stuck",
+                    "error_code": "cloud_task_failed",
+                    "result": {"error": redact_log_text(str(exc))},
+                },
+            )
+            raise
+        finally:
+            self._task_commands_by_id.pop(task_key, None)
+
+        status = _task_status_for_turn(result)
+        await self._gateway.send_task_result(
+            command_id=command.command_id,
+            message=result.envelope.message,
+            payload={
+                **task_payload,
+                "status": status,
+                "result": {
+                    "action": result.envelope.action,
+                    "message": result.envelope.message,
+                    "run_id": result.run_id,
+                    "profile_id": result.profile_id,
+                    "session_id": result.session_id,
+                },
+            },
+        )
+
+    async def _handle_task_cancel(self, command: CloudRuntimeCommand) -> None:
+        payload = command.payload
+        task_key = _task_key(payload=payload, fallback=command.command_id or command.command)
+        running_task = self._task_commands_by_id.get(task_key)
+        if running_task is not None:
+            running_task.cancel()
+        await self._gateway.send_task_result(
+            command_id=command.command_id,
+            message="Task canceled.",
+            payload=_task_payload(
+                payload=payload,
+                command=command,
+                status="canceled",
+                title=_string_payload(payload, "title") or "Cloud task",
+                description=_string_payload(payload, "description"),
+                result={"canceled": True},
+            ),
+        )
+
+    async def _run_agent_turn(
+        self,
+        *,
+        message: str,
+        profile_id: str,
+        session_id: str,
+        client_msg_id: str | None,
+        command: CloudRuntimeCommand,
+    ) -> TurnResult:
+        return await self._run_chat_turn(
+            message=message,
+            profile_id=profile_id,
+            session_id=session_id,
+            client_msg_id=client_msg_id,
+            context_overrides=TurnContextOverrides(
+                runtime_metadata={
+                    "cloud_command": command.command,
+                    "cloud_command_id": command.command_id or "",
+                },
+                trusted_runtime_context={
+                    "ingress": "afkbot_cloud",
+                    "command": command.command,
+                },
+            ),
+        )
+
+
+def _profile_id_from_payload(payload: dict[str, Any]) -> str:
+    raw_profile_id = _string_payload(payload, "profile_id") or _DEFAULT_PROFILE_ID
+    try:
+        return validate_profile_id(raw_profile_id)
+    except InvalidProfileIdError:
+        return _DEFAULT_PROFILE_ID
+
+
+def _session_id(prefix: str, value: str) -> str:
+    return compose_bounded_session_id(prefix, encode_session_component(value or "default"))
+
+
+def _task_key(*, payload: dict[str, Any], fallback: str) -> str:
+    return (
+        _string_payload(payload, "task_id")
+        or _string_payload(payload, "external_id")
+        or _string_payload(payload, "control_plane_task_id")
+        or fallback
+    )
+
+
+def _task_payload(
+    *,
+    payload: dict[str, Any],
+    command: CloudRuntimeCommand,
+    status: str,
+    title: str,
+    description: str,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    task_id = _string_payload(payload, "task_id") or _string_payload(payload, "external_id")
+    control_plane_task_id = _string_payload(payload, "control_plane_task_id") or task_id
+    task_payload: dict[str, Any] = {
+        "task_id": task_id or command.command_id or "",
+        "control_plane_task_id": control_plane_task_id or "",
+        "status": status,
+        "title": title[:240],
+        "description": description,
+        "command_id": command.command_id or "",
+    }
+    if result is not None:
+        task_payload["result"] = result
+    return task_payload
+
+
+def _task_status_for_turn(result: TurnResult) -> str:
+    if result.envelope.action == "finalize":
+        return "done"
+    if result.envelope.action in {"ask_question", "request_secure_field"}:
+        return "waiting"
+    if result.envelope.action == "block":
+        return "stuck"
+    return "done"
+
+
+def _task_prompt(*, title: str, description: str, payload: dict[str, Any]) -> str:
+    serialized_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return "\n\n".join(
+        part
+        for part in (
+            f"Cloud task: {title}",
+            description.strip(),
+            f"Task payload: {serialized_payload}",
+        )
+        if part
+    )
+
+
+def _string_payload(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if value is None:
+        return ""
+    return str(value).strip()

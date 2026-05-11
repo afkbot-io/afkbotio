@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-12
+
+### Added
+
+- Added AFKBOT Cloud runtime gateway support for managed containers, including
+  outbound control-plane WebSocket auth, heartbeat, redacted event/log messages,
+  fail-closed connectivity, chat command results, and cloud task update/result
+  forwarding.
+
+### Changed
+
+- Managed runtime detection is now unified across `AFKBOT_DEPLOYMENT_MODE=managed`
+  and the legacy `AFKBOT_MANAGED_MODE=1` flag, so database-per-bot and
+  read-only managed schema validation cannot be bypassed by cloud gateway setup.
+- Cloud gateway URL/token settings are env-only and are not loaded from persisted
+  runtime config or runtime secrets.
+
+### Security
+
+- Managed cloud gateway URLs now require `wss://` by default. Local compose can
+  opt into cleartext `ws://` only with `AFKBOT_CLOUD_GATEWAY_ALLOW_INSECURE_WS=1`.
+
 ## [1.7.4] - 2026-05-08
 
 ### Added

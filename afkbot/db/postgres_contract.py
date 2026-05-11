@@ -109,7 +109,7 @@ def render_database_per_bot_bootstrap_plan(
 def validate_managed_postgres_settings(settings: Settings) -> None:
     """Validate the runtime DB posture expected inside a managed bot container."""
 
-    if settings.deployment_mode != "managed":
+    if not settings.cloud_gateway_enabled:
         return
     if settings.managed_database_isolation_mode != "database_per_bot":
         raise PostgresBootstrapContractError(

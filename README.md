@@ -342,6 +342,12 @@ afk start
 | `afk logs` | Show diagnostic error log files and their path |
 | `afk update` | Update the installed AFKBOT build |
 
+Hosted AFKBOT Cloud containers use an outbound WebSocket gateway when
+`AFKBOT_DEPLOYMENT_MODE=managed` is set by the control plane. The managed path
+requires a bot-scoped PostgreSQL database and a `wss://` gateway URL. This is
+disabled by default and does not change local or self-hosted `afk start`
+behavior.
+
 ## Core model
 
 Keep the mental model simple:

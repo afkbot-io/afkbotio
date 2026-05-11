@@ -350,6 +350,8 @@ def test_settings_runtime_store_respects_allowlists(
             "public_runtime_url": "https://app.example.com",
             "public_chat_api_url": "https://chat.example.com",
             "nginx_config_path": "/etc/nginx/conf.d/afkbot.conf",
+            "control_ws_url": "wss://persisted.example.test/ws/runtime/connect/",
+            "managed_mode": True,
             "openai_api_key": "config-secret-must-be-ignored",
             "root_dir": "/tmp/unsafe-root-override",
         },
@@ -358,6 +360,7 @@ def test_settings_runtime_store_respects_allowlists(
         seeded,
         secrets={
             "llm_api_key": "runtime-secret-key",
+            "runtime_ws_token": "persisted-runtime-token",
             "runtime_port": "17000",
         },
     )
@@ -368,6 +371,9 @@ def test_settings_runtime_store_respects_allowlists(
     assert settings.public_runtime_url == "https://app.example.com"
     assert settings.public_chat_api_url == "https://chat.example.com"
     assert settings.nginx_config_path == "/etc/nginx/conf.d/afkbot.conf"
+    assert settings.control_ws_url is None
+    assert settings.managed_mode is False
+    assert settings.runtime_ws_token is None
     assert settings.llm_api_key == "runtime-secret-key"
     assert settings.openai_api_key is None
 
