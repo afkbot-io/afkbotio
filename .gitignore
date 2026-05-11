@@ -42,6 +42,10 @@ site/
 output/
 bin/
 target/
+
+# Mandatory local-only operator notes. These paths must not be staged, committed,
+# pushed, or included in pull requests. Local git hooks allow deletions only when
+# cleaning up files that were already tracked before this rule.
 docs/
 plans/
 docs_web/
