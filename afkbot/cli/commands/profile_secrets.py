@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import typer
@@ -13,9 +12,9 @@ from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_i
 from afkbot.services.profile_runtime import (
     ProfileServiceError,
     get_profile_runtime_secrets_service,
-    get_profile_service,
     provider_oauth_metadata_fields,
     provider_secret_field,
+    run_profile_service_sync,
 )
 from afkbot.services.llm.provider_catalog import LLMProviderId
 from afkbot.services.llm.token_file_sources import openai_codex_secret_token_runtime_secrets
@@ -37,7 +36,10 @@ def register_secrets(profile_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             normalized_profile_id = validate_profile_id(profile_id)
-            profile = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            profile = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -80,7 +82,10 @@ def register_secrets(profile_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             normalized_profile_id = validate_profile_id(profile_id)
-            profile = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            profile = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
             updates = _build_secret_updates(
                 llm_provider=profile.effective_runtime.llm_provider,
                 llm_api_key=llm_api_key,
@@ -93,7 +98,10 @@ def register_secrets(profile_app: typer.Typer) -> None:
                 )
             service = get_profile_runtime_secrets_service(settings)
             service.merge(normalized_profile_id, updates)
-            refreshed = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            refreshed = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -137,7 +145,10 @@ def register_secrets(profile_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             normalized_profile_id = validate_profile_id(profile_id)
-            profile = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            profile = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
             if all_fields:
                 fields_to_clear: tuple[str, ...] | None = None
             else:
@@ -156,7 +167,10 @@ def register_secrets(profile_app: typer.Typer) -> None:
                 fields_to_clear = tuple(dict.fromkeys(requested_fields))
             service = get_profile_runtime_secrets_service(settings)
             service.clear(normalized_profile_id, fields=fields_to_clear)
-            refreshed = asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            refreshed = run_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=normalized_profile_id),
+            )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None

@@ -249,19 +249,7 @@ class BrowserSessionManager:
             await self._prune_session_lock_if_unused(key, lock)
         if clear_persisted_state:
             state_root = self.state_root_dir(root_dir=root_dir)
-            if state_root.exists():
-                for path in sorted(state_root.rglob("*"), reverse=True):
-                    try:
-                        if path.is_file():
-                            path.unlink()
-                        else:
-                            path.rmdir()
-                    except OSError:
-                        continue
-                try:
-                    state_root.rmdir()
-                except OSError:
-                    pass
+            await asyncio.to_thread(self._clear_state_root_sync, state_root)
         await self._prune_root_metadata(root_key)
         return closed
 
@@ -327,13 +315,15 @@ class BrowserSessionManager:
             profile_id=profile_id,
             session_id=session_id,
         )
-        if not path.exists():
+        if not await asyncio.to_thread(path.exists):
             return False
-        try:
-            path.unlink()
-        except OSError:
+        if not await asyncio.to_thread(self._unlink_path_sync, path):
             return False
-        self._prune_empty_parent_dirs(path.parent, stop_at=self.state_root_dir(root_dir=root_dir))
+        await asyncio.to_thread(
+            self._prune_empty_parent_dirs,
+            path.parent,
+            stop_at=self.state_root_dir(root_dir=root_dir),
+        )
         return True
 
     @classmethod
@@ -533,14 +523,11 @@ class BrowserSessionManager:
     ) -> tuple[Any | None, Any, bool]:
         new_context = getattr(browser, "new_context", None)
         if callable(new_context):
-            if storage_state_path.exists():
+            if await asyncio.to_thread(storage_state_path.exists):
                 try:
                     context = await new_context(storage_state=str(storage_state_path))
                 except Exception:
-                    try:
-                        storage_state_path.unlink()
-                    except OSError:
-                        pass
+                    await asyncio.to_thread(BrowserSessionManager._unlink_path_sync, storage_state_path)
                     context = await new_context()
                     loaded_from_storage = False
                 else:
@@ -576,11 +563,10 @@ class BrowserSessionManager:
         clear_persisted_state: bool = False,
     ) -> None:
         if clear_persisted_state:
-            try:
-                if handle.storage_state_path.exists():
-                    handle.storage_state_path.unlink()
-            except OSError:
-                pass
+            await asyncio.to_thread(
+                BrowserSessionManager._unlink_path_if_exists_sync,
+                handle.storage_state_path,
+            )
         else:
             try:
                 await BrowserSessionManager._persist_handle_state(handle)
@@ -605,7 +591,8 @@ class BrowserSessionManager:
         except Exception:
             pass
         if clear_persisted_state:
-            BrowserSessionManager._prune_empty_parent_dirs(
+            await asyncio.to_thread(
+                BrowserSessionManager._prune_empty_parent_dirs,
                 handle.storage_state_path.parent,
                 stop_at=BrowserSessionManager.state_root_dir(root_dir=Path(handle.root_key)),
             )
@@ -620,9 +607,40 @@ class BrowserSessionManager:
         storage_state = getattr(context, "storage_state", None)
         if not callable(storage_state):
             return False
-        handle.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(handle.storage_state_path.parent.mkdir, parents=True, exist_ok=True)
         await storage_state(path=str(handle.storage_state_path))
         return True
+
+    @staticmethod
+    def _clear_state_root_sync(state_root: Path) -> None:
+        if not state_root.exists():
+            return
+        for path in sorted(state_root.rglob("*"), reverse=True):
+            try:
+                if path.is_file():
+                    path.unlink()
+                else:
+                    path.rmdir()
+            except OSError:
+                continue
+        try:
+            state_root.rmdir()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _unlink_path_sync(path: Path) -> bool:
+        try:
+            path.unlink()
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def _unlink_path_if_exists_sync(path: Path) -> bool:
+        if not path.exists():
+            return False
+        return BrowserSessionManager._unlink_path_sync(path)
 
     @staticmethod
     def _prune_empty_parent_dirs(path: Path, *, stop_at: Path) -> None:

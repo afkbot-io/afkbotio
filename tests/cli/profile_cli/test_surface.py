@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from pathlib import Path
@@ -12,7 +11,7 @@ from typer.testing import CliRunner
 
 from afkbot.cli.main import app
 from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointConfig
-from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channels.endpoint_service import run_channel_endpoint_service_sync
 from afkbot.settings import get_settings
 from tests.cli.profile_cli._harness import _prepare_env
 
@@ -189,8 +188,9 @@ def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: Monk
     assert add_result.exit_code == 0
 
     settings = get_settings()
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelegramPollingEndpointConfig(
                 endpoint_id="support-bot",
                 profile_id="default",
@@ -335,8 +335,9 @@ def test_profile_show_human_output_includes_channel_narrowing(
     assert add_result.exit_code == 0
 
     settings = get_settings()
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelegramPollingEndpointConfig(
                 endpoint_id="support-bot",
                 profile_id="default",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from afkbot.services.setup.defaults import load_env_defaults
 from afkbot.services.profile_id import InvalidProfileIdError
 from afkbot.services.profile_runtime import (
     ProfileServiceError,
-    get_profile_service,
+    run_profile_service_sync,
 )
 from afkbot.settings import get_settings
 
@@ -365,8 +364,9 @@ def register_add(profile_app: typer.Typer) -> None:
                 skip_verify=skip_llm_token_verify,
                 lang=prompt_language,
             )
-            profile = asyncio.run(
-                get_profile_service(settings).create(
+            profile = run_profile_service_sync(
+                settings,
+                lambda service: service.create(
                     profile_id=resolved_profile_id,
                     name=mutation_inputs.resolved_name,
                     runtime_config=mutation_inputs.runtime_config,
@@ -379,7 +379,7 @@ def register_add(profile_app: typer.Typer) -> None:
                     policy_shell_sandbox_mode=mutation_inputs.resolved_policy.shell_sandbox_mode,
                     policy_shell_allowed_commands=mutation_inputs.resolved_policy.shell_allowed_commands,
                     policy_network_allowlist=mutation_inputs.resolved_policy.network_allowlist,
-                )
+                ),
             )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)

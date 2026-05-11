@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 import typer
@@ -13,8 +12,8 @@ from afkbot.services.channel_routing import (
     ChannelBindingServiceError,
     ChannelRoutingInput,
     SessionPolicy,
-    get_channel_binding_service,
 )
+from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.settings import get_settings
 
 
@@ -53,8 +52,9 @@ def register_binding(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            rule = asyncio.run(
-                get_channel_binding_service(settings).put(
+            rule = run_channel_binding_service_sync(
+                settings,
+                lambda service: service.put(
                     ChannelBindingRule(
                         binding_id=binding_id,
                         transport=transport,
@@ -68,7 +68,7 @@ def register_binding(profile_app: typer.Typer) -> None:
                         user_id=user_id,
                         prompt_overlay=prompt_overlay,
                     )
-                )
+                ),
             )
         except (ChannelBindingServiceError, ValueError) as exc:
             emit_profile_error(exc)
@@ -84,11 +84,12 @@ def register_binding(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            rules = asyncio.run(
-                get_channel_binding_service(settings).list(
+            rules = run_channel_binding_service_sync(
+                settings,
+                lambda service: service.list(
                     transport=transport,
                     profile_id=profile_id,
-                )
+                ),
             )
         except (ChannelBindingServiceError, ValueError) as exc:
             emit_profile_error(exc)
@@ -108,7 +109,10 @@ def register_binding(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            rule = asyncio.run(get_channel_binding_service(settings).get(binding_id=binding_id))
+            rule = run_channel_binding_service_sync(
+                settings,
+                lambda service: service.get(binding_id=binding_id),
+            )
         except (ChannelBindingServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -122,7 +126,10 @@ def register_binding(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            asyncio.run(get_channel_binding_service(settings).delete(binding_id=binding_id))
+            run_channel_binding_service_sync(
+                settings,
+                lambda service: service.delete(binding_id=binding_id),
+            )
         except (ChannelBindingServiceError, ValueError) as exc:
             emit_profile_error(exc)
             raise typer.Exit(code=1) from None
@@ -145,8 +152,9 @@ def register_binding(profile_app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            decision = asyncio.run(
-                get_channel_binding_service(settings).resolve(
+            decision = run_channel_binding_service_sync(
+                settings,
+                lambda service: service.resolve(
                     routing_input=ChannelRoutingInput(
                         transport=transport,
                         account_id=account_id,
@@ -155,7 +163,7 @@ def register_binding(profile_app: typer.Typer) -> None:
                         user_id=user_id,
                         default_session_id=default_session_id,
                     )
-                )
+                ),
             )
         except (ChannelBindingServiceError, ValueError) as exc:
             emit_profile_error(exc)

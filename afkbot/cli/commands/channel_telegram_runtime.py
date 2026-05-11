@@ -159,7 +159,7 @@ async def telegram_poll_once_payload(*, channel_id: str) -> dict[str, object]:
         "channel_id": channel_id,
         "processed_updates": processed,
         "state_path": str(state_path),
-        "state_present": state_path.exists(),
+        "state_present": await asyncio.to_thread(state_path.exists),
     }
 
 

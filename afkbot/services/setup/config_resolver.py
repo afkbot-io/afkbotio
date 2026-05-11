@@ -60,6 +60,10 @@ from afkbot.services.policy import PolicyPresetLevel, resolve_allowed_directorie
 from afkbot.services.runtime_ports import (
     resolve_default_runtime_port,
 )
+from afkbot.services.runtime_exposure_guard import (
+    RuntimeExposureGuardError,
+    validate_runtime_exposure,
+)
 from afkbot.settings import Settings
 
 
@@ -455,6 +459,14 @@ def collect_setup_config(
 
     if profile_setup_only or platform_seed_only:
         runtime_host_resolved = (runtime_host or defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host)).strip()
+        try:
+            validate_runtime_exposure(
+                settings=settings,
+                host=runtime_host_resolved,
+                context="afk setup",
+            )
+        except RuntimeExposureGuardError as exc:
+            raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
         runtime_port_default = _resolve_runtime_port_default_from_inputs(
             settings=settings,
             defaults=defaults,
@@ -506,6 +518,14 @@ def collect_setup_config(
             default=defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host),
             lang=lang,
         )
+        try:
+            validate_runtime_exposure(
+                settings=settings,
+                host=runtime_host_resolved,
+                context="afk setup",
+            )
+        except RuntimeExposureGuardError as exc:
+            raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
         runtime_port_default = _resolve_runtime_port_default_from_inputs(
             settings=settings,
             defaults=defaults,

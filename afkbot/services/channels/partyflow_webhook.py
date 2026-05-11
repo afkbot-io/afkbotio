@@ -131,8 +131,14 @@ class PartyFlowWebhookService:
             endpoint_id=self._endpoint.endpoint_id,
             service=self,
         )
-        self._stop_event.set()
         worker_task = self._worker_task
+        if worker_task is not None:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._queue.join(),
+                    timeout=max(0.1, min(5.0, self._settings.runtime_shutdown_timeout_sec)),
+                )
+        self._stop_event.set()
         self._worker_task = None
         retry_task = self._retry_task
         self._retry_task = None
@@ -145,6 +151,7 @@ class PartyFlowWebhookService:
             worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
+        await self._drain_queued_events_after_stop()
         await self._ingress_coalescer.flush_all()
         self._pending_restored = False
 
@@ -277,6 +284,11 @@ class PartyFlowWebhookService:
                 "credential_binding_conflict",
                 "credential_profile_required",
             }:
+                if self._settings.partyflow_webhook_signing_required:
+                    raise PartyFlowWebhookServiceError(
+                        error_code="partyflow_signing_secret_required",
+                        reason="PartyFlow webhook signing secret is required for this runtime.",
+                    ) from exc
                 self._signing_secret = None
             else:
                 raise PartyFlowWebhookServiceError(
@@ -285,6 +297,11 @@ class PartyFlowWebhookService:
                 ) from exc
         else:
             self._signing_secret = secret.encode("utf-8") if secret.strip() else None
+            if self._signing_secret is None and self._settings.partyflow_webhook_signing_required:
+                raise PartyFlowWebhookServiceError(
+                    error_code="partyflow_signing_secret_required",
+                    reason="PartyFlow webhook signing secret is required for this runtime.",
+                )
         result = await self._app_runtime.run(
             app="partyflow",
             action="get_me",
@@ -315,22 +332,37 @@ class PartyFlowWebhookService:
 
         while not self._stop_event.is_set():
             item = await self._queue.get()
+            await self._process_queued_event(item)
+
+    async def _drain_queued_events_after_stop(self) -> None:
+        """Best-effort drain for accepted events not yet picked up by the worker."""
+
+        while True:
             try:
-                await self._ingress_coalescer.enqueue(item.ingress_event)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                retry_after_sec = _extract_retry_after_sec(exc) or 5
-                await self._schedule_pending_retry(retry_after_sec=retry_after_sec)
-                _LOGGER.exception(
-                    "partyflow_webhook_event_failed endpoint_id=%s event_key=%s retry_after_sec=%s error=%s",
-                    self._endpoint.endpoint_id,
-                    item.ingress_event.event_key,
-                    retry_after_sec,
-                    f"{exc.__class__.__name__}: {exc}",
-                )
-            finally:
-                self._queue.task_done()
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            await self._process_queued_event(item)
+
+    async def _process_queued_event(self, item: _QueuedWebhookEvent) -> None:
+        """Process one queued webhook event or schedule a persisted retry."""
+
+        try:
+            await self._ingress_coalescer.enqueue(item.ingress_event)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            retry_after_sec = _extract_retry_after_sec(exc) or 5
+            await self._schedule_pending_retry(retry_after_sec=retry_after_sec)
+            _LOGGER.exception(
+                "partyflow_webhook_event_failed endpoint_id=%s event_key=%s retry_after_sec=%s error=%s",
+                self._endpoint.endpoint_id,
+                item.ingress_event.event_key,
+                retry_after_sec,
+                f"{exc.__class__.__name__}: {exc}",
+            )
+        finally:
+            self._queue.task_done()
 
     async def _flush_inbound_batch(self, batch: ChannelIngressBatch) -> None:
         """Flush one coalesced PartyFlow ingress batch through AgentLoop and reply delivery."""

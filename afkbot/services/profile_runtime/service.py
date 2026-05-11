@@ -144,19 +144,24 @@ class ProfileService:
                 network_allowlist=policy_network_allowlist,
             )
             async with self._profile_files_lock.acquire(profile_id):
-                self._runtime_configs.ensure_layout(profile_id)
+                await asyncio.to_thread(self._runtime_configs.ensure_layout, profile_id)
                 config_path = self._runtime_configs.config_path(profile_id)
-                if config_path.exists():
+                if await asyncio.to_thread(config_path.exists):
                     raise ProfileServiceError(
                         error_code="profile_runtime_config_exists",
                         reason=f"Profile runtime config already exists: {profile_id}",
                     )
-                self._runtime_configs.write(profile_id, runtime_config)
+                await asyncio.to_thread(self._runtime_configs.write, profile_id, runtime_config)
                 config_written = True
                 if runtime_secrets:
-                    self._runtime_secrets.write(profile_id, runtime_secrets)
+                    await asyncio.to_thread(
+                        self._runtime_secrets.write,
+                        profile_id,
+                        runtime_secrets,
+                    )
                     secrets_written = True
-                self._seed_missing_bootstrap_files(
+                await asyncio.to_thread(
+                    self._seed_missing_bootstrap_files,
                     profile_id=profile_id,
                     created=created_bootstrap_files,
                 )
@@ -168,12 +173,12 @@ class ProfileService:
             if config_written or secrets_written or created_bootstrap_files:
                 async with self._profile_files_lock.acquire(profile_id):
                     for path in created_bootstrap_files:
-                        if path.exists():
-                            path.unlink()
+                        if await asyncio.to_thread(path.exists):
+                            await asyncio.to_thread(path.unlink)
                     if config_written:
-                        self._runtime_configs.remove(profile_id)
+                        await asyncio.to_thread(self._runtime_configs.remove, profile_id)
                     if secrets_written:
-                        self._runtime_secrets.remove(profile_id)
+                        await asyncio.to_thread(self._runtime_secrets.remove, profile_id)
             raise
 
     async def bootstrap_default(
@@ -228,13 +233,17 @@ class ProfileService:
                 network_allowlist=policy_network_allowlist,
             )
             async with self._profile_files_lock.acquire("default"):
-                self._runtime_configs.ensure_layout("default")
-                self._runtime_configs.write("default", runtime_config)
+                await asyncio.to_thread(self._runtime_configs.ensure_layout, "default")
+                await asyncio.to_thread(self._runtime_configs.write, "default", runtime_config)
                 if runtime_secrets:
-                    self._runtime_secrets.write("default", runtime_secrets)
+                    await asyncio.to_thread(
+                        self._runtime_secrets.write,
+                        "default",
+                        runtime_secrets,
+                    )
                 else:
-                    self._runtime_secrets.remove("default")
-                self._seed_missing_bootstrap_files(profile_id="default")
+                    await asyncio.to_thread(self._runtime_secrets.remove, "default")
+                await asyncio.to_thread(self._seed_missing_bootstrap_files, profile_id="default")
             await session.flush()
             return await self._build_details(row=row, session=session)
 
@@ -300,8 +309,8 @@ class ProfileService:
                 network_allowlist=policy_network_allowlist,
             )
             async with self._profile_files_lock.acquire(profile_id):
-                self._runtime_configs.ensure_layout(profile_id)
-                self._runtime_configs.write(profile_id, runtime_config)
+                await asyncio.to_thread(self._runtime_configs.ensure_layout, profile_id)
+                await asyncio.to_thread(self._runtime_configs.write, profile_id, runtime_config)
             await session.flush()
             return await self._build_details(row=row, session=session)
 

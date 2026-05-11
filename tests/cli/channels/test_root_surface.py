@@ -13,7 +13,7 @@ from afkbot.services.channels.endpoint_contracts import (
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
-from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channels.endpoint_service import run_channel_endpoint_service_sync
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.settings import get_settings
 from tests.cli._rendering import invoke_plain_help
@@ -51,8 +51,9 @@ def test_channel_root_show_includes_effective_memory_behavior(
             policy_network_allowlist=("*",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelethonUserEndpointConfig(
                 endpoint_id="personal-user",
                 profile_id="default",
@@ -108,8 +109,9 @@ def test_channel_root_show_human_output_includes_profile_ceiling_and_merge_model
             policy_network_allowlist=("api.telegram.org",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelegramPollingEndpointConfig(
                 endpoint_id="support-bot",
                 profile_id="default",
@@ -157,8 +159,9 @@ def test_channel_telethon_show_includes_merge_model_and_profile_ceiling(
             policy_network_allowlist=("*",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelethonUserEndpointConfig(
                 endpoint_id="personal-user",
                 profile_id="default",
@@ -214,9 +217,9 @@ def test_channel_root_show_includes_effective_permissions(tmp_path: Path, monkey
             policy_network_allowlist=("api.telegram.org",),
         )
     )
-    endpoint_service = get_channel_endpoint_service(settings)
-    asyncio.run(
-        endpoint_service.create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelethonUserEndpointConfig(
                 endpoint_id="personal-user",
                 profile_id="default",

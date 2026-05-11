@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 from pathlib import Path
 from typing import Literal
@@ -113,10 +114,17 @@ class ProfileSkillService:
 
         if scope == "profile":
             path = self._loader.profile_skill_path(profile_id, normalized_name)
-            if not path.exists():
+            if not await asyncio.to_thread(path.exists):
                 raise FileNotFoundError(f"Profile skill not found: {normalized_name}")
-            content = path.read_text(encoding="utf-8")
-            skill_info = self._loader._build_skill_info(name=normalized_name, path=path, origin="profile")  # noqa: SLF001
+            content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            skill_info = await asyncio.to_thread(
+                self._loader._build_skill_info,  # noqa: SLF001
+                name=normalized_name,
+                path=path,
+                origin="profile",
+            )
+            manifest_path = self._loader.profile_skill_manifest_path(profile_id, normalized_name)
+            manifest_exists = await asyncio.to_thread(manifest_path.exists)
             return ProfileSkillRecord(
                 name=normalized_name,
                 origin="profile",
@@ -124,8 +132,8 @@ class ProfileSkillService:
                 content=content,
                 summary=_extract_summary(content),
                 manifest_path=(
-                    self._to_relative(self._loader.profile_skill_manifest_path(profile_id, normalized_name))
-                    if self._loader.profile_skill_manifest_path(profile_id, normalized_name).exists()
+                    self._to_relative(manifest_path)
+                    if manifest_exists
                     else None
                 ),
                 manifest_valid=skill_info.manifest_valid,
@@ -156,10 +164,10 @@ class ProfileSkillService:
         if not selected_path.is_absolute():
             selected_path = root / selected_path
         try:
-            resolved_path = selected_path.resolve(strict=True)
+            resolved_path = await asyncio.to_thread(selected_path.resolve, strict=True)
         except (OSError, RuntimeError, ValueError) as exc:
             raise FileNotFoundError(f"Skill not found: {normalized_name}") from exc
-        content_text = resolved_path.read_text(encoding="utf-8")
+        content_text = await asyncio.to_thread(resolved_path.read_text, encoding="utf-8")
         return ProfileSkillRecord(
             name=selected.name,
             origin=selected.origin,
@@ -189,14 +197,20 @@ class ProfileSkillService:
         path = self._loader.profile_skill_path(profile_id, normalized_name)
         normalized_content = canonicalize_skill_markdown(name=normalized_name, content=content)
         async with self._profile_files_lock.acquire(profile_id):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(normalized_content, encoding="utf-8")
-            materialized = self._loader.materialize_manifest(
+            await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(path.write_text, normalized_content, encoding="utf-8")
+            materialized = await asyncio.to_thread(
+                self._loader.materialize_manifest,
                 skill_path=path,
                 name=normalized_name,
                 content=normalized_content,
             )
-            skill_info = self._loader._build_skill_info(name=normalized_name, path=path, origin="profile")  # noqa: SLF001
+            skill_info = await asyncio.to_thread(
+                self._loader._build_skill_info,  # noqa: SLF001
+                name=normalized_name,
+                path=path,
+                origin="profile",
+            )
         return ProfileSkillRecord(
             name=normalized_name,
             path=self._to_relative(path),
@@ -224,14 +238,14 @@ class ProfileSkillService:
         self._loader.validate_skill_name(normalized_name)
         path = self._loader.profile_skill_path(profile_id, normalized_name)
         async with self._profile_files_lock.acquire(profile_id):
-            if not path.exists():
+            if not await asyncio.to_thread(path.exists):
                 raise FileNotFoundError(f"Profile skill not found: {normalized_name}")
-            path.unlink()
+            await asyncio.to_thread(path.unlink)
             manifest_path = self._loader.profile_skill_manifest_path(profile_id, normalized_name)
-            if manifest_path.exists():
-                manifest_path.unlink()
+            if await asyncio.to_thread(manifest_path.exists):
+                await asyncio.to_thread(manifest_path.unlink)
             try:
-                path.parent.rmdir()
+                await asyncio.to_thread(path.parent.rmdir)
             except OSError:
                 # Parent can remain when additional files exist.
                 pass
@@ -257,16 +271,22 @@ class ProfileSkillService:
         async with self._profile_files_lock.acquire(profile_id):
             for normalized_name in names:
                 path = self._loader.profile_skill_path(profile_id, normalized_name)
-                if not path.exists():
+                if not await asyncio.to_thread(path.exists):
                     raise FileNotFoundError(f"Profile skill not found: {normalized_name}")
-                content = path.read_text(encoding="utf-8")
-                materialized = self._loader.materialize_manifest(
+                content = await asyncio.to_thread(path.read_text, encoding="utf-8")
+                materialized = await asyncio.to_thread(
+                    self._loader.materialize_manifest,
                     skill_path=path,
                     name=normalized_name,
                     content=content,
                     overwrite=overwrite,
                 )
-                refreshed = self._loader._build_skill_info(name=normalized_name, path=path, origin="profile")  # noqa: SLF001
+                refreshed = await asyncio.to_thread(
+                    self._loader._build_skill_info,  # noqa: SLF001
+                    name=normalized_name,
+                    path=path,
+                    origin="profile",
+                )
                 results.append(
                     ProfileSkillNormalizeRecord(
                         name=normalized_name,

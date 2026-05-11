@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
@@ -24,7 +25,7 @@ from afkbot.services.memory.contracts import (
 )
 from afkbot.settings import Settings
 
-_SERVICES_BY_ROOT: dict[str, "MemoryService"] = {}
+_SERVICES_BY_ROOT: dict[tuple[str, int], "MemoryService"] = {}
 TValue = TypeVar("TValue")
 
 
@@ -518,15 +519,29 @@ class MemoryService:
 
 
 def get_memory_service(settings: Settings) -> MemoryService:
-    """Get or create one memory service for current root directory."""
+    """Get or create one memory service for the current root and event loop."""
 
-    key = str(settings.root_dir.resolve())
+    key_root = str(settings.root_dir.resolve())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return _build_memory_service(settings)
+
+    key = (key_root, id(loop))
     service = _SERVICES_BY_ROOT.get(key)
     if service is not None:
         return service
+    service = _build_memory_service(settings)
+    _SERVICES_BY_ROOT[key] = service
+    return service
+
+
+def _build_memory_service(settings: Settings) -> MemoryService:
+    """Create one memory service with its own async engine."""
+
     engine = create_engine(settings)
     factory = create_session_factory(engine)
-    service = MemoryService(
+    return MemoryService(
         factory,
         engine=engine,
         settings=settings,
@@ -534,8 +549,22 @@ def get_memory_service(settings: Settings) -> MemoryService:
         max_items_per_profile=settings.memory_max_items_per_profile,
         gc_batch_size=settings.memory_gc_batch_size,
     )
-    _SERVICES_BY_ROOT[key] = service
-    return service
+
+
+def run_memory_service_sync(
+    settings: Settings,
+    op: Callable[[MemoryService], Awaitable[TValue]],
+) -> TValue:
+    """Run one memory-service operation in a fresh loop and dispose the engine."""
+
+    async def _run() -> TValue:
+        service = _build_memory_service(settings)
+        try:
+            return await op(service)
+        finally:
+            await service.shutdown()
+
+    return asyncio.run(_run())
 
 
 def reset_memory_services() -> None:

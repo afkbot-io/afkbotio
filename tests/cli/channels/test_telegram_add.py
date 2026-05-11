@@ -8,7 +8,7 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
-from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channels.endpoint_service import run_channel_endpoint_service_sync
 from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.setup.runtime_store import write_runtime_config
@@ -367,7 +367,10 @@ def test_channel_telegram_add_interactive_accepts_generated_channel_id(
     assert result.exit_code == 0
     assert "Telegram Bot API channel setup" in result.stdout
     assert "Press Enter there to accept `telegram-" in result.stdout
-    channels = asyncio.run(get_channel_endpoint_service(settings).list(transport="telegram"))
+    channels = run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram"),
+    )
     assert len(channels) == 1
     saved = channels[0]
     assert saved.endpoint_id.startswith("telegram-")

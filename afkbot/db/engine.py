@@ -12,6 +12,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from afkbot.db.dialect import database_driver_name, is_postgres_url, is_sqlite_url
 from afkbot.settings import Settings
 
 _SQLITE_BUSY_TIMEOUT_MS: Final[int] = 5_000
@@ -22,13 +23,37 @@ def create_engine(settings: Settings) -> AsyncEngine:
     """Create an async database engine from settings."""
 
     _ensure_sqlite_directory(settings.db_url)
-    if _is_sqlite_url(settings.db_url):
+    is_sqlite = is_sqlite_url(settings.db_url)
+    is_postgres = is_postgres_url(settings.db_url)
+    if is_sqlite:
         _register_sqlite_datetime_codecs()
-    engine = create_async_engine(settings.db_url, future=True)
+    engine_kwargs: dict[str, object] = {
+        "future": True,
+        "pool_pre_ping": is_postgres,
+    }
+    if is_postgres:
+        engine_kwargs.update(_postgres_engine_kwargs(settings))
+    engine = create_async_engine(settings.db_url, **engine_kwargs)
     setattr(engine.sync_engine, "_afkbot_settings", settings)
-    if _is_sqlite_url(settings.db_url):
+    if is_sqlite:
         _configure_sqlite(engine, db_url=settings.db_url)
     return engine
+
+
+def _postgres_engine_kwargs(settings: Settings) -> dict[str, object]:
+    """Return bounded PostgreSQL pool and server-side timeout settings."""
+
+    server_settings: dict[str, str] = {
+        "application_name": settings.db_application_name,
+        "statement_timeout": str(max(0, settings.db_statement_timeout_ms)),
+        "idle_in_transaction_session_timeout": str(max(0, settings.db_idle_in_transaction_timeout_ms)),
+    }
+    return {
+        "pool_size": max(1, settings.db_pool_size),
+        "max_overflow": max(0, settings.db_max_overflow),
+        "pool_timeout": max(1, settings.db_pool_timeout_sec),
+        "connect_args": {"server_settings": server_settings},
+    }
 
 
 def _configure_sqlite(engine: AsyncEngine, *, db_url: str) -> None:
@@ -67,15 +92,6 @@ def _ensure_sqlite_directory(db_url: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _is_sqlite_url(db_url: str) -> bool:
-    """Return True for sqlite URLs, including sqlite+aiosqlite."""
-
-    try:
-        return str(make_url(db_url).drivername).startswith("sqlite")
-    except Exception:
-        return False
-
-
 def _register_sqlite_datetime_codecs() -> None:
     """Install explicit SQLite date/time codecs to avoid Python 3.12 default-adapter deprecations."""
 
@@ -101,10 +117,9 @@ def _sqlite_datetime_from_bytes(value: bytes) -> datetime:
 def _sqlite_supports_wal(db_url: str) -> bool:
     """Return True when the SQLite target is on-disk and can use WAL mode."""
 
-    try:
-        url = make_url(db_url)
-    except Exception:
+    if not database_driver_name(db_url).startswith("sqlite"):
         return False
+    url = make_url(db_url)
     database = str(url.database or "").strip()
     if not database or database == ":memory:":
         return False

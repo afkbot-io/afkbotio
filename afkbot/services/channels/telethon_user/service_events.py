@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -119,7 +120,7 @@ async def enrich_inbound_with_downloaded_media(
         size_bytes = None
     if isinstance(size_bytes, int) and size_bytes > max_bytes:
         try:
-            path.unlink(missing_ok=True)
+            await asyncio.to_thread(path.unlink, missing_ok=True)
         except OSError:
             service.logger.warning(
                 "telethon_media_oversized_delete_failed endpoint_id=%s message_id=%s path=%s",

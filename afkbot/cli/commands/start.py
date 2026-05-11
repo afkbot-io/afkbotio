@@ -28,7 +28,15 @@ from afkbot.services.runtime_ports import (
     probe_runtime_stack,
     resolve_default_runtime_port,
 )
+from afkbot.services.runtime_exposure_guard import (
+    RuntimeExposureGuardError,
+    validate_runtime_exposure,
+)
 from afkbot.services.error_logging import configure_error_file_logging, log_exception
+from afkbot.services.managed_database_guard import (
+    ManagedDatabaseGuardError,
+    validate_managed_database_runtime,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
@@ -180,6 +188,18 @@ def run_start_command(
             **updated_settings
         )
     resolved_host = host or resolved_settings.runtime_host
+    try:
+        validate_runtime_exposure(
+            settings=resolved_settings,
+            host=resolved_host,
+            context="afk start",
+        )
+    except RuntimeExposureGuardError as exc:
+        raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
+    try:
+        validate_managed_database_runtime(resolved_settings)
+    except ManagedDatabaseGuardError as exc:
+        raise_usage_error(f"ERROR [{exc.error_code}] {exc.reason}")
     runtime_config = read_runtime_config(resolved_settings)
     bind_plan = _resolve_runtime_bind_plan(
         settings=resolved_settings,
@@ -518,6 +538,7 @@ def _persist_runtime_bind_defaults(
 ) -> None:
     """Persist the first successful runtime bind so future starts reuse it."""
 
+    validate_runtime_exposure(settings=settings, host=host, context="runtime bind persistence")
     runtime_config = dict(read_runtime_config(settings))
     runtime_config.setdefault("runtime_host", host)
     runtime_config["runtime_port"] = runtime_port

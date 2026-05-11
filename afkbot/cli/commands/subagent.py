@@ -11,11 +11,11 @@ import typer
 from afkbot.cli.commands.runtime_assets_common import emit_structured_error, resolve_inline_or_file_text
 from afkbot.services.policy import PolicyViolationError
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
-from afkbot.services.profile_runtime.service import ProfileServiceError, get_profile_service
+from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
 from afkbot.services.subagents import get_subagent_service
 from afkbot.services.subagents.profile_service import get_profile_subagent_service
 from afkbot.services.tools.base import ToolContext
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 
 
 def register(app: typer.Typer) -> None:
@@ -36,7 +36,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             items = asyncio.run(
                 get_profile_subagent_service(settings).list(
                     profile_id=normalized_profile_id,
@@ -62,7 +62,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_subagent_service(settings).get(
                     profile_id=normalized_profile_id,
@@ -96,7 +96,7 @@ def register(app: typer.Typer) -> None:
             markdown = resolve_inline_or_file_text(text=text, from_file=from_file)
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_subagent_service(settings).upsert(
                     profile_id=normalized_profile_id,
@@ -119,7 +119,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             item = asyncio.run(
                 get_profile_subagent_service(settings).delete(
                     profile_id=normalized_profile_id,
@@ -149,7 +149,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             result = asyncio.run(
                 get_subagent_service(settings).run(
                     ctx=ToolContext(profile_id=normalized_profile_id, session_id=session_id, run_id=0),
@@ -187,7 +187,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             result = asyncio.run(
                 get_subagent_service(settings).wait(
                     task_id=task_id,
@@ -218,7 +218,7 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             normalized_profile_id = validate_profile_id(profile_id)
-            asyncio.run(get_profile_service(settings).get(profile_id=normalized_profile_id))
+            _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             result = asyncio.run(
                 get_subagent_service(settings).result(
                     task_id=task_id,
@@ -236,3 +236,10 @@ def register(app: typer.Typer) -> None:
             emit_structured_error(exc, default_error_code="subagent_error")
             raise typer.Exit(code=1) from None
         typer.echo(json.dumps({"task": result.model_dump(mode="json")}, ensure_ascii=True))
+
+
+def _assert_profile_exists(*, settings: Settings, profile_id: str) -> None:
+    run_profile_service_sync(
+        settings,
+        lambda service: service.get(profile_id=profile_id),
+    )

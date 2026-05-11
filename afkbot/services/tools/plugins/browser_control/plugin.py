@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
@@ -572,34 +573,37 @@ class BrowserControlTool(ToolBase):
         text_truncated = bool(snapshot.get("body_text_truncated"))
         html_excerpt, html_truncated = self._truncate_raw_text(html, limit=payload.max_chars)
         files = self._resolve_snapshot_paths(ctx=ctx, requested_path=payload.path)
-        files["screenshot"].parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(files["screenshot"].parent.mkdir, parents=True, exist_ok=True)
         await session.page.screenshot(
             path=str(files["screenshot"]),
             full_page=payload.full_page,
             timeout=payload.timeout_ms,
         )
-        files["text"].write_text(text_excerpt, encoding="utf-8")
-        files["html"].write_text(html_excerpt, encoding="utf-8")
-        files["json"].write_text(
-            json.dumps(
-                {
-                    "url": str(getattr(session.page, "url", "") or ""),
-                    "title": snapshot.get("title") or "",
-                    "headings": snapshot.get("headings") or [],
-                    "buttons": snapshot.get("buttons") or [],
-                    "links": snapshot.get("links") or [],
-                    "forms": snapshot.get("forms") or [],
-                    "images": snapshot.get("images") or [],
-                    "interactives": snapshot.get("interactives") or [],
-                    "text": text_excerpt,
-                    "text_truncated": text_truncated,
-                    "html_truncated": html_truncated,
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
+        await asyncio.gather(
+            asyncio.to_thread(files["text"].write_text, text_excerpt, encoding="utf-8"),
+            asyncio.to_thread(files["html"].write_text, html_excerpt, encoding="utf-8"),
+            asyncio.to_thread(
+                files["json"].write_text,
+                json.dumps(
+                    {
+                        "url": str(getattr(session.page, "url", "") or ""),
+                        "title": snapshot.get("title") or "",
+                        "headings": snapshot.get("headings") or [],
+                        "buttons": snapshot.get("buttons") or [],
+                        "links": snapshot.get("links") or [],
+                        "forms": snapshot.get("forms") or [],
+                        "images": snapshot.get("images") or [],
+                        "interactives": snapshot.get("interactives") or [],
+                        "text": text_excerpt,
+                        "text_truncated": text_truncated,
+                        "html_truncated": html_truncated,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
             ),
-            encoding="utf-8",
         )
         return {
             "action": "snapshot",
@@ -626,7 +630,7 @@ class BrowserControlTool(ToolBase):
     async def _screenshot(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
         session = await self._require_session(ctx)
         path = self._resolve_screenshot_path(ctx=ctx, requested_path=payload.path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
         await session.page.screenshot(
             path=str(path),
             full_page=payload.full_page,

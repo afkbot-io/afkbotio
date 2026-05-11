@@ -161,6 +161,17 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.llm_thinking_level == "medium"
     assert settings.chat_planning_mode == "auto"
     assert settings.runtime_host == "127.0.0.1"
+    assert settings.db_pool_size == 5
+    assert settings.db_max_overflow == 5
+    assert settings.db_pool_timeout_sec == 30
+    assert settings.db_statement_timeout_ms == 30_000
+    assert settings.db_idle_in_transaction_timeout_ms == 30_000
+    assert settings.db_application_name == "afkbot"
+    assert settings.deployment_mode == "self_hosted"
+    assert settings.runtime_public_bind_policy == "local_only"
+    assert settings.plugin_api_auth_required is True
+    assert settings.partyflow_webhook_signing_required is False
+    assert settings.managed_database_isolation_mode == "database_per_bot"
     assert settings.runtime_port == 46339
     assert settings.runtime_queue_max_size == 100
     assert settings.runtime_worker_count == 4

@@ -120,13 +120,31 @@ def test_service_host_command_persists_runtime_host_and_reloads_service(
     )
     runner = CliRunner()
 
-    result = runner.invoke(app, ["service", "host", "0.0.0.0"])
+    result = runner.invoke(app, ["service", "host", "127.0.0.1"])
 
     assert result.exit_code == 0
     assert calls == [True]
     config = read_runtime_config(get_settings())
-    assert config["runtime_host"] == "0.0.0.0"
-    assert "runtime bind saved: host=0.0.0.0" in result.stdout
+    assert config["runtime_host"] == "127.0.0.1"
+    assert "runtime bind saved: host=127.0.0.1" in result.stdout
+    get_settings.cache_clear()
+
+
+def test_service_host_command_rejects_wildcard_host_without_auth_policy(
+    tmp_path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """`afk service host` must not persist a public bind without explicit auth posture."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["service", "host", "0.0.0.0"])
+
+    assert result.exit_code != 0
+    assert "runtime_public_exposure_blocked" in result.stderr
+    assert read_runtime_config(get_settings()) == {}
     get_settings.cache_clear()
 
 
@@ -137,6 +155,11 @@ def test_service_host_command_allows_switching_running_local_service_to_wildcard
     """Host changes should be allowed when AFKBOT itself already owns the current port pair."""
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_RUNTIME_PUBLIC_BIND_POLICY", "auth_required")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_MODE", "password")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_USERNAME", "operator")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_PASSWORD_HASH", "sha256:test")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_COOKIE_KEY", "cookie-key")
     get_settings.cache_clear()
     settings = get_settings()
     monkeypatch.setattr(
@@ -179,6 +202,11 @@ def test_service_port_command_allows_host_then_port_switch_when_wildcard_pair_is
     """`service host` -> `service port` should succeed when the wildcard bind pair is free."""
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_RUNTIME_PUBLIC_BIND_POLICY", "auth_required")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_MODE", "password")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_USERNAME", "operator")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_PASSWORD_HASH", "sha256:test")
+    monkeypatch.setenv("AFKBOT_UI_AUTH_COOKIE_KEY", "cookie-key")
     get_settings.cache_clear()
     new_runtime_port = 19000
 

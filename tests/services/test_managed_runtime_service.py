@@ -36,6 +36,7 @@ def test_ensure_managed_runtime_service_prefers_linux_system_unit_when_available
     calls: list[list[str]] = []
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Linux")
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.os.geteuid", lambda: 1000)
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._preferred_systemd_system_service_path",
         lambda: service_path,
@@ -129,6 +130,7 @@ def test_ensure_managed_runtime_service_falls_back_to_linux_user_unit_when_syste
     calls: list[list[str]] = []
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Linux")
+    monkeypatch.setattr("afkbot.services.managed_runtime_service.os.geteuid", lambda: 1000)
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.shutil.which",
         lambda value: "/bin/systemctl" if value == "systemctl" else None,

@@ -16,6 +16,7 @@ class UIAuthProtectedSurface:
     protected: bool
     api_request: bool
     plugin_id: str | None = None
+    auth_configured: bool = True
 
 
 def ui_auth_is_configured(settings: Settings) -> bool:
@@ -37,8 +38,14 @@ def resolve_ui_auth_surface(
     """Resolve whether one request path belongs to an auth-protected plugin surface."""
 
     normalized = str(path or "").strip() or "/"
-    if not ui_auth_is_configured(settings):
-        return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
+    auth_configured = ui_auth_is_configured(settings)
+
+    if (
+        auth_configured
+        and settings.plugin_api_auth_required
+        and _path_matches_prefix(normalized, "/v1/plugins")
+    ):
+        return UIAuthProtectedSurface(protected=True, api_request=True, plugin_id=None)
 
     protected_ids = {
         plugin_id_value.strip().lower()
@@ -53,9 +60,19 @@ def resolve_ui_auth_surface(
 
     for mount in protected_mounts:
         if _path_matches_prefix(normalized, mount.api_prefix):
-            return UIAuthProtectedSurface(protected=True, api_request=True, plugin_id=mount.plugin_id)
+            return UIAuthProtectedSurface(
+                protected=True,
+                api_request=True,
+                plugin_id=mount.plugin_id,
+                auth_configured=auth_configured,
+            )
         if _path_matches_prefix(normalized, mount.web_prefix):
-            return UIAuthProtectedSurface(protected=True, api_request=False, plugin_id=mount.plugin_id)
+            return UIAuthProtectedSurface(
+                protected=True,
+                api_request=False,
+                plugin_id=mount.plugin_id,
+                auth_configured=auth_configured,
+            )
     return UIAuthProtectedSurface(protected=False, api_request=normalized.startswith("/v1/"))
 
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 from afkbot.services.mcp_integration.contracts import MCPServerConfig
 from afkbot.services.mcp_integration.errors import MCPIntegrationError
@@ -28,6 +31,7 @@ from afkbot.settings import Settings
 
 _SERVICES_BY_ROOT: dict[str, "MCPProfileService"] = {}
 _BOUNDARY_NOTE = MCP_CONFIG_BOUNDARY_NOTE
+TMCPValue = TypeVar("TMCPValue")
 
 
 class MCPProfileService:
@@ -391,6 +395,18 @@ def get_mcp_profile_service(settings: Settings) -> MCPProfileService:
         service = MCPProfileService(settings=settings)
         _SERVICES_BY_ROOT[key] = service
     return service
+
+
+def run_mcp_profile_service_sync(
+    settings: Settings,
+    op: Callable[[MCPProfileService], Awaitable[TMCPValue]],
+) -> TMCPValue:
+    """Run one MCP profile-service operation in a fresh event loop."""
+
+    async def _run() -> TMCPValue:
+        return await op(MCPProfileService(settings=settings))
+
+    return asyncio.run(_run())
 
 
 def reset_mcp_profile_services() -> None:

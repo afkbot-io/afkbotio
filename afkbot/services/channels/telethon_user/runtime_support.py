@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -95,7 +96,7 @@ async def persist_telethon_identity_state(
 ) -> None:
     """Persist the latest Telethon identity/health snapshot."""
 
-    state_path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(state_path.parent.mkdir, parents=True, exist_ok=True)
     payload: dict[str, object] = {
         "account_id": account_id,
         "last_connected_at": datetime.now(UTC).isoformat(),
@@ -108,7 +109,8 @@ async def persist_telethon_identity_state(
             "phone": identity.phone,
             "display_name": identity.display_name,
         }
-    state_path.write_text(
+    await asyncio.to_thread(
+        state_path.write_text,
         json.dumps(payload, ensure_ascii=True, sort_keys=True),
         encoding="utf-8",
     )

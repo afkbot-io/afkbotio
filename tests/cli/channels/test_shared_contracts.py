@@ -14,7 +14,7 @@ from afkbot.services.channels.endpoint_contracts import (
     TelethonUserEndpointConfig,
 )
 from afkbot.services.channels.endpoint_service import (
-    get_channel_endpoint_service,
+    run_channel_endpoint_service_sync,
     reset_channel_endpoint_services_async,
 )
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
@@ -302,15 +302,16 @@ def test_channel_telethon_enable_rejects_non_telethon_endpoint(tmp_path: Path, m
             policy_network_allowlist=("*",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelegramPollingEndpointConfig(
                 endpoint_id="support-bot",
                 profile_id="default",
                 credential_profile_key="bot-main",
                 account_id="telegram-bot",
             )
-        )
+        ),
     )
     asyncio.run(reset_channel_endpoint_services_async())
 
@@ -345,15 +346,16 @@ def test_channel_telegram_enable_rejects_non_telegram_endpoint(tmp_path: Path, m
             policy_network_allowlist=("*",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelethonUserEndpointConfig(
                 endpoint_id="personal-user",
                 profile_id="default",
                 credential_profile_key="tg-user",
                 account_id="personal-user",
             )
-        )
+        ),
     )
     asyncio.run(reset_channel_endpoint_services_async())
 
@@ -387,15 +389,16 @@ def test_channel_telegram_show_and_delete_reject_non_telegram_endpoint(
             policy_network_allowlist=("*",),
         )
     )
-    asyncio.run(
-        get_channel_endpoint_service(settings).create(
+    run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.create(
             TelethonUserEndpointConfig(
                 endpoint_id="personal-user",
                 profile_id="default",
                 credential_profile_key="tg-user",
                 account_id="personal-user",
             )
-        )
+        ),
     )
 
     show_result = runner.invoke(app, ["channel", "telegram", "show", "personal-user"])
@@ -410,5 +413,8 @@ def test_channel_telegram_show_and_delete_reject_non_telegram_endpoint(
     assert delete_result.exit_code == 2
     assert "channel_endpoint_type_mismatch" in delete_result.stderr
 
-    endpoint = asyncio.run(get_channel_endpoint_service(settings).get(endpoint_id="personal-user"))
+    endpoint = run_channel_endpoint_service_sync(
+        settings,
+        lambda service: service.get(endpoint_id="personal-user"),
+    )
     assert endpoint.endpoint_id == "personal-user"

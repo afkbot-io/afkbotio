@@ -164,9 +164,9 @@ class TelegramPollingService(TelegramPollingRuntimeMixin):
         """Delete any persisted polling offset and reset in-memory tracking state."""
 
         await self._reset_offset_tracking(None)
-        if not self._state_path.exists():
+        if not await asyncio.to_thread(self._state_path.exists):
             return False
-        self._state_path.unlink()
+        await asyncio.to_thread(self._state_path.unlink)
         return True
 
     async def _poll_loop(self) -> None:

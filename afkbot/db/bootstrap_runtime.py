@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 
-from sqlalchemy import MetaData, Table, delete, exists, select, text
+from sqlalchemy import MetaData, Table, delete, exists, inspect, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -36,20 +36,146 @@ class LegacyWebhookSecretUpgradeError(RuntimeError):
     """Raised when legacy plaintext webhook secrets need a configured credentials vault."""
 
 
+class ManagedRuntimeSchemaError(RuntimeError):
+    """Raised when a managed runtime is pointed at an unprepared database."""
+
+    def __init__(self, *, error_code: str, reason: str) -> None:
+        super().__init__(reason)
+        self.error_code = error_code
+        self.reason = reason
+
+
+_MANAGED_REQUIRED_INDEXES_BY_TABLE: dict[str, tuple[str, ...]] = {
+    "task": (
+        "ix_task_profile_status",
+        "ix_task_profile_owner_status",
+        "ix_task_profile_claim_owner_status",
+        "ix_task_lease_until",
+        "ix_task_last_run_id",
+        "ux_task_active_ai_claim_owner",
+    ),
+    "run": (
+        "ix_run_profile_session_id",
+        "ix_run_profile_session_status_id",
+    ),
+    "task_event": ("ix_task_event_created_at",),
+    "task_run": ("ix_task_run_finished_at",),
+    "runlog_event": ("ix_runlog_event_created_at",),
+    "automation_trigger_webhook": ("ix_automation_webhook_token_hash",),
+}
+_MANAGED_REQUIRED_AUXILIARY_COLUMNS_BY_TABLE: dict[str, set[str]] = {
+    "afkbot_schema_migration": {"version", "description", "checksum", "applied_at"},
+}
+
+
 async def create_schema(engine: AsyncEngine) -> None:
-    """Create all mapped tables for the tracked SQLite runtime."""
+    """Create local schema or validate pre-migrated managed PostgreSQL schema."""
 
     load_all_models()
     settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
+        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
+            await conn.run_sync(_validate_managed_runtime_schema)
+            return
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_upgrade_schema, settings=settings)
 
 
-async def list_applied_migrations(engine: AsyncEngine) -> tuple[int, ...]:
-    """Return applied schema migrations for the clean SQLite baseline."""
+def _requires_managed_runtime_schema_validation(
+    *,
+    settings: Settings | None,
+    dialect_name: str,
+) -> bool:
+    """Return True when runtime bootstrap must be read-only schema validation."""
 
-    del engine
+    if settings is None or settings.deployment_mode != "managed":
+        return False
+    if dialect_name != "postgresql":
+        raise ManagedRuntimeSchemaError(
+            error_code="managed_database_postgres_required",
+            reason="Managed runtime schema validation requires a PostgreSQL connection.",
+        )
+    return True
+
+
+def _validate_managed_runtime_schema(conn: Connection) -> None:
+    """Fail closed when managed Postgres has not been migrated by the control plane."""
+
+    expected_columns_by_table = {
+        table.name: {column.name for column in table.columns}
+        for table in Base.metadata.sorted_tables
+        if table.name
+    }
+    expected_columns_by_table.update(_MANAGED_REQUIRED_AUXILIARY_COLUMNS_BY_TABLE)
+    _validate_managed_table_columns(conn, expected_columns_by_table=expected_columns_by_table)
+    _validate_managed_required_indexes(conn)
+
+
+def _validate_managed_task_runtime_schema(conn: Connection) -> None:
+    """Validate the Task Flow subset needed by hot-path task claiming."""
+
+    expected_columns_by_table = {
+        table_name: {column.name for column in Base.metadata.tables[table_name].columns}
+        for table_name in ("task", "task_event", "task_run", "run", "runlog_event")
+        if table_name in Base.metadata.tables
+    }
+    _validate_managed_table_columns(conn, expected_columns_by_table=expected_columns_by_table)
+    _validate_managed_required_indexes(conn)
+
+
+def _validate_managed_table_columns(
+    conn: Connection,
+    *,
+    expected_columns_by_table: dict[str, set[str]],
+) -> None:
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    missing_tables = sorted(set(expected_columns_by_table) - existing_tables)
+    if missing_tables:
+        raise ManagedRuntimeSchemaError(
+            error_code="managed_runtime_schema_missing_tables",
+            reason="Managed database is missing required table(s): " + ", ".join(missing_tables[:12]),
+        )
+
+    missing_columns: list[str] = []
+    for table_name, expected_columns in sorted(expected_columns_by_table.items()):
+        existing_columns = {str(column["name"]) for column in inspector.get_columns(table_name)}
+        for column_name in sorted(expected_columns - existing_columns):
+            missing_columns.append(f"{table_name}.{column_name}")
+    if missing_columns:
+        raise ManagedRuntimeSchemaError(
+            error_code="managed_runtime_schema_missing_columns",
+            reason="Managed database is missing required column(s): " + ", ".join(missing_columns[:16]),
+        )
+
+
+def _validate_managed_required_indexes(conn: Connection) -> None:
+    inspector = inspect(conn)
+    missing_indexes: list[str] = []
+    for table_name, expected_index_names in sorted(_MANAGED_REQUIRED_INDEXES_BY_TABLE.items()):
+        existing_index_names = {str(index["name"]) for index in inspector.get_indexes(table_name)}
+        for index_name in expected_index_names:
+            if index_name not in existing_index_names:
+                missing_indexes.append(f"{table_name}.{index_name}")
+    if missing_indexes:
+        raise ManagedRuntimeSchemaError(
+            error_code="managed_runtime_schema_missing_indexes",
+            reason="Managed database is missing required index(es): " + ", ".join(missing_indexes[:16]),
+        )
+
+
+async def list_applied_migrations(engine: AsyncEngine) -> tuple[int, ...]:
+    """Return applied schema migrations for the clean runtime baseline."""
+
+    settings = _resolve_engine_settings(engine)
+    async with engine.connect() as conn:
+        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
+            rows = (
+                await conn.execute(
+                    text("SELECT version FROM afkbot_schema_migration ORDER BY version ASC")
+                )
+            ).all()
+            return tuple(int(row[0]) for row in rows)
     return ()
 
 
@@ -62,10 +188,14 @@ async def ping(engine: AsyncEngine) -> bool:
 
 
 async def ensure_task_runtime_schema(engine: AsyncEngine) -> None:
-    """Refresh Task Flow runtime upkeep without re-running full global bootstrap."""
+    """Refresh local Task Flow upkeep or validate managed runtime readiness."""
 
     load_all_models()
+    settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
+        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
+            await conn.run_sync(_validate_managed_task_runtime_schema)
+            return
         await conn.run_sync(_upgrade_task_runtime_schema)
 
 
@@ -95,7 +225,7 @@ async def prune_runtime_history(
 
 
 def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> None:
-    """Apply lightweight idempotent schema upgrades for existing SQLite databases."""
+    """Apply lightweight idempotent schema upgrades for existing runtime databases."""
 
     _ensure_task_description_column(conn)
     _ensure_run_indexes(conn)
@@ -705,10 +835,12 @@ def _issue_unique_webhook_token_hash(*, existing_hashes: set[str]) -> str:
 
 
 def _table_columns(conn: Connection, table_name: str) -> set[str]:
-    """Return current column names for one SQLite table."""
+    """Return current column names for one table across supported SQLAlchemy dialects."""
 
-    rows = conn.execute(text(f"PRAGMA table_info('{table_name}')")).fetchall()
-    return {str(row[1]) for row in rows}
+    try:
+        return {str(column["name"]) for column in inspect(conn).get_columns(table_name)}
+    except Exception:
+        return set()
 
 
 def _resolve_engine_settings(engine: AsyncEngine) -> Settings | None:

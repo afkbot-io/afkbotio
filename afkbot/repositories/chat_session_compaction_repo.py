@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from afkbot.db.upsert import upsert_insert_for_session
 from afkbot.models.chat_session_compaction import ChatSessionCompaction
 
 
@@ -49,7 +49,7 @@ class ChatSessionCompactionRepository:
             "source_turn_count": source_turn_count,
             "strategy": strategy,
         }
-        statement = sqlite_insert(ChatSessionCompaction).values(**payload)
+        statement = upsert_insert_for_session(self._session, ChatSessionCompaction).values(**payload)
         statement = statement.on_conflict_do_update(
             index_elements=[
                 ChatSessionCompaction.session_id,

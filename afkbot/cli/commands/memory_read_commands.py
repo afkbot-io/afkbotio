@@ -20,9 +20,10 @@ from afkbot.services.memory import (
     MemoryItemMetadata,
     MemoryScopeDescriptor,
     MemoryScopeMode,
+    MemoryService,
     MemoryServiceError,
     MemoryVisibility,
-    get_memory_service,
+    run_memory_service_sync,
 )
 from afkbot.services.memory.digest import render_memory_digest
 from afkbot.services.memory.runtime_scope import MemoryScopeResolutionError
@@ -80,13 +81,14 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                     session_id=session_id,
                 )
             )
-            metadata_items = asyncio.run(
-                get_memory_service(settings).list(
+            metadata_items = run_memory_service_sync(
+                settings,
+                lambda service: service.list(
                     profile_id=normalized_profile_id,
                     scope=resolved_scope,
                     visibility=visibility,
                     limit=limit,
-                )
+                ),
             )
             items = filter_items(
                 items=serialize_memory_items(metadata_items),
@@ -121,7 +123,7 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
 
         try:
             settings = get_settings()
-            profile_ids = asyncio.run(get_memory_service(settings).list_profiles())
+            profile_ids = run_memory_service_sync(settings, lambda service: service.list_profiles())
         except MemoryServiceError as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
@@ -168,12 +170,13 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                     session_id=session_id,
                 )
             )
-            item = asyncio.run(
-                get_memory_service(settings).get(
+            item = run_memory_service_sync(
+                settings,
+                lambda service: service.get(
                     profile_id=normalized_profile_id,
                     memory_key=memory_key,
                     scope=resolved_scope,
-                )
+                ),
             )
         except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
@@ -241,9 +244,9 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             )
             memory_kinds = normalize_memory_kinds(memory_kind) or None
             source_kinds = normalize_source_kinds(source_kind) or None
-            service = get_memory_service(settings)
-            items = asyncio.run(
-                service.search(
+            items = run_memory_service_sync(
+                settings,
+                lambda service: service.search(
                     profile_id=normalized_profile_id,
                     query=query,
                     scope=resolved_scope,
@@ -253,7 +256,7 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                     include_global=include_global and not resolved_scope.is_profile_scope,
                     global_limit=global_limit,
                     limit=limit,
-                )
+                ),
             )
             payload_items = serialize_memory_items(items)
         except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
@@ -327,35 +330,36 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             )
             memory_kinds = normalize_memory_kinds(memory_kind)
             source_kinds = normalize_source_kinds(source_kind)
-            service = get_memory_service(settings)
-            local_items = asyncio.run(
-                service.list(
+            async def _load_digest_items(
+                service: MemoryService,
+            ) -> tuple[list[MemoryItemMetadata], list[MemoryItemMetadata]]:
+                local_loaded = await service.list(
                     profile_id=normalized_profile_id,
                     scope=resolved_scope,
                     visibility=None if not resolved_scope.is_profile_scope else "promoted_global",
                     limit=limit,
                 )
-            )
-            local_items = filter_memory_metadata(
-                items=local_items,
-                memory_kinds=memory_kinds,
-                source_kinds=source_kinds,
-            )
-            global_items: list[MemoryItemMetadata] = []
-            if include_global and not resolved_scope.is_profile_scope:
-                global_items = asyncio.run(
-                    service.list(
+                global_loaded: list[MemoryItemMetadata] = []
+                if include_global and not resolved_scope.is_profile_scope:
+                    global_loaded = await service.list(
                         profile_id=normalized_profile_id,
                         scope=MemoryScopeDescriptor.profile_scope(),
                         visibility="promoted_global",
                         limit=global_limit or limit,
                     )
-                )
-                global_items = filter_memory_metadata(
-                    items=global_items,
-                    memory_kinds=memory_kinds,
-                    source_kinds=source_kinds,
-                )
+                return list(local_loaded), global_loaded
+
+            local_items, global_items = run_memory_service_sync(settings, _load_digest_items)
+            local_items = filter_memory_metadata(
+                items=local_items,
+                memory_kinds=memory_kinds,
+                source_kinds=source_kinds,
+            )
+            global_items = filter_memory_metadata(
+                items=global_items,
+                memory_kinds=memory_kinds,
+                source_kinds=source_kinds,
+            )
             digest = render_memory_digest(
                 scope=resolved_scope,
                 local_items=local_items,

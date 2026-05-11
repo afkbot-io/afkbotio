@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import NoReturn
+from collections.abc import Awaitable, Callable
+from typing import NoReturn, TypeVar
 
 import typer
 
@@ -29,10 +30,24 @@ from afkbot.services.mcp_integration.operator_contracts import (
     MCP_CONFIG_BOUNDARY_NOTE,
 )
 from afkbot.services.mcp_integration.errors import MCPIntegrationError
-from afkbot.services.mcp_integration.service import get_mcp_profile_service
+from afkbot.services.mcp_integration.service import MCPProfileService, get_mcp_profile_service
 from afkbot.services.mcp_integration.url_resolver import resolve_mcp_url
 from afkbot.services.profile_runtime.service import ProfileServiceError
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
+
+TMCPValue = TypeVar("TMCPValue")
+
+
+def _run_mcp_profile_service_sync(
+    settings: Settings,
+    op: Callable[[MCPProfileService], Awaitable[TMCPValue]],
+) -> TMCPValue:
+    """Run one MCP profile service operation through the CLI facade."""
+
+    async def _run() -> TMCPValue:
+        return await op(get_mcp_profile_service(settings))
+
+    return asyncio.run(_run())
 
 
 def register(app: typer.Typer) -> None:
@@ -124,9 +139,9 @@ def register(app: typer.Typer) -> None:
                 )
 
         try:
-            service = get_mcp_profile_service(settings)
-            preview = asyncio.run(
-                service.preview_add_by_url(
+            preview = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.preview_add_by_url(
                     profile_id=profile_id,
                     url=resolution.url,
                     server=resolved_server,
@@ -135,7 +150,7 @@ def register(app: typer.Typer) -> None:
                     env_refs=resolved_env_refs,
                     secret_refs=resolved_secret_refs,
                     enabled=enabled,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -158,8 +173,9 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=0)
 
         try:
-            result = asyncio.run(
-                service.add_by_url(
+            result = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.add_by_url(
                     profile_id=profile_id,
                     url=resolution.url,
                     server=resolved_server,
@@ -168,7 +184,7 @@ def register(app: typer.Typer) -> None:
                     env_refs=resolved_env_refs,
                     secret_refs=resolved_secret_refs,
                     enabled=enabled,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -195,11 +211,12 @@ def register(app: typer.Typer) -> None:
 
         try:
             settings = get_settings()
-            items = asyncio.run(
-                get_mcp_profile_service(settings).list(
+            items = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.list(
                     profile_id=profile_id,
                     show_disabled=show_disabled,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -248,7 +265,10 @@ def register(app: typer.Typer) -> None:
 
         try:
             settings = get_settings()
-            item = asyncio.run(get_mcp_profile_service(settings).get(profile_id=profile_id, server=server))
+            item = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=profile_id, server=server),
+            )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
 
@@ -267,7 +287,10 @@ def register(app: typer.Typer) -> None:
 
         try:
             settings = get_settings()
-            report = asyncio.run(get_mcp_profile_service(settings).validate(profile_id=profile_id))
+            report = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.validate(profile_id=profile_id),
+            )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
 
@@ -426,8 +449,10 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             prompt_language = _resolve_mcp_prompt_language(settings)
-            service = get_mcp_profile_service(settings)
-            current = asyncio.run(service.get(profile_id=profile_id, server=server))
+            current = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.get(profile_id=profile_id, server=server),
+            )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
 
@@ -479,8 +504,9 @@ def register(app: typer.Typer) -> None:
                 )
 
         try:
-            preview = asyncio.run(
-                service.preview_add_by_url(
+            preview = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.preview_add_by_url(
                     profile_id=profile_id,
                     url=resolution.url,
                     server=current.server,
@@ -489,7 +515,7 @@ def register(app: typer.Typer) -> None:
                     env_refs=resolved_env_refs,
                     secret_refs=resolved_secret_refs,
                     enabled=resolved_enabled,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -512,8 +538,9 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=0)
 
         try:
-            result = asyncio.run(
-                service.add_by_url(
+            result = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.add_by_url(
                     profile_id=profile_id,
                     url=resolution.url,
                     server=current.server,
@@ -522,7 +549,7 @@ def register(app: typer.Typer) -> None:
                     env_refs=resolved_env_refs,
                     secret_refs=resolved_secret_refs,
                     enabled=resolved_enabled,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -545,12 +572,12 @@ def register(app: typer.Typer) -> None:
         try:
             settings = get_settings()
             prompt_language = _resolve_mcp_prompt_language(settings)
-            service = get_mcp_profile_service(settings)
-            preview = asyncio.run(
-                service.preview_remove(
+            preview = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.preview_remove(
                     profile_id=profile_id,
                     server=server,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)
@@ -569,11 +596,12 @@ def register(app: typer.Typer) -> None:
                 raise typer.Exit(code=0)
 
         try:
-            result = asyncio.run(
-                service.remove(
+            result = _run_mcp_profile_service_sync(
+                settings,
+                lambda service: service.remove(
                     profile_id=profile_id,
                     server=server,
-                )
+                ),
             )
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             _exit_mcp_error(exc, json_output=json_output)

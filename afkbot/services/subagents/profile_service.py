@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -40,7 +41,7 @@ class ProfileSubagentService:
         for item in subagents:
             if item.origin != "profile":
                 continue
-            content = item.path.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(item.path.read_text, encoding="utf-8")
             result.append(
                 ProfileSubagentRecord(
                     name=item.name,
@@ -56,9 +57,9 @@ class ProfileSubagentService:
         normalized_name = normalize_runtime_name(name)
         self._loader.validate_subagent_name(normalized_name)
         path = self._loader.profile_subagent_path(profile_id, normalized_name)
-        if not path.exists():
+        if not await asyncio.to_thread(path.exists):
             raise FileNotFoundError(f"Profile subagent not found: {normalized_name}")
-        content = path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
         return ProfileSubagentRecord(
             name=normalized_name,
             path=self._to_relative(path),
@@ -76,8 +77,8 @@ class ProfileSubagentService:
         self._loader.validate_subagent_name(normalized_name)
         path = self._loader.profile_subagent_path(profile_id, normalized_name)
         async with self._profile_files_lock.acquire(profile_id):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(path.write_text, content, encoding="utf-8")
         return ProfileSubagentRecord(
             name=normalized_name,
             path=self._to_relative(path),
@@ -92,9 +93,9 @@ class ProfileSubagentService:
         self._loader.validate_subagent_name(normalized_name)
         path = self._loader.profile_subagent_path(profile_id, normalized_name)
         async with self._profile_files_lock.acquire(profile_id):
-            if not path.exists():
+            if not await asyncio.to_thread(path.exists):
                 raise FileNotFoundError(f"Profile subagent not found: {normalized_name}")
-            path.unlink()
+            await asyncio.to_thread(path.unlink)
         return ProfileSubagentRecord(name=normalized_name, path=self._to_relative(path))
 
     def _to_relative(self, path: Path) -> str:
