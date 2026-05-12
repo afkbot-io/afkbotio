@@ -10,7 +10,12 @@ from pytest import MonkeyPatch
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
-from afkbot.services.cloud_remote import infer_cloud_api_url_from_public_url, resolve_cloud_api_url
+from afkbot.services.cloud_remote import (
+    list_remote_bot_connections,
+    save_remote_bot_connection,
+    infer_cloud_api_url_from_public_url,
+    resolve_cloud_api_url,
+)
 from afkbot.services.setup.runtime_store import read_runtime_config, read_runtime_secrets
 from afkbot.settings import get_settings
 
@@ -182,3 +187,37 @@ def test_cloud_list_outputs_saved_connections(monkeypatch: MonkeyPatch, tmp_path
     payload = json.loads(result.stdout)
     assert payload["connections"][0]["name"] == "ops"
     assert "afkbt_prefix_secret" not in result.stdout
+
+
+def test_cloud_connection_storage_sanitizes_optional_cloud_payload(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Malformed optional Cloud fields should fall back to safe local defaults."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    settings = get_settings()
+
+    connection = save_remote_bot_connection(
+        settings=settings,
+        name="ops",
+        api_url="http://127.0.0.1:8000/api/v1",
+        public_url="http://q8m2xk4p.cloud.afkbot.local/bot/bot-1",
+        token="afkbt_prefix_secret",
+        verification_payload={
+            "bot": {
+                "id": "bot-1",
+                "name": "Ops bot",
+                "organization_id": "org-1",
+                "status": "running",
+            },
+            "token": {"scopes": None},
+            "profile_config": None,
+        },
+    )
+
+    assert connection.scopes == ["remote_connect"]
+    assert connection.profile_config == {}
+    persisted = list_remote_bot_connections(settings=settings)
+    assert persisted[0].scopes == ["remote_connect"]
+    assert persisted[0].profile_config == {}

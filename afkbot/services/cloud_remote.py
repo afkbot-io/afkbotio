@@ -170,10 +170,12 @@ def save_remote_bot_connection(
     token_payload = verification_payload.get("token")
     if not isinstance(bot_payload, dict) or not isinstance(token_payload, dict):
         raise CloudRemoteError("Cloud API returned an invalid response.", error_code="cloud_api_invalid_response")
-    scopes = token_payload.get("scopes") if isinstance(token_payload.get("scopes"), list) else [REMOTE_CONNECT_SCOPE]
-    profile_config = verification_payload.get("profile_config")
-    if not isinstance(profile_config, dict):
-        profile_config = {}
+    raw_scopes = token_payload.get("scopes")
+    scopes = [str(scope) for scope in raw_scopes] if isinstance(raw_scopes, list) else [REMOTE_CONNECT_SCOPE]
+    raw_profile_config = verification_payload.get("profile_config")
+    profile_config: dict[str, Any] = (
+        {str(key): value for key, value in raw_profile_config.items()} if isinstance(raw_profile_config, dict) else {}
+    )
     connection = RemoteBotConnection(
         name=connection_name,
         api_url=api_url,
@@ -233,8 +235,8 @@ def list_remote_bot_connections(*, settings: Settings) -> list[RemoteBotConnecti
                 bot_name=str(payload.get("bot_name") or ""),
                 organization_id=str(payload.get("organization_id") or ""),
                 status=str(payload.get("status") or ""),
-                scopes=[str(scope) for scope in payload.get("scopes", []) if isinstance(scope, str)],
-                profile_config=payload.get("profile_config") if isinstance(payload.get("profile_config"), dict) else {},
+                scopes=_read_string_list(payload, "scopes"),
+                profile_config=_read_profile_config(payload),
                 connected_at=str(payload.get("connected_at") or ""),
             )
         )
@@ -268,6 +270,33 @@ def normalize_remote_connection_name(name: str) -> str:
     return normalized
 
 
+def _read_string_list(payload: dict[Any, Any], key: str) -> list[str]:
+    """Read a list of strings from a persisted JSON object.
+
+    :param payload: Persisted connection payload.
+    :param key: Field name to read.
+    :return: String-only list or an empty list for invalid data.
+    """
+
+    raw_value = payload.get(key)
+    if not isinstance(raw_value, list):
+        return []
+    return [item for item in raw_value if isinstance(item, str)]
+
+
+def _read_profile_config(payload: dict[Any, Any]) -> dict[str, Any]:
+    """Read a profile config object from persisted JSON.
+
+    :param payload: Persisted connection payload.
+    :return: Profile config with string keys or an empty dict for invalid data.
+    """
+
+    raw_value = payload.get("profile_config")
+    if not isinstance(raw_value, dict):
+        return {}
+    return {str(key): value for key, value in raw_value.items()}
+
+
 def _extract_http_error_reason(exc: HTTPError) -> str:
     """Read a safe error message from an HTTP error response.
 
@@ -281,6 +310,7 @@ def _extract_http_error_reason(exc: HTTPError) -> str:
         return "Cloud rejected the token."
     if isinstance(payload, dict):
         error = payload.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
+        message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(message, str):
+            return message
     return "Cloud rejected the token."
