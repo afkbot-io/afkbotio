@@ -79,14 +79,6 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             )
             else "0"
         ),
-        "AFKBOT_PARTYFLOW_WEBHOOK_SIGNING_REQUIRED": (
-            "1"
-            if coerce_bool(
-                runtime_config.get("partyflow_webhook_signing_required"),
-                default=settings.partyflow_webhook_signing_required,
-            )
-            else "0"
-        ),
         "AFKBOT_MANAGED_DATABASE_ISOLATION_MODE": str(
             runtime_config.get(
                 "managed_database_isolation_mode",

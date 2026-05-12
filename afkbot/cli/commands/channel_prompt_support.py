@@ -212,8 +212,8 @@ def _channel_choice_label(
             "Одна общая беседа для этой привязки",
         ),
         "per-chat": (
-            "Separate conversation for each Telegram chat",
-            "Отдельная беседа для каждого Telegram-чата",
+            "Separate conversation for each chat or conversation",
+            "Отдельная беседа для каждого чата или диалога",
         ),
         "per-thread": (
             "Separate conversation for each group topic or thread",
@@ -251,9 +251,25 @@ def _channel_choice_label(
             "all_messages - process every allowed group message",
             "all_messages - обрабатывать каждое разрешённое сообщение в группе",
         ),
+        "all": (
+            "all - process every allowed message",
+            "all - обрабатывать каждое разрешённое сообщение",
+        ),
+        "mention": (
+            "mention - trigger only when the bot is mentioned",
+            "mention - запускать только по упоминанию бота",
+        ),
+        "keywords": (
+            "keywords - trigger only on configured keywords",
+            "keywords - запускать только по заданным ключевым словам",
+        ),
         "same_chat": (
             "same_chat - send replies back to the same Telegram chat",
             "same_chat - отправлять ответы обратно в тот же Telegram-чат",
+        ),
+        "same_conversation": (
+            "same_conversation - send replies back to the same conversation",
+            "same_conversation - отправлять ответы обратно в тот же диалог",
         ),
         "reply_or_command": (
             "reply_or_command - trigger on replies to the account or command prefix",

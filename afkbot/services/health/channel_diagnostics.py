@@ -9,20 +9,22 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
+from afkbot.services.channels.endpoint_contracts import UNSUPPORTED_PARTYFLOW_WEBHOOK_REASON
 from afkbot.services.channels.delivery_telemetry import get_channel_delivery_diagnostics
 from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
 from afkbot.services.health.contracts import (
     DoctorChannelsReport,
     DoctorDeliveryReport,
     DoctorRoutingReport,
+    PartyFlowPollingEndpointReport,
     TelethonUserEndpointReport,
     TelegramPollingEndpointReport,
+    UnsupportedPartyFlowEndpointReport,
 )
 from afkbot.services.health.runtime_support import available_credentials
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.profile_runtime.service import ProfileServiceError, get_profile_service
 from afkbot.settings import Settings
-
 
 async def run_channel_routing_diagnostics(settings: Settings) -> DoctorRoutingReport:
     """Return aggregated in-memory channel-routing telemetry for current runtime root."""
@@ -57,11 +59,13 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
     endpoint_service = get_channel_endpoint_service(settings)
     telegram_endpoints = await endpoint_service.list(transport="telegram")
     telegram_bindings = await get_channel_binding_service(settings).list(transport="telegram")
+    partyflow_endpoints = await endpoint_service.list(transport="partyflow")
+    partyflow_bindings = await get_channel_binding_service(settings).list(transport="partyflow")
     telethon_endpoints = await endpoint_service.list(transport="telegram_user")
     telethon_bindings = await get_channel_binding_service(settings).list(transport="telegram_user")
     profile_ids = {
         endpoint.profile_id.strip()
-        for endpoint in [*telegram_endpoints, *telethon_endpoints]
+        for endpoint in [*telegram_endpoints, *partyflow_endpoints, *telethon_endpoints]
         if endpoint.profile_id.strip()
     }
     existing_profiles = await _load_existing_profile_ids(
@@ -69,6 +73,8 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
         profile_ids=tuple(sorted(profile_ids)),
     )
     telegram_reports: list[TelegramPollingEndpointReport] = []
+    partyflow_reports: list[PartyFlowPollingEndpointReport] = []
+    unsupported_partyflow_reports: list[UnsupportedPartyFlowEndpointReport] = []
     telethon_reports: list[TelethonUserEndpointReport] = []
     for endpoint in telegram_endpoints:
         profile_id = endpoint.profile_id.strip()
@@ -101,6 +107,55 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
                 profile_valid=profile_valid,
                 profile_exists=profile_exists,
                 token_configured=token_configured,
+                binding_count=binding_count,
+                state_path=str(state_path),
+                state_present=await asyncio.to_thread(state_path.exists),
+            )
+        )
+    for endpoint in partyflow_endpoints:
+        if endpoint.adapter_kind != "partyflow_polling":
+            unsupported_partyflow_reports.append(
+                UnsupportedPartyFlowEndpointReport(
+                    endpoint_id=endpoint.endpoint_id,
+                    adapter_kind=endpoint.adapter_kind,
+                    enabled=endpoint.enabled,
+                    profile_id=endpoint.profile_id.strip(),
+                    credential_profile_key=endpoint.credential_profile_key.strip(),
+                    account_id=endpoint.account_id.strip(),
+                    reason=UNSUPPORTED_PARTYFLOW_WEBHOOK_REASON,
+                )
+            )
+            continue
+        profile_id = endpoint.profile_id.strip()
+        credential_profile_key = endpoint.credential_profile_key.strip()
+        account_id = endpoint.account_id.strip()
+        profile_valid = True
+        try:
+            validate_profile_id(profile_id)
+        except ValueError:
+            profile_valid = False
+        profile_exists = profile_valid and profile_id in existing_profiles
+        bot_token_configured = (
+            await _has_partyflow_token(
+                settings=settings,
+                profile_id=profile_id,
+                credential_profile_key=credential_profile_key,
+            )
+            if profile_exists
+            else False
+        )
+        binding_count = sum(1 for item in partyflow_bindings if item.enabled and item.account_id == account_id)
+        state_path = endpoint_service.partyflow_polling_state_path(endpoint_id=endpoint.endpoint_id)
+        partyflow_reports.append(
+            PartyFlowPollingEndpointReport(
+                endpoint_id=endpoint.endpoint_id,
+                enabled=endpoint.enabled,
+                profile_id=profile_id,
+                credential_profile_key=credential_profile_key,
+                account_id=account_id,
+                profile_valid=profile_valid,
+                profile_exists=profile_exists,
+                bot_token_configured=bot_token_configured,
                 binding_count=binding_count,
                 state_path=str(state_path),
                 state_present=await asyncio.to_thread(state_path.exists),
@@ -152,6 +207,8 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
         )
     return DoctorChannelsReport(
         telegram_polling=tuple(telegram_reports),
+        partyflow_polling=tuple(partyflow_reports),
+        unsupported_partyflow=tuple(unsupported_partyflow_reports),
         telethon_userbot=tuple(telethon_reports),
     )
 
@@ -197,6 +254,28 @@ async def _has_telegram_token(
     except CredentialsServiceError:
         return False
     return "telegram_token" in available
+
+
+async def _has_partyflow_token(
+    *,
+    settings: Settings,
+    profile_id: str,
+    credential_profile_key: str,
+) -> bool:
+    try:
+        service = get_credentials_service(settings)
+    except CredentialsServiceError:
+        return False
+    try:
+        available = await available_credentials(
+            service=service,
+            profile_id=profile_id,
+            integration_name="partyflow",
+            credential_profile_key=credential_profile_key,
+        )
+    except CredentialsServiceError:
+        return False
+    return "partyflow_bot_token" in available
 
 
 async def _available_telethon_credentials(

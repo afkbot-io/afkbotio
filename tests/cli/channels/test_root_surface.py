@@ -294,7 +294,7 @@ def test_channel_family_help_lists_expected_commands(tmp_path: Path, monkeypatch
 
     root_help = runner.invoke(app, ["channel", "--help"])
     assert root_help.exit_code == 0
-    for command in ("list", "show", "telegram", "telethon"):
+    for command in ("list", "show", "telegram", "telethon", "partyflow"):
         assert command in root_help.stdout
 
     telegram_help = runner.invoke(app, ["channel", "telegram", "--help"])
@@ -306,6 +306,22 @@ def test_channel_family_help_lists_expected_commands(tmp_path: Path, monkeypatch
     assert telethon_help.exit_code == 0
     for command in ("add", "update", "list", "show", "dialogs", "enable", "disable", "delete", "status", "authorize", "logout", "reset-state"):
         assert command in telethon_help.stdout
+
+    partyflow_help = runner.invoke(app, ["channel", "partyflow", "--help"])
+    assert partyflow_help.exit_code == 0
+    for command in (
+        "add",
+        "update",
+        "list",
+        "show",
+        "enable",
+        "disable",
+        "delete",
+        "status",
+        "poll-once",
+        "reset-cursor",
+    ):
+        assert command in partyflow_help.stdout
 
 def test_channel_help_surfaces_telegram_and_telethon_options(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """CLI help should expose the full operator surface for both channel families."""

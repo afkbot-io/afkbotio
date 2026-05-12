@@ -8,7 +8,7 @@ from typing import Protocol
 
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
-    PartyFlowWebhookEndpointConfig,
+    PartyFlowPollingEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
@@ -17,9 +17,9 @@ from afkbot.services.channels.endpoint_service import (
     ChannelEndpointServiceError,
     get_channel_endpoint_service,
 )
-from afkbot.services.channels.partyflow_webhook import (
-    PartyFlowWebhookService,
-    PartyFlowWebhookServiceError,
+from afkbot.services.channels.partyflow_polling import (
+    PartyFlowPollingService,
+    PartyFlowPollingServiceError,
 )
 from afkbot.services.channels.telethon_user import TelethonUserService, TelethonUserServiceError
 from afkbot.services.channels.telegram_polling import (
@@ -160,15 +160,7 @@ class ChannelRuntimeManager:
                 reason=exc.reason,
             ) from exc
 
-        supported: list[ChannelEndpointConfig] = []
-        for config in configs:
-            if config.transport == "telegram" and config.adapter_kind == "telegram_bot_polling":
-                supported.append(TelegramPollingEndpointConfig.model_validate(config.model_dump()))
-            if config.transport == "telegram_user" and config.adapter_kind == "telethon_userbot":
-                supported.append(TelethonUserEndpointConfig.model_validate(config.model_dump()))
-            if config.transport == "partyflow" and config.adapter_kind == "partyflow_webhook":
-                supported.append(PartyFlowWebhookEndpointConfig.model_validate(config.model_dump()))
-        return tuple(supported)
+        return tuple(self._normalize_runtime_endpoint(config) for config in configs)
 
     def _build_service(self, config: ChannelEndpointConfig) -> _ChannelRuntimeService:
         if config.transport == "telegram" and config.adapter_kind == "telegram_bot_polling":
@@ -187,10 +179,13 @@ class ChannelRuntimeManager:
                     endpoint_id=config.endpoint_id
                 ),
             )
-        if config.transport == "partyflow" and config.adapter_kind == "partyflow_webhook":
-            return PartyFlowWebhookService(
+        if config.transport == "partyflow" and config.adapter_kind == "partyflow_polling":
+            return PartyFlowPollingService(
                 self._settings,
-                endpoint=PartyFlowWebhookEndpointConfig.model_validate(config.model_dump()),
+                endpoint=PartyFlowPollingEndpointConfig.model_validate(config.model_dump()),
+                state_path=self._endpoint_service.partyflow_polling_state_path(
+                    endpoint_id=config.endpoint_id
+                ),
             )
         raise ChannelRuntimeManagerError(
             error_code="channel_adapter_not_supported",
@@ -199,6 +194,16 @@ class ChannelRuntimeManager:
                 f"adapter_kind={config.adapter_kind}"
             ),
         )
+
+    @staticmethod
+    def _normalize_runtime_endpoint(config: ChannelEndpointConfig) -> ChannelEndpointConfig:
+        if config.transport == "telegram" and config.adapter_kind == "telegram_bot_polling":
+            return TelegramPollingEndpointConfig.model_validate(config.model_dump())
+        if config.transport == "telegram_user" and config.adapter_kind == "telethon_userbot":
+            return TelethonUserEndpointConfig.model_validate(config.model_dump())
+        if config.transport == "partyflow" and config.adapter_kind == "partyflow_polling":
+            return PartyFlowPollingEndpointConfig.model_validate(config.model_dump())
+        return config
 
     @staticmethod
     def _to_start_error(
@@ -210,7 +215,7 @@ class ChannelRuntimeManager:
             return exc
         if isinstance(
             exc,
-            (TelegramPollingServiceError, TelethonUserServiceError, PartyFlowWebhookServiceError),
+            (TelegramPollingServiceError, TelethonUserServiceError, PartyFlowPollingServiceError),
         ):
             return ChannelRuntimeManagerError(
                 error_code=exc.error_code,

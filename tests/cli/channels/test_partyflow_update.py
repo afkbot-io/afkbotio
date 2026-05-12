@@ -1,4 +1,4 @@
-"""PartyFlow webhook channel update-command tests."""
+"""PartyFlow polling channel update-command tests."""
 
 from __future__ import annotations
 

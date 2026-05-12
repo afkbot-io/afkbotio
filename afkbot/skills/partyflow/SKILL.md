@@ -1,6 +1,6 @@
 ---
 name: partyflow
-description: "PartyFlow bot and webhook operations through `app.run`. Use when sending messages to PartyFlow, checking bot identity, or joining a PartyFlow conversation with stored credentials."
+description: "PartyFlow bot operations through `app.run`. Use when sending messages to PartyFlow, polling bot events, checking bot identity, or joining a PartyFlow conversation with stored credentials."
 aliases:
   - partyflow-send
   - partyflow-bot
@@ -36,10 +36,10 @@ Supported actions (`app_name=partyflow`):
 - `get_me`
 - `join_conversation`
 - `send_message`
+- `poll_events`
 
 Credential set (per `profile_name`):
 - required: `partyflow_bot_token`
-- optional: `partyflow_webhook_signing_secret` for webhook receivers
 
 Runtime params for `app.run`:
 - `app_name=partyflow`
@@ -58,6 +58,8 @@ Action payload contract:
 - `send_message`
   - required: `conversation_id`, `content`
   - optional: `thread_id`, `base_url`, `token_credential_name`
+- `poll_events`
+  - optional: `cursor`, `limit`, `base_url`, `token_credential_name`
 
 Preferred example:
 ```json
@@ -82,8 +84,7 @@ Workflow:
 3. Missing credentials:
    - call `credentials.request` without `value` to trigger secure input recovery;
    - collect the missing bot token securely;
-   - collect the webhook signing secret only when the operator wants signature validation enabled.
-   - continue the original task after the credential is stored.
+  - continue the original task after the credential is stored.
 4. Use `get_me` to confirm bot identity when you need to verify the integration.
 5. Use `send_message` for outbound delivery; it will try to join a group/team conversation automatically after a `403` if the bot is not yet a member.
 
@@ -95,6 +96,6 @@ Error handling:
 - `partyflow_bot_not_in_conversation` -> the bot could not post; if this is a DM, PartyFlow join may not be supported.
 
 Safety:
-- Never ask for the bot token or webhook signing secret in plain chat.
+- Never ask for the bot token in plain chat.
 - Never print secret values in the final response.
 - Prefer configured credential profiles over ad-hoc secrets.

@@ -449,6 +449,7 @@ def test_app_registry_defines_builtin_skills_and_canonical_actions() -> None:
         "get_me",
         "get_messages",
         "join_conversation",
+        "poll_events",
         "read_channel_history",
         "send_message",
     }
@@ -1232,6 +1233,71 @@ async def test_app_run_partyflow_get_messages_rejects_multiple_cursors(
         assert result.ok is False
         assert result.error_code == "app_run_invalid"
         assert "only one of before_msg_index" in (result.reason or "")
+    finally:
+        await engine.dispose()
+
+
+async def test_app_run_partyflow_poll_events_with_cursor(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """app.run should expose PartyFlow Bot Event Polling cursor reads."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    try:
+        await _set_network_allowlist(
+            settings=settings,
+            profile_id="default",
+            hosts=["api.partyflow.ru"],
+        )
+        app_tool = registry.get("app.run")
+        assert app_tool is not None
+        await _create_credential(
+            registry=registry,
+            settings=settings,
+            ctx=ctx,
+            app_name="partyflow",
+            profile_name="default",
+            credential_slug="partyflow_bot_token",
+            value="fri_bot_test_token",
+        )
+
+        calls: list[dict[str, object]] = []
+
+        async def _fake_poll_events(**kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"events": [{"event_id": "evt-1"}], "next_cursor": "cursor-2"}
+
+        monkeypatch.setattr(
+            "afkbot.services.apps.partyflow.actions._poll_events",
+            _fake_poll_events,
+        )
+
+        params = app_tool.parse_params(
+            {
+                "profile_key": "default",
+                "app_name": "partyflow",
+                "action": "poll_events",
+                "profile_name": "default",
+                "params": {"cursor": "cursor-1", "limit": 25},
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        )
+        result = await app_tool.execute(ctx, params)
+
+        assert result.ok is True
+        assert result.payload["next_cursor"] == "cursor-2"
+        assert calls == [
+            {
+                "base_url": "https://api.partyflow.ru",
+                "token": "fri_bot_test_token",
+                "cursor": "cursor-1",
+                "limit": 25,
+                "timeout_sec": settings.tool_timeout_default_sec,
+            }
+        ]
     finally:
         await engine.dispose()
 

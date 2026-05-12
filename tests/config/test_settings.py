@@ -170,7 +170,6 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.deployment_mode == "self_hosted"
     assert settings.runtime_public_bind_policy == "local_only"
     assert settings.plugin_api_auth_required is True
-    assert settings.partyflow_webhook_signing_required is False
     assert settings.managed_database_isolation_mode == "database_per_bot"
     assert settings.runtime_port == 46339
     assert settings.runtime_queue_max_size == 100
@@ -181,6 +180,9 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.runtime_read_timeout_sec == 5.0
     assert settings.runtime_max_header_bytes == 16384
     assert settings.runtime_max_body_bytes == 262144
+    assert settings.partyflow_polling_limit == 50
+    assert settings.partyflow_polling_idle_sleep_ms == 2000
+    assert settings.partyflow_polling_error_backoff_ms == 1000
     assert settings.taskflow_runtime_poll_interval_sec == 5.0
     assert settings.taskflow_runtime_maintenance_batch_size == 32
     assert settings.taskflow_runtime_claim_ttl_sec == 900

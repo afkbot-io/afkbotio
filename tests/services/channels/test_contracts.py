@@ -5,6 +5,11 @@ from __future__ import annotations
 import pytest
 
 from afkbot.services.channels import ChannelDeliveryTarget, build_delivery_target_runtime_metadata
+from afkbot.services.channels.endpoint_contracts import (
+    ChannelEndpointConfig,
+    PartyFlowPollingEndpointConfig,
+    deserialize_endpoint_config,
+)
 
 
 def test_channel_delivery_target_normalizes_transport_and_metadata() -> None:
@@ -71,3 +76,25 @@ def test_channel_delivery_target_accepts_address_alias_for_partyflow_peer_id() -
 
     assert target.peer_id == "660e8400-e29b-41d4-a716-446655440001"
     assert target.address is None
+
+
+def test_deserialize_partyflow_webhook_endpoint_does_not_coerce_to_polling() -> None:
+    """Legacy PartyFlow webhook rows must remain unsupported instead of looking live."""
+
+    endpoint = deserialize_endpoint_config(
+        {
+            "endpoint_id": "legacy-partyflow",
+            "transport": "partyflow",
+            "adapter_kind": "partyflow_webhook",
+            "profile_id": "default",
+            "credential_profile_key": "legacy-partyflow",
+            "account_id": "legacy-partyflow",
+            "enabled": True,
+            "group_trigger_mode": None,
+            "config": {"ingress_mode": "webhook"},
+        }
+    )
+
+    assert isinstance(endpoint, ChannelEndpointConfig)
+    assert not isinstance(endpoint, PartyFlowPollingEndpointConfig)
+    assert endpoint.adapter_kind == "partyflow_webhook"

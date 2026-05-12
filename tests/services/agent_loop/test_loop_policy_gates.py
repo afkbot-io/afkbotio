@@ -16,7 +16,7 @@ from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
-from afkbot.services.channels.endpoint_contracts import PartyFlowWebhookEndpointConfig
+from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointConfig
 from afkbot.services.llm import LLMResponse, MockLLMProvider, ToolCallRequest
 from afkbot.services.skills.skills import SkillLoader
@@ -742,7 +742,7 @@ async def test_active_channel_history_tool_is_visible_in_minimal_channel(
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
         active_overrides = build_active_channel_context_overrides(
-            endpoint=PartyFlowWebhookEndpointConfig(
+            endpoint=PartyFlowPollingEndpointConfig(
                 endpoint_id="partyflow-main",
                 profile_id="default",
                 credential_profile_key="partyflow-main",
@@ -797,7 +797,7 @@ async def test_active_channel_context_survives_agent_loop_resolution(
             llm_max_iterations=1,
         )
         active_overrides = build_active_channel_context_overrides(
-            endpoint=PartyFlowWebhookEndpointConfig(
+            endpoint=PartyFlowPollingEndpointConfig(
                 endpoint_id="partyflow-main",
                 profile_id="default",
                 credential_profile_key="partyflow-main",
@@ -912,7 +912,7 @@ async def test_llm_active_channel_history_execution_receives_trusted_context(
             llm_max_iterations=2,
         )
         active_overrides = build_active_channel_context_overrides(
-            endpoint=PartyFlowWebhookEndpointConfig(
+            endpoint=PartyFlowPollingEndpointConfig(
                 endpoint_id="partyflow-main",
                 profile_id="default",
                 credential_profile_key="partyflow-main",

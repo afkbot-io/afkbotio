@@ -134,16 +134,16 @@ def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(
     assert text_prompts == ["Allowed outbound chat/user ids"]
 
 
-def test_partyflow_credentials_wizard_marks_signing_secret_optional(
+def test_partyflow_credentials_wizard_only_prompts_for_bot_token(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """PartyFlow setup copy should make the final webhook security check optional."""
+    """PartyFlow polling setup should only ask for bot token credentials."""
 
     secret_prompts: list[dict[str, object]] = []
 
     def _fake_secret(**kwargs: object) -> str | None:
         secret_prompts.append(dict(kwargs))
-        return "fri_bot_test" if kwargs["prompt_en"] == "PartyFlow bot token" else None
+        return "fri_bot_test"
 
     monkeypatch.setattr(
         channel_credentials_support,
@@ -162,10 +162,5 @@ def test_partyflow_credentials_wizard_marks_signing_secret_optional(
         lang=PromptLanguage.RU,
     )
 
-    signing_prompt = next(
-        item for item in secret_prompts if item["prompt_en"] == "PartyFlow webhook signing secret"
-    )
     assert updated is True
-    assert signing_prompt["required"] is False
-    assert "leave this blank to skip signature validation" in str(signing_prompt["detail_en"])
-    assert "оставьте поле пустым" in str(signing_prompt["detail_ru"])
+    assert [item["prompt_en"] for item in secret_prompts] == ["PartyFlow bot token"]

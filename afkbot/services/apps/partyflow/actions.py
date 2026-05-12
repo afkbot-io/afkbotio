@@ -22,10 +22,12 @@ from afkbot.services.apps.credential_manifest import (
 )
 from afkbot.services.apps.params_validation import build_app_params_validation_error
 from afkbot.services.apps.partyflow.http_api import (
+    PARTYFLOW_API_BASE_URL,
     PartyFlowApiError,
     _get_me,
     _get_messages,
     _join_conversation,
+    _poll_events,
     _send_message,
 )
 from afkbot.services.apps.registry import register_app
@@ -34,9 +36,15 @@ from afkbot.services.policy import PolicyViolationError
 from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 
-_DEFAULT_BASE_URL = "https://api.partyflow.ru"
 _ALLOWED_ACTIONS = frozenset(
-    {"get_me", "join_conversation", "send_message", "get_messages", "read_channel_history"}
+    {
+        "get_me",
+        "join_conversation",
+        "send_message",
+        "get_messages",
+        "read_channel_history",
+        "poll_events",
+    }
 )
 _ALLOWED_SKILLS = frozenset({"partyflow"})
 _CREDENTIAL_MANIFEST = AppCredentialManifest(
@@ -45,11 +53,6 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
             slug="partyflow_bot_token",
             description="PartyFlow bot bearer token.",
         ),
-        "partyflow_webhook_signing_secret": CredentialFieldManifest(
-            slug="partyflow_webhook_signing_secret",
-            description="PartyFlow outgoing webhook signing secret.",
-            required_by_default=False,
-        ),
     },
     actions={
         "get_me": ActionCredentialManifest(required=("partyflow_bot_token",)),
@@ -57,6 +60,7 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
         "send_message": ActionCredentialManifest(required=("partyflow_bot_token",)),
         "get_messages": ActionCredentialManifest(required=("partyflow_bot_token",)),
         "read_channel_history": ActionCredentialManifest(required=("partyflow_bot_token",)),
+        "poll_events": ActionCredentialManifest(required=("partyflow_bot_token",)),
     },
 )
 
@@ -64,7 +68,7 @@ _CREDENTIAL_MANIFEST = AppCredentialManifest(
 class _BasePartyFlowParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    base_url: str = Field(default=_DEFAULT_BASE_URL, min_length=1, max_length=512)
+    base_url: str = Field(default=PARTYFLOW_API_BASE_URL, min_length=1, max_length=512)
     token_credential_name: str = Field(default="partyflow_bot_token", min_length=1, max_length=128)
 
 
@@ -127,12 +131,18 @@ class _GetMessagesParams(_BasePartyFlowParams):
         return self
 
 
+class _PollEventsParams(_BasePartyFlowParams):
+    cursor: str = Field(default="", max_length=2048)
+    limit: int = Field(default=50, ge=1, le=500)
+
+
 _ACTION_PARAMS_MODELS: dict[str, type[BaseModel]] = {
     "get_me": _GetMeParams,
     "join_conversation": _JoinConversationParams,
     "send_message": _SendMessageParams,
     "get_messages": _GetMessagesParams,
     "read_channel_history": _GetMessagesParams,
+    "poll_events": _PollEventsParams,
 }
 
 
@@ -242,6 +252,26 @@ async def run_partyflow_action(
                 around_msg_index=get_messages_params.around_msg_index,
                 updated_since=get_messages_params.updated_since,
                 thread_id=get_messages_params.thread_id,
+                timeout_sec=ctx.timeout_sec,
+            )
+            return ToolResult(ok=True, payload=result)
+        if normalized_action == "poll_events":
+            poll_params = _PollEventsParams.model_validate(params)
+            token = await resolve_credential_value(
+                settings=settings,
+                context=call_context,
+                credential_slug=poll_params.token_credential_name,
+            )
+            await ensure_host_allowed(
+                settings=settings,
+                context=call_context,
+                host=_host_from_base_url(poll_params.base_url),
+            )
+            result = await _poll_events(
+                base_url=poll_params.base_url,
+                token=token,
+                cursor=poll_params.cursor,
+                limit=poll_params.limit,
                 timeout_sec=ctx.timeout_sec,
             )
             return ToolResult(ok=True, payload=result)

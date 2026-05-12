@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header
 from afkbot.api.chat_auth import ensure_health_diagnostics_scope, require_chat_http_context
 
 from afkbot.services.health import (
+    channel_health_ok,
     run_channel_health_diagnostics,
     run_channel_delivery_diagnostics,
     run_channel_routing_diagnostics,
@@ -132,7 +133,7 @@ async def get_channel_health(
     ensure_health_diagnostics_scope(auth_context)
     report = await run_channel_health_diagnostics(get_settings())
     return {
-        "ok": True,
+        "ok": channel_health_ok(report),
         "telegram_polling": {
             "total_endpoints": len(report.telegram_polling),
             "enabled_endpoints": sum(1 for item in report.telegram_polling if item.enabled),
@@ -151,6 +152,42 @@ async def get_channel_health(
                     "state_present": item.state_present,
                 }
                 for item in report.telegram_polling
+            ],
+        },
+        "partyflow_polling": {
+            "total_endpoints": len(report.partyflow_polling),
+            "enabled_endpoints": sum(1 for item in report.partyflow_polling if item.enabled),
+            "endpoints": [
+                {
+                    "endpoint_id": item.endpoint_id,
+                    "enabled": item.enabled,
+                    "profile_id": item.profile_id,
+                    "credential_profile_key": item.credential_profile_key,
+                    "account_id": item.account_id,
+                    "profile_valid": item.profile_valid,
+                    "profile_exists": item.profile_exists,
+                    "bot_token_configured": item.bot_token_configured,
+                    "binding_count": item.binding_count,
+                    "state_path": item.state_path,
+                    "state_present": item.state_present,
+                }
+                for item in report.partyflow_polling
+            ],
+        },
+        "unsupported_partyflow": {
+            "total_endpoints": len(report.unsupported_partyflow),
+            "enabled_endpoints": sum(1 for item in report.unsupported_partyflow if item.enabled),
+            "endpoints": [
+                {
+                    "endpoint_id": item.endpoint_id,
+                    "adapter_kind": item.adapter_kind,
+                    "enabled": item.enabled,
+                    "profile_id": item.profile_id,
+                    "credential_profile_key": item.credential_profile_key,
+                    "account_id": item.account_id,
+                    "reason": item.reason,
+                }
+                for item in report.unsupported_partyflow
             ],
         },
         "telethon_userbot": {

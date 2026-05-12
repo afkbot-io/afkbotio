@@ -17,7 +17,7 @@ from afkbot.services.channel_routing.service import ChannelBindingServiceError
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,
     ChannelEndpointConfig,
-    PartyFlowWebhookEndpointConfig,
+    PartyFlowPollingEndpointConfig,
     TelegramPollingEndpointConfig,
 )
 from afkbot.services.channels.endpoint_service import ChannelEndpointServiceError
@@ -263,7 +263,7 @@ async def test_channel_send_tool_delivers_text_to_partyflow_target(tmp_path: Pat
     """channel.send should support plain-text PartyFlow outbound delivery."""
 
     delivery = _FakeDeliveryService()
-    endpoint = PartyFlowWebhookEndpointConfig(
+    endpoint = PartyFlowPollingEndpointConfig(
         endpoint_id="partyflow-main",
         profile_id="default",
         credential_profile_key="partyflow-main",
@@ -503,7 +503,7 @@ async def test_channel_send_tool_rejects_credential_profile_override(tmp_path: P
     """channel.send should always use the endpoint sender credentials."""
 
     delivery = _FakeDeliveryService()
-    endpoint = PartyFlowWebhookEndpointConfig(
+    endpoint = PartyFlowPollingEndpointConfig(
         endpoint_id="partyflow-main",
         profile_id="default",
         credential_profile_key="partyflow-main",

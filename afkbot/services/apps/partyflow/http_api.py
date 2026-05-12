@@ -8,6 +8,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
+PARTYFLOW_API_BASE_URL = "https://api.partyflow.ru"
+
 
 class PartyFlowApiError(RuntimeError):
     """Structured PartyFlow Bot REST API failure."""
@@ -96,6 +98,32 @@ async def _get_messages(
             token=token,
             method="GET",
             path=f"/api/v1/channels/{conversation_id}/messages",
+            body=None,
+            query=query,
+            timeout_sec=timeout_sec,
+        ),
+        timeout=float(timeout_sec),
+    )
+
+
+async def _poll_events(
+    *,
+    base_url: str,
+    token: str,
+    cursor: str,
+    limit: int,
+    timeout_sec: int,
+) -> dict[str, object]:
+    query: dict[str, object] = {"limit": limit}
+    if cursor:
+        query["cursor"] = cursor
+    return await asyncio.wait_for(
+        asyncio.to_thread(
+            _request_json_sync,
+            base_url=base_url,
+            token=token,
+            method="GET",
+            path="/api/v1/bot/events",
             body=None,
             query=query,
             timeout_sec=timeout_sec,

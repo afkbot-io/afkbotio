@@ -169,22 +169,20 @@ def render_channel_add_intro(
             msg(
                 lang,
                 en=(
-                    "PartyFlow webhook channel setup\n"
-                    f"- This wizard creates one PartyFlow outgoing-webhook endpoint.\n"
+                    "PartyFlow channel setup\n"
+                    f"- This wizard creates one PartyFlow bot channel. AFKBOT fetches bot events directly.\n"
                     f"- `Channel id` is your local AFKBOT id for later `show`, `update`, and `delete` commands. "
                     f"Press Enter there to accept `{suggested_channel_id}`.\n"
-                    "- PartyFlow does not support Telegram-style polling here; webhook is the only ingress mode.\n"
-                    "- You will need the bot token from PartyFlow UI. The webhook signing secret is optional; "
-                    "if you leave it blank, AFKBOT accepts deliveries without signature validation."
+                    "- Configure the PartyFlow bot delivery mode as `poll` with MESSAGE_CREATED events.\n"
+                    "- You will need the bot token from PartyFlow UI; AFKBOT will fetch events directly."
                 ),
                 ru=(
-                    "Настройка PartyFlow webhook-канала\n"
-                    f"- Этот мастер создаёт один endpoint для исходящих webhook-событий PartyFlow.\n"
+                    "Настройка канала PartyFlow\n"
+                    f"- Этот мастер создаёт один канал PartyFlow-бота. AFKBOT получает события бота напрямую.\n"
                     f"- `Идентификатор канала` это локальный id внутри AFKBOT для команд `show`, `update` и `delete`. "
                     f"На этом вопросе можно просто нажать Enter и принять `{suggested_channel_id}`.\n"
-                    "- Polling в стиле Telegram здесь не поддерживается; сейчас доступен только режим webhook.\n"
-                    "- Понадобится токен бота из UI PartyFlow. Секрет подписи webhook необязателен; "
-                    "если оставить его пустым, AFKBOT примет доставки без проверки подписи."
+                    "- В PartyFlow настройте режим доставки бота `poll` и событие MESSAGE_CREATED.\n"
+                    "- Понадобится токен бота из UI PartyFlow; AFKBOT будет получать события напрямую."
                 ),
             )
         )
