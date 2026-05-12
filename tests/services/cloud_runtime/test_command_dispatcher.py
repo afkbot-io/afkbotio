@@ -131,6 +131,42 @@ async def test_dispatcher_stops_runtime_for_shutdown_command() -> None:
     assert gateway.events[0]["event_type"] == "runtime.command.shutdown"
 
 
+@pytest.mark.asyncio
+async def test_dispatcher_rejects_invalid_profile_id() -> None:
+    """Invalid Cloud profile ids should fail explicitly instead of falling back."""
+
+    gateway = _FakeGateway()
+    calls: list[dict[str, Any]] = []
+
+    async def _run_chat_turn(**kwargs: Any) -> TurnResult:
+        calls.append(kwargs)
+        return TurnResult(
+            run_id=1,
+            session_id=kwargs["session_id"],
+            profile_id=kwargs["profile_id"],
+            envelope=ActionEnvelope(action="finalize", message="should not run"),
+        )
+
+    dispatcher = CloudRuntimeCommandDispatcher(
+        gateway=gateway,  # type: ignore[arg-type]
+        request_shutdown=lambda: None,
+        run_chat_turn_fn=_run_chat_turn,
+    )
+
+    await dispatcher.handle(
+        CloudRuntimeCommand(
+            command="chat.message",
+            command_id="cmd-bad-profile",
+            payload={"message_id": "msg-1", "content": "hello", "profile_id": "../bad"},
+        )
+    )
+    await _drain_dispatcher(dispatcher)
+
+    assert calls == []
+    assert gateway.events[0]["event_type"] == "runtime.command.failed"
+    assert gateway.events[0]["payload"]["command_id"] == "cmd-bad-profile"
+
+
 async def _drain_dispatcher(dispatcher: CloudRuntimeCommandDispatcher) -> None:
     """Let scheduled command tasks finish.
 

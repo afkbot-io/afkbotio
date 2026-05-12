@@ -14,7 +14,7 @@ from afkbot.services.agent_loop.api_runtime import run_chat_turn
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand, CloudRuntimeGatewayClient
 from afkbot.services.error_logging import redact_log_text
-from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
+from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
 
 logger = logging.getLogger(__name__)
@@ -272,10 +272,7 @@ class CloudRuntimeCommandDispatcher:
 
 def _profile_id_from_payload(payload: dict[str, Any]) -> str:
     raw_profile_id = _string_payload(payload, "profile_id") or _DEFAULT_PROFILE_ID
-    try:
-        return validate_profile_id(raw_profile_id)
-    except InvalidProfileIdError:
-        return _DEFAULT_PROFILE_ID
+    return validate_profile_id(raw_profile_id)
 
 
 def _session_id(prefix: str, value: str) -> str:

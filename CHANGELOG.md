@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-05-13
+
+### Added
+
+- Added `afk cloud connect` and `afk cloud list` so a local CLI can verify and
+  save AFKBOT Cloud bot connections by public bot URL and scoped remote token.
+  The CLI infers the Cloud API URL from workspace bot URLs by default while
+  keeping `--api-url` for local development and private deployments.
+
+### Security
+
+- Cloud remote tokens are stored in the encrypted runtime secrets store and are
+  never printed by `afk cloud connect --json` or `afk cloud list --json`.
+- `afk cloud connect` rejects plain HTTP API URLs outside local development so
+  scoped Cloud tokens are not sent to unsafe endpoints.
+- Cloud runtime commands now fail explicitly on invalid `profile_id` values
+  instead of falling back to the default profile.
+
 ## [1.8.0] - 2026-05-12
 
 ### Added

@@ -10,6 +10,7 @@ from afkbot.cli.commands.bootstrap import register as register_bootstrap
 from afkbot.cli.commands.browser import register as register_browser
 from afkbot.cli.commands.channel import register as register_channel
 from afkbot.cli.commands.chat import register as register_chat
+from afkbot.cli.commands.cloud import register as register_cloud
 from afkbot.cli.commands.connect import register as register_connect
 from afkbot.cli.commands.credentials import register as register_credentials
 from afkbot.cli.commands.doctor import register as register_doctor
@@ -42,7 +43,8 @@ app = typer.Typer(
         "system-prompt files, `afk update` to refresh the active AFKBOT install, `afk automation` to "
         "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk plugin` to "
         "install optional platform extensions, `afk channel` to operate external adapters, `afk memory` to "
-        "inspect profile memory, `afk mcp` to manage profile-local MCP IDE integrations, "
+        "inspect profile memory, `afk cloud` to connect local CLI with AFKBOT Cloud bots, "
+        "`afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, `afk auth` to protect web/plugin "
         "surfaces, `afk logs` to inspect diagnostic error logs, and `afk browser install` "
         "to prepare browser automation runtime."
@@ -60,6 +62,7 @@ register_task(app)
 register_browser(app)
 register_channel(app)
 register_chat(app)
+register_cloud(app)
 register_connect(app)
 register_credentials(app)
 register_doctor(app)
@@ -93,6 +96,7 @@ def _guard_setup(ctx: typer.Context) -> None:
         "browser",
         "bootstrap",
         "upgrade",
+        "cloud",
         "mcp",
         "plugin",
         "auth",

@@ -48,6 +48,7 @@ def test_legacy_groups_are_not_exposed() -> None:
     assert "chat" in output
     assert "browser" in output
     assert "channel" in output
+    assert "cloud" in output
     assert "connect" in output
     assert "credentials" in output
     assert "bootstrap" in output
@@ -96,6 +97,7 @@ def test_root_help_explains_primary_entrypoints() -> None:
     assert "`afk plugin`" in output
     assert "`afk channel`" in output
     assert "`afk memory`" in output
+    assert "`afk cloud`" in output
     assert "`afk mcp`" in output
     assert "`afk skill` and `afk subagent`" in output
     assert "`afk auth`" in output
