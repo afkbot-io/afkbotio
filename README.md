@@ -87,7 +87,7 @@ bash scripts/install.sh --repo-url "file://$PWD"
 | Plugins | Optional platform extensions such as AFKBOT UI. | `afk plugin install`, `afk plugin list` |
 | MCP | Remote MCP servers connected to a profile. | `afk mcp connect https://example.com/mcp --profile default`, `afk mcp list --profile default` |
 | Memory | Scoped semantic memory for profile, chat, thread, and user-in-chat contexts. | `afk memory list --profile default`, `afk memory search "topic" --profile default` |
-| Cloud remote | Connect the local CLI to a hosted AFKBOT Cloud bot using its public URL and a bot token. | `afk cloud connect --url https://... --token ...`, `afk cloud list` |
+| Cloud remote | Connect the local CLI to a hosted AFKBOT Cloud bot using its public URL and a bot token, then send chat/lifecycle/profile setup commands to it. | `afk cloud connect --url https://... --token ...`, `afk chat --cloud default --message "..."`, `afk start --cloud default` |
 
 ## Common setup flows
 
@@ -113,12 +113,20 @@ bot public URL:
 ```bash
 afk cloud connect --url https://5x8surre8xpxbunx.cloud.afkbot.io/bot/q8m2xk4p
 afk cloud list
+afk cloud chat default --message "Hello"
+afk chat --cloud default --message "Hello"
+afk start --cloud default
 ```
 
 If you pass `--token`, it is verified once and then stored in the encrypted runtime
 secrets store. Without `--token`, the CLI asks for it with hidden input. By
 default, the CLI infers the Cloud API URL from the public bot URL; use
 `--api-url` only for local development or private Cloud deployments.
+
+Remote mode is explicit. Plain `afk chat`, `afk start`, `afk setup`,
+`afk profile add`, and `afk channel add` keep using the local runtime. Use
+`afk cloud chat/start/stop/restart/setup`, `afk cloud profile add`, and
+`afk cloud channel add` when the command should be sent to the hosted bot.
 
 ### Create a skill
 

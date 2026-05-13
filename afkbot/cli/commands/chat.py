@@ -17,6 +17,7 @@ from afkbot.cli.commands.chat_planning import (
     resolve_cli_thinking_level,
 )
 from afkbot.cli.commands.chat_update_notices import handle_chat_update_notice
+from afkbot.cli.commands.cloud import _attach_remote_chat_replies, _render_chat_payload
 from afkbot.cli.presentation import confirm_space
 from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.cli.commands.chat_secure_flow import (
@@ -54,6 +55,7 @@ from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
 )
 from afkbot.settings import Settings, get_settings
+from afkbot.services.cloud_remote import CloudRemoteError, send_remote_chat_message
 
 _DEFAULT_LLM_EXECUTION_BUDGET_LOW_SEC = 900.0
 _DEFAULT_LLM_EXECUTION_BUDGET_MEDIUM_SEC = 1800.0
@@ -140,10 +142,36 @@ def register(app: typer.Typer) -> None:
             "--thinking-level",
             help="Reasoning budget: low, medium, high, or very_high.",
         ),
+        cloud: str | None = typer.Option(
+            None,
+            "--cloud",
+            "--cloud-connection",
+            help="Send the message to a saved AFKBOT Cloud connection instead of local runtime.",
+        ),
     ) -> None:
         """Run one chat turn or open the interactive REPL terminal chat session."""
 
         settings = get_settings()
+        if cloud is not None:
+            if message is None:
+                raise_usage_error("Remote Cloud chat currently requires --message.")
+            try:
+                payload = send_remote_chat_message(
+                    settings=settings,
+                    connection_name=cloud,
+                    content=message,
+                    profile_id=profile,
+                )
+                payload = _attach_remote_chat_replies(connection=cloud, payload=payload)
+            except CloudRemoteError as exc:
+                raise_usage_error(exc.reason)
+            if json_output:
+                import json
+
+                typer.echo(json.dumps({"ok": True, "message": payload}, ensure_ascii=True))
+                return
+            _render_chat_payload(payload)
+            return
         target = resolve_cli_chat_target(
             settings=settings,
             profile_id=profile,

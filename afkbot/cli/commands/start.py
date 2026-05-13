@@ -14,6 +14,7 @@ import typer
 import uvicorn
 
 from afkbot.cli.command_errors import raise_usage_error
+from afkbot.cli.commands.cloud import _run_lifecycle_command
 from afkbot.api.app import create_app
 from afkbot.services.automations.runtime_daemon import RuntimeDaemon
 from afkbot.services.channels.runtime_manager import (
@@ -128,9 +129,18 @@ def register(app: typer.Typer) -> None:
             "--taskflow-owner-subagent",
             help="Optional structured Task Flow executor subagent shard inside --taskflow-owner-profile.",
         ),
+        cloud: str | None = typer.Option(
+            None,
+            "--cloud",
+            "--cloud-connection",
+            help="Start a saved AFKBOT Cloud connection instead of the local runtime stack.",
+        ),
     ) -> None:
         """Start the full AFKBOT stack and stop all owned services on exit."""
 
+        if cloud is not None:
+            _run_lifecycle_command(connection=cloud, action="start", json_output=False)
+            return
         run_start_command(
             settings=None,
             host=host,

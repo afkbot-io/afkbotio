@@ -221,3 +221,103 @@ def test_cloud_connection_storage_sanitizes_optional_cloud_payload(
     persisted = list_remote_bot_connections(settings=settings)
     assert persisted[0].scopes == ["remote_connect"]
     assert persisted[0].profile_config == {}
+
+
+def test_cloud_chat_sends_message_through_saved_connection(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk cloud chat` should call the Cloud remote chat API and avoid local runtime setup."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_send_remote_chat_message(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"id": "msg-1", "status": "sent", "command_id": "cmd-1"}
+
+    monkeypatch.setattr("afkbot.cli.commands.cloud.send_remote_chat_message", _fake_send_remote_chat_message)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.poll_remote_chat_messages",
+        lambda **kwargs: {
+            "results": [{"role": "assistant", "content": "hello from cloud"}],
+        },
+    )
+
+    result = CliRunner().invoke(app, ["cloud", "chat", "--message", "Hello", "ops"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hello from cloud"
+    assert captured["connection_name"] == "ops"
+    assert captured["content"] == "Hello"
+
+
+def test_chat_cloud_alias_sends_one_message(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk chat --cloud` should route one-shot chat through the Cloud remote API."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_send_remote_chat_message(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"id": "msg-1", "status": "sent", "command_id": "cmd-1"}
+
+    monkeypatch.setattr("afkbot.cli.commands.chat.send_remote_chat_message", _fake_send_remote_chat_message)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.poll_remote_chat_messages",
+        lambda **kwargs: {"results": []},
+    )
+
+    result = CliRunner().invoke(app, ["chat", "--cloud", "ops", "--message", "Hello"])
+
+    assert result.exit_code == 0
+    assert "message sent" in result.stdout
+    assert captured["connection_name"] == "ops"
+    assert captured["content"] == "Hello"
+
+
+def test_start_cloud_alias_runs_remote_lifecycle(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk start --cloud` should start the saved Cloud connection instead of local services."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_run_remote_lifecycle_action(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"action": "start", "state": "starting"}
+
+    monkeypatch.setattr("afkbot.cli.commands.cloud.run_remote_lifecycle_action", _fake_run_remote_lifecycle_action)
+
+    result = CliRunner().invoke(app, ["start", "--cloud", "ops"])
+
+    assert result.exit_code == 0
+    assert "cloud start accepted" in result.stdout
+    assert captured["connection_name"] == "ops"
+    assert captured["action"] == "start"
+
+
+def test_cloud_setup_patches_remote_profile_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk cloud setup` should patch profile fields through the Cloud remote API."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def _fake_update_remote_profile_config(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"model": "openai/gpt-5.4", "skills": ["codex"]}
+
+    monkeypatch.setattr("afkbot.cli.commands.cloud.update_remote_profile_config", _fake_update_remote_profile_config)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "cloud",
+            "setup",
+            "ops",
+            "--model",
+            "openai/gpt-5.4",
+            "--skill",
+            "codex",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["connection_name"] == "ops"
+    assert captured["fields"] == {"model": "openai/gpt-5.4", "skills": ["codex"]}

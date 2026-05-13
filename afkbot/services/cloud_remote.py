@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import json
 import os
 import re
+import secrets
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
@@ -243,6 +244,153 @@ def list_remote_bot_connections(*, settings: Settings) -> list[RemoteBotConnecti
     return sorted(connections, key=lambda item: item.name)
 
 
+def get_remote_bot_connection(*, settings: Settings, name: str = "default") -> tuple[RemoteBotConnection, str]:
+    """Return one saved remote bot connection and its plaintext token.
+
+    :param settings: Active AFKBOT settings.
+    :param name: Local connection name.
+    :return: Connection metadata and stored bot token.
+    """
+
+    connection_name = normalize_remote_connection_name(name)
+    connections = {connection.name: connection for connection in list_remote_bot_connections(settings=settings)}
+    connection = connections.get(connection_name)
+    if connection is None:
+        raise CloudRemoteError(
+            f"Cloud connection '{connection_name}' is not saved. Run `afk cloud connect` first.",
+            error_code="cloud_connection_missing",
+        )
+    secrets_payload = read_runtime_secrets(settings)
+    token = str(secrets_payload.get(f"{TOKEN_SECRET_PREFIX}{connection_name}") or "")
+    if not token:
+        raise CloudRemoteError(
+            f"Cloud token for '{connection_name}' is missing. Reconnect with `afk cloud connect`.",
+            error_code="cloud_token_missing",
+        )
+    return connection, token
+
+
+def send_remote_chat_message(
+    *,
+    settings: Settings,
+    connection_name: str,
+    content: str,
+    profile_id: str = "",
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    """Send one chat message to a saved Cloud bot connection.
+
+    :param settings: Active AFKBOT settings.
+    :param connection_name: Saved Cloud connection name.
+    :param content: Message text.
+    :param profile_id: Optional runtime profile id.
+    :param idempotency_key: Optional retry key. Generated when omitted.
+    :return: Cloud API response payload.
+    """
+
+    connection, token = get_remote_bot_connection(settings=settings, name=connection_name)
+    key = idempotency_key or f"afk-cli-chat-{secrets.token_urlsafe(18)}"
+    return _post_remote_payload(
+        connection=connection,
+        token=token,
+        path="/bot-access/chat",
+        payload={
+            "content": content,
+            "idempotency_key": key,
+            "profile_id": profile_id,
+        },
+    )
+
+
+def poll_remote_chat_messages(
+    *,
+    settings: Settings,
+    connection_name: str,
+    command_id: str = "",
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Poll Cloud chat messages for a saved bot connection.
+
+    :param settings: Active AFKBOT settings.
+    :param connection_name: Saved Cloud connection name.
+    :param command_id: Optional command id to narrow responses.
+    :param limit: Maximum number of messages.
+    :return: Cloud API response payload.
+    """
+
+    connection, token = get_remote_bot_connection(settings=settings, name=connection_name)
+    return _post_remote_payload(
+        connection=connection,
+        token=token,
+        path="/bot-access/chat/messages",
+        payload={"command_id": command_id, "limit": limit},
+    )
+
+
+def run_remote_lifecycle_action(
+    *,
+    settings: Settings,
+    connection_name: str,
+    action: str,
+) -> dict[str, Any]:
+    """Run one Cloud bot lifecycle action.
+
+    :param settings: Active AFKBOT settings.
+    :param connection_name: Saved Cloud connection name.
+    :param action: Lifecycle action: start, stop, or restart.
+    :return: Cloud API response payload.
+    """
+
+    connection, token = get_remote_bot_connection(settings=settings, name=connection_name)
+    return _post_remote_payload(
+        connection=connection,
+        token=token,
+        path="/bot-access/lifecycle",
+        payload={"action": action},
+    )
+
+
+def read_remote_profile_config(*, settings: Settings, connection_name: str) -> dict[str, Any]:
+    """Read Cloud bot profile config through a saved connection.
+
+    :param settings: Active AFKBOT settings.
+    :param connection_name: Saved Cloud connection name.
+    :return: Cloud API response payload.
+    """
+
+    connection, token = get_remote_bot_connection(settings=settings, name=connection_name)
+    return _post_remote_payload(
+        connection=connection,
+        token=token,
+        path="/bot-access/profile-config",
+        payload={},
+    )
+
+
+def update_remote_profile_config(
+    *,
+    settings: Settings,
+    connection_name: str,
+    fields: dict[str, Any],
+) -> dict[str, Any]:
+    """Patch Cloud bot profile config through a saved connection.
+
+    :param settings: Active AFKBOT settings.
+    :param connection_name: Saved Cloud connection name.
+    :param fields: Profile config fields to patch.
+    :return: Cloud API response payload.
+    """
+
+    connection, token = get_remote_bot_connection(settings=settings, name=connection_name)
+    return _request_remote_payload(
+        connection=connection,
+        token=token,
+        path="/bot-access/profile-config",
+        payload=fields,
+        method="PATCH",
+    )
+
+
 def _is_local_cloud_api_host(hostname: str) -> bool:
     """Return whether a host is safe for plain HTTP local development.
 
@@ -252,6 +400,77 @@ def _is_local_cloud_api_host(hostname: str) -> bool:
 
     host = hostname.lower().strip(".")
     return host in {"localhost", "127.0.0.1", "::1", "cloud.afkbot.local"} or host.endswith(".localhost")
+
+
+def _post_remote_payload(
+    *,
+    connection: RemoteBotConnection,
+    token: str,
+    path: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """POST a token-authenticated remote payload to the Cloud API.
+
+    :param connection: Saved connection metadata.
+    :param token: Plaintext bot token.
+    :param path: API path starting with slash.
+    :param payload: Command payload fields.
+    :return: Parsed JSON response.
+    """
+
+    return _request_remote_payload(
+        connection=connection,
+        token=token,
+        path=path,
+        payload=payload,
+        method="POST",
+    )
+
+
+def _request_remote_payload(
+    *,
+    connection: RemoteBotConnection,
+    token: str,
+    path: str,
+    payload: dict[str, Any],
+    method: str,
+) -> dict[str, Any]:
+    """Send a token-authenticated remote payload to the Cloud API.
+
+    :param connection: Saved connection metadata.
+    :param token: Plaintext bot token.
+    :param path: API path starting with slash.
+    :param payload: Command payload fields.
+    :param method: HTTP method.
+    :return: Parsed JSON response.
+    """
+
+    body = json.dumps(
+        {
+            "public_url": connection.public_url,
+            "token": token,
+            **payload,
+        }
+    ).encode("utf-8")
+    request = Request(
+        f"{connection.api_url}{path}",
+        data=body,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=30) as response:  # noqa: S310 - URL was validated at connect time.
+            parsed = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        reason = _extract_http_error_reason(exc)
+        raise CloudRemoteError(reason, error_code="cloud_command_rejected") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise CloudRemoteError("Cloud API is unavailable.", error_code="cloud_api_unavailable") from exc
+    except json.JSONDecodeError as exc:
+        raise CloudRemoteError("Cloud API returned an invalid response.", error_code="cloud_api_invalid_response") from exc
+    if not isinstance(parsed, dict):
+        raise CloudRemoteError("Cloud API returned an invalid response.", error_code="cloud_api_invalid_response")
+    return parsed
 
 
 def normalize_remote_connection_name(name: str) -> str:

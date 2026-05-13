@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added remote Cloud command execution for saved bot connections:
+  `afk cloud chat/start/stop/restart/setup`, `afk cloud profile add`, and
+  `afk cloud channel add`.
+- Added explicit aliases for common remote flows: `afk chat --cloud <name>
+  --message ...` and `afk start --cloud <name>`.
+
 ### Changed
 
 - PartyFlow channel ingress now uses Bot Event Polling (`/api/v1/bot/events`)
