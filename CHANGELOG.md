@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-05-14
+
 ### Added
 
 - Added remote Cloud command execution for saved bot connections:
