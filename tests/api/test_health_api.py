@@ -24,7 +24,9 @@ from afkbot.services.health import (
     DoctorChannelsReport,
     DoctorDeliveryReport,
     DoctorRoutingReport,
+    PartyFlowPollingEndpointReport,
     TelegramPollingEndpointReport,
+    UnsupportedPartyFlowEndpointReport,
 )
 from afkbot.settings import Settings
 
@@ -240,6 +242,47 @@ def test_health_routing_route_returns_diagnostics(monkeypatch: MonkeyPatch) -> N
     }
 
 
+def test_health_channels_route_marks_unhealthy_partyflow_polling_not_ok(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """GET /v1/health/channels should fail readiness for unhealthy enabled PartyFlow polling."""
+
+    _allow_health_auth(monkeypatch)
+
+    async def _fake_report(_settings: object) -> DoctorChannelsReport:
+        return DoctorChannelsReport(
+            telegram_polling=(),
+            partyflow_polling=(
+                PartyFlowPollingEndpointReport(
+                    endpoint_id="partyflow-main",
+                    enabled=True,
+                    profile_id="default",
+                    credential_profile_key="partyflow-main",
+                    account_id="partyflow-bot",
+                    profile_valid=True,
+                    profile_exists=True,
+                    bot_token_configured=False,
+                    binding_count=0,
+                    state_path="/tmp/partyflow_polling_state.json",
+                    state_present=False,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("afkbot.api.routes_health.run_channel_health_diagnostics", _fake_report)
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/v1/health/channels",
+        headers={"Authorization": "Bearer test-token", "X-AFK-Session-Proof": "proof-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["partyflow_polling"]["endpoints"][0]["bot_token_configured"] is False
+
+
 def test_health_delivery_route_returns_diagnostics(monkeypatch: MonkeyPatch) -> None:
     """GET /v1/health/delivery should expose structured outbound delivery diagnostics."""
 
@@ -334,7 +377,33 @@ def test_health_channels_route_returns_channel_status(monkeypatch: MonkeyPatch) 
                     state_path="/tmp/telegram_polling_state.json",
                     state_present=False,
                 ),
-            )
+            ),
+            partyflow_polling=(
+                PartyFlowPollingEndpointReport(
+                    endpoint_id="partyflow-main",
+                    enabled=True,
+                    profile_id="default",
+                    credential_profile_key="partyflow-main",
+                    account_id="partyflow-bot",
+                    profile_valid=True,
+                    profile_exists=True,
+                    bot_token_configured=True,
+                    binding_count=1,
+                    state_path="/tmp/partyflow_polling_state.json",
+                    state_present=True,
+                ),
+            ),
+            unsupported_partyflow=(
+                UnsupportedPartyFlowEndpointReport(
+                    endpoint_id="legacy-partyflow",
+                    adapter_kind="partyflow_webhook",
+                    enabled=True,
+                    profile_id="default",
+                    credential_profile_key="legacy-partyflow",
+                    account_id="legacy-partyflow",
+                    reason="PartyFlow webhook endpoints are no longer supported.",
+                ),
+            ),
         )
 
     monkeypatch.setattr("afkbot.api.routes_health.run_channel_health_diagnostics", _fake_report)
@@ -348,7 +417,7 @@ def test_health_channels_route_returns_channel_status(monkeypatch: MonkeyPatch) 
 
     assert response.status_code == 200
     assert response.json() == {
-        "ok": True,
+        "ok": False,
         "telegram_polling": {
             "total_endpoints": 1,
             "enabled_endpoints": 1,
@@ -365,6 +434,40 @@ def test_health_channels_route_returns_channel_status(monkeypatch: MonkeyPatch) 
                     "binding_count": 2,
                     "state_path": "/tmp/telegram_polling_state.json",
                     "state_present": False,
+                }
+            ],
+        },
+        "partyflow_polling": {
+            "total_endpoints": 1,
+            "enabled_endpoints": 1,
+            "endpoints": [
+                {
+                    "endpoint_id": "partyflow-main",
+                    "enabled": True,
+                    "profile_id": "default",
+                    "credential_profile_key": "partyflow-main",
+                    "account_id": "partyflow-bot",
+                    "profile_valid": True,
+                    "profile_exists": True,
+                    "bot_token_configured": True,
+                    "binding_count": 1,
+                    "state_path": "/tmp/partyflow_polling_state.json",
+                    "state_present": True,
+                }
+            ],
+        },
+        "unsupported_partyflow": {
+            "total_endpoints": 1,
+            "enabled_endpoints": 1,
+            "endpoints": [
+                {
+                    "endpoint_id": "legacy-partyflow",
+                    "adapter_kind": "partyflow_webhook",
+                    "enabled": True,
+                    "profile_id": "default",
+                    "credential_profile_key": "legacy-partyflow",
+                    "account_id": "legacy-partyflow",
+                    "reason": "PartyFlow webhook endpoints are no longer supported.",
                 }
             ],
         },

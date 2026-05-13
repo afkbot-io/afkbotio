@@ -31,8 +31,6 @@ class ChannelWizardScenario:
     trigger_mode: str | None = None
     reply_mode: str | None = None
     session_policy: str = "per-chat"
-    include_context: bool | None = None
-    context_size: int | None = None
     watcher_enabled: bool | None = None
     current_channel_tools: tuple[str, ...] = ("channel.history.list", "channel.send")
 
@@ -82,30 +80,26 @@ _CHANNEL_SCENARIOS: dict[str, ChannelWizardScenario] = {
     "partyflow_private_mention": ChannelWizardScenario(
         id="partyflow_private_mention",
         transport="partyflow",
-        label_en="PartyFlow webhook on mention",
-        label_ru="PartyFlow webhook по упоминанию",
+        label_en="PartyFlow group mention bot",
+        label_ru="PartyFlow-бот в группе по упоминанию",
         tool_profile="messaging_safe",
         private_policy="disabled",
         group_policy="open",
         trigger_mode="mention",
         reply_mode="same_conversation",
         session_policy="per-thread",
-        include_context=True,
-        context_size=8,
     ),
-    "partyflow_webhook_keywords": ChannelWizardScenario(
-        id="partyflow_webhook_keywords",
+    "partyflow_group_keywords": ChannelWizardScenario(
+        id="partyflow_group_keywords",
         transport="partyflow",
-        label_en="PartyFlow webhook by keywords",
-        label_ru="PartyFlow webhook по ключевым словам",
+        label_en="PartyFlow group keyword bot",
+        label_ru="PartyFlow-бот в группе по ключевым словам",
         tool_profile="messaging_safe",
         private_policy="disabled",
         group_policy="open",
         trigger_mode="keywords",
         reply_mode="same_conversation",
         session_policy="per-thread",
-        include_context=True,
-        context_size=8,
     ),
     "partyflow_group_all_messages": ChannelWizardScenario(
         id="partyflow_group_all_messages",
@@ -118,22 +112,18 @@ _CHANNEL_SCENARIOS: dict[str, ChannelWizardScenario] = {
         trigger_mode="all",
         reply_mode="same_conversation",
         session_policy="per-thread",
-        include_context=True,
-        context_size=12,
     ),
     "partyflow_trusted_admin": ChannelWizardScenario(
         id="partyflow_trusted_admin",
         transport="partyflow",
-        label_en="PartyFlow trusted admin webhook",
-        label_ru="PartyFlow доверенный админ-webhook",
+        label_en="PartyFlow trusted admin channel",
+        label_ru="PartyFlow доверенный админ-канал",
         tool_profile="inherit",
         private_policy="open",
         group_policy="allowlist",
         trigger_mode="mention",
         reply_mode="same_conversation",
         session_policy="per-thread",
-        include_context=True,
-        context_size=12,
     ),
     "telethon_private_reply": ChannelWizardScenario(
         id="telethon_private_reply",
@@ -290,14 +280,10 @@ def channel_plan(transport: str) -> WizardPlan:
     else:
         questions.extend(
             (
-                _question("partyflow_ingress_mode", "transport", "single", "PartyFlow ingress mode", "Режим входящих событий PartyFlow"),
                 _question("partyflow_trigger_mode", "transport", "single", "PartyFlow trigger mode", "Режим триггера PartyFlow"),
                 _question("partyflow_trigger_keywords", "transport", "text", "PartyFlow trigger keywords", "Ключевые слова-триггеры PartyFlow", shown_when="partyflow_trigger_mode == keywords"),
-                _question("partyflow_include_context", "transport", "confirm", "Include PartyFlow context?", "Подтягивать контекст из PartyFlow?"),
-                _question("partyflow_context_size", "transport", "integer", "PartyFlow context size", "Размер контекста PartyFlow", shown_when="partyflow_include_context"),
                 _question("partyflow_reply_mode", "transport", "single", "PartyFlow reply mode", "Режим ответа PartyFlow"),
                 _question("partyflow_bot_token", "credentials", "secret", "PartyFlow bot token", "Токен бота PartyFlow"),
-                _question("partyflow_signing_secret", "credentials", "secret", "PartyFlow webhook signing secret", "Секрет подписи webhook PartyFlow", advanced=True),
             )
         )
     return WizardPlan(

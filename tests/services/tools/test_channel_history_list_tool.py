@@ -8,7 +8,7 @@ import pytest
 
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
-from afkbot.services.channels.endpoint_contracts import PartyFlowWebhookEndpointConfig
+from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.channels.endpoint_service import ChannelEndpointServiceError
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.plugins.channel_history_list.plugin import (
@@ -19,10 +19,10 @@ from afkbot.settings import Settings
 
 
 class _FakeEndpointService:
-    def __init__(self, endpoint: PartyFlowWebhookEndpointConfig) -> None:
+    def __init__(self, endpoint: PartyFlowPollingEndpointConfig) -> None:
         self.endpoint = endpoint
 
-    async def get(self, *, endpoint_id: str) -> PartyFlowWebhookEndpointConfig:
+    async def get(self, *, endpoint_id: str) -> PartyFlowPollingEndpointConfig:
         if endpoint_id == self.endpoint.endpoint_id:
             return self.endpoint
         raise ChannelEndpointServiceError(
@@ -47,7 +47,7 @@ async def test_channel_history_list_reads_active_partyflow_conversation(
 ) -> None:
     """Active PartyFlow turns should infer endpoint, conversation, and thread safely."""
 
-    endpoint = PartyFlowWebhookEndpointConfig(
+    endpoint = PartyFlowPollingEndpointConfig(
         endpoint_id="partyflow-main",
         profile_id="default",
         credential_profile_key="partyflow-main",
@@ -129,7 +129,7 @@ async def test_channel_history_list_rejects_non_active_endpoint(
 ) -> None:
     """An active channel turn must not read another endpoint's history."""
 
-    endpoint = PartyFlowWebhookEndpointConfig(
+    endpoint = PartyFlowPollingEndpointConfig(
         endpoint_id="partyflow-main",
         profile_id="default",
         credential_profile_key="partyflow-main",

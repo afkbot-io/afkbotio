@@ -232,7 +232,6 @@ class Settings(BaseSettings):
     deployment_mode: Literal["self_hosted", "managed"] = "self_hosted"
     runtime_public_bind_policy: Literal["local_only", "auth_required"] = "local_only"
     plugin_api_auth_required: bool = True
-    partyflow_webhook_signing_required: bool = False
     managed_database_isolation_mode: Literal["database_per_bot", "schema_per_bot"] = "database_per_bot"
     llm_proxy_type: Literal["none", "http", "socks5", "socks5h"] = "none"
     llm_proxy_url: str | None = None
@@ -362,6 +361,9 @@ class Settings(BaseSettings):
     telegram_polling_timeout_sec: int = 20
     telegram_polling_idle_sleep_ms: int = 250
     telegram_polling_error_backoff_ms: int = 1000
+    partyflow_polling_limit: int = 50
+    partyflow_polling_idle_sleep_ms: int = 2000
+    partyflow_polling_error_backoff_ms: int = 1000
     channel_media_download_max_bytes: int = 20_000_000
     channel_media_upload_max_bytes: int = 50_000_000
     channel_media_text_preview_bytes: int = 8_192
@@ -603,6 +605,9 @@ class Settings(BaseSettings):
         "telegram_polling_timeout_sec",
         "telegram_polling_idle_sleep_ms",
         "telegram_polling_error_backoff_ms",
+        "partyflow_polling_limit",
+        "partyflow_polling_idle_sleep_ms",
+        "partyflow_polling_error_backoff_ms",
         "channel_media_download_max_bytes",
         "channel_media_upload_max_bytes",
         "channel_media_text_preview_bytes",

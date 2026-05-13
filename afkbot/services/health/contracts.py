@@ -93,6 +93,36 @@ class TelegramPollingEndpointReport:
 
 
 @dataclass(frozen=True, slots=True)
+class PartyFlowPollingEndpointReport:
+    """Operator-facing PartyFlow Bot Event Polling endpoint status."""
+
+    endpoint_id: str
+    enabled: bool
+    profile_id: str
+    credential_profile_key: str
+    account_id: str
+    profile_valid: bool
+    profile_exists: bool
+    bot_token_configured: bool
+    binding_count: int
+    state_path: str
+    state_present: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UnsupportedPartyFlowEndpointReport:
+    """Operator-facing unsupported PartyFlow endpoint status."""
+
+    endpoint_id: str
+    adapter_kind: str
+    enabled: bool
+    profile_id: str
+    credential_profile_key: str
+    account_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class TelethonUserEndpointReport:
     """Operator-facing Telethon userbot endpoint status."""
 
@@ -118,7 +148,46 @@ class DoctorChannelsReport:
     """Operator-facing channel health snapshot."""
 
     telegram_polling: tuple[TelegramPollingEndpointReport, ...]
+    partyflow_polling: tuple[PartyFlowPollingEndpointReport, ...] = ()
+    unsupported_partyflow: tuple[UnsupportedPartyFlowEndpointReport, ...] = ()
     telethon_userbot: tuple[TelethonUserEndpointReport, ...] = ()
+
+
+def channel_health_ok(report: DoctorChannelsReport) -> bool:
+    """Return whether configured channel adapters are healthy for operator readiness."""
+
+    if report.unsupported_partyflow:
+        return False
+    telegram_ok = all(
+        (
+            not endpoint.enabled
+            or (endpoint.profile_valid and endpoint.profile_exists and endpoint.token_configured)
+        )
+        for endpoint in report.telegram_polling
+    )
+    partyflow_ok = all(
+        (
+            not endpoint.enabled
+            or (endpoint.profile_valid and endpoint.profile_exists and endpoint.bot_token_configured)
+        )
+        for endpoint in report.partyflow_polling
+    )
+    telethon_ok = all(
+        (
+            not endpoint.enabled
+            or (
+                endpoint.profile_valid
+                and endpoint.profile_exists
+                and endpoint.api_id_configured
+                and endpoint.api_hash_configured
+                and endpoint.phone_configured
+                and endpoint.session_string_configured
+                and endpoint.policy_allows_runtime
+            )
+        )
+        for endpoint in report.telethon_userbot
+    )
+    return telegram_ok and partyflow_ok and telethon_ok
 
 
 @dataclass(frozen=True, slots=True)

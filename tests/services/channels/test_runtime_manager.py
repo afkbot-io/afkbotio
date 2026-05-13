@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
-    PartyFlowWebhookEndpointConfig,
+    PartyFlowPollingEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
@@ -39,6 +39,9 @@ class _FakeEndpointService:
         return items
 
     def telegram_polling_state_path(self, *, endpoint_id: str):  # pragma: no cover - not used here
+        raise AssertionError(f"Unexpected state path request: {endpoint_id}")
+
+    def partyflow_polling_state_path(self, *, endpoint_id: str):  # pragma: no cover - not used here
         raise AssertionError(f"Unexpected state path request: {endpoint_id}")
 
     def telethon_user_state_path(self, *, endpoint_id: str):  # pragma: no cover - not used here
@@ -106,13 +109,26 @@ def _telethon_endpoint(endpoint_id: str, *, enabled: bool = True) -> TelethonUse
 
 def _partyflow_endpoint(
     endpoint_id: str, *, enabled: bool = True
-) -> PartyFlowWebhookEndpointConfig:
-    return PartyFlowWebhookEndpointConfig(
+) -> PartyFlowPollingEndpointConfig:
+    return PartyFlowPollingEndpointConfig(
         endpoint_id=endpoint_id,
         profile_id="default",
         credential_profile_key="default",
         account_id=endpoint_id,
         enabled=enabled,
+    )
+
+
+def _legacy_partyflow_webhook_endpoint(endpoint_id: str, *, enabled: bool = True) -> ChannelEndpointConfig:
+    return ChannelEndpointConfig(
+        endpoint_id=endpoint_id,
+        transport="partyflow",
+        adapter_kind="partyflow_webhook",
+        profile_id="default",
+        credential_profile_key="default",
+        account_id=endpoint_id,
+        enabled=enabled,
+        config={"ingress_mode": "webhook"},
     )
 
 
@@ -232,8 +248,8 @@ async def test_runtime_manager_best_effort_converts_build_failures_to_report(tmp
     assert third.started is True
 
 
-async def test_runtime_manager_starts_partyflow_webhook_endpoints(tmp_path) -> None:
-    """Manager should include PartyFlow webhook endpoints in the supported startup set."""
+async def test_runtime_manager_starts_partyflow_polling_endpoints(tmp_path) -> None:
+    """Manager should include PartyFlow polling endpoints in the supported startup set."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
     endpoint_service = _FakeEndpointService((_partyflow_endpoint("partyflow-main"),))
@@ -248,3 +264,41 @@ async def test_runtime_manager_starts_partyflow_webhook_endpoints(tmp_path) -> N
 
     assert started == ("partyflow-main",)
     assert fake_service.started is True
+
+
+async def test_runtime_manager_strict_start_fails_for_legacy_partyflow_webhook(tmp_path) -> None:
+    """Strict startup should not silently skip unsupported legacy PartyFlow webhook endpoints."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    endpoint_service = _FakeEndpointService(
+        (_legacy_partyflow_webhook_endpoint("legacy-partyflow"),)
+    )
+    manager = ChannelRuntimeManager(settings, endpoint_service=endpoint_service)  # type: ignore[arg-type]
+
+    try:
+        await manager.start(endpoint_ids=("legacy-partyflow",))
+    except ChannelRuntimeManagerError as exc:
+        assert exc.error_code == "channel_adapter_not_supported"
+        assert "adapter_kind=partyflow_webhook" in exc.reason
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("Expected ChannelRuntimeManagerError")
+
+
+async def test_runtime_manager_best_effort_reports_legacy_partyflow_webhook_failure(
+    tmp_path,
+) -> None:
+    """Best-effort startup should report unsupported PartyFlow webhook rows as failures."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    endpoint_service = _FakeEndpointService(
+        (_legacy_partyflow_webhook_endpoint("legacy-partyflow"),)
+    )
+    manager = ChannelRuntimeManager(settings, endpoint_service=endpoint_service)  # type: ignore[arg-type]
+
+    report = await manager.start_best_effort()
+
+    assert report.started_endpoint_ids == ()
+    assert len(report.failures) == 1
+    assert report.failures[0].endpoint_id == "legacy-partyflow"
+    assert report.failures[0].error_code == "channel_adapter_not_supported"
+    assert "adapter_kind=partyflow_webhook" in report.failures[0].reason

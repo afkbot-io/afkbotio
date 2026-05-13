@@ -87,9 +87,8 @@ def test_channel_plans_contain_shared_and_transport_specific_branches() -> None:
     assert "telegram_group_trigger" in telegram
     assert "telethon_reply_mode" in telethon
     assert "telethon_watcher_digest" in telethon
-    assert "partyflow_ingress_mode" in partyflow
-    assert "partyflow_include_context" in partyflow
-    assert "partyflow_signing_secret" in partyflow
+    assert "partyflow_trigger_mode" in partyflow
+    assert "partyflow_bot_token" in partyflow
 
 
 def test_channel_scenario_catalog_covers_each_transport_mode() -> None:
@@ -113,7 +112,7 @@ def test_channel_scenario_catalog_covers_each_transport_mode() -> None:
     }.issubset(telethon_ids)
     assert {
         "partyflow_private_mention",
-        "partyflow_webhook_keywords",
+        "partyflow_group_keywords",
         "partyflow_group_all_messages",
         "partyflow_trusted_admin",
     }.issubset(partyflow_ids)
@@ -141,6 +140,22 @@ def test_wizard_plans_expose_branch_graphs() -> None:
     trusted_admin = next(branch for branch in partyflow.branches if branch.id == "trusted_admin")
     assert "trusted_admin" in trusted_admin.condition
     assert "channel_scenario" == partyflow.questions[0].id
+
+
+def test_partyflow_wizard_does_not_offer_webhook_or_polling_transport_choice() -> None:
+    """PartyFlow setup should mirror Telegram-style channel scenarios, not delivery transports."""
+
+    plan = channel_plan("partyflow")
+    scenarios = list_channel_scenarios(transport="partyflow")
+
+    assert all("webhook" not in question.id.lower() for question in plan.questions)
+    assert all("polling" not in question.id.lower() for question in plan.questions)
+    assert all("webhook" not in scenario.label_en.lower() for scenario in scenarios)
+    assert all("polling" not in scenario.label_en.lower() for scenario in scenarios)
+    assert all("webhook" not in scenario.label_ru.lower() for scenario in scenarios)
+    assert all("polling" not in scenario.label_ru.lower() for scenario in scenarios)
+    assert all("webhook" not in scenario.id.lower() for scenario in scenarios)
+    assert all("polling" not in scenario.id.lower() for scenario in scenarios)
 
 
 def test_profile_scenario_defaults_are_safe_and_useful() -> None:
@@ -271,7 +286,7 @@ def test_effective_preview_includes_credentials_network_and_warnings() -> None:
         private_policy="disabled",
         group_policy="open",
         current_channel_tools=("channel.history.list",),
-        credential_status=("bot_token_configured", "signing_secret_optional"),
+        credential_status=("bot_token_configured",),
         lang=PromptLanguage.EN,
     )
 
@@ -282,7 +297,8 @@ def test_effective_preview_includes_credentials_network_and_warnings() -> None:
     assert "network: api.partyflow.ru" in profile_text
     assert "best_effort is not hard isolation" in profile_text
     assert "full_system exposes all local files" in profile_text
-    assert "credentials: bot_token_configured, signing_secret_optional" in channel_text
+    assert "credentials: bot_token_configured" in channel_text
+    assert "signing_secret" not in channel_text
     assert "channel-owned tools are scoped to the active endpoint" in channel_text
 
 
@@ -311,4 +327,4 @@ def test_wizard_inventory_is_serializable_and_stable() -> None:
     assert payloads[0]["questions"][0]["id"] == "security_ack"
     assert payloads[1]["questions"][0]["id"] == "channel_scenario"
     assert payloads[1]["branches"]
-    assert payloads[-1]["questions"][-1]["id"] == "partyflow_signing_secret"
+    assert payloads[-1]["questions"][-1]["id"] == "partyflow_bot_token"

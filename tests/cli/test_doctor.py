@@ -17,7 +17,9 @@ from afkbot.services.health import (
     HealthServiceError,
     IntegrationCheck,
     IntegrationMatrixReport,
+    PartyFlowPollingEndpointReport,
     TelegramPollingEndpointReport,
+    UnsupportedPartyFlowEndpointReport,
 )
 from afkbot.services.channel_routing import ChannelRoutingDiagnostics
 from afkbot.services.channels.contracts import ChannelDeliveryDiagnostics
@@ -488,6 +490,86 @@ async def test_doctor_delivery_and_channels_print_diagnostics(
     assert "succeeded=4" in out
     assert "channels:" in out
     assert "telegram_polling: endpoints=1" in out
+
+
+async def test_doctor_channels_fails_for_unsupported_partyflow(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    """Channel diagnostics should affect doctor readiness when legacy PartyFlow rows remain."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    async def _fake_channels(_settings: Settings) -> DoctorChannelsReport:
+        return DoctorChannelsReport(
+            telegram_polling=(),
+            unsupported_partyflow=(
+                UnsupportedPartyFlowEndpointReport(
+                    endpoint_id="legacy-partyflow",
+                    adapter_kind="partyflow_webhook",
+                    enabled=True,
+                    profile_id="default",
+                    credential_profile_key="legacy-partyflow",
+                    account_id="legacy-partyflow",
+                    reason="PartyFlow webhook endpoints are no longer supported.",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("afkbot.cli.commands.doctor.run_channel_health_diagnostics", _fake_channels)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_unsupported_partyflow.db'}",
+        root_dir=tmp_path,
+    )
+
+    assert await _run_doctor(settings, integrations=False, channels=True) is False
+    out = capsys.readouterr().out
+    assert "unsupported_partyflow: endpoints=1" in out
+    assert "partyflow_webhook" in out
+
+
+async def test_doctor_channels_fails_for_unhealthy_partyflow_polling(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Enabled PartyFlow polling endpoints without bot tokens should fail doctor readiness."""
+
+    bootstrap_dir = tmp_path / "afkbot/bootstrap"
+    bootstrap_dir.mkdir(parents=True)
+    for file_name in ("AGENTS.md", "IDENTITY.md", "TOOLS.md", "SECURITY.md"):
+        (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
+
+    async def _fake_channels(_settings: Settings) -> DoctorChannelsReport:
+        return DoctorChannelsReport(
+            telegram_polling=(),
+            partyflow_polling=(
+                PartyFlowPollingEndpointReport(
+                    endpoint_id="partyflow-main",
+                    enabled=True,
+                    profile_id="default",
+                    credential_profile_key="partyflow-main",
+                    account_id="partyflow-bot",
+                    profile_valid=True,
+                    profile_exists=True,
+                    bot_token_configured=False,
+                    binding_count=0,
+                    state_path="/tmp/partyflow_polling_state.json",
+                    state_present=False,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr("afkbot.cli.commands.doctor.run_channel_health_diagnostics", _fake_channels)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_unhealthy_partyflow.db'}",
+        root_dir=tmp_path,
+    )
+
+    assert await _run_doctor(settings, integrations=False, channels=True) is False
 
 
 def test_doctor_missing_profile_returns_usage_error(monkeypatch: MonkeyPatch) -> None:

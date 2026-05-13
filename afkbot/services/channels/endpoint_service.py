@@ -170,6 +170,11 @@ class ChannelEndpointService:
 
         return self.state_dir(endpoint_id=endpoint_id) / "telegram_polling_state.json"
 
+    def partyflow_polling_state_path(self, *, endpoint_id: str) -> Path:
+        """Return persisted PartyFlow polling state file for one endpoint."""
+
+        return self.state_dir(endpoint_id=endpoint_id) / "partyflow_polling_state.json"
+
     def telethon_user_state_path(self, *, endpoint_id: str) -> Path:
         """Return persisted Telethon userbot state file for one endpoint."""
 
@@ -291,6 +296,12 @@ def telegram_polling_state_path_for(settings: Settings, *, endpoint_id: str) -> 
     """Return Telegram polling state path without constructing a DB-backed service."""
 
     return channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "telegram_polling_state.json"
+
+
+def partyflow_polling_state_path_for(settings: Settings, *, endpoint_id: str) -> Path:
+    """Return PartyFlow polling state path without constructing a DB-backed service."""
+
+    return channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "partyflow_polling_state.json"
 
 
 def telethon_user_state_path_for(settings: Settings, *, endpoint_id: str) -> Path:

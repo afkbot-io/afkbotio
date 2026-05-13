@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- PartyFlow channel ingress now uses Bot Event Polling (`/api/v1/bot/events`)
+  instead of a public webhook receiver. Channel setup/status now expose polling
+  cursor controls and no longer require a public Chat API URL or signing secret.
+
 ## [1.8.2] - 2026-05-13
 
 ### Fixed

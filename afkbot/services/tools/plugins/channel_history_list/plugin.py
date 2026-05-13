@@ -6,7 +6,7 @@ from pydantic import Field, model_validator
 
 from afkbot.services.apps.partyflow.http_api import PartyFlowApiError, _get_messages
 from afkbot.services.channels.active_context import active_channel_context_from_trusted
-from afkbot.services.channels.endpoint_contracts import PartyFlowWebhookEndpointConfig
+from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.channels.endpoint_service import (
     ChannelEndpointService,
     ChannelEndpointServiceError,
@@ -65,7 +65,7 @@ class ChannelHistoryListTool(ToolBase):
     name = "channel.history.list"
     description = (
         "Read message history for the current external channel. PartyFlow is supported now via the "
-        "current webhook endpoint and Bot REST API. In an inbound PartyFlow turn, omit endpoint_id "
+        "current polling endpoint and Bot REST API. In an inbound PartyFlow turn, omit endpoint_id "
         "and conversation_id to read the current conversation; optional limit, cursor, updated_since, "
         "and thread_id narrow the read. Outside an active channel turn, endpoint_id and conversation_id "
         "are required. This tool never exposes generic app.run."
@@ -210,7 +210,7 @@ class ChannelHistoryListTool(ToolBase):
         *,
         ctx: ToolContext,
         endpoint_id: str,
-    ) -> PartyFlowWebhookEndpointConfig | ToolResult:
+    ) -> PartyFlowPollingEndpointConfig | ToolResult:
         try:
             endpoint = await self._endpoint_service.get(endpoint_id=endpoint_id)
         except ChannelEndpointServiceError as exc:
@@ -233,7 +233,7 @@ class ChannelHistoryListTool(ToolBase):
                 reason="channel.history.list endpoint is disabled.",
                 metadata={"endpoint_id": endpoint.endpoint_id},
             )
-        return PartyFlowWebhookEndpointConfig.model_validate(endpoint.model_dump())
+        return PartyFlowPollingEndpointConfig.model_validate(endpoint.model_dump())
 
     @staticmethod
     def _resolve_conversation_id(

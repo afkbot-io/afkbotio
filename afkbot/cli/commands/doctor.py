@@ -18,8 +18,11 @@ from afkbot.services.health import (
     DoctorRoutingReport,
     HealthServiceError,
     IntegrationCheck,
+    PartyFlowPollingEndpointReport,
     TelethonUserEndpointReport,
     TelegramPollingEndpointReport,
+    UnsupportedPartyFlowEndpointReport,
+    channel_health_ok,
     get_missing_bootstrap as get_missing_bootstrap_service,
 )
 from afkbot.services.health import (
@@ -183,6 +186,7 @@ async def _run_doctor(
         channels_report = await run_channel_health_diagnostics(settings)
         typer.echo("channels:")
         typer.echo(_format_channels_report(channels_report))
+        ok = ok and channel_health_ok(channels_report)
 
     if not integrations:
         return ok
@@ -363,6 +367,12 @@ def _format_channels_report(report: DoctorChannelsReport) -> str:
     lines = [f"- telegram_polling: endpoints={len(report.telegram_polling)}"]
     for telegram_endpoint in report.telegram_polling:
         lines.append(_format_telegram_endpoint_report(telegram_endpoint))
+    lines.append(f"- partyflow_polling: endpoints={len(report.partyflow_polling)}")
+    for partyflow_endpoint in report.partyflow_polling:
+        lines.append(_format_partyflow_endpoint_report(partyflow_endpoint))
+    lines.append(f"- unsupported_partyflow: endpoints={len(report.unsupported_partyflow)}")
+    for unsupported_partyflow_endpoint in report.unsupported_partyflow:
+        lines.append(_format_unsupported_partyflow_endpoint_report(unsupported_partyflow_endpoint))
     lines.append(f"- telethon_userbot: endpoints={len(report.telethon_userbot)}")
     for telethon_endpoint in report.telethon_userbot:
         lines.append(_format_telethon_endpoint_report(telethon_endpoint))
@@ -384,6 +394,41 @@ def _format_telegram_endpoint_report(endpoint: TelegramPollingEndpointReport) ->
         f"token_configured={endpoint.token_configured}, "
         f"binding_count={endpoint.binding_count}, "
         f"state_present={endpoint.state_present}"
+    )
+
+
+def _format_partyflow_endpoint_report(endpoint: PartyFlowPollingEndpointReport) -> str:
+    """Render one PartyFlow endpoint line for doctor channel diagnostics."""
+
+    return (
+        "  "
+        f"- {endpoint.endpoint_id}: "
+        f"enabled={endpoint.enabled}, "
+        f"profile_id={endpoint.profile_id}, "
+        f"profile_valid={endpoint.profile_valid}, "
+        f"profile_exists={endpoint.profile_exists}, "
+        f"credential_profile_key={endpoint.credential_profile_key}, "
+        f"account_id={endpoint.account_id}, "
+        f"bot_token_configured={endpoint.bot_token_configured}, "
+        f"binding_count={endpoint.binding_count}, "
+        f"state_present={endpoint.state_present}"
+    )
+
+
+def _format_unsupported_partyflow_endpoint_report(
+    endpoint: UnsupportedPartyFlowEndpointReport,
+) -> str:
+    """Render one unsupported PartyFlow endpoint line for doctor channel diagnostics."""
+
+    return (
+        "  "
+        f"- {endpoint.endpoint_id}: "
+        f"adapter_kind={endpoint.adapter_kind}, "
+        f"enabled={endpoint.enabled}, "
+        f"profile_id={endpoint.profile_id}, "
+        f"credential_profile_key={endpoint.credential_profile_key}, "
+        f"account_id={endpoint.account_id}, "
+        f"reason={endpoint.reason}"
     )
 
 

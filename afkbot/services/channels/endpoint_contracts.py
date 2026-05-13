@@ -40,18 +40,19 @@ TELETHON_WATCHER_BUFFER_SIZE_MIN = 1
 TELETHON_WATCHER_BUFFER_SIZE_MAX = 5_000
 TELETHON_WATCHER_MESSAGE_CHARS_MIN = 32
 TELETHON_WATCHER_MESSAGE_CHARS_MAX = 4_000
-PARTYFLOW_CONTEXT_SIZE_MIN = 1
-PARTYFLOW_CONTEXT_SIZE_MAX = 50
 PARTYFLOW_TRIGGER_KEYWORDS_MAX = 20
 PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MIN = 2
 PARTYFLOW_TRIGGER_KEYWORD_LENGTH_MAX = 100
+UNSUPPORTED_PARTYFLOW_WEBHOOK_REASON = (
+    "PartyFlow webhook endpoints are no longer supported; create a PartyFlow polling "
+    "channel and configure the PartyFlow bot delivery mode to poll."
+)
 ChannelAccessMode = Literal["open", "allowlist", "disabled"]
 TelegramGroupTriggerMode = Literal["mention_or_reply", "reply_only", "mention_only", "all_messages"]
 TelethonReplyMode = Literal["same_chat", "disabled"]
 TelethonGroupInvocationMode = Literal[
     "reply_or_command", "reply_only", "command_only", "all_messages"
 ]
-PartyFlowIngressMode = Literal["webhook"]
 PartyFlowTriggerMode = Literal["all", "mention", "keywords"]
 PartyFlowReplyMode = Literal["same_conversation", "disabled"]
 
@@ -509,19 +510,14 @@ class TelegramPollingEndpointConfig(ChannelEndpointConfig):
         }
 
 
-class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
-    """Typed PartyFlow outgoing-webhook endpoint config."""
+class PartyFlowPollingEndpointConfig(ChannelEndpointConfig):
+    """Typed PartyFlow Bot Event Polling endpoint config."""
 
-    transport: str = "partyflow"
-    adapter_kind: str = "partyflow_webhook"
+    transport: Literal["partyflow"] = "partyflow"
+    adapter_kind: Literal["partyflow_polling"] = "partyflow_polling"
     group_trigger_mode: None = None
-    ingress_mode: PartyFlowIngressMode = "webhook"
     trigger_mode: PartyFlowTriggerMode = "mention"
     trigger_keywords: tuple[str, ...] = ()
-    include_context: bool = True
-    context_size: int = Field(
-        default=8, ge=PARTYFLOW_CONTEXT_SIZE_MIN, le=PARTYFLOW_CONTEXT_SIZE_MAX
-    )
     reply_mode: PartyFlowReplyMode = "same_conversation"
     ingress_batch: ChannelIngressBatchConfig = Field(default_factory=ChannelIngressBatchConfig)
 
@@ -531,6 +527,10 @@ class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
         if not isinstance(value, Mapping):
             return value
         payload = dict(value)
+        adapter_kind = str(payload.get("adapter_kind") or "").strip().lower()
+        if adapter_kind and adapter_kind != "partyflow_polling":
+            return payload
+        payload["adapter_kind"] = "partyflow_polling"
         config = payload.get("config")
         if isinstance(config, Mapping):
             if "tool_profile" not in payload and "tool_profile" in config:
@@ -538,11 +538,8 @@ class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
             if "access_policy" not in payload and "access_policy" in config:
                 payload["access_policy"] = config["access_policy"]
             for key in (
-                "ingress_mode",
                 "trigger_mode",
                 "trigger_keywords",
-                "include_context",
-                "context_size",
                 "reply_mode",
                 "ingress_batch",
             ):
@@ -556,7 +553,7 @@ class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
         return _normalize_chat_pattern_values(value, error_label="partyflow trigger keywords")
 
     @model_validator(mode="after")
-    def _validate_trigger_config(self) -> "PartyFlowWebhookEndpointConfig":
+    def _validate_trigger_config(self) -> "PartyFlowPollingEndpointConfig":
         if self.trigger_mode == "keywords" and not self.trigger_keywords:
             raise ValueError("trigger_keywords are required when trigger_mode=keywords")
         if len(self.trigger_keywords) > PARTYFLOW_TRIGGER_KEYWORDS_MAX:
@@ -582,11 +579,8 @@ class PartyFlowWebhookEndpointConfig(ChannelEndpointConfig):
         return {
             "tool_profile": self.tool_profile,
             "access_policy": self.access_policy.model_dump(mode="python", exclude_none=True),
-            "ingress_mode": self.ingress_mode,
             "trigger_mode": self.trigger_mode,
             "trigger_keywords": self.trigger_keywords,
-            "include_context": self.include_context,
-            "context_size": self.context_size,
             "reply_mode": self.reply_mode,
             "ingress_batch": self.ingress_batch.model_dump(mode="python", exclude_none=True),
         }
@@ -601,7 +595,7 @@ def serialize_endpoint_storage_payload(
         return None, config.storage_config()
     if isinstance(config, TelegramPollingEndpointConfig):
         return config.group_trigger_mode, config.storage_config()
-    if isinstance(config, PartyFlowWebhookEndpointConfig):
+    if isinstance(config, PartyFlowPollingEndpointConfig):
         return None, config.storage_config()
     return config.group_trigger_mode, dict(config.config)
 
@@ -615,6 +609,6 @@ def deserialize_endpoint_config(payload: Mapping[str, object]) -> ChannelEndpoin
         return TelethonUserEndpointConfig.model_validate(payload)
     if adapter_kind == "telegram_bot_polling" or transport == "telegram":
         return TelegramPollingEndpointConfig.model_validate(payload)
-    if adapter_kind == "partyflow_webhook" or transport == "partyflow":
-        return PartyFlowWebhookEndpointConfig.model_validate(payload)
+    if adapter_kind == "partyflow_polling" or (transport == "partyflow" and not adapter_kind):
+        return PartyFlowPollingEndpointConfig.model_validate(payload)
     return ChannelEndpointConfig.model_validate(payload)

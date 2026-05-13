@@ -23,7 +23,7 @@ from afkbot.cli.commands.channel_telegram import register_telegram_commands
 from afkbot.cli.commands.channel_partyflow import register_partyflow_commands
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
-    PartyFlowWebhookEndpointConfig,
+    PartyFlowPollingEndpointConfig,
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
     deserialize_endpoint_config,
@@ -179,12 +179,10 @@ def register(app: typer.Typer) -> None:
             typer.echo(f"- group_invocation_mode: {channel.group_invocation_mode}")
             typer.echo(f"- watcher.enabled: {channel.watcher.enabled}")
             typer.echo(f"- ingress_batch: {_render_batch_brief(channel.ingress_batch.enabled)}")
-        elif isinstance(channel, PartyFlowWebhookEndpointConfig):
-            typer.echo(f"- ingress_mode: {channel.ingress_mode}")
+        elif isinstance(channel, PartyFlowPollingEndpointConfig):
+            typer.echo("- delivery_mode: poll")
             typer.echo(f"- trigger_mode: {channel.trigger_mode}")
             typer.echo("- trigger_keywords: " + (", ".join(channel.trigger_keywords) or "-"))
-            typer.echo(f"- include_context: {channel.include_context}")
-            typer.echo(f"- context_size: {channel.context_size}")
             typer.echo(f"- reply_mode: {channel.reply_mode}")
             typer.echo(f"- ingress_batch: {_render_batch_brief(channel.ingress_batch.enabled)}")
 
@@ -206,7 +204,7 @@ def _render_channel_summary(channel: object) -> str:
             f"account_id={channel.account_id}, tool_profile={channel.tool_profile}, reply_mode={channel.reply_mode}, "
             f"watcher={channel.watcher.enabled}, enabled={channel.enabled}"
         )
-    if isinstance(channel, PartyFlowWebhookEndpointConfig):
+    if isinstance(channel, PartyFlowPollingEndpointConfig):
         return (
             f"- {channel.endpoint_id}: transport={channel.transport}, profile={channel.profile_id}, "
             f"account_id={channel.account_id}, tool_profile={channel.tool_profile}, trigger_mode={channel.trigger_mode}, "
