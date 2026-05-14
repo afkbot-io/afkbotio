@@ -98,6 +98,7 @@ class PolicyEngine:
         tool_name: str,
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
+        approved_network_hosts: set[str] | None = None,
     ) -> None:
         """Validate one tool invocation against profile policy fields."""
 
@@ -116,6 +117,7 @@ class PolicyEngine:
             policy=policy,
             tool_name=tool_name,
             params=params,
+            approved_network_hosts=approved_network_hosts,
         )
 
     @staticmethod
@@ -221,6 +223,7 @@ class PolicyEngine:
         policy: ProfilePolicy,
         tool_name: str,
         params: dict[str, object],
+        approved_network_hosts: set[str] | None = None,
     ) -> None:
         hosts = extract_hosts(params)
         fixed_hosts = _FIXED_OUTBOUND_HOSTS_BY_TOOL.get(tool_name, ())
@@ -229,6 +232,17 @@ class PolicyEngine:
             hosts = list(dict.fromkeys(hosts))
         if not hosts:
             return
+        if approved_network_hosts:
+            hosts = [
+                host
+                for host in hosts
+                if not any(
+                    host_matches(host=host, allowed=approved_host)
+                    for approved_host in approved_network_hosts
+                )
+            ]
+            if not hosts:
+                return
 
         allowlist = parse_string_set(
             raw=policy.network_allowlist_json,

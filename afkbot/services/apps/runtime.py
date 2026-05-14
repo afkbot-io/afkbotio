@@ -85,6 +85,8 @@ class AppRuntime:
             app_name=normalized_app,
             action=canonical_action,
             profile_name=ctx.credential_profile_key,
+            approved_tool_names=ctx.approved_tool_names,
+            approved_network_hosts=ctx.approved_network_hosts,
         )
         try:
             resolved_params = await resolve_credential_placeholders(

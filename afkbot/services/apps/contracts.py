@@ -14,3 +14,5 @@ class AppRuntimeContext:
     run_id: int
     credential_profile_key: str | None
     timeout_sec: int
+    approved_tool_names: tuple[str, ...] = ()
+    approved_network_hosts: tuple[str, ...] = ()

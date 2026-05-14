@@ -200,6 +200,7 @@ async def test_partyflow_polling_processes_message_and_persists_cursor(tmp_path:
         )
 
     delivery = _FakeDeliveryService()
+    app_runtime = _FakePartyFlowRuntime(events=[_message_event(event_id="evt-1", text="hello")])
     state_path = get_channel_endpoint_service(settings).partyflow_polling_state_path(
         endpoint_id="partyflow-main"
     )
@@ -207,7 +208,7 @@ async def test_partyflow_polling_processes_message_and_persists_cursor(tmp_path:
         settings,
         endpoint=_endpoint(),
         state_path=state_path,
-        app_runtime=_FakePartyFlowRuntime(events=[_message_event(event_id="evt-1", text="hello")]),  # type: ignore[arg-type]
+        app_runtime=app_runtime,  # type: ignore[arg-type]
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=fake_run_chat_turn,
     )
@@ -218,6 +219,8 @@ async def test_partyflow_polling_processes_message_and_persists_cursor(tmp_path:
     assert captured[0]["message"] == "hello"
     assert captured[0]["client_msg_id"] == "partyflow:partyflow-bot:msg-evt-1"
     assert delivery.calls[0]["text"] == "partyflow reply"
+    assert app_runtime.calls[0]["ctx"].approved_tool_names == ("app.run",)
+    assert app_runtime.calls[0]["ctx"].approved_network_hosts == ("api.partyflow.ru",)
     assert json.loads(state_path.read_text(encoding="utf-8"))["cursor"] == "cursor-2"
 
 

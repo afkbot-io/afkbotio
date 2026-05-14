@@ -25,6 +25,8 @@ class AppCallContext:
     app_name: str
     action: str
     profile_name: str | None
+    approved_tool_names: tuple[str, ...] = ()
+    approved_network_hosts: tuple[str, ...] = ()
 
 
 def _contains_secret_placeholders(value: str) -> bool:
@@ -201,7 +203,19 @@ async def ensure_host_allowed(
     try:
         async with session_scope(session_factory) as session:
             policy = await ProfilePolicyRepository(session).get_or_create_default(context.profile_id)
-            PolicyEngine(root_dir=settings.root_dir).ensure_tool_call_allowed(
+            policy_engine = PolicyEngine(root_dir=settings.root_dir)
+            approved_tool_names = set(context.approved_tool_names) or None
+            approved_network_hosts = set(context.approved_network_hosts) or None
+            policy_engine.ensure_tool_call_allowed(
+                policy=policy,
+                tool_name="app.run",
+                params={
+                    "app_name": context.app_name,
+                    "action": context.action,
+                },
+                approved_tool_names=approved_tool_names,
+            )
+            policy_engine.ensure_tool_call_allowed(
                 policy=policy,
                 tool_name="app.run",
                 params={
@@ -209,6 +223,8 @@ async def ensure_host_allowed(
                     "app_name": context.app_name,
                     "action": context.action,
                 },
+                approved_tool_names=approved_tool_names,
+                approved_network_hosts=approved_network_hosts,
             )
     finally:
         await engine.dispose()

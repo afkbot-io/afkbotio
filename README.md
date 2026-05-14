@@ -262,6 +262,14 @@ safe channel tool profiles allow that tool while still blocking broad `app.run`.
 the wizard `Restrict channel.send outbound targets` step or `--outbound-allow-to`
 is configured, `channel.send` can only target those peer ids.
 
+Channel runtimes also carry their own transport-scoped API grant. Telegram and
+PartyFlow polling, replies, typing indicators, downloads, `channel.send`
+delivery, and PartyFlow `channel.history.list` can call their fixed provider API
+even when the profile does not expose the generic `apps` capability or `app.run`
+to the agent. Re-running `afk setup` or `afk profile update` may still change the
+agent's visible tools, but it should not break an already configured channel's own
+polling, history, and reply path.
+
 `channel.send` still supports plain text, and now also accepts structured Telegram
 messages with `parse_mode`, `disable_web_page_preview`, Bot API-style `reply_markup`
 inline/reply keyboards, `attachments` of kind `photo`, `document`, `voice`, `audio`,

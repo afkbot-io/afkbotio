@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.apps.contracts import AppRuntimeContext
 from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
 from afkbot.services.channels import (
@@ -24,6 +26,7 @@ from afkbot.services.channels.sender_registry import (
     get_channel_sender_registry,
     reset_channel_sender_registries,
 )
+from afkbot.services.credentials import get_credentials_service
 from afkbot.services.channels.telethon_user import TelethonUserServiceError
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import ProfileService
@@ -465,6 +468,83 @@ async def test_channel_delivery_service_sends_explicit_partyflow_target(tmp_path
         "content": "hello from partyflow",
         "thread_id": "770e8400-e29b-41d4-a716-446655440002",
     }
+
+
+async def test_channel_delivery_service_grants_partyflow_runtime_policy_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Channel delivery should work under a locked profile without exposing generic app.run."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_partyflow_policy.db'}",
+        credentials_master_keys=Fernet.generate_key().decode("utf-8"),
+    )
+    await _seed_profile(settings)
+    credentials = get_credentials_service(settings)
+    await credentials.create(
+        profile_id="default",
+        tool_name="app.run",
+        integration_name="partyflow",
+        credential_profile_key="bot-main",
+        credential_name="partyflow_bot_token",
+        secret_value="fri_bot_test_token",
+        replace_existing=True,
+    )
+
+    calls: list[dict[str, object]] = []
+
+    async def _fake_send_message(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"message_id": "msg-1", "conversation_id": kwargs["conversation_id"]}
+
+    monkeypatch.setattr(
+        "afkbot.services.apps.partyflow.actions._send_message",
+        _fake_send_message,
+    )
+
+    direct = await AppRuntime(settings).run(
+        app="partyflow",
+        action="send_message",
+        ctx=AppRuntimeContext(
+            profile_id="default",
+            session_id="s-1",
+            run_id=1,
+            credential_profile_key="bot-main",
+            timeout_sec=5,
+        ),
+        params={"conversation_id": "conv-1", "content": "direct app.run"},
+    )
+
+    assert direct.ok is False
+    assert direct.error_code == "profile_policy_violation"
+    assert calls == []
+
+    service = ChannelDeliveryService(settings)
+    delivered = await service.deliver_text(
+        profile_id="default",
+        session_id="s-1",
+        run_id=2,
+        target=ChannelDeliveryTarget(transport="partyflow", peer_id="conv-1"),
+        text="channel-owned send",
+        credential_profile_key="bot-main",
+    )
+
+    assert delivered.transport == "partyflow"
+    assert calls == [
+        {
+            "base_url": "https://api.partyflow.ru",
+            "token": "fri_bot_test_token",
+            "conversation_id": "conv-1",
+            "content": "channel-owned send",
+            "thread_id": None,
+            "display_name": None,
+            "display_avatar_url": None,
+            "metadata_json": None,
+            "timeout_sec": settings.tool_timeout_default_sec,
+        }
+    ]
 
 
 async def test_channel_delivery_service_splits_long_partyflow_text(tmp_path: Path) -> None:

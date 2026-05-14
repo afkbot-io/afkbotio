@@ -450,6 +450,32 @@ def test_policy_engine_web_search_uses_fixed_provider_host_allowlist() -> None:
     )
 
 
+def test_policy_engine_approved_network_hosts_bypass_only_matching_hosts() -> None:
+    """Scoped channel runtime grants should not open unrelated network hosts."""
+
+    engine = PolicyEngine()
+    policy = _policy(network_allowlist_json='["example.com"]')
+    engine.ensure_tool_call_allowed(
+        policy=policy,
+        tool_name="channel.history.list",
+        params={},
+        approved_tool_names={"channel.history.list"},
+        approved_network_hosts={"api.partyflow.ru"},
+    )
+
+    with pytest.raises(
+        PolicyViolationError,
+        match="Network host is not allowed by policy: evil.com",
+    ):
+        engine.ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="channel.history.list",
+            params={"host": "evil.com"},
+            approved_tool_names={"channel.history.list"},
+            approved_network_hosts={"api.partyflow.ru"},
+        )
+
+
 def test_policy_engine_enforces_network_allowlist_for_shell_command_urls() -> None:
     """Network allowlist should also apply to URL hosts found inside shell commands."""
 

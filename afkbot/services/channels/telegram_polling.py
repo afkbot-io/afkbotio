@@ -21,6 +21,10 @@ from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
     TelegramPollingEndpointConfig,
 )
+from afkbot.services.channels.delivery_runtime import (
+    CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+    TELEGRAM_CHANNEL_API_HOSTS,
+)
 from afkbot.services.channels.endpoint_service import telegram_polling_state_path_for
 from afkbot.services.channels.ingress_coalescer import ChannelIngressCoalescer
 from afkbot.services.channels.service import ChannelDeliveryService
@@ -295,4 +299,6 @@ class TelegramPollingService(TelegramPollingRuntimeMixin):
             run_id=0,
             credential_profile_key=self._credential_profile_key,
             timeout_sec=timeout_sec,
+            approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+            approved_network_hosts=TELEGRAM_CHANNEL_API_HOSTS,
         )

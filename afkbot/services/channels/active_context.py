@@ -17,6 +17,9 @@ PARTYFLOW_ACTIVE_CHANNEL_TOOL_NAMES: tuple[str, ...] = (
 RESERVED_CHANNEL_OWNED_TOOL_NAMES: frozenset[str] = frozenset(
     (*PARTYFLOW_ACTIVE_CHANNEL_TOOL_NAMES, *MESSAGING_ACTIVE_CHANNEL_TOOL_NAMES)
 )
+PARTYFLOW_CHANNEL_OWNED_NETWORK_HOSTS_BY_TOOL: dict[str, tuple[str, ...]] = {
+    "channel.history.list": ("api.partyflow.ru",),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +148,30 @@ def filter_generic_approved_tool_names(
         for raw_name in approved_tool_names
         if (name := str(raw_name).strip()) and name not in RESERVED_CHANNEL_OWNED_TOOL_NAMES
     }
+
+
+def filter_channel_owned_approved_network_hosts(
+    *,
+    trusted_runtime_context: Mapping[str, object] | None,
+    approved_tool_names: set[str] | tuple[str, ...] | None,
+) -> set[str]:
+    """Return transport API hosts approved by trusted current-channel tools."""
+
+    if not approved_tool_names:
+        return set()
+    active_context = active_channel_context_from_trusted(trusted_runtime_context)
+    if active_context is None:
+        return set()
+    if active_context.transport != "partyflow":
+        return set()
+    allowed_tools = set(channel_owned_tool_names_for_transport(active_context.transport))
+    hosts: set[str] = set()
+    for raw_name in approved_tool_names:
+        name = str(raw_name).strip()
+        if name not in allowed_tools:
+            continue
+        hosts.update(PARTYFLOW_CHANNEL_OWNED_NETWORK_HOSTS_BY_TOOL.get(name, ()))
+    return hosts
 
 
 def _normalize_optional(value: object) -> str | None:

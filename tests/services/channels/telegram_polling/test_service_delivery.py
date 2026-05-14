@@ -80,6 +80,8 @@ async def test_telegram_polling_processes_private_message_and_replies(tmp_path: 
     assert len(delivery.calls) == 1
     assert delivery.calls[0]["text"] == "hello user"
     assert delivery.calls[0]["credential_profile_key"] == "bot-main"
+    assert app_runtime.calls[0]["ctx"].approved_tool_names == ("app.run",)
+    assert app_runtime.calls[0]["ctx"].approved_network_hosts == ("api.telegram.org",)
     assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
         "transport": "telegram",
         "account_id": "telegram-bot",
