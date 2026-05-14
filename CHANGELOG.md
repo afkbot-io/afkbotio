@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.4] - 2026-05-14
+
 ### Fixed
 
 - Fixed Telegram and PartyFlow channel runtime API calls so polling, replies,
