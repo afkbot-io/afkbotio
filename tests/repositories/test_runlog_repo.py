@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
@@ -157,6 +159,28 @@ async def test_run_repo_request_cancel_returns_false_when_update_affects_no_rows
 
     assert await repo.request_cancel(profile_id="default", session_id="s-1") is False
     assert session.execute.await_count == 2
+
+
+async def test_run_repo_update_status_retries_transient_sqlite_lock() -> None:
+    """Status updates should recover when SQLite reports one transient write lock."""
+
+    locked = OperationalError(
+        "UPDATE run SET status = ? WHERE run.id = ?",
+        ("cancelled", 1),
+        sqlite3.OperationalError("database is locked"),
+    )
+    update_result = Mock()
+    update_result.rowcount = 1
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[locked, update_result])
+
+    repo = RunRepository(session)
+
+    await repo.update_status(run_id=1, status="cancelled")
+
+    assert session.execute.await_count == 2
+    session.rollback.assert_awaited_once()
 
 
 async def test_runlog_repo_list_session_events_filters_before_limit(tmp_path: Path) -> None:
