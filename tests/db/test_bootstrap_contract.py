@@ -24,7 +24,10 @@ from afkbot.db.postgres_contract import (
     PostgresBootstrapContractError,
     build_database_per_bot_contract,
     render_database_per_bot_bootstrap_plan,
-    validate_managed_postgres_settings,
+)
+from afkbot.services.managed_database_guard import (
+    ManagedDatabaseGuardError,
+    validate_managed_database_runtime,
 )
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.db.upsert import upsert_insert_for_dialect
@@ -76,8 +79,8 @@ def test_postgres_database_per_bot_contract_rejects_unsafe_identifiers() -> None
     assert exc.value.error_code == "postgres_identifier_invalid"
 
 
-def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_path: Path) -> None:
-    """Managed mode must not accept local SQLite or schema-per-bot for first Cloud launch."""
+def test_managed_database_settings_require_workspace_sqlite(tmp_path: Path) -> None:
+    """Managed mode keeps bot state in workspace-local SQLite."""
 
     sqlite_settings = Settings(
         root_dir=tmp_path,
@@ -86,46 +89,22 @@ def test_managed_postgres_settings_require_database_per_bot_postgres_url(tmp_pat
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )
-    with pytest.raises(PostgresBootstrapContractError) as sqlite_exc:
-        validate_managed_postgres_settings(sqlite_settings)
-    assert sqlite_exc.value.error_code == "managed_database_postgres_required"
+    validate_managed_database_runtime(sqlite_settings)
 
-    wrong_driver_settings = Settings(
+    postgres_settings = Settings(
         root_dir=tmp_path,
         deployment_mode="managed",
-        db_url="postgresql+psycopg://bot_role:secret@db.example.com/afkbot_bot_1",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
-    )
-    with pytest.raises(PostgresBootstrapContractError) as wrong_driver_exc:
-        validate_managed_postgres_settings(wrong_driver_settings)
-    assert wrong_driver_exc.value.error_code == "managed_database_postgres_required"
-
-    schema_settings = Settings(
-        root_dir=tmp_path,
-        deployment_mode="managed",
-        managed_database_isolation_mode="schema_per_bot",
         db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )
-    with pytest.raises(PostgresBootstrapContractError) as schema_exc:
-        validate_managed_postgres_settings(schema_settings)
-    assert schema_exc.value.error_code == "managed_database_per_bot_required"
-
-    validate_managed_postgres_settings(
-        Settings(
-            root_dir=tmp_path,
-            deployment_mode="managed",
-            db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
-            control_ws_url="wss://api.example.test/ws/runtime/connect/",
-            runtime_ws_token="runtime-token",
-        )
-    )
+    with pytest.raises(ManagedDatabaseGuardError) as postgres_exc:
+        validate_managed_database_runtime(postgres_settings)
+    assert postgres_exc.value.error_code == "managed_database_sqlite_required"
 
 
-def test_legacy_managed_mode_still_activates_managed_database_guard(tmp_path: Path) -> None:
-    """The compatibility flag must not bypass managed database isolation checks."""
+def test_legacy_managed_mode_still_accepts_sqlite_runtime_storage(tmp_path: Path) -> None:
+    """The compatibility flag uses the same SQLite storage contract."""
 
     settings = Settings(
         root_dir=tmp_path,
@@ -135,26 +114,24 @@ def test_legacy_managed_mode_still_activates_managed_database_guard(tmp_path: Pa
         runtime_ws_token="runtime-token",
     )
 
-    with pytest.raises(PostgresBootstrapContractError) as exc:
-        validate_managed_postgres_settings(settings)
-    assert exc.value.error_code == "managed_database_postgres_required"
+    validate_managed_database_runtime(settings)
 
 
-def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: Path) -> None:
-    """Managed runtimes must validate a prepared Postgres schema instead of running DDL."""
+def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
+    """Managed runtimes create/upgrade local SQLite schema in their workspace."""
 
     settings = Settings(
         root_dir=tmp_path,
         deployment_mode="managed",
-        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )
 
-    assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="postgresql") is True
+    assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite") is False
     with pytest.raises(ManagedRuntimeSchemaError) as exc:
-        _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite")
-    assert exc.value.error_code == "managed_database_postgres_required"
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name="postgresql")
+    assert exc.value.error_code == "managed_database_sqlite_required"
     assert (
         _requires_managed_runtime_schema_validation(
             settings=Settings(root_dir=tmp_path),
@@ -165,16 +142,16 @@ def test_managed_runtime_schema_validation_is_read_only_postgres_only(tmp_path: 
     legacy_settings = Settings(
         root_dir=tmp_path,
         managed_mode=True,
-        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy-managed.db'}",
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )
     assert (
         _requires_managed_runtime_schema_validation(
             settings=legacy_settings,
-            dialect_name="postgresql",
+            dialect_name="sqlite",
         )
-        is True
+        is False
     )
 
 

@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
-from afkbot.db.postgres_contract import (
-    PostgresBootstrapContractError,
-    validate_managed_postgres_settings,
-)
+from afkbot.db.dialect import database_driver_name
 from afkbot.settings import Settings
 
-ManagedDatabaseGuardError = PostgresBootstrapContractError
+
+class ManagedDatabaseGuardError(ValueError):
+    """Raised when managed runtime database settings are unsafe."""
+
+    def __init__(self, *, error_code: str, reason: str) -> None:
+        super().__init__(reason)
+        self.error_code = error_code
+        self.reason = reason
 
 
 def validate_managed_database_runtime(settings: Settings) -> None:
-    """Validate database settings before starting a managed runtime."""
+    """Validate database settings before starting a managed runtime.
 
-    validate_managed_postgres_settings(settings)
+    Cloud-managed containers keep state in a SQLite database inside the
+    per-bot workspace volume. That keeps each bot self-contained across image
+    versions and avoids any direct network path from the runtime to the
+    control-plane PostgreSQL service.
+
+    :param settings: Resolved AFKBOT settings.
+    :return: None.
+    """
+
+    if not settings.cloud_gateway_enabled:
+        return
+    driver_name = database_driver_name(settings.db_url)
+    if not driver_name.startswith("sqlite"):
+        raise ManagedDatabaseGuardError(
+            error_code="managed_database_sqlite_required",
+            reason="Managed runtime requires a SQLite database inside the workspace.",
+        )
