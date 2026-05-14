@@ -124,6 +124,8 @@ async def run_smtp_action(
         app_name="smtp",
         action=normalized_action,
         profile_name=ctx.credential_profile_key,
+        approved_tool_names=ctx.approved_tool_names,
+        approved_network_hosts=ctx.approved_network_hosts,
     )
 
     try:

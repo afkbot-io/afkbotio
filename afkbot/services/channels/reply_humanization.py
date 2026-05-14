@@ -8,6 +8,10 @@ from typing import Any
 
 from afkbot.services.apps.contracts import AppRuntimeContext
 from afkbot.services.apps.runtime import AppRuntime
+from afkbot.services.channels.delivery_runtime import (
+    CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+    TELEGRAM_CHANNEL_API_HOSTS,
+)
 from afkbot.services.channels.endpoint_contracts import ChannelReplyHumanizationConfig
 from afkbot.services.channels.telegram_timeouts import TELEGRAM_ACTION_TIMEOUT_PREFIX
 from afkbot.settings import Settings
@@ -146,6 +150,8 @@ async def _send_telegram_typing_once(
             run_id=run_id,
             credential_profile_key=credential_profile_key,
             timeout_sec=min(settings.tool_timeout_default_sec, settings.tool_timeout_max_sec),
+            approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+            approved_network_hosts=TELEGRAM_CHANNEL_API_HOSTS,
         ),
         params=params,
     )

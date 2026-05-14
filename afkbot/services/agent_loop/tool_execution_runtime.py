@@ -16,6 +16,7 @@ from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 from afkbot.services.agent_loop.tool_invocation_gates import ToolInvocationGuards
 from afkbot.services.channels.active_context import (
+    filter_channel_owned_approved_network_hosts,
     filter_channel_owned_approved_tool_names,
     filter_generic_approved_tool_names,
 )
@@ -120,6 +121,10 @@ class ToolExecutionRuntime:
             trusted_runtime_context=trusted_runtime_context,
             approved_tool_names=channel_owned_tool_names,
         ))
+        effective_approved_network_hosts = filter_channel_owned_approved_network_hosts(
+            trusted_runtime_context=trusted_runtime_context,
+            approved_tool_names=channel_owned_tool_names,
+        )
         results: list[ToolResult] = []
         explicit_skills = {
             name.strip() for name in (explicit_skill_requests or set()) if name.strip()
@@ -221,6 +226,7 @@ class ToolExecutionRuntime:
                 confirmation_question_id=confirmation_question_id,
                 allowed_tool_names=allowed_tool_names,
                 approved_tool_names=effective_approved_tool_names,
+                approved_network_hosts=effective_approved_network_hosts,
                 approval_required_tool_names=approval_required_tool_names,
             )
             if isinstance(prepared_or_result, ToolResult):
@@ -366,6 +372,7 @@ class ToolExecutionRuntime:
         confirmation_question_id: str | None,
         allowed_tool_names: set[str] | None,
         approved_tool_names: set[str] | None,
+        approved_network_hosts: set[str] | None,
         approval_required_tool_names: set[str] | None,
     ) -> ToolResult | _PreparedToolExecution:
         """Run sequential guards and return one executable tool call."""
@@ -456,6 +463,7 @@ class ToolExecutionRuntime:
                 tool_name=execution_name,
                 params=approval_params,
                 approved_tool_names=approved_tool_names,
+                approved_network_hosts=approved_network_hosts,
             )
         except PolicyViolationError as exc:
             return ToolResult.error(

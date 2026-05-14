@@ -13,6 +13,10 @@ from afkbot.services.channel_routing.service import (
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
 from afkbot.settings import Settings
 
+CHANNEL_RUNTIME_APP_TOOL_GRANTS: tuple[str, ...] = ("app.run",)
+PARTYFLOW_CHANNEL_API_HOSTS: tuple[str, ...] = ("api.partyflow.ru",)
+TELEGRAM_CHANNEL_API_HOSTS: tuple[str, ...] = ("api.telegram.org",)
+
 
 class ChannelDeliveryServiceError(ValueError):
     """Structured channel delivery failure."""
@@ -159,6 +163,8 @@ def build_app_runtime_context(
     session_id: str,
     run_id: int,
     credential_profile_key: str | None,
+    approved_tool_names: tuple[str, ...] = (),
+    approved_network_hosts: tuple[str, ...] = (),
 ) -> AppRuntimeContext:
     """Build consistent AppRuntime context for outbound delivery transports."""
 
@@ -171,4 +177,6 @@ def build_app_runtime_context(
             max(1, settings.tool_timeout_default_sec),
             settings.tool_timeout_max_sec,
         ),
+        approved_tool_names=approved_tool_names,
+        approved_network_hosts=approved_network_hosts,
     )

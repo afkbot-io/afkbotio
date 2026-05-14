@@ -947,6 +947,75 @@ async def test_llm_active_channel_history_execution_receives_trusted_context(
     await engine.dispose()
 
 
+async def test_active_partyflow_history_execution_gets_channel_scoped_network_grant(
+    tmp_path: Path,
+) -> None:
+    """Active PartyFlow history should run under network-deny profiles via channel scope."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_active_partyflow_history_network_grant.db"
+    )
+    provider = MockLLMProvider(
+        [
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="channel.history.list", params={"limit": 1})]
+            ),
+            LLMResponse.final("done"),
+        ]
+    )
+
+    async with session_scope(factory) as session:
+        policy = await _ensure_default_profile_policy(session)
+        policy.enabled = True
+        policy.allowed_tools_json = '["debug.echo"]'
+        policy.network_allowlist_json = "[]"
+        await session.flush()
+
+        loop = AgentLoop(
+            session,
+            ContextBuilder(settings, SkillLoader(settings)),
+            tool_registry=ToolRegistry.from_settings(settings),
+            tool_timeout_default_sec=settings.tool_timeout_default_sec,
+            tool_timeout_max_sec=settings.tool_timeout_max_sec,
+            llm_provider=provider,
+            llm_max_iterations=2,
+        )
+        active_overrides = build_active_channel_context_overrides(
+            endpoint=PartyFlowPollingEndpointConfig(
+                endpoint_id="partyflow-main",
+                profile_id="default",
+                credential_profile_key="partyflow-main",
+                account_id="partyflow-bot",
+            ),
+            peer_id="conv-1",
+            thread_id=None,
+            user_id="user-1",
+        )
+        overrides = merge_turn_context_overrides(
+            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            active_overrides,
+        )
+
+        await loop.run_turn(
+            profile_id="default",
+            session_id="s-active-partyflow-history-network-grant",
+            message="read current PartyFlow history",
+            context_overrides=overrides,
+        )
+        events = (
+            (await session.execute(select(RunlogEvent).order_by(RunlogEvent.id.asc())))
+            .scalars()
+            .all()
+        )
+        result_payload = json.loads(
+            [event for event in events if event.event_type == "tool.result"][0].payload_json
+        )
+
+        assert result_payload["result"]["error_code"] == "channel_endpoint_not_found"
+
+    await engine.dispose()
+
+
 async def test_active_channel_history_approval_requires_trusted_channel_context(
     tmp_path: Path,
 ) -> None:

@@ -35,7 +35,11 @@ from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
-from afkbot.services.channels.delivery_runtime import ChannelDeliveryServiceError
+from afkbot.services.channels.delivery_runtime import (
+    CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+    PARTYFLOW_CHANNEL_API_HOSTS,
+    ChannelDeliveryServiceError,
+)
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
     PartyFlowPollingEndpointConfig,
@@ -584,6 +588,8 @@ class PartyFlowPollingService:
             run_id=0,
             credential_profile_key=self._credential_profile_key,
             timeout_sec=timeout_sec,
+            approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+            approved_network_hosts=PARTYFLOW_CHANNEL_API_HOSTS,
         )
 
     @staticmethod

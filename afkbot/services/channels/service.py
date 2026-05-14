@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import zlib
+from dataclasses import replace
 
 from afkbot.services.agent_loop.action_contracts import TurnResult
-from afkbot.services.apps.contracts import AppRuntimeContext
 from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.channel_routing.service import ChannelBindingService
 from afkbot.services.channels.contracts import (
@@ -17,8 +17,11 @@ from afkbot.services.channels.contracts import (
     ChannelOutboundMessage,
 )
 from afkbot.services.channels.delivery_runtime import (
+    CHANNEL_RUNTIME_APP_TOOL_GRANTS,
     ChannelDeliveryServiceError,
+    PARTYFLOW_CHANNEL_API_HOSTS,
     ResolvedDeliveryTarget,
+    TELEGRAM_CHANNEL_API_HOSTS,
     build_app_runtime_context,
     resolve_delivery_target,
 )
@@ -497,6 +500,8 @@ class ChannelDeliveryService:
                 session_id=session_id,
                 run_id=run_id,
                 credential_profile_key=credential_profile_key,
+                approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+                approved_network_hosts=TELEGRAM_CHANNEL_API_HOSTS,
             ),
             params=params,
         )
@@ -531,6 +536,8 @@ class ChannelDeliveryService:
                     session_id=session_id,
                     run_id=run_id,
                     credential_profile_key=credential_profile_key,
+                    approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+                    approved_network_hosts=TELEGRAM_CHANNEL_API_HOSTS,
                 ),
                 params=params,
             )
@@ -787,6 +794,8 @@ class ChannelDeliveryService:
                 session_id=session_id,
                 run_id=run_id,
                 credential_profile_key=credential_profile_key,
+                approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+                approved_network_hosts=PARTYFLOW_CHANNEL_API_HOSTS,
             ),
             params={
                 "conversation_id": target.peer_id,
@@ -863,15 +872,11 @@ class ChannelDeliveryService:
             session_id=session_id,
             run_id=run_id,
             credential_profile_key=credential_profile_key,
+            approved_tool_names=CHANNEL_RUNTIME_APP_TOOL_GRANTS,
+            approved_network_hosts=TELEGRAM_CHANNEL_API_HOSTS,
         )
         if timeout_sec is not None:
-            ctx = AppRuntimeContext(
-                profile_id=ctx.profile_id,
-                session_id=ctx.session_id,
-                run_id=ctx.run_id,
-                credential_profile_key=ctx.credential_profile_key,
-                timeout_sec=timeout_sec,
-            )
+            ctx = replace(ctx, timeout_sec=timeout_sec)
         return await self._app_runtime.run(
             app="telegram",
             action="send_message",

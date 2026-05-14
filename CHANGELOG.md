@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.4] - 2026-05-14
+
+### Fixed
+
+- Fixed Telegram and PartyFlow channel runtime API calls so polling, replies,
+  typing indicators, downloads, `channel.send` delivery, and PartyFlow
+  `channel.history.list` keep working under locked-down profiles without
+  exposing generic `app.run` to the agent.
+
 ## [1.8.3] - 2026-05-14
 
 ### Added

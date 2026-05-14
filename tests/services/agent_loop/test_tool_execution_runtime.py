@@ -8,6 +8,8 @@ from pydantic import Field
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
+from afkbot.services.channels.active_context import build_active_channel_context_overrides
+from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.error_logging import component_log_path
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -40,8 +42,9 @@ class _FakePolicyEngine:
         tool_name: str,
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
+        approved_network_hosts: set[str] | None = None,
     ) -> None:
-        _ = policy, tool_name, params, approved_tool_names
+        _ = policy, tool_name, params, approved_tool_names, approved_network_hosts
         return None
 
 
@@ -174,7 +177,7 @@ async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_polic
 
 class _PolicyCaptureEngine(_FakePolicyEngine):
     def __init__(self) -> None:
-        self.calls: list[tuple[str, set[str] | None]] = []
+        self.calls: list[tuple[str, set[str] | None, set[str] | None]] = []
 
     def ensure_tool_call_allowed(
         self,
@@ -183,10 +186,15 @@ class _PolicyCaptureEngine(_FakePolicyEngine):
         tool_name: str,
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
+        approved_network_hosts: set[str] | None = None,
     ) -> None:
         _ = policy, params
         self.calls.append(
-            (tool_name, None if approved_tool_names is None else set(approved_tool_names))
+            (
+                tool_name,
+                None if approved_tool_names is None else set(approved_tool_names),
+                None if approved_network_hosts is None else set(approved_network_hosts),
+            )
         )
 
 
@@ -293,7 +301,7 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
 
     assert len(results) == 1
     assert results[0].ok is True
-    assert policy_engine.calls == [("bash.exec", {"bash.exec"})]
+    assert policy_engine.calls == [("bash.exec", {"bash.exec"}, set())]
 
 
 async def test_execute_requested_tool_calls_filters_channel_owned_generic_approval() -> None:
@@ -333,7 +341,62 @@ async def test_execute_requested_tool_calls_filters_channel_owned_generic_approv
 
     assert len(results) == 1
     assert results[0].ok is True
-    assert policy_engine.calls == [("channel.history.list", set())]
+    assert policy_engine.calls == [("channel.history.list", set(), set())]
+
+
+async def test_execute_requested_tool_calls_grants_active_partyflow_history_network_host() -> None:
+    """Active PartyFlow history should carry a scoped provider host grant."""
+
+    policy_engine = _PolicyCaptureEngine()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_ChannelHistoryTool()),
+        actor="main",
+        policy_engine=policy_engine,
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+    active_overrides = build_active_channel_context_overrides(
+        endpoint=PartyFlowPollingEndpointConfig(
+            endpoint_id="partyflow-main",
+            profile_id="default",
+            credential_profile_key="partyflow-main",
+            account_id="partyflow-bot",
+        ),
+        peer_id="conv-1",
+        thread_id=None,
+        user_id="user-1",
+    )
+    assert active_overrides is not None
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-policy-override-channel-history",
+        profile_id="default",
+        tool_calls=[ToolCall(name="channel.history.list", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=active_overrides.trusted_runtime_context,
+        allowed_tool_names={"channel.history.list"},
+        channel_owned_tool_names={"channel.history.list"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert policy_engine.calls == [
+        ("channel.history.list", {"channel.history.list"}, {"api.partyflow.ru"})
+    ]
 
 
 async def test_execute_tool_call_logs_unexpected_tool_exception(tmp_path, monkeypatch) -> None:
