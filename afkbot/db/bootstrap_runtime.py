@@ -90,12 +90,17 @@ def _requires_managed_runtime_schema_validation(
 
     if settings is None or not settings.cloud_gateway_enabled:
         return False
-    if dialect_name != "postgresql":
+    if dialect_name == "sqlite":
+        return False
+    if dialect_name == "postgresql":
         raise ManagedRuntimeSchemaError(
-            error_code="managed_database_postgres_required",
-            reason="Managed runtime schema validation requires a PostgreSQL connection.",
+            error_code="managed_database_sqlite_required",
+            reason="Managed runtime requires SQLite storage inside the workspace.",
         )
-    return True
+    raise ManagedRuntimeSchemaError(
+        error_code="managed_database_sqlite_required",
+        reason="Managed runtime requires SQLite storage inside the workspace.",
+    )
 
 
 def _validate_managed_runtime_schema(conn: Connection) -> None:

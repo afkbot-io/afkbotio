@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from typing import Literal
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from typing import Literal, TypeVar
 
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -31,6 +32,24 @@ from afkbot.services.agent_loop.turn_preparation import TurnPreparationRuntime
 from afkbot.services.llm.reasoning import ThinkingLevel
 from afkbot.services.policy import PolicyEngine
 from afkbot.services.tools.base import ToolCall
+
+_T = TypeVar("_T")
+
+
+async def _await_cancellation_safe(awaitable: Awaitable[_T]) -> _T:
+    """Let one critical awaitable finish even when the outer turn is cancelled.
+
+    :param awaitable: Critical awaitable that should not be interrupted mid-DB write/read.
+    :return: The awaitable result when it completes before cancellation.
+    """
+
+    task = asyncio.ensure_future(awaitable)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        with suppress(Exception):
+            await task
+        raise
 
 
 class TurnExecutionRuntime:
@@ -164,15 +183,17 @@ class TurnExecutionRuntime:
                     persist_turn=persist_turn,
                 )
 
-            prepared = await self._turn_preparation.prepare(
-                run_id=run_id,
-                session_id=session_key,
-                profile_id=profile_id,
-                policy=policy,
-                raw_user_message=raw_user_message,
-                user_message=user_message,
-                llm_enabled=self._llm_provider_enabled,
-                context_overrides=effective_overrides,
+            prepared = await _await_cancellation_safe(
+                self._turn_preparation.prepare(
+                    run_id=run_id,
+                    session_id=session_key,
+                    profile_id=profile_id,
+                    policy=policy,
+                    raw_user_message=raw_user_message,
+                    user_message=user_message,
+                    llm_enabled=self._llm_provider_enabled,
+                    context_overrides=effective_overrides,
+                )
             )
             automation_intent = prepared.automation_intent
             explicit_skill_mentions = prepared.explicit_skill_mentions
@@ -419,10 +440,12 @@ class TurnExecutionRuntime:
             )
         except asyncio.CancelledError:
             if run_id is not None and session_key is not None:
-                await self._turn_finalizer.finalize_cancelled_turn(
-                    run_id=run_id,
-                    session_id=session_key,
-                    machine=machine,
+                await _await_cancellation_safe(
+                    self._turn_finalizer.finalize_cancelled_turn(
+                        run_id=run_id,
+                        session_id=session_key,
+                        machine=machine,
+                    )
                 )
             raise
 

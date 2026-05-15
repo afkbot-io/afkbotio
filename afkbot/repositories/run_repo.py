@@ -45,32 +45,32 @@ class RunRepository:
         return turn
 
     async def update_status(self, run_id: int, status: str) -> None:
-        """Update run status by primary key."""
+        """Update run status by primary key with bounded SQLite lock retries.
+
+        :param run_id: Run primary key to update.
+        :param status: New run lifecycle status.
+        :return: None.
+        """
+
+        statement = update(Run).where(Run.id == run_id).values(status=status)
 
         async def _update_once() -> None:
             try:
-                run = await self._session.get(Run, run_id)
+                await self._session.execute(statement)
             except (InvalidRequestError, PendingRollbackError):
                 await self._session.rollback()
-                run = await self._session.get(Run, run_id)
-            if run is None:
-                return
-            run.status = status
-            try:
-                await self._session.flush()
-            except (InvalidRequestError, PendingRollbackError):
-                await self._session.rollback()
-                run = await self._session.get(Run, run_id)
-                if run is None:
-                    return
-                run.status = status
-                await self._session.flush()
+                await self._session.execute(statement)
             except OperationalError as exc:
                 if is_sqlite_lock_error(exc):
                     await self._session.rollback()
                 raise
 
-        await run_with_sqlite_lock_retry(_update_once, attempts=5)
+        await run_with_sqlite_lock_retry(
+            _update_once,
+            attempts=8,
+            base_delay_sec=0.1,
+            max_delay_sec=1.0,
+        )
 
     async def is_cancel_requested(self, run_id: int) -> bool:
         """Return true when run cancellation has been requested in storage."""

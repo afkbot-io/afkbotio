@@ -161,8 +161,8 @@ def test_start_allows_public_bind_only_with_auth_required_policy(monkeypatch) ->
     get_settings.cache_clear()
 
 
-def test_start_rejects_managed_runtime_without_postgres_database_per_bot(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Managed runtime must not silently use the local SQLite default."""
+def test_start_accepts_managed_runtime_with_workspace_sqlite(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Managed runtime uses SQLite inside the mounted workspace."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     monkeypatch.setenv("AFKBOT_DEPLOYMENT_MODE", "managed")
@@ -170,12 +170,30 @@ def test_start_rejects_managed_runtime_without_postgres_database_per_bot(monkeyp
     monkeypatch.setenv("AFKBOT_CONTROL_WS_URL", "wss://api.example.test/ws/runtime/connect/")
     monkeypatch.setenv("AFKBOT_RUNTIME_WS_TOKEN", "runtime-token")
     get_settings.cache_clear()
+    calls: list[tuple[str, int, int]] = []
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        persist_runtime_bind: bool,
+        settings,
+    ) -> None:
+        del start_channels, channel_ids, strict_channels, persist_runtime_bind, settings
+        calls.append((host, runtime_port, api_port))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
     runner = CliRunner()
 
     result = runner.invoke(app, ["start", "--runtime-port", "18080", "--api-port", "18081"])
 
-    assert result.exit_code != 0
-    assert "managed_database_postgres_required" in result.stderr
+    assert result.exit_code == 0
+    assert calls == [("127.0.0.1", 18080, 18081)]
     get_settings.cache_clear()
 
 
@@ -865,7 +883,7 @@ async def test_run_full_stack_starts_cloud_gateway_only_in_managed_mode(monkeypa
     settings = Settings(
         root_dir=tmp_path,
         deployment_mode="managed",
-        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}",
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )

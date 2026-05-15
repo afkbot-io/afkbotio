@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-05-15
+
+### Changed
+
+- Cloud-managed runtimes now use workspace-local SQLite storage instead of an
+  external PostgreSQL database contract.
+- Managed `afk start` accepts the same SQLite-backed runtime state used by local
+  AFKBOT, so bot containers can keep their state across image updates without
+  direct database access to the Cloud control plane.
+
 ## [1.8.4] - 2026-05-14
 
 ### Fixed

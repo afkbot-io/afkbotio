@@ -156,7 +156,7 @@ def test_gateway_uses_deployment_mode_managed_contract(tmp_path) -> None:
     settings = Settings(
         root_dir=tmp_path,
         deployment_mode="managed",
-        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}",
         control_ws_url="wss://api.example.test/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
     )
@@ -172,7 +172,7 @@ def test_gateway_rejects_insecure_ws_by_default(tmp_path) -> None:
         Settings(
             root_dir=tmp_path,
             deployment_mode="managed",
-            db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}",
             control_ws_url="ws://api.example.test/ws/runtime/connect/",
             runtime_ws_token="runtime-token",
         )
@@ -184,7 +184,7 @@ def test_gateway_allows_insecure_ws_only_with_explicit_dev_flag(tmp_path) -> Non
     settings = Settings(
         root_dir=tmp_path,
         deployment_mode="managed",
-        db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}",
         control_ws_url="ws://control-plane:8000/ws/runtime/connect/",
         runtime_ws_token="runtime-token",
         cloud_gateway_allow_insecure_ws=True,
