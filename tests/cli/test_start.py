@@ -564,6 +564,58 @@ def test_start_rejects_pending_upgrades_by_default(monkeypatch, tmp_path) -> Non
     get_settings.cache_clear()
 
 
+def test_managed_start_applies_pending_upgrades(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Cloud-managed start should repair persisted state before gateway startup."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_DEPLOYMENT_MODE", "managed")
+    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    monkeypatch.setenv("AFKBOT_CONTROL_WS_URL", "wss://cloud.example.test/ws/runtime/connect/")
+    monkeypatch.setenv("AFKBOT_RUNTIME_WS_TOKEN", "runtime-token")
+    get_settings.cache_clear()
+    calls: list[tuple[str, int, int]] = []
+
+    async def _fake_apply_pending_upgrades(settings):  # type: ignore[no-untyped-def]
+        assert settings.cloud_gateway_enabled is True
+        return UpgradeApplyReport(
+            changed=True,
+            steps=(UpgradeStepReport(name="profile_runtime_configs", changed=True, details="rewritten"),),
+        )
+
+    async def _fake_inspect_pending_upgrades(settings):  # type: ignore[no-untyped-def]
+        raise AssertionError("managed start should apply upgrades instead of only inspecting them")
+
+    async def _fake_run_full_stack(
+        *,
+        host: str,
+        runtime_port: int,
+        api_port: int,
+        start_channels: bool,
+        channel_ids: tuple[str, ...],
+        strict_channels: bool,
+        persist_runtime_bind: bool,
+        settings,
+    ) -> None:
+        del start_channels, channel_ids, strict_channels, persist_runtime_bind, settings
+        calls.append((host, runtime_port, api_port))
+
+    monkeypatch.setattr("afkbot.cli.commands.start._apply_pending_upgrades", _fake_apply_pending_upgrades)
+    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start.is_runtime_port_pair_available",
+        lambda *, host, runtime_port: True,
+    )
+    monkeypatch.setattr("afkbot.cli.commands.start._run_full_stack", _fake_run_full_stack)
+    runner = CliRunner()
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 0
+    assert calls
+    assert "Applied persisted-state upgrades before Cloud runtime start." in result.stdout
+    get_settings.cache_clear()
+
+
 def test_start_can_bypass_pending_upgrade_guard(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Explicit override should allow startup when the operator accepts pending upgrades."""
 

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.9] - 2026-05-16
+
+### Fixed
+
+- Cloud-managed `afk start` now applies idempotent persisted-state upgrades
+  before connecting to Cloud, so hosted containers do not stop on canonical
+  runtime config rewrites after an image update.
+
 ## [1.8.8] - 2026-05-15
 
 ### Added

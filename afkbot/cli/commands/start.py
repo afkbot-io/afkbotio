@@ -222,7 +222,11 @@ def run_start_command(
     resolved_runtime_port = bind_plan.runtime_port
     resolved_api_port = bind_plan.api_port
     persist_runtime_bind = bind_plan.persist_runtime_bind
-    if not allow_pending_upgrades:
+    if not allow_pending_upgrades and resolved_settings.cloud_gateway_enabled:
+        upgrade_report = asyncio.run(_apply_pending_upgrades(resolved_settings))
+        if upgrade_report.changed:
+            typer.echo("Applied persisted-state upgrades before Cloud runtime start.")
+    elif not allow_pending_upgrades:
         upgrade_report = asyncio.run(_inspect_pending_upgrades(resolved_settings))
         if upgrade_report.changed:
             details = "; ".join(
@@ -476,6 +480,20 @@ async def _inspect_pending_upgrades(settings: Settings) -> UpgradeApplyReport:
     service = UpgradeService(settings)
     try:
         return await service.inspect()
+    finally:
+        await service.shutdown()
+
+
+async def _apply_pending_upgrades(settings: Settings) -> UpgradeApplyReport:
+    """Apply idempotent persisted-state upgrades before managed Cloud startup.
+
+    :param settings: Resolved runtime settings.
+    :return: Upgrade report describing changed upgrade steps.
+    """
+
+    service = UpgradeService(settings)
+    try:
+        return await service.apply()
     finally:
         await service.shutdown()
 
