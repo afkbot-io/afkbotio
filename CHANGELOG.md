@@ -18,6 +18,10 @@ All notable changes to this project will be documented in this file.
   review routing while omitted reviewer fields continue to preserve existing
   assignments.
 
+### Changed
+
+- Release metadata and lockfile package metadata are aligned to `1.8.8`.
+
 ## [1.8.7] - 2026-05-15
 
 ### Changed
