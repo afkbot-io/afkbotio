@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.7] - 2026-05-15
+
+### Changed
+
+- Cloud-managed runtime startup now uses only the current
+  `AFKBOT_DEPLOYMENT_MODE=managed` contract; the old managed-mode compatibility
+  flag is removed.
+
 ## [1.8.5] - 2026-05-15
 
 ### Changed
