@@ -103,20 +103,6 @@ def test_managed_database_settings_require_workspace_sqlite(tmp_path: Path) -> N
     assert postgres_exc.value.error_code == "managed_database_sqlite_required"
 
 
-def test_legacy_managed_mode_still_accepts_sqlite_runtime_storage(tmp_path: Path) -> None:
-    """The compatibility flag uses the same SQLite storage contract."""
-
-    settings = Settings(
-        root_dir=tmp_path,
-        managed_mode=True,
-        db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
-    )
-
-    validate_managed_database_runtime(settings)
-
-
 def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
     """Managed runtimes create/upgrade local SQLite schema in their workspace."""
 
@@ -139,21 +125,6 @@ def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
         )
         is False
     )
-    legacy_settings = Settings(
-        root_dir=tmp_path,
-        managed_mode=True,
-        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy-managed.db'}",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
-    )
-    assert (
-        _requires_managed_runtime_schema_validation(
-            settings=legacy_settings,
-            dialect_name="sqlite",
-        )
-        is False
-    )
-
 
 def test_dialect_aware_upsert_insert_compiles_for_sqlite_and_postgres() -> None:
     """Hot-path upserts should not be tied to the SQLite insert implementation."""

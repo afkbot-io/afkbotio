@@ -1,4 +1,4 @@
-"""Update helpers for source checkouts, legacy managed installs, and uv tool installs."""
+"""Update helpers for source checkouts, managed installs, and uv tool installs."""
 
 from __future__ import annotations
 

@@ -75,9 +75,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Managed runtime detection is now unified across `AFKBOT_DEPLOYMENT_MODE=managed`
-  and the legacy `AFKBOT_MANAGED_MODE=1` flag, so database-per-bot and
-  read-only managed schema validation cannot be bypassed by cloud gateway setup.
+- Managed runtime detection now uses only `AFKBOT_DEPLOYMENT_MODE=managed`, so
+  Cloud startup has one supported runtime contract.
 - Cloud gateway URL/token settings are env-only and are not loaded from persisted
   runtime config or runtime secrets.
 
@@ -707,7 +706,7 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
-- Hosted installer support for the legacy managed `--install-dir` workflow.
+- Hosted installer support for the managed `--install-dir` workflow.
 
 ## [1.0.0] - 2026-03-25
 

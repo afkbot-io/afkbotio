@@ -138,20 +138,20 @@ def test_gateway_is_disabled_for_local_settings(tmp_path) -> None:
     assert CloudRuntimeGatewayClient.from_settings(settings=settings) is None
 
 
-def test_gateway_requires_token_in_managed_mode(tmp_path) -> None:
-    """Managed mode should fail closed when the runner did not inject a token."""
+def test_gateway_requires_token_in_managed_deployment(tmp_path) -> None:
+    """Managed deployment should fail closed when the runner did not inject a token."""
 
     with pytest.raises(ValueError, match="runtime_ws_token is required"):
         Settings(
             root_dir=tmp_path,
             db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}",
-            managed_mode=True,
+            deployment_mode="managed",
             control_ws_url="wss://api.example.test/ws/runtime/connect/",
         )
 
 
 def test_gateway_uses_deployment_mode_managed_contract(tmp_path) -> None:
-    """Deployment mode managed should enable the cloud gateway without the legacy flag."""
+    """Deployment mode managed should enable the cloud gateway."""
 
     settings = Settings(
         root_dir=tmp_path,

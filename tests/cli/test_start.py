@@ -793,7 +793,7 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]
 
 
-async def test_run_full_stack_starts_cloud_gateway_only_in_managed_mode(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+async def test_run_full_stack_starts_cloud_gateway_for_managed_deployment(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Internal launcher should attach cloud gateway only for managed cloud runtimes."""
 
     lifecycle: list[str] = []

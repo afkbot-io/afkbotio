@@ -293,7 +293,6 @@ class Settings(BaseSettings):
     public_runtime_url: str | None = None
     public_chat_api_url: str | None = None
     nginx_config_path: str | None = None
-    managed_mode: bool = False
     control_ws_url: str | None = None
     runtime_ws_token: str | None = None
     cloud_gateway_allow_insecure_ws: bool = False
@@ -789,10 +788,10 @@ class Settings(BaseSettings):
         """Return whether this process is running as a cloud-managed runtime.
 
         :param: None.
-        :return: True when the managed deployment contract or the legacy managed flag is enabled.
+        :return: True when the managed deployment contract is enabled.
         """
 
-        return self.deployment_mode == "managed" or self.managed_mode
+        return self.deployment_mode == "managed"
 
     @model_validator(mode="after")
     def _validate_ui_auth_policy(self) -> Settings:
@@ -944,7 +943,6 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
 )
 _RUNTIME_ENV_ONLY_FIELD_NAMES = frozenset(
     {
-        "managed_mode",
         "control_ws_url",
         "runtime_ws_token",
         "cloud_gateway_allow_insecure_ws",
