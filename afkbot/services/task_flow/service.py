@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,8 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.task import Task
 from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
+from afkbot.models.task_document import TaskDocument
+from afkbot.models.task_document_revision import TaskDocumentRevision
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
 from afkbot.models.task_run import TaskRun
@@ -44,6 +47,7 @@ from afkbot.services.task_flow.ai_executors import (
 )
 from afkbot.services.session_orchestration.service import session_turn_queue_stale_cutoff
 from afkbot.services.task_flow.contracts import (
+    AgentTaskInboxMetadata,
     HumanTaskInboxEventMetadata,
     HumanTaskInboxMetadata,
     HumanTaskStartupSummary,
@@ -53,6 +57,9 @@ from afkbot.services.task_flow.contracts import (
     TaskAttachmentMetadata,
     TaskBlockStateMetadata,
     TaskCommentMetadata,
+    TaskContextMetadata,
+    TaskDocumentMetadata,
+    TaskDocumentRevisionMetadata,
     TaskBoardColumnMetadata,
     TaskBoardMetadata,
     TaskDelegationMetadata,
@@ -94,6 +101,35 @@ _HUMAN_INBOX_NOTIFICATION_EVENT_TYPES = {
     "dependencies_satisfied",
 }
 _TASK_COMMENT_EVENT_TYPE = "comment_added"
+_TASK_DOCUMENT_SCOPE_FLOW = "flow"
+_TASK_DOCUMENT_SCOPE_TASK = "task"
+_DEFAULT_FLOW_DOCUMENTS: tuple[tuple[str, str, str], ...] = (
+    (
+        "brief",
+        "Project brief",
+        "## Brief\n\nSummarize the goal, users, constraints, and success criteria for this flow.\n",
+    ),
+    (
+        "plan",
+        "Execution plan",
+        "## Plan\n\nCapture the approved task plan, sequencing, dependencies, and validation path.\n",
+    ),
+    (
+        "roadmap",
+        "Roadmap",
+        "## Roadmap\n\nTrack milestones, phases, delivery order, and known follow-up work.\n",
+    ),
+    (
+        "spec",
+        "Specification",
+        "## Specification\n\nRecord behavior, contracts, architecture notes, and acceptance criteria.\n",
+    ),
+    (
+        "decisions",
+        "Decisions",
+        "## Decisions\n\nLog durable design and implementation decisions with dates and rationale.\n",
+    ),
+)
 _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("plan", "PLAN", ("plan",)),
     ("todo", "Todo", ("todo",)),
@@ -116,6 +152,7 @@ _TASK_FLOW_SCHEMA_INCOMPATIBLE_REASON = (
 TValue = TypeVar("TValue")
 _TASK_FIELD_UNSET = object()
 TASK_FLOW_FIELD_UNSET = _TASK_FIELD_UNSET
+_MENTION_PATTERN = re.compile(r"(?<![\w./:-])@([A-Za-z0-9_.-]+)(?::|/)?([A-Za-z0-9_.-]+)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +303,12 @@ class TaskFlowService:
                 default_owner_ref=normalized_default_owner_ref,
                 labels_json=json.dumps(normalized_labels),
             )
+            await _ensure_default_flow_documents(
+                repo=repo,
+                flow=row,
+                actor_type=normalized_created_by_type,
+                actor_ref=normalized_created_by_ref,
+            )
             return _to_flow_metadata(row)
 
         return await self._with_repo(_op)
@@ -287,8 +330,316 @@ class TaskFlowService:
             await _ensure_profile_exists(repo, profile_id)
             row = await repo.get_flow(profile_id=profile_id, flow_id=flow_id)
             if row is None:
-                raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+                raise TaskFlowServiceError(
+                    error_code="task_flow_not_found", reason="Task flow not found"
+                )
             return _to_flow_metadata(row)
+
+        return await self._with_repo(_op)
+
+    async def list_flow_documents(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str,
+    ) -> list[TaskDocumentMetadata]:
+        """List editable documents attached to one flow."""
+
+        normalized_flow_id = _normalize_required_text(flow_id, field_name="flow_id")
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskDocumentMetadata]:
+            flow = await _require_flow(repo, profile_id=profile_id, flow_id=normalized_flow_id)
+            await _ensure_default_flow_documents(
+                repo=repo,
+                flow=flow,
+                actor_type=flow.created_by_type,
+                actor_ref=flow.created_by_ref,
+            )
+            rows = await repo.list_task_documents(
+                profile_id=profile_id,
+                scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+                scope_id=flow.id,
+            )
+            return [_to_task_document_metadata(row) for row in rows]
+
+        return await self._with_repo(_op)
+
+    async def put_flow_document(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None = None,
+        base_revision: int | None = None,
+    ) -> TaskDocumentMetadata:
+        """Create or update one flow document with optimistic revision checks."""
+
+        normalized_flow_id = _normalize_required_text(flow_id, field_name="flow_id")
+        return await self._put_document(
+            profile_id=profile_id,
+            scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+            scope_id=normalized_flow_id,
+            document_key=document_key,
+            title=title,
+            body=body,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            actor_session_id=actor_session_id,
+            base_revision=base_revision,
+        )
+
+    async def put_task_document(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None = None,
+        base_revision: int | None = None,
+    ) -> TaskDocumentMetadata:
+        """Create or update one task document with optimistic revision checks."""
+
+        normalized_task_id = _normalize_required_text(task_id, field_name="task_id")
+        return await self._put_document(
+            profile_id=profile_id,
+            scope_type=_TASK_DOCUMENT_SCOPE_TASK,
+            scope_id=normalized_task_id,
+            document_key=document_key,
+            title=title,
+            body=body,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            actor_session_id=actor_session_id,
+            base_revision=base_revision,
+        )
+
+    async def list_document_revisions(
+        self,
+        *,
+        profile_id: str,
+        document_id: str,
+        limit: int | None = None,
+    ) -> list[TaskDocumentRevisionMetadata]:
+        """List immutable revisions for a document."""
+
+        normalized_document_id = _normalize_required_text(document_id, field_name="document_id")
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskDocumentRevisionMetadata]:
+            document = await repo.get_task_document_by_id(
+                profile_id=profile_id,
+                document_id=normalized_document_id,
+            )
+            if document is None:
+                raise TaskFlowServiceError(
+                    error_code="task_document_not_found",
+                    reason="Task Flow document not found",
+                )
+            rows = await repo.list_task_document_revisions(document_id=document.id, limit=limit)
+            return [_to_task_document_revision_metadata(row) for row in rows]
+
+        return await self._with_repo(_op)
+
+    async def confirm_document(
+        self,
+        *,
+        profile_id: str,
+        document_id: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None = None,
+        expected_revision: int | None = None,
+    ) -> TaskDocumentMetadata:
+        """Confirm the current revision of one Task Flow document."""
+
+        normalized_document_id = _normalize_required_text(document_id, field_name="document_id")
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_document_actor_required",
+            reason="Confirming Task Flow documents requires an explicit actor identity",
+        )
+        if expected_revision is not None and int(expected_revision) < 1:
+            raise TaskFlowServiceError(
+                error_code="task_document_invalid_revision",
+                reason="expected_revision must be greater than zero",
+            )
+
+        async def _op(repo: TaskFlowRepository) -> TaskDocumentMetadata:
+            document = await repo.get_task_document_by_id(
+                profile_id=profile_id,
+                document_id=normalized_document_id,
+            )
+            if document is None:
+                raise TaskFlowServiceError(
+                    error_code="task_document_not_found",
+                    reason="Task Flow document not found",
+                )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_document_actor_required",
+                reason="Confirming Task Flow documents requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            if expected_revision is not None and int(document.revision) != int(expected_revision):
+                raise TaskFlowServiceError(
+                    error_code="task_document_revision_conflict",
+                    reason="Document revision changed; reload the latest revision before confirming",
+                )
+            document = await repo.confirm_task_document(
+                document=document,
+                confirmed_by_type=normalized_actor_type,
+                confirmed_by_ref=normalized_actor_ref,
+                confirmed_at=datetime.now(timezone.utc),
+            )
+            await _record_document_confirmation_event(
+                repo=repo,
+                document=document,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            return _to_task_document_metadata(document)
+
+        return await self._with_repo(_op)
+
+    async def _put_document(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str,
+        scope_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None,
+        base_revision: int | None,
+    ) -> TaskDocumentMetadata:
+        """Shared document create/update implementation."""
+
+        normalized_scope_type = _normalize_document_scope_type(scope_type)
+        normalized_scope_id = _normalize_required_text(scope_id, field_name="scope_id")
+        normalized_document_key = _normalize_document_key(document_key)
+        normalized_title = _normalize_required_text(title, field_name="title")
+        normalized_body = _normalize_document_body(body)
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_document_actor_required",
+            reason="Editing Task Flow documents requires an explicit actor identity",
+        )
+        if base_revision is not None and int(base_revision) < 1:
+            raise TaskFlowServiceError(
+                error_code="task_document_invalid_revision",
+                reason="base_revision must be greater than zero",
+            )
+
+        async def _op(repo: TaskFlowRepository) -> TaskDocumentMetadata:
+            await _ensure_document_scope_exists(
+                repo=repo,
+                profile_id=profile_id,
+                scope_type=normalized_scope_type,
+                scope_id=normalized_scope_id,
+            )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_document_actor_required",
+                reason="Editing Task Flow documents requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            document = await repo.get_task_document(
+                profile_id=profile_id,
+                scope_type=normalized_scope_type,
+                scope_id=normalized_scope_id,
+                document_key=normalized_document_key,
+            )
+            if document is None:
+                if base_revision is not None:
+                    raise TaskFlowServiceError(
+                        error_code="task_document_revision_conflict",
+                        reason="Document does not exist for the supplied base_revision",
+                    )
+                document = await repo.create_task_document(
+                    document_id=_new_identifier("doc"),
+                    profile_id=profile_id,
+                    scope_type=normalized_scope_type,
+                    scope_id=normalized_scope_id,
+                    document_key=normalized_document_key,
+                    title=normalized_title,
+                    body=normalized_body,
+                    created_by_type=normalized_actor_type,
+                    created_by_ref=normalized_actor_ref,
+                )
+            else:
+                if base_revision is not None and int(document.revision) != int(base_revision):
+                    raise TaskFlowServiceError(
+                        error_code="task_document_revision_conflict",
+                        reason="Document revision changed; reload the latest revision before editing",
+                    )
+                document = await repo.update_task_document(
+                    document=document,
+                    title=normalized_title,
+                    body=normalized_body,
+                    updated_by_type=normalized_actor_type,
+                    updated_by_ref=normalized_actor_ref,
+                )
+            await _record_document_event(
+                repo=repo,
+                profile_id=profile_id,
+                scope_type=normalized_scope_type,
+                scope_id=normalized_scope_id,
+                document=document,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            return _to_task_document_metadata(document)
 
         return await self._with_repo(_op)
 
@@ -301,7 +652,9 @@ class TaskFlowService:
             await _ensure_profile_exists(repo, profile_id)
             row = await repo.get_flow(profile_id=profile_id, flow_id=normalized_flow_id)
             if row is None:
-                raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+                raise TaskFlowServiceError(
+                    error_code="task_flow_not_found", reason="Task flow not found"
+                )
             flow_tasks = await repo.list_tasks(profile_id=profile_id, flow_id=normalized_flow_id)
             if any(task.status in {"claimed", "running"} for task in flow_tasks):
                 raise TaskFlowServiceError(
@@ -317,7 +670,9 @@ class TaskFlowService:
                 )
             deleted = await repo.delete_flow(profile_id=profile_id, flow_id=normalized_flow_id)
             if not deleted:
-                raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+                raise TaskFlowServiceError(
+                    error_code="task_flow_not_found", reason="Task flow not found"
+                )
 
         await self._with_repo(_op)
 
@@ -357,8 +712,12 @@ class TaskFlowService:
         normalized_depends_on = _normalize_identifier_list(depends_on_task_ids)
         normalized_attachments = _normalize_task_attachment_inputs(attachments)
         normalized_source_type = _normalize_required_text(source_type, field_name="source_type")
-        normalized_created_by_type = _normalize_required_text(created_by_type, field_name="created_by_type")
-        normalized_created_by_ref = _normalize_required_text(created_by_ref, field_name="created_by_ref")
+        normalized_created_by_type = _normalize_required_text(
+            created_by_type, field_name="created_by_type"
+        )
+        normalized_created_by_ref = _normalize_required_text(
+            created_by_ref, field_name="created_by_ref"
+        )
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
         normalized_session_id = _normalize_optional_text(session_id)
         normalized_session_profile_id = _normalize_optional_text(session_profile_id)
@@ -498,11 +857,7 @@ class TaskFlowService:
                 status=resolved_status,
                 priority=priority,
                 due_at=due_at,
-                ready_at=(
-                    None
-                    if normalized_depends_on or resolved_status != "todo"
-                    else now_utc
-                ),
+                ready_at=(None if normalized_depends_on or resolved_status != "todo" else now_utc),
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
                 reviewer_type=normalized_reviewer_type,
@@ -557,6 +912,15 @@ class TaskFlowService:
                     "attachment_count": len(normalized_attachments),
                 },
             )
+            if is_ai_executor_owner_type(row.owner_type) and row.status == "todo":
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=row,
+                    reason_code="task_created",
+                    actor_type=normalized_created_by_type,
+                    actor_ref=normalized_created_by_ref,
+                    message="AI-owned task created and ready for execution.",
+                )
             return await _build_task_metadata(repo, row, settings=self._settings)
 
         try:
@@ -744,13 +1108,17 @@ class TaskFlowService:
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            attachment = await repo.get_task_attachment(task_id=task.id, attachment_id=attachment_id)
+            attachment = await repo.get_task_attachment(
+                task_id=task.id, attachment_id=attachment_id
+            )
             if attachment is None:
                 raise TaskFlowServiceError(
                     error_code="task_attachment_not_found",
                     reason="Task attachment not found",
                 )
-            deleted = await repo.delete_task_attachment(task_id=task.id, attachment_id=attachment.id)
+            deleted = await repo.delete_task_attachment(
+                task_id=task.id, attachment_id=attachment.id
+            )
             if not deleted:
                 raise TaskFlowServiceError(
                     error_code="task_attachment_not_found",
@@ -857,11 +1225,17 @@ class TaskFlowService:
                 flow_id=normalized_flow_id,
             )
             filtered_rows = [
-                row for row in rows if _task_matches_required_labels(row=row, labels=normalized_labels)
+                row
+                for row in rows
+                if _task_matches_required_labels(row=row, labels=normalized_labels)
             ]
             now_utc = datetime.now(timezone.utc)
-            column_counts: dict[str, int] = {column_id: 0 for column_id, _title, _statuses in _TASK_BOARD_COLUMNS}
-            preview_rows: dict[str, list[Task]] = {column_id: [] for column_id, _title, _statuses in _TASK_BOARD_COLUMNS}
+            column_counts: dict[str, int] = {
+                column_id: 0 for column_id, _title, _statuses in _TASK_BOARD_COLUMNS
+            }
+            preview_rows: dict[str, list[Task]] = {
+                column_id: [] for column_id, _title, _statuses in _TASK_BOARD_COLUMNS
+            }
             ready_count = 0
             blocked_count = 0
             running_count = 0
@@ -1074,6 +1448,189 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def build_agent_inbox(
+        self,
+        *,
+        profile_id: str,
+        owner_type: str,
+        owner_ref: str,
+        task_limit: int = 10,
+        event_limit: int = 10,
+    ) -> AgentTaskInboxMetadata:
+        """Build an inbox for one AI executor from assignments and mentions."""
+
+        normalized_owner_type = normalize_task_owner_type(owner_type)
+        normalized_owner_ref = _normalize_optional_text(owner_ref)
+        _validate_owner_pair(
+            owner_type=normalized_owner_type,
+            owner_ref=normalized_owner_ref,
+            allow_missing=False,
+        )
+        if normalized_owner_type is None or normalized_owner_ref is None:
+            raise TaskFlowServiceError(
+                error_code="invalid_owner_ref",
+                reason="AI inbox owner is required",
+            )
+        if not is_ai_executor_owner_type(normalized_owner_type):
+            raise TaskFlowServiceError(
+                error_code="task_agent_inbox_owner_required",
+                reason="Agent inbox requires an AI profile or AI subagent owner",
+            )
+
+        async def _op(repo: TaskFlowRepository) -> AgentTaskInboxMetadata:
+            await _ensure_profile_exists(repo, profile_id)
+            await _ensure_actor_refs_exist(
+                repo,
+                settings=self._settings,
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                reviewer_type=None,
+                reviewer_ref=None,
+            )
+            actionable = await repo.list_agent_inbox_tasks(
+                profile_id=profile_id,
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                limit=max(task_limit, 1),
+            )
+            recent_events = await repo.list_task_feed_events_for_owner(
+                profile_id=profile_id,
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                limit=event_limit,
+            )
+            title_by_task_id: dict[str, str] = {}
+            for event in recent_events:
+                if event.task_id in title_by_task_id:
+                    continue
+                row = await repo.get_task(profile_id=profile_id, task_id=event.task_id)
+                title_by_task_id[event.task_id] = row.title if row is not None else event.task_id
+            return AgentTaskInboxMetadata(
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                total_count=len(actionable),
+                todo_count=sum(1 for row in actionable if row.status == "todo"),
+                blocked_count=sum(1 for row in actionable if row.status == "blocked"),
+                review_count=sum(1 for row in actionable if row.status == "review"),
+                running_count=sum(1 for row in actionable if row.status in {"claimed", "running"}),
+                mention_event_count=sum(
+                    1 for row in recent_events if row.event_type == "mention_created"
+                ),
+                tasks=tuple(
+                    await _build_task_metadata_many(
+                        repo,
+                        actionable,
+                        settings=self._settings,
+                    )
+                ),
+                recent_events=tuple(
+                    _to_human_inbox_event_metadata(
+                        row,
+                        task_title=title_by_task_id.get(row.task_id, row.task_id),
+                    )
+                    for row in recent_events
+                ),
+            )
+
+        return await self._with_repo(_op)
+
+    async def build_task_context(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        event_limit: int = 20,
+        comment_limit: int = 10,
+    ) -> TaskContextMetadata:
+        """Build a Paperclip-style context bundle for one task execution."""
+
+        normalized_task_id = _normalize_required_text(task_id, field_name="task_id")
+
+        async def _op(repo: TaskFlowRepository) -> TaskContextMetadata:
+            task = await _require_task(repo, profile_id=profile_id, task_id=normalized_task_id)
+            flow: TaskFlow | None = None
+            flow_documents: list[TaskDocument] = []
+            if task.flow_id is not None:
+                flow = await repo.get_flow(profile_id=profile_id, flow_id=task.flow_id)
+                if flow is not None:
+                    await _ensure_default_flow_documents(
+                        repo=repo,
+                        flow=flow,
+                        actor_type=flow.created_by_type,
+                        actor_ref=flow.created_by_ref,
+                    )
+                    flow_documents = await repo.list_task_documents(
+                        profile_id=profile_id,
+                        scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+                        scope_id=flow.id,
+                    )
+            task_documents = await repo.list_task_documents(
+                profile_id=profile_id,
+                scope_type=_TASK_DOCUMENT_SCOPE_TASK,
+                scope_id=task.id,
+            )
+            dependencies = await repo.list_dependencies(task_id=task.id)
+            dependency_rows: list[Task] = []
+            for edge in dependencies:
+                dependency = await repo.get_task(
+                    profile_id=profile_id,
+                    task_id=edge.depends_on_task_id,
+                )
+                if dependency is not None:
+                    dependency_rows.append(dependency)
+            dependents = await repo.list_dependents(depends_on_task_id=task.id)
+            dependent_rows: list[Task] = []
+            for edge in dependents:
+                dependent = await repo.get_task(profile_id=profile_id, task_id=edge.task_id)
+                if dependent is not None:
+                    dependent_rows.append(dependent)
+            delegated_rows = await repo.list_tasks_by_source(
+                profile_id=profile_id,
+                source_type="task_delegation",
+                source_ref=task.id,
+                limit=20,
+            )
+            event_rows = await repo.list_task_events(task_id=task.id, limit=max(event_limit, 1))
+            comment_rows = [
+                row
+                for row in event_rows
+                if str(row.event_type or "").strip() == _TASK_COMMENT_EVENT_TYPE
+            ][: max(comment_limit, 1)]
+            return TaskContextMetadata(
+                generated_at=datetime.now(timezone.utc),
+                task=await _build_task_metadata(repo, task, settings=self._settings),
+                flow=_to_flow_metadata(flow) if flow is not None else None,
+                flow_documents=tuple(_to_task_document_metadata(row) for row in flow_documents),
+                task_documents=tuple(_to_task_document_metadata(row) for row in task_documents),
+                dependencies=tuple(_to_dependency_metadata(row) for row in dependencies),
+                dependency_tasks=tuple(
+                    await _build_task_metadata_many(
+                        repo,
+                        dependency_rows,
+                        settings=self._settings,
+                    )
+                ),
+                dependents=tuple(_to_dependency_metadata(row) for row in dependents),
+                dependent_tasks=tuple(
+                    await _build_task_metadata_many(
+                        repo,
+                        dependent_rows,
+                        settings=self._settings,
+                    )
+                ),
+                delegated_tasks=tuple(
+                    await _build_task_metadata_many(
+                        repo,
+                        delegated_rows,
+                        settings=self._settings,
+                    )
+                ),
+                recent_comments=tuple(_to_task_comment_metadata(row) for row in comment_rows),
+                recent_events=tuple(_to_task_event_metadata(row) for row in event_rows),
+            )
+
+        return await self._with_repo(_op)
+
     async def list_review_tasks(
         self,
         *,
@@ -1107,7 +1664,7 @@ class TaskFlowService:
                     )
             rows = await repo.list_tasks(
                 profile_id=profile_id,
-                statuses=("review",),
+                statuses=("review", "claimed", "running"),
                 flow_id=normalized_flow_id,
             )
             filtered_rows = [
@@ -1356,6 +1913,15 @@ class TaskFlowService:
                     "owner_ref": updated.owner_ref,
                 },
             )
+            if is_ai_executor_owner_type(updated.owner_type):
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=updated,
+                    reason_code=normalized_reason_code,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    message="Review changes requested; AI owner should resume this task.",
+                )
             return await _build_task_metadata(repo, updated, settings=self._settings)
 
         return await self._with_repo(_op)
@@ -1565,7 +2131,9 @@ class TaskFlowService:
     ) -> TaskDelegationMetadata:
         """Create one delegated AI-owned task and optionally block the source task on it."""
 
-        normalized_source_task_id = _normalize_required_text(source_task_id, field_name="source_task_id")
+        normalized_source_task_id = _normalize_required_text(
+            source_task_id, field_name="source_task_id"
+        )
         normalized_delegate_owner_type = normalize_task_owner_type(delegated_owner_type)
         if normalized_delegate_owner_type is None:
             raise TaskFlowServiceError(
@@ -1604,7 +2172,9 @@ class TaskFlowService:
         )
 
         async def _op(repo: TaskFlowRepository) -> TaskDelegationMetadata:
-            source_task = await _require_task(repo, profile_id=profile_id, task_id=normalized_source_task_id)
+            source_task = await _require_task(
+                repo, profile_id=profile_id, task_id=normalized_source_task_id
+            )
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
@@ -1655,7 +2225,9 @@ class TaskFlowService:
                 owner_type=normalized_delegate_owner_type,
                 owner_ref=normalized_delegate_owner_ref,
             )
-            delegated_flow_id = normalized_flow_id if normalized_flow_id is not None else source_task.flow_id
+            delegated_flow_id = (
+                normalized_flow_id if normalized_flow_id is not None else source_task.flow_id
+            )
             if delegated_flow_id is not None:
                 flow = await repo.get_flow(profile_id=profile_id, flow_id=delegated_flow_id)
                 if flow is None:
@@ -1663,7 +2235,9 @@ class TaskFlowService:
                         error_code="task_flow_not_found",
                         reason="Task flow not found",
                     )
-            delegated_title = normalized_title or f"{source_task.title} [{normalized_delegate_owner_ref}]"
+            delegated_title = (
+                normalized_title or f"{source_task.title} [{normalized_delegate_owner_ref}]"
+            )
             delegated_priority = priority if priority is not None else source_task.priority
             delegated_due_at = due_at if due_at is not None else source_task.due_at
             delegated_labels = (
@@ -1769,7 +2343,9 @@ class TaskFlowService:
                     satisfied_on_status="completed",
                     created_at=edge.created_at,
                 )
-                refreshed_source = await repo.get_task(profile_id=profile_id, task_id=source_task.id)
+                refreshed_source = await repo.get_task(
+                    profile_id=profile_id, task_id=source_task.id
+                )
                 if refreshed_source is not None:
                     refreshed_source_task = await _reconcile_task_readiness_after_dependency_change(
                         repo=repo,
@@ -1838,7 +2414,9 @@ class TaskFlowService:
                     if task_row is None:
                         run = None
             if run is None:
-                raise TaskFlowServiceError(error_code="task_run_not_found", reason="Task run not found")
+                raise TaskFlowServiceError(
+                    error_code="task_run_not_found", reason="Task run not found"
+                )
             return _to_task_run_metadata(run)
 
         return await self._with_repo(_op)
@@ -1896,8 +2474,8 @@ class TaskFlowService:
         ready_at: datetime | None | object = _TASK_FIELD_UNSET,
         owner_type: str | None = None,
         owner_ref: str | None = None,
-        reviewer_type: str | None = None,
-        reviewer_ref: str | None = None,
+        reviewer_type: str | None | object = _TASK_FIELD_UNSET,
+        reviewer_ref: str | None | object = _TASK_FIELD_UNSET,
         requires_review: bool | None = None,
         labels: Sequence[str] | None = None,
         session_id: str | None | object = _TASK_FIELD_UNSET,
@@ -1944,7 +2522,10 @@ class TaskFlowService:
             normalized_actor_session_id = _normalize_optional_text(
                 cast(str | None, actor_session_id)
             )
-        if normalized_session_profile_id is not _TASK_FIELD_UNSET and normalized_session_id is _TASK_FIELD_UNSET:
+        if (
+            normalized_session_profile_id is not _TASK_FIELD_UNSET
+            and normalized_session_id is _TASK_FIELD_UNSET
+        ):
             raise TaskFlowServiceError(
                 error_code="task_session_profile_requires_session_id",
                 reason="session_profile_id requires session_id",
@@ -1968,6 +2549,25 @@ class TaskFlowService:
                 owner_ref=normalized_owner_ref,
                 allow_missing=False,
             )
+        normalized_reviewer_type: str | None | object = _TASK_FIELD_UNSET
+        if reviewer_type is not _TASK_FIELD_UNSET:
+            normalized_reviewer_type = normalize_task_owner_type(cast(str | None, reviewer_type))
+        normalized_reviewer_ref: str | None | object = _TASK_FIELD_UNSET
+        if reviewer_ref is not _TASK_FIELD_UNSET:
+            normalized_reviewer_ref = _normalize_optional_text(cast(str | None, reviewer_ref))
+        if (
+            normalized_reviewer_type is not _TASK_FIELD_UNSET
+            or normalized_reviewer_ref is not _TASK_FIELD_UNSET
+        ):
+            _validate_owner_pair(
+                owner_type=cast(str | None, normalized_reviewer_type)
+                if normalized_reviewer_type is not _TASK_FIELD_UNSET
+                else None,
+                owner_ref=cast(str | None, normalized_reviewer_ref)
+                if normalized_reviewer_ref is not _TASK_FIELD_UNSET
+                else None,
+                allow_missing=True,
+            )
         normalized_actor_type = _normalize_optional_text(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         if normalized_actor_type is not None or normalized_actor_ref is not None:
@@ -1983,11 +2583,6 @@ class TaskFlowService:
             actor_session_id=normalized_actor_session_id,
             error_code="task_actor_required",
             reason="Task updates require an explicit actor identity",
-        )
-        _validate_owner_pair(
-            owner_type=reviewer_type,
-            owner_ref=reviewer_ref,
-            allow_missing=True,
         )
 
         async def _op(repo: TaskFlowRepository) -> tuple[TaskMetadata, bool]:
@@ -2020,14 +2615,27 @@ class TaskFlowService:
             requested_session_id = normalized_session_id
             requested_session_profile_id = normalized_session_profile_id
             owner_changed = (
-                (normalized_owner_type is not None and normalized_owner_type != current_row.owner_type)
-                or (normalized_owner_ref is not None and normalized_owner_ref != current_row.owner_ref)
+                normalized_owner_type is not None
+                and normalized_owner_type != current_row.owner_type
+            ) or (
+                normalized_owner_ref is not None and normalized_owner_ref != current_row.owner_ref
             )
             effective_owner_type = normalized_owner_type or current_row.owner_type
             effective_owner_ref = normalized_owner_ref or current_row.owner_ref
-            effective_reviewer_type = normalize_task_owner_type(reviewer_type)
-            effective_reviewer_ref = _normalize_optional_text(reviewer_ref)
-            if reviewer_type is None and reviewer_ref is None:
+            effective_reviewer_type = (
+                current_row.reviewer_type
+                if normalized_reviewer_type is _TASK_FIELD_UNSET
+                else cast(str | None, normalized_reviewer_type)
+            )
+            effective_reviewer_ref = (
+                current_row.reviewer_ref
+                if normalized_reviewer_ref is _TASK_FIELD_UNSET
+                else cast(str | None, normalized_reviewer_ref)
+            )
+            if (
+                normalized_reviewer_type is _TASK_FIELD_UNSET
+                and normalized_reviewer_ref is _TASK_FIELD_UNSET
+            ):
                 effective_reviewer_type = current_row.reviewer_type
                 effective_reviewer_ref = current_row.reviewer_ref
             effective_status = normalized_status
@@ -2073,10 +2681,10 @@ class TaskFlowService:
                 if effective_session_id is not _TASK_FIELD_UNSET
                 else None
             )
-            if (
-                normalized_actor_type == "automation"
-                and effective_status_after_update in {"claimed", "running"}
-            ):
+            if normalized_actor_type == "automation" and effective_status_after_update in {
+                "claimed",
+                "running",
+            }:
                 raise TaskFlowServiceError(
                     error_code="task_session_binding_forbidden",
                     reason="Automation actors cannot move tasks into claimed/running state",
@@ -2103,7 +2711,7 @@ class TaskFlowService:
                 raise TaskFlowServiceError(
                     error_code="task_owner_active_conflict",
                     reason="AI owner already has another active task",
-            )
+                )
             effective_session_profile_id: str | None | object = _TASK_FIELD_UNSET
             if requested_session_id is not _TASK_FIELD_UNSET:
                 if requested_session_id is None:
@@ -2137,10 +2745,20 @@ class TaskFlowService:
                     ready_at=ready_at if ready_at is not _TASK_FIELD_UNSET else _REPO_FIELD_UNSET,
                     owner_type=normalized_owner_type,
                     owner_ref=normalized_owner_ref,
-                    reviewer_type=normalize_task_owner_type(reviewer_type),
-                    reviewer_ref=_normalize_optional_text(reviewer_ref),
+                    reviewer_type=(
+                        normalized_reviewer_type
+                        if normalized_reviewer_type is not _TASK_FIELD_UNSET
+                        else _REPO_FIELD_UNSET
+                    ),
+                    reviewer_ref=(
+                        normalized_reviewer_ref
+                        if normalized_reviewer_ref is not _TASK_FIELD_UNSET
+                        else _REPO_FIELD_UNSET
+                    ),
                     requires_review=requires_review,
-                    labels_json=(json.dumps(_normalize_labels(labels)) if labels is not None else None),
+                    labels_json=(
+                        json.dumps(_normalize_labels(labels)) if labels is not None else None
+                    ),
                     last_session_id=(
                         requested_session_id
                         if requested_session_id is not _TASK_FIELD_UNSET
@@ -2208,12 +2826,25 @@ class TaskFlowService:
                     to_status=row.status if before.status != row.status else None,
                     details=update_details,
                 )
+            if (
+                is_ai_executor_owner_type(row.owner_type)
+                and row.status in {"todo", "blocked", "review"}
+                and row.ready_at is not None
+                and (before.ready_at != row.ready_at or before.status != row.status)
+            ):
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=row,
+                    reason_code=str(row.blocked_reason_code or row.status or "task_ready"),
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    message="Task has a scheduled AI wake.",
+                )
             refresh_schema_invariants = (
                 is_ai_executor_owner_type(before.owner_type)
                 and before.status in {"claimed", "running"}
             ) or (
-                is_ai_executor_owner_type(row.owner_type)
-                and row.status in {"claimed", "running"}
+                is_ai_executor_owner_type(row.owner_type) and row.status in {"claimed", "running"}
             )
             return (
                 await _build_task_metadata(repo, row, settings=self._settings),
@@ -2245,7 +2876,10 @@ class TaskFlowService:
 
         normalized_reason_code = _normalize_required_text(reason_code, field_name="reason_code")
         normalized_reason_text = _normalize_required_text(reason_text, field_name="reason_text")
-        if normalized_reason_code == "dependency_wait" and ready_at not in {_TASK_FIELD_UNSET, None}:
+        if normalized_reason_code == "dependency_wait" and ready_at not in {
+            _TASK_FIELD_UNSET,
+            None,
+        }:
             raise TaskFlowServiceError(
                 error_code="task_dependency_wait_ready_at_conflict",
                 reason="dependency_wait blockers cannot schedule a timed revisit",
@@ -2298,7 +2932,12 @@ class TaskFlowService:
         normalized_channel = _normalize_optional_text(channel)
 
         async def _op(repo: TaskFlowRepository) -> HumanTaskInboxMetadata:
-            filtered_rows, metadata_rows, status_counts, overdue_count = await _build_human_task_summary(
+            (
+                filtered_rows,
+                metadata_rows,
+                status_counts,
+                overdue_count,
+            ) = await _build_human_task_summary(
                 repo=repo,
                 profile_id=profile_id,
                 owner_ref=normalized_owner_ref,
@@ -2341,14 +2980,22 @@ class TaskFlowService:
                     )
                     for row in relevant_rows
                 )
-                unseen_event_count = 0 if should_suppress_initial_preview else await repo.count_filtered_task_events_for_tasks(
-                    task_ids=task_ids,
-                    after_event_id=last_seen_event_id,
-                    event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
-                    updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
-                    updated_detail_keys=("owner", "reviewer", "blocked_reason"),
+                unseen_event_count = (
+                    0
+                    if should_suppress_initial_preview
+                    else await repo.count_filtered_task_events_for_tasks(
+                        task_ids=task_ids,
+                        after_event_id=last_seen_event_id,
+                        event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
+                        updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
+                        updated_detail_keys=("owner", "reviewer", "blocked_reason"),
+                    )
                 )
-                if normalized_channel is not None and mark_seen and acknowledge_event_id is not None:
+                if (
+                    normalized_channel is not None
+                    and mark_seen
+                    and acknowledge_event_id is not None
+                ):
                     await repo.upsert_task_notification_cursor(
                         profile_id=profile_id,
                         actor_type="human",
@@ -2383,7 +3030,12 @@ class TaskFlowService:
         normalized_owner_ref = _normalize_required_text(owner_ref, field_name="owner_ref")
 
         async def _op(repo: TaskFlowRepository) -> HumanTaskStartupSummary:
-            filtered_rows, metadata_rows, status_counts, overdue_count = await _build_human_task_summary(
+            (
+                filtered_rows,
+                metadata_rows,
+                status_counts,
+                overdue_count,
+            ) = await _build_human_task_summary(
                 repo=repo,
                 profile_id=profile_id,
                 owner_ref=normalized_owner_ref,
@@ -2468,6 +3120,84 @@ async def _ensure_profile_exists(repo: TaskFlowRepository, profile_id: str) -> N
     if await profile_exists(repo._session, profile_id=profile_id):
         return
     raise TaskFlowServiceError(error_code="profile_not_found", reason="Profile not found")
+
+
+async def _require_flow(
+    repo: TaskFlowRepository,
+    *,
+    profile_id: str,
+    flow_id: str,
+) -> TaskFlow:
+    """Load one flow or raise a structured service error."""
+
+    await _ensure_profile_exists(repo, profile_id)
+    row = await repo.get_flow(profile_id=profile_id, flow_id=flow_id)
+    if row is None:
+        raise TaskFlowServiceError(error_code="task_flow_not_found", reason="Task flow not found")
+    return row
+
+
+async def _ensure_document_scope_exists(
+    *,
+    repo: TaskFlowRepository,
+    profile_id: str,
+    scope_type: str,
+    scope_id: str,
+) -> None:
+    """Validate a document scope before writing document state."""
+
+    if scope_type == _TASK_DOCUMENT_SCOPE_FLOW:
+        await _require_flow(repo, profile_id=profile_id, flow_id=scope_id)
+        return
+    if scope_type == _TASK_DOCUMENT_SCOPE_TASK:
+        await _require_task(repo, profile_id=profile_id, task_id=scope_id)
+        return
+    raise TaskFlowServiceError(
+        error_code="invalid_task_document_scope",
+        reason=f"Unsupported Task Flow document scope: {scope_type}",
+    )
+
+
+async def _ensure_default_flow_documents(
+    *,
+    repo: TaskFlowRepository,
+    flow: TaskFlow,
+    actor_type: str,
+    actor_ref: str,
+) -> None:
+    """Create missing default documents for a flow without touching existing revisions."""
+
+    for document_key, title, template in _DEFAULT_FLOW_DOCUMENTS:
+        existing = await repo.get_task_document(
+            profile_id=flow.profile_id,
+            scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+            scope_id=flow.id,
+            document_key=document_key,
+        )
+        if existing is not None:
+            continue
+        await repo.create_task_document(
+            document_id=_new_identifier("doc"),
+            profile_id=flow.profile_id,
+            scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+            scope_id=flow.id,
+            document_key=document_key,
+            title=title,
+            body=_default_flow_document_body(
+                flow=flow, document_key=document_key, template=template
+            ),
+            created_by_type=actor_type,
+            created_by_ref=actor_ref,
+        )
+
+
+def _default_flow_document_body(*, flow: TaskFlow, document_key: str, template: str) -> str:
+    """Build a lightweight seed document for new flows."""
+
+    if document_key == "brief":
+        description = str(flow.description or "").strip() or "No description captured yet."
+        return f"## Brief\n\n# {flow.title}\n\n{description}\n"
+    return template
 
 
 async def _ensure_actor_refs_exist(
@@ -2600,10 +3330,7 @@ async def _ensure_public_ai_principal_session(
         actor_type=normalized_actor_type,
         actor_ref=normalized_actor_ref,
     )
-    if (
-        actor_profile_id is None
-        or normalized_actor_session_id is None
-    ):
+    if actor_profile_id is None or normalized_actor_session_id is None:
         return
     session_row = await ChatSessionRepository(repo._session).get(normalized_actor_session_id)
     if session_row is None or session_row.profile_id != actor_profile_id:
@@ -2643,7 +3370,9 @@ def _ensure_public_principal_identity(
         actor_ref=normalized_actor_ref,
         allow_missing=False,
     )
-    if normalized_actor_type == "human" and normalized_actor_ref != resolve_local_human_ref(settings):
+    if normalized_actor_type == "human" and normalized_actor_ref != resolve_local_human_ref(
+        settings
+    ):
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
     if is_ai_executor_owner_type(normalized_actor_type) and normalized_actor_session_id is None:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
@@ -2653,7 +3382,9 @@ def _normalize_required_text(value: str | None, *, field_name: str) -> str:
     normalized = str(value or "").strip()
     if normalized:
         return normalized
-    raise TaskFlowServiceError(error_code=f"invalid_{field_name}", reason=f"{field_name} is required")
+    raise TaskFlowServiceError(
+        error_code=f"invalid_{field_name}", reason=f"{field_name} is required"
+    )
 
 
 @overload
@@ -2713,7 +3444,9 @@ def _parse_automation_actor_ref(actor_ref: str | None) -> tuple[str, str] | None
 def _normalize_status(status: str) -> str:
     normalized = _normalize_required_text(status, field_name="status").lower()
     if normalized not in _VALID_TASK_STATUSES:
-        raise TaskFlowServiceError(error_code="invalid_status", reason=f"Unsupported task status: {status}")
+        raise TaskFlowServiceError(
+            error_code="invalid_status", reason=f"Unsupported task status: {status}"
+        )
     return normalized
 
 
@@ -2721,6 +3454,36 @@ def _normalize_statuses(statuses: Sequence[str] | None) -> tuple[str, ...]:
     if not statuses:
         return ()
     return tuple(_normalize_status(status) for status in statuses)
+
+
+def _normalize_document_scope_type(scope_type: str) -> str:
+    normalized = _normalize_required_text(scope_type, field_name="scope_type").lower()
+    if normalized not in {_TASK_DOCUMENT_SCOPE_FLOW, _TASK_DOCUMENT_SCOPE_TASK}:
+        raise TaskFlowServiceError(
+            error_code="invalid_task_document_scope",
+            reason=f"Unsupported Task Flow document scope: {scope_type}",
+        )
+    return normalized
+
+
+def _normalize_document_key(document_key: str) -> str:
+    normalized = _normalize_required_text(document_key, field_name="document_key").lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", normalized):
+        raise TaskFlowServiceError(
+            error_code="invalid_task_document_key",
+            reason="document_key must use lowercase letters, numbers, dot, underscore, or dash",
+        )
+    return normalized
+
+
+def _normalize_document_body(body: str | None) -> str:
+    normalized = str(body or "").strip()
+    if not normalized:
+        raise TaskFlowServiceError(
+            error_code="invalid_task_document_body",
+            reason="document body is required",
+        )
+    return normalized
 
 
 def _normalize_create_task_status(status: str | None) -> str | None:
@@ -2824,7 +3587,10 @@ def _validate_owner_pair(
             error_code="invalid_owner_type",
             reason=f"Unsupported owner type: {normalized_type}",
         )
-    if normalized_type == AI_SUBAGENT_OWNER_TYPE and parse_ai_subagent_owner_ref(normalized_ref) is None:
+    if (
+        normalized_type == AI_SUBAGENT_OWNER_TYPE
+        and parse_ai_subagent_owner_ref(normalized_ref) is None
+    ):
         raise TaskFlowServiceError(
             error_code="invalid_owner_ref",
             reason="ai_subagent ref must match <profile_id>:<subagent_name>",
@@ -2856,7 +3622,10 @@ def _validate_actor_pair(
             error_code="invalid_actor_ref",
             reason="automation actor_ref must match automation:<profile_id>:<automation_id>",
         )
-    if normalized_type == AI_SUBAGENT_OWNER_TYPE and parse_ai_subagent_owner_ref(normalized_ref) is None:
+    if (
+        normalized_type == AI_SUBAGENT_OWNER_TYPE
+        and parse_ai_subagent_owner_ref(normalized_ref) is None
+    ):
         raise TaskFlowServiceError(
             error_code="invalid_actor_ref",
             reason="ai_subagent ref must match <profile_id>:<subagent_name>",
@@ -2994,7 +3763,9 @@ def _ensure_ai_owner_assignment_allowed(
     )
     if normalized_owner_profile_id == normalized_actor_profile_id:
         return
-    allowed_profiles = _taskflow_allowed_ai_profile_ids(settings=settings, profile_id=task_profile_id)
+    allowed_profiles = _taskflow_allowed_ai_profile_ids(
+        settings=settings, profile_id=task_profile_id
+    )
     if not allowed_profiles:
         return
     if normalized_owner_profile_id in allowed_profiles:
@@ -3029,7 +3800,9 @@ def _ensure_ai_actor_admitted_to_backlog(
     )
     if normalized_actor_profile_id is None:
         return
-    allowed_profiles = _taskflow_allowed_ai_profile_ids(settings=settings, profile_id=task_profile_id)
+    allowed_profiles = _taskflow_allowed_ai_profile_ids(
+        settings=settings, profile_id=task_profile_id
+    )
     if not allowed_profiles:
         return
     if normalized_actor_profile_id in allowed_profiles:
@@ -3099,7 +3872,9 @@ def _taskflow_allowed_ai_profile_ids(
     return tuple(allowed)
 
 
-def _taskflow_team_profile_ids(*, settings: Settings | None, profile_id: str) -> tuple[str, ...] | None:
+def _taskflow_team_profile_ids(
+    *, settings: Settings | None, profile_id: str
+) -> tuple[str, ...] | None:
     """Return configured teammate AI profiles for one backlog profile."""
 
     if settings is None:
@@ -3156,6 +3931,7 @@ def _to_task_metadata(
         owner_ref=row.owner_ref,
         reviewer_type=row.reviewer_type,
         reviewer_ref=row.reviewer_ref,
+        review_actionable=_task_is_review_actionable(row),
         source_type=row.source_type,
         source_ref=row.source_ref,
         created_by_type=row.created_by_type,
@@ -3219,8 +3995,12 @@ async def _build_task_metadata_many(
         row_list,
         settings=settings,
     )
-    dependencies = await repo.list_dependencies_for_tasks(task_ids=tuple(row.id for row in row_list))
-    attachment_counts = await repo.count_task_attachments_for_tasks(task_ids=tuple(row.id for row in row_list))
+    dependencies = await repo.list_dependencies_for_tasks(
+        task_ids=tuple(row.id for row in row_list)
+    )
+    attachment_counts = await repo.count_task_attachments_for_tasks(
+        task_ids=tuple(row.id for row in row_list)
+    )
     dependency_ids_by_task_id: dict[str, list[str]] = {}
     for edge in dependencies:
         dependency_ids_by_task_id.setdefault(edge.task_id, []).append(edge.depends_on_task_id)
@@ -3409,7 +4189,10 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         if part is not None
     ).lower()
     return "ux_task_active_ai_owner" in message or (
-        ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
+        (
+            "unique constraint failed" in message
+            or "duplicate key value violates unique constraint" in message
+        )
         and "owner_ref" in message
         and "profile_id" in message
     )
@@ -3481,6 +4264,46 @@ def _to_task_event_metadata(row: TaskEvent) -> TaskEventMetadata:
         from_status=row.from_status,
         to_status=row.to_status,
         details=_decode_json_object(row.details_json),
+        created_at=row.created_at,
+    )
+
+
+def _to_task_document_metadata(row: TaskDocument) -> TaskDocumentMetadata:
+    return TaskDocumentMetadata(
+        id=row.id,
+        profile_id=row.profile_id,
+        scope_type=row.scope_type,
+        scope_id=row.scope_id,
+        document_key=row.document_key,
+        title=row.title,
+        body=row.body,
+        revision=row.revision,
+        confirmation_status=row.confirmation_status,
+        confirmed_revision=row.confirmed_revision,
+        confirmed_by_type=row.confirmed_by_type,
+        confirmed_by_ref=row.confirmed_by_ref,
+        confirmed_at=row.confirmed_at,
+        latest_revision_id=row.latest_revision_id,
+        created_by_type=row.created_by_type,
+        created_by_ref=row.created_by_ref,
+        updated_by_type=row.updated_by_type,
+        updated_by_ref=row.updated_by_ref,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_task_document_revision_metadata(
+    row: TaskDocumentRevision,
+) -> TaskDocumentRevisionMetadata:
+    return TaskDocumentRevisionMetadata(
+        id=row.id,
+        document_id=row.document_id,
+        revision=row.revision,
+        title=row.title,
+        body=row.body,
+        created_by_type=row.created_by_type,
+        created_by_ref=row.created_by_ref,
         created_at=row.created_at,
     )
 
@@ -3618,7 +4441,10 @@ def _build_task_update_event_details(
                 "session_profile_id": after.last_session_profile_id,
             },
         }
-    if before.blocked_reason_code != after.blocked_reason_code or before.blocked_reason_text != after.blocked_reason_text:
+    if (
+        before.blocked_reason_code != after.blocked_reason_code
+        or before.blocked_reason_text != after.blocked_reason_text
+    ):
         details["blocked_reason"] = {
             "before": {"code": before.blocked_reason_code, "text": before.blocked_reason_text},
             "after": {"code": after.blocked_reason_code, "text": after.blocked_reason_text},
@@ -3703,9 +4529,8 @@ def _task_matches_human_inbox(*, row: Task, owner_ref: str) -> bool:
     if row.status in {"todo", "blocked"}:
         return row.owner_type == "human" and row.owner_ref == owner_ref
     if row.status == "review":
-        return (
-            (row.owner_type == "human" and row.owner_ref == owner_ref)
-            or (row.reviewer_type == "human" and row.reviewer_ref == owner_ref)
+        return (row.owner_type == "human" and row.owner_ref == owner_ref) or (
+            row.reviewer_type == "human" and row.reviewer_ref == owner_ref
         )
     return False
 
@@ -3796,7 +4621,9 @@ async def _reconcile_task_readiness(
     if not dependencies:
         return task
     for edge in dependencies:
-        dependency_row = await repo.get_task(profile_id=task.profile_id, task_id=edge.depends_on_task_id)
+        dependency_row = await repo.get_task(
+            profile_id=task.profile_id, task_id=edge.depends_on_task_id
+        )
         if dependency_row is None:
             return task
         if dependency_row.status != edge.satisfied_on_status:
@@ -3819,6 +4646,13 @@ async def _reconcile_task_readiness(
             from_status=before_status,
             to_status=promoted.status,
         )
+        if is_ai_executor_owner_type(promoted.owner_type):
+            await _record_task_wake_requested(
+                repo=repo,
+                task=promoted,
+                reason_code="dependencies_satisfied",
+                message="Dependencies satisfied; task is ready for AI execution.",
+            )
     return task if promoted is None else promoted
 
 
@@ -3848,10 +4682,19 @@ async def _reconcile_task_readiness_after_dependency_change(
                     from_status=before_status,
                     to_status=promoted.status,
                 )
+                if is_ai_executor_owner_type(promoted.owner_type):
+                    await _record_task_wake_requested(
+                        repo=repo,
+                        task=promoted,
+                        reason_code="dependencies_satisfied",
+                        message="Dependencies satisfied; task is ready for AI execution.",
+                    )
             return task if promoted is None else promoted
         return task
     for edge in dependencies:
-        dependency_row = await repo.get_task(profile_id=task.profile_id, task_id=edge.depends_on_task_id)
+        dependency_row = await repo.get_task(
+            profile_id=task.profile_id, task_id=edge.depends_on_task_id
+        )
         if dependency_row is None or dependency_row.status != edge.satisfied_on_status:
             if task.status != "blocked" or task.blocked_reason_code != "dependency_wait":
                 before_status = task.status
@@ -3901,14 +4744,169 @@ async def _append_task_comment_event(
     comment_type: str,
     task_run_id: int | None = None,
 ) -> TaskEvent:
-    return await repo.create_task_event(
+    details: dict[str, object] = {"comment_type": comment_type}
+    mentions = _extract_task_mentions(message)
+    if mentions:
+        details["mentions"] = mentions
+    row = await repo.create_task_event(
         task_id=task_id,
         task_run_id=task_run_id,
         event_type=_TASK_COMMENT_EVENT_TYPE,
         actor_type=actor_type,
         actor_ref=actor_ref,
         message=message,
-        details_json=encode_task_event_details({"comment_type": comment_type}),
+        details_json=encode_task_event_details(details),
+    )
+    for mention in mentions:
+        await repo.create_task_event(
+            task_id=task_id,
+            task_run_id=task_run_id,
+            event_type="mention_created",
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            message=message,
+            details_json=encode_task_event_details({"mentions": [mention]}),
+        )
+        await repo.create_task_event(
+            task_id=task_id,
+            task_run_id=task_run_id,
+            event_type="wake_requested",
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            message="Explicit mention requested AI attention.",
+            details_json=encode_task_event_details(
+                {
+                    "reason_code": "explicit_mention",
+                    "owner_type": mention["owner_type"],
+                    "owner_ref": mention["owner_ref"],
+                    "status": "mentioned",
+                    "mentions": [mention],
+                }
+            ),
+        )
+    return row
+
+
+async def _record_task_wake_requested(
+    *,
+    repo: TaskFlowRepository,
+    task: Task,
+    reason_code: str,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
+    message: str | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    """Record a visible wake signal for AI-owned runnable or soon-runnable work."""
+
+    await repo.create_task_event(
+        task_id=task.id,
+        event_type="wake_requested",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=message or f"Wake requested: {reason_code}",
+        details_json=encode_task_event_details(
+            {
+                "reason_code": reason_code,
+                "owner_type": task.owner_type,
+                "owner_ref": task.owner_ref,
+                "reviewer_type": task.reviewer_type,
+                "reviewer_ref": task.reviewer_ref,
+                "status": task.status,
+                "ready_at": task.ready_at.isoformat() if task.ready_at is not None else None,
+                **(details or {}),
+            }
+        ),
+    )
+
+
+def _extract_task_mentions(message: str) -> list[dict[str, str]]:
+    """Parse lightweight @profile and @profile:subagent mentions from comments."""
+
+    mentions: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for match in _MENTION_PATTERN.finditer(message):
+        profile_id = str(match.group(1) or "").strip()
+        subagent_name = str(match.group(2) or "").strip()
+        if not profile_id:
+            continue
+        if subagent_name:
+            owner_type = AI_SUBAGENT_OWNER_TYPE
+            owner_ref = f"{profile_id}:{subagent_name}"
+            token = f"@{profile_id}:{subagent_name}"
+        else:
+            owner_type = "ai_profile"
+            owner_ref = profile_id
+            token = f"@{profile_id}"
+        key = (owner_type, owner_ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        mentions.append(
+            {
+                "owner_type": owner_type,
+                "owner_ref": owner_ref,
+                "token": token,
+            }
+        )
+    return mentions
+
+
+async def _record_document_event(
+    *,
+    repo: TaskFlowRepository,
+    profile_id: str,
+    scope_type: str,
+    scope_id: str,
+    document: TaskDocument,
+    actor_type: str,
+    actor_ref: str,
+) -> None:
+    """Record document updates on task history when the scope is task-like."""
+
+    _ = profile_id
+    if scope_type != _TASK_DOCUMENT_SCOPE_TASK:
+        return
+    await record_task_event(
+        repo=repo,
+        task_id=scope_id,
+        event_type="document_revision_created",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=f"Updated {document.document_key} document revision {document.revision}.",
+        details={
+            "document_id": document.id,
+            "document_key": document.document_key,
+            "revision": document.revision,
+            "latest_revision_id": document.latest_revision_id,
+        },
+    )
+
+
+async def _record_document_confirmation_event(
+    *,
+    repo: TaskFlowRepository,
+    document: TaskDocument,
+    actor_type: str,
+    actor_ref: str,
+) -> None:
+    """Record document confirmations on task history when the scope is task-like."""
+
+    if document.scope_type != _TASK_DOCUMENT_SCOPE_TASK:
+        return
+    await record_task_event(
+        repo=repo,
+        task_id=document.scope_id,
+        event_type="document_confirmed",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=f"Confirmed {document.document_key} document revision {document.revision}.",
+        details={
+            "document_id": document.id,
+            "document_key": document.document_key,
+            "revision": document.revision,
+            "confirmation_status": document.confirmation_status,
+        },
     )
 
 
@@ -3970,9 +4968,7 @@ async def _delete_task_row(
     dependent_edges = await repo.list_dependents(depends_on_task_id=row.id)
     skip_ids = skip_reconcile_task_ids or set()
     dependent_task_ids = tuple(
-        edge.task_id
-        for edge in dependent_edges
-        if edge.task_id not in skip_ids
+        edge.task_id for edge in dependent_edges if edge.task_id not in skip_ids
     )
     await repo.delete_task_attachments(task_id=row.id)
     await repo.delete_task_events(task_id=row.id)

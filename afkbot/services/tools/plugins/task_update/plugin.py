@@ -62,7 +62,11 @@ class TaskUpdateTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskUpdateParams) else TaskUpdateParams.model_validate(params)
+        payload = (
+            params
+            if isinstance(params, TaskUpdateParams)
+            else TaskUpdateParams.model_validate(params)
+        )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
             payload=payload,
@@ -82,17 +86,34 @@ class TaskUpdateTool(ToolBase):
                 owner_profile_id=payload.owner_profile_id,
                 owner_subagent_name=payload.owner_subagent_name,
             )
-            resolved_reviewer_type, resolved_reviewer_ref = resolve_task_owner_inputs(
-                field_prefix="reviewer",
-                owner_type=payload.reviewer_type,
-                owner_ref=payload.reviewer_ref,
-                owner_profile_id=payload.reviewer_profile_id,
-                owner_subagent_name=payload.reviewer_subagent_name,
-            )
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
+            reviewer_fields_explicit = bool(
+                explicit_fields
+                & {
+                    "reviewer_type",
+                    "reviewer_ref",
+                    "reviewer_profile_id",
+                    "reviewer_subagent_name",
+                }
+            )
+            if reviewer_fields_explicit:
+                resolved_reviewer_type: str | None | object
+                resolved_reviewer_ref: str | None | object
+                resolved_reviewer_type, resolved_reviewer_ref = resolve_task_owner_inputs(
+                    field_prefix="reviewer",
+                    owner_type=payload.reviewer_type,
+                    owner_ref=payload.reviewer_ref,
+                    owner_profile_id=payload.reviewer_profile_id,
+                    owner_subagent_name=payload.reviewer_subagent_name,
+                )
+            else:
+                resolved_reviewer_type = TASK_FLOW_FIELD_UNSET
+                resolved_reviewer_ref = TASK_FLOW_FIELD_UNSET
             session_id_explicit = "session_id" in explicit_fields
             session_profile_id_explicit = "session_profile_id" in explicit_fields
-            if actor.actor_type == "automation" and (session_id_explicit or session_profile_id_explicit):
+            if actor.actor_type == "automation" and (
+                session_id_explicit or session_profile_id_explicit
+            ):
                 return ToolResult.error(
                     error_code="task_session_binding_forbidden",
                     reason="automation graph runtime does not support explicit task session bindings",
@@ -104,10 +125,14 @@ class TaskUpdateTool(ToolBase):
             blocked_reason_code_explicit = "blocked_reason_code" in explicit_fields
             blocked_reason_text_explicit = "blocked_reason_text" in explicit_fields
             blocked_reason_code_arg = (
-                payload.blocked_reason_code if blocked_reason_code_explicit else TASK_FLOW_FIELD_UNSET
+                payload.blocked_reason_code
+                if blocked_reason_code_explicit
+                else TASK_FLOW_FIELD_UNSET
             )
             blocked_reason_text_arg = (
-                payload.blocked_reason_text if blocked_reason_text_explicit else TASK_FLOW_FIELD_UNSET
+                payload.blocked_reason_text
+                if blocked_reason_text_explicit
+                else TASK_FLOW_FIELD_UNSET
             )
             ready_at_explicit = "ready_at" in explicit_fields
             retry_after_explicit = "retry_after_sec" in explicit_fields
@@ -123,7 +148,9 @@ class TaskUpdateTool(ToolBase):
                         error_code="task_retry_after_requires_blocked_status",
                         reason="retry_after_sec requires status=blocked",
                     )
-                effective_ready_at = datetime.now(timezone.utc) + timedelta(seconds=payload.retry_after_sec or 0)
+                effective_ready_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=payload.retry_after_sec or 0
+                )
             if (
                 actor.actor_type != "automation"
                 and effective_session_id is None
@@ -160,7 +187,8 @@ class TaskUpdateTool(ToolBase):
                         session_id=effective_session_id,
                         session_profile_id=(
                             effective_session_profile_id
-                            if session_profile_id_explicit or effective_session_profile_id is not None
+                            if session_profile_id_explicit
+                            or effective_session_profile_id is not None
                             else None
                         ),
                         blocked_reason_code=blocked_reason_code_arg,

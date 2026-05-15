@@ -113,12 +113,17 @@ class Settings(BaseSettings):
         "task_block",
         "task_comment_add",
         "task_comment_list",
+        "task_context_get",
         "task_create",
         "task_delegate",
         "task_dependency_add",
         "task_dependency_list",
         "task_dependency_remove",
+        "task_doc_confirm",
+        "task_doc_list",
+        "task_doc_put",
         "task_event_list",
+        "task_feed_list",
         "task_flow_create",
         "task_flow_list",
         "task_flow_get",
@@ -232,7 +237,9 @@ class Settings(BaseSettings):
     deployment_mode: Literal["self_hosted", "managed"] = "self_hosted"
     runtime_public_bind_policy: Literal["local_only", "auth_required"] = "local_only"
     plugin_api_auth_required: bool = True
-    managed_database_isolation_mode: Literal["database_per_bot", "schema_per_bot"] = "database_per_bot"
+    managed_database_isolation_mode: Literal["database_per_bot", "schema_per_bot"] = (
+        "database_per_bot"
+    )
     llm_proxy_type: Literal["none", "http", "socks5", "socks5h"] = "none"
     llm_proxy_url: str | None = None
     llm_debug_diagnostics_enabled: bool = False
@@ -556,19 +563,11 @@ class Settings(BaseSettings):
         if value is None:
             return ("afkbotui",)
         if isinstance(value, str):
-            return tuple(
-                item.strip().lower()
-                for item in value.split(",")
-                if item.strip()
-            )
+            return tuple(item.strip().lower() for item in value.split(",") if item.strip())
         if isinstance(value, Mapping):
             return value
         if isinstance(value, (list, tuple, set, frozenset)):
-            return tuple(
-                str(item).strip().lower()
-                for item in value
-                if str(item).strip()
-            )
+            return tuple(str(item).strip().lower() for item in value if str(item).strip())
         return value
 
     @field_validator(

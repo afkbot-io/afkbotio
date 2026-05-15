@@ -194,7 +194,9 @@ async def list_tasks_payload(
             flow_id=flow_id,
             limit=limit,
         )
-        return json.dumps({"tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+        return json.dumps(
+            {"tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+        )
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
@@ -261,6 +263,194 @@ async def build_human_inbox_payload(
             mark_seen=mark_seen,
         )
         return json.dumps({"inbox": inbox.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def build_agent_feed_payload(
+    *,
+    profile_id: str,
+    owner_type: str,
+    owner_ref: str,
+    task_limit: int = 10,
+    event_limit: int = 10,
+) -> str:
+    """Build one AI assignment/mention feed payload."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        feed = await service.build_agent_inbox(
+            profile_id=profile_id,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            task_limit=task_limit,
+            event_limit=event_limit,
+        )
+        return json.dumps({"feed": feed.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def build_task_context_payload(
+    *,
+    profile_id: str,
+    task_id: str,
+    event_limit: int = 20,
+    comment_limit: int = 10,
+) -> str:
+    """Build one Task Flow context bundle payload."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        context = await service.build_task_context(
+            profile_id=profile_id,
+            task_id=task_id,
+            event_limit=event_limit,
+            comment_limit=comment_limit,
+        )
+        return json.dumps({"task_context": context.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def list_task_documents_payload(
+    *,
+    profile_id: str,
+    scope_type: str,
+    scope_id: str,
+) -> str:
+    """List Task Flow documents for a flow or task scope."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        normalized_scope_type = scope_type.strip().lower()
+        if normalized_scope_type == "flow":
+            documents = await service.list_flow_documents(profile_id=profile_id, flow_id=scope_id)
+        elif normalized_scope_type == "task":
+            context = await service.build_task_context(
+                profile_id=profile_id,
+                task_id=scope_id,
+                event_limit=1,
+                comment_limit=1,
+            )
+            documents = list(context.task_documents)
+        else:
+            return _error_json(
+                error_code="invalid_task_document_scope",
+                reason="scope_type must be flow or task",
+            )
+        return json.dumps(
+            {"documents": [item.model_dump(mode="json") for item in documents]},
+            ensure_ascii=True,
+        )
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def put_task_document_payload(
+    *,
+    profile_id: str,
+    scope_type: str,
+    scope_id: str,
+    document_key: str,
+    title: str,
+    body: str,
+    actor_type: str,
+    actor_ref: str,
+    base_revision: int | None = None,
+) -> str:
+    """Create or update one Task Flow document."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        normalized_scope_type = scope_type.strip().lower()
+        if normalized_scope_type == "flow":
+            document = await service.put_flow_document(
+                profile_id=profile_id,
+                flow_id=scope_id,
+                document_key=document_key,
+                title=title,
+                body=body,
+                actor_type=actor_type,
+                actor_ref=actor_ref,
+                base_revision=base_revision,
+            )
+        elif normalized_scope_type == "task":
+            document = await service.put_task_document(
+                profile_id=profile_id,
+                task_id=scope_id,
+                document_key=document_key,
+                title=title,
+                body=body,
+                actor_type=actor_type,
+                actor_ref=actor_ref,
+                base_revision=base_revision,
+            )
+        else:
+            return _error_json(
+                error_code="invalid_task_document_scope",
+                reason="scope_type must be flow or task",
+            )
+        return json.dumps({"document": document.model_dump(mode="json")}, ensure_ascii=True)
+    except TaskFlowServiceError as exc:
+        return _error_json(error_code=exc.error_code, reason=exc.reason)
+    finally:
+        await engine.dispose()
+
+
+async def confirm_task_document_payload(
+    *,
+    profile_id: str,
+    document_id: str,
+    actor_type: str,
+    actor_ref: str,
+    expected_revision: int | None = None,
+) -> str:
+    """Confirm one Task Flow document revision."""
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    await create_schema(engine)
+    try:
+        await _ensure_profile_exists(session_factory, profile_id)
+        service = get_task_flow_service(settings)
+        document = await service.confirm_document(
+            profile_id=profile_id,
+            document_id=document_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            expected_revision=expected_revision,
+        )
+        return json.dumps({"document": document.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
@@ -373,7 +563,9 @@ async def list_review_tasks_payload(
             labels=labels,
             limit=limit,
         )
-        return json.dumps({"review_tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+        return json.dumps(
+            {"review_tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+        )
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
@@ -400,7 +592,9 @@ async def list_task_events_payload(
             task_id=task_id,
             limit=limit,
         )
-        return json.dumps({"task_events": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+        return json.dumps(
+            {"task_events": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+        )
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:
@@ -427,7 +621,9 @@ async def list_task_comments_payload(
             task_id=task_id,
             limit=limit,
         )
-        return json.dumps({"task_comments": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+        return json.dumps(
+            {"task_comments": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+        )
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:

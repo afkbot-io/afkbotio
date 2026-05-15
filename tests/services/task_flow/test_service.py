@@ -178,6 +178,403 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
         await engine.dispose()
 
 
+async def test_task_flow_service_creates_default_flow_documents_and_revisions(
+    tmp_path: Path,
+) -> None:
+    """Flows should carry editable project docs without changing legacy flow fields."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_documents.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Agent operating model",
+            description="Coordinate profile agents and subagents.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        documents = await service.list_flow_documents(
+            profile_id="default",
+            flow_id=flow.id,
+        )
+        by_key = {document.document_key: document for document in documents}
+        assert {"brief", "plan", "roadmap", "spec", "decisions"}.issubset(by_key)
+        assert by_key["brief"].revision == 1
+        assert by_key["brief"].scope_type == "flow"
+        assert by_key["brief"].scope_id == flow.id
+        assert "Agent operating model" in by_key["brief"].body
+
+        updated = await service.put_flow_document(
+            profile_id="default",
+            flow_id=flow.id,
+            document_key="plan",
+            title="Execution plan",
+            body="1. Capture context.\n2. Decompose work.\n3. Verify output.",
+            actor_type="human",
+            actor_ref="cli",
+            base_revision=by_key["plan"].revision,
+        )
+        assert updated.document_key == "plan"
+        assert updated.revision == by_key["plan"].revision + 1
+        assert updated.body.startswith("1. Capture context.")
+
+        revisions = await service.list_document_revisions(
+            profile_id="default",
+            document_id=updated.id,
+        )
+        assert [revision.revision for revision in revisions] == [2, 1]
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_builds_task_context_with_docs_history_and_relations(
+    tmp_path: Path,
+) -> None:
+    """Task context should give agents the surrounding work state before execution."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_context.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Autonomous agent team",
+            description="Make agents coordinate through tasks and docs.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        parent = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Implement collaboration loop",
+            description="Build docs, context, mentions, and recovery primitives.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        delegated = await service.delegate_task(
+            profile_id="default",
+            source_task_id=parent.id,
+            title="Draft context contract",
+            description="Define the context bundle that every worker receives.",
+            actor_type="ai_profile",
+            actor_ref="default",
+            delegated_owner_type="ai_profile",
+            delegated_owner_ref="default",
+            wait_for_delegated_task=True,
+        )
+        await service.add_task_comment(
+            profile_id="default",
+            task_id=parent.id,
+            message="Initial plan persisted for the implementation run.",
+            actor_type="ai_profile",
+            actor_ref="default",
+            comment_type="plan",
+        )
+        task_doc = await service.put_task_document(
+            profile_id="default",
+            task_id=parent.id,
+            document_key="spec",
+            title="Task spec",
+            body="Agents must receive docs, blockers, comments, and delegated work.",
+            actor_type="ai_profile",
+            actor_ref="default",
+        )
+
+        context = await service.build_task_context(
+            profile_id="default",
+            task_id=parent.id,
+            event_limit=10,
+            comment_limit=10,
+        )
+
+        assert context.task.id == parent.id
+        assert context.flow is not None
+        assert context.flow.id == flow.id
+        assert any(document.document_key == "plan" for document in context.flow_documents)
+        assert context.task_documents == (task_doc,)
+        assert context.recent_comments[0].comment_type == "plan"
+        assert context.delegated_tasks[0].id == delegated.delegated_task.id
+        assert context.dependencies[0].depends_on_task_id == delegated.delegated_task.id
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path) -> None:
+    """Task comments should turn @profile:subagent references into actionable AI inbox events."""
+
+    db_name = "task_flow_agent_mentions.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="researcher",
+        markdown="# Researcher\nInvestigate delegated work and answer mentions.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Check competitor behavior",
+            description="Compare our Task Flow behavior with Paperclip.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        await service.add_task_comment(
+            profile_id="default",
+            task_id=task.id,
+            message="@analyst:researcher please verify the planning-doc assumptions.",
+            actor_type="ai_profile",
+            actor_ref="default",
+            comment_type="question",
+        )
+
+        inbox = await service.build_agent_inbox(
+            profile_id="default",
+            owner_type="ai_subagent",
+            owner_ref="analyst:researcher",
+            event_limit=10,
+        )
+
+        assert inbox.owner_type == "ai_subagent"
+        assert inbox.owner_ref == "analyst:researcher"
+        assert inbox.mention_event_count == 1
+        assert {event.event_type for event in inbox.recent_events} >= {
+            "mention_created",
+            "wake_requested",
+        }
+        mention_event = next(
+            event for event in inbox.recent_events if event.event_type == "mention_created"
+        )
+        wake_event = next(
+            event for event in inbox.recent_events if event.event_type == "wake_requested"
+        )
+        assert mention_event.task_id == task.id
+        assert wake_event.details["reason_code"] == "explicit_mention"
+        assert mention_event.details["mentions"] == [
+            {
+                "owner_type": "ai_subagent",
+                "owner_ref": "analyst:researcher",
+                "token": "@analyst:researcher",
+            }
+        ]
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_agent_inbox_includes_review_assignments_by_reviewer(
+    tmp_path: Path,
+) -> None:
+    """AI inbox should match runtime claim ownership for review assignments."""
+
+    db_name = "task_flow_agent_review_inbox.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nReview assigned work.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        review_task = await service.create_task(
+            profile_id="default",
+            title="Review human-owned implementation",
+            description="Review this task even though the task owner is human.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=review_task.id, status="review")
+
+        inbox = await service.build_agent_inbox(
+            profile_id="default",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+        )
+
+        assert inbox.review_count == 1
+        assert [item.id for item in inbox.tasks] == [review_task.id]
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="claim-review-inbox",
+                claimed_by="taskflow-runtime:reviewer",
+            )
+        assert claimed is not None
+        assert claimed.id == review_task.id
+        assert claimed.claim_owner_type == "ai_subagent"
+        assert claimed.claim_owner_ref == "analyst:reviewer"
+
+        active_inbox = await service.build_agent_inbox(
+            profile_id="default",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+        )
+
+        assert active_inbox.running_count == 1
+        assert [item.id for item in active_inbox.tasks] == [review_task.id]
+
+        review_inbox = await service.list_review_tasks(
+            profile_id="default",
+            actor_type="ai_subagent",
+            actor_ref="analyst:reviewer",
+        )
+        assert [item.id for item in review_inbox] == [review_task.id]
+        assert review_inbox[0].review_actionable is True
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -> None:
+    """Explicit reviewer nulls should remove stale review routing."""
+
+    db_name = "task_flow_clear_reviewer.db"
+    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="analyst",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nReview assigned work.",
+    )
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "analyst"),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Clear stale reviewer",
+            description="Remove the specialist reviewer and fall back to the task owner.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_subagent",
+            reviewer_ref="analyst:reviewer",
+        )
+
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            reviewer_type=None,
+            reviewer_ref=None,
+        )
+        assert updated.reviewer_type is None
+        assert updated.reviewer_ref is None
+
+        review_task = await service.update_task(
+            profile_id="default", task_id=task.id, status="review"
+        )
+        assert review_task.status == "review"
+        assert review_task.reviewer_type is None
+        assert review_task.reviewer_ref is None
+
+        stale_reviewer_inbox = await service.build_agent_inbox(
+            profile_id="default",
+            owner_type="ai_subagent",
+            owner_ref="analyst:reviewer",
+        )
+        assert stale_reviewer_inbox.total_count == 0
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claim_now = datetime.now(timezone.utc)
+            stale_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-stale-reviewer",
+                claimed_by="taskflow-runtime:stale-reviewer",
+                owner_ref="analyst:reviewer",
+            )
+            owner_claim = await repo.claim_next_runnable_task(
+                now_utc=claim_now,
+                lease_until=claim_now + timedelta(minutes=15),
+                claim_token="claim-owner-reviewer-fallback",
+                claimed_by="taskflow-runtime:owner",
+                owner_ref="default",
+            )
+
+        assert stale_claim is None
+        assert owner_claim is not None
+        assert owner_claim.id == task.id
+        assert owner_claim.claim_owner_type == "ai_profile"
+        assert owner_claim.claim_owner_ref == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
+    tmp_path: Path,
+) -> None:
+    """AI-owned dependency-wait tasks should emit visible wake events when ready."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_ai_wake_events.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        prerequisite = await service.create_task(
+            profile_id="default",
+            title="Prepare API contract",
+            description="Write the API contract before implementation starts.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        dependent = await service.create_task(
+            profile_id="default",
+            title="Implement API contract",
+            description="Implement only after the contract is complete.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            depends_on_task_ids=(prerequisite.id,),
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=prerequisite.id,
+            status="completed",
+        )
+
+        events = await service.list_task_events(profile_id="default", task_id=dependent.id)
+        wake_event = next(event for event in events if event.event_type == "wake_requested")
+        assert wake_event.details["reason_code"] == "dependencies_satisfied"
+        assert wake_event.details["owner_type"] == "ai_profile"
+        assert wake_event.details["owner_ref"] == "default"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_allows_assigning_task_to_ai_subagent(tmp_path: Path) -> None:
     """Tasks should accept direct ai_subagent ownership when the descriptor exists."""
 
@@ -541,7 +938,9 @@ async def test_task_flow_service_lists_stale_task_claims_for_one_owner_ref(tmp_p
         )
         stale_now = datetime.now(timezone.utc)
 
-        async def _mark_stale(task_id: str, *, owner_ref: str, claim_token: str, worker_id: str) -> None:
+        async def _mark_stale(
+            task_id: str, *, owner_ref: str, claim_token: str, worker_id: str
+        ) -> None:
             async with session_scope(factory) as session:
                 repo = TaskFlowRepository(session)
                 claimed = await repo.claim_next_runnable_task(
@@ -626,7 +1025,9 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             reviewer_ref="cli_user:alice",
             labels=("review",),
         )
-        await service.update_task(profile_id="default", task_id=explicit_reviewer.id, status="review")
+        await service.update_task(
+            profile_id="default", task_id=explicit_reviewer.id, status="review"
+        )
 
         owner_fallback = await service.create_task(
             profile_id="default",
@@ -666,7 +1067,9 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         await engine.dispose()
 
 
-async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_owner(tmp_path: Path) -> None:
+async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_owner(
+    tmp_path: Path,
+) -> None:
     """Review claim fallback should treat empty reviewer fields like missing reviewer fields."""
 
     db_name = "task_flow_review_blank_reviewer_claim.db"
@@ -1079,7 +1482,9 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             owner_ref="cli_user:alice",
             labels=("release",),
         )
-        await service.update_task(profile_id="default", task_id=completed_task.id, status="completed")
+        await service.update_task(
+            profile_id="default", task_id=completed_task.id, status="completed"
+        )
         failed_task = await service.create_task(
             profile_id="default",
             title="Failed item",
@@ -1101,7 +1506,9 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             owner_ref="cli_user:alice",
             labels=("release",),
         )
-        await service.update_task(profile_id="default", task_id=cancelled_task.id, status="cancelled")
+        await service.update_task(
+            profile_id="default", task_id=cancelled_task.id, status="cancelled"
+        )
         await service.create_task(
             profile_id="default",
             title="Claimed item",
@@ -1144,7 +1551,9 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             running_row = claimed_row if claimed_row.id == running_task.id else second_row
             await repo.mark_task_started(
                 task_id=running_row.id,
-                claim_token="claim-board-1" if running_row.id == claimed_row.id else "claim-board-2",
+                claim_token="claim-board-1"
+                if running_row.id == claimed_row.id
+                else "claim-board-2",
                 started_at=claim_now_utc,
             )
 
@@ -1351,11 +1760,12 @@ async def test_task_flow_service_rebinding_session_reinfers_profile_from_owner(
         await engine.dispose()
 
 
-
 async def test_task_flow_service_create_task_rejects_missing_description(tmp_path: Path) -> None:
     """create_task should fail fast when description is omitted."""
 
-    engine, factory = await build_repository_factory(tmp_path, db_name="task_flow_create_requires_description.db")
+    engine, factory = await build_repository_factory(
+        tmp_path, db_name="task_flow_create_requires_description.db"
+    )
     service = TaskFlowService(factory)
     try:
         with pytest.raises(TaskFlowServiceError) as exc_info:
@@ -1376,7 +1786,9 @@ async def test_task_flow_service_create_task_rejects_missing_description(tmp_pat
 async def test_task_flow_service_delegate_task_rejects_missing_description(tmp_path: Path) -> None:
     """delegate_task should fail fast when description is omitted."""
 
-    engine, factory = await build_repository_factory(tmp_path, db_name="task_flow_delegate_requires_description.db")
+    engine, factory = await build_repository_factory(
+        tmp_path, db_name="task_flow_delegate_requires_description.db"
+    )
     service = TaskFlowService(factory)
     try:
         with pytest.raises(TaskFlowServiceError) as exc_info:
@@ -1781,7 +2193,9 @@ async def test_task_flow_service_rejects_ai_creator_outside_backlog_roster(tmp_p
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_manager_assignment_outside_team_roster(tmp_path: Path) -> None:
+async def test_task_flow_service_rejects_manager_assignment_outside_team_roster(
+    tmp_path: Path,
+) -> None:
     """Backlog manager AI should still be constrained to its configured teammate roster."""
 
     db_name = "task_flow_manager_assignment.db"
@@ -2123,7 +2537,9 @@ async def test_task_flow_service_limits_automation_mutations_to_own_tasks(
         await engine.dispose()
 
 
-async def test_task_flow_service_requires_actor_identity_on_public_mutations(tmp_path: Path) -> None:
+async def test_task_flow_service_requires_actor_identity_on_public_mutations(
+    tmp_path: Path,
+) -> None:
     """Public service instances should reject anonymous task and review mutations."""
 
     db_name = "task_flow_public_actor_required.db"
@@ -2322,7 +2738,9 @@ async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_p
         await engine.dispose()
 
 
-async def test_task_flow_service_preserves_block_reason_on_unrelated_updates(tmp_path: Path) -> None:
+async def test_task_flow_service_preserves_block_reason_on_unrelated_updates(
+    tmp_path: Path,
+) -> None:
     """Updating metadata on blocked tasks should not silently clear the blocker semantics."""
 
     engine, factory = await build_repository_factory(
@@ -2721,7 +3139,7 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
         assert updated.status == "review"
 
         events = await service.list_task_events(profile_id="default", task_id=task.id)
-        assert [item.event_type for item in events] == ["updated", "created"]
+        assert [item.event_type for item in events] == ["updated", "wake_requested", "created"]
         updated_event = events[0]
         assert updated_event.actor_type == "human"
         assert updated_event.actor_ref == "cli_user:alice"
@@ -2750,10 +3168,13 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
             task_id=dependent.id,
             depends_on_task_id=prereq.id,
         )
-        dependency_events = await service.list_task_events(profile_id="default", task_id=dependent.id)
-        assert [item.event_type for item in dependency_events[:3]] == [
+        dependency_events = await service.list_task_events(
+            profile_id="default", task_id=dependent.id
+        )
+        assert [item.event_type for item in dependency_events[:4]] == [
             "dependencies_blocked",
             "dependency_added",
+            "wake_requested",
             "created",
         ]
 
@@ -2762,12 +3183,16 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
             task_id=dependent.id,
             depends_on_task_id=prereq.id,
         )
-        dependency_events = await service.list_task_events(profile_id="default", task_id=dependent.id)
-        assert [item.event_type for item in dependency_events[:5]] == [
+        dependency_events = await service.list_task_events(
+            profile_id="default", task_id=dependent.id
+        )
+        assert [item.event_type for item in dependency_events[:7]] == [
+            "wake_requested",
             "dependencies_satisfied",
             "dependency_removed",
             "dependencies_blocked",
             "dependency_added",
+            "wake_requested",
             "created",
         ]
     finally:
@@ -2939,9 +3364,13 @@ async def test_task_flow_service_human_inbox_avoids_materializing_full_unseen_ev
         )
 
         async def _unexpected_bulk_fetch(*args, **kwargs):
-            raise AssertionError("build_human_inbox should not materialize the full unseen event tail")
+            raise AssertionError(
+                "build_human_inbox should not materialize the full unseen event tail"
+            )
 
-        monkeypatch.setattr(TaskFlowRepository, "list_task_events_for_tasks", _unexpected_bulk_fetch)
+        monkeypatch.setattr(
+            TaskFlowRepository, "list_task_events_for_tasks", _unexpected_bulk_fetch
+        )
 
         inbox = await service.build_human_inbox(
             profile_id="default",
@@ -3106,7 +3535,10 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
             ),
         )
 
-        assert task.description == "Collect requirements, attach source files, and keep the task in plan."
+        assert (
+            task.description
+            == "Collect requirements, attach source files, and keep the task in plan."
+        )
         assert task.status == "plan"
         assert task.attachment_count == 1
 
@@ -3130,11 +3562,14 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
     finally:
         await engine.dispose()
 
+
 async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: Path) -> None:
     """AI-owned PLAN tasks must be rejected to prevent silent runtime starvation."""
 
     db_name = "task_flow_plan_ai_owner_create_rejected.db"
-    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    engine, factory = await build_repository_factory(
+        tmp_path, db_name=db_name, profile_ids=("default",)
+    )
     service = TaskFlowService(factory)
 
     try:
@@ -3160,7 +3595,9 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
     """Status updates should block transitions to AI-owned PLAN."""
 
     db_name = "task_flow_plan_ai_owner_update_rejected.db"
-    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    engine, factory = await build_repository_factory(
+        tmp_path, db_name=db_name, profile_ids=("default",)
+    )
     service = TaskFlowService(factory)
 
     try:
@@ -3189,11 +3626,15 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(tmp_path: Path) -> None:
+async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
+    tmp_path: Path,
+) -> None:
     """Owner reassignment must not move PLAN tasks under AI ownership."""
 
     db_name = "task_flow_plan_ai_owner_reassign_rejected.db"
-    engine, factory = await build_repository_factory(tmp_path, db_name=db_name, profile_ids=("default",))
+    engine, factory = await build_repository_factory(
+        tmp_path, db_name=db_name, profile_ids=("default",)
+    )
     service = TaskFlowService(factory)
 
     try:

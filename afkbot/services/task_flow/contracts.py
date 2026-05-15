@@ -27,6 +27,48 @@ class TaskFlowMetadata(BaseModel):
     updated_at: datetime
 
 
+class TaskDocumentMetadata(BaseModel):
+    """Latest editable document body attached to a Task Flow scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    profile_id: str
+    scope_type: str
+    scope_id: str
+    document_key: str
+    title: str
+    body: str
+    revision: int = Field(ge=1)
+    confirmation_status: str = "draft"
+    confirmed_revision: int | None = None
+    confirmed_by_type: str | None = None
+    confirmed_by_ref: str | None = None
+    confirmed_at: datetime | None = None
+    latest_revision_id: int | None = None
+    created_by_type: str
+    created_by_ref: str
+    updated_by_type: str
+    updated_by_ref: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskDocumentRevisionMetadata(BaseModel):
+    """One immutable revision of a Task Flow document."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    document_id: str
+    revision: int = Field(ge=1)
+    title: str
+    body: str
+    created_by_type: str
+    created_by_ref: str
+    created_at: datetime
+
+
 class TaskSessionActivityMetadata(BaseModel):
     """Live session/dialog state attached to one task when work is in progress."""
 
@@ -110,6 +152,7 @@ class TaskMetadata(BaseModel):
     owner_ref: str
     reviewer_type: str | None = None
     reviewer_ref: str | None = None
+    review_actionable: bool = False
     source_type: str
     source_ref: str | None = None
     created_by_type: str
@@ -317,3 +360,39 @@ class HumanTaskInboxMetadata(BaseModel):
     unseen_event_count: int = Field(ge=0)
     tasks: tuple[TaskMetadata, ...] = ()
     recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
+
+
+class AgentTaskInboxMetadata(BaseModel):
+    """Notification-ready Task Flow inbox for an AI profile or subagent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    owner_type: str
+    owner_ref: str
+    total_count: int = Field(ge=0)
+    todo_count: int = Field(ge=0)
+    blocked_count: int = Field(ge=0)
+    review_count: int = Field(ge=0)
+    running_count: int = Field(ge=0)
+    mention_event_count: int = Field(ge=0)
+    tasks: tuple[TaskMetadata, ...] = ()
+    recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
+
+
+class TaskContextMetadata(BaseModel):
+    """Context bundle an agent should inspect before working one task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    task: TaskMetadata
+    flow: TaskFlowMetadata | None = None
+    flow_documents: tuple[TaskDocumentMetadata, ...] = ()
+    task_documents: tuple[TaskDocumentMetadata, ...] = ()
+    dependencies: tuple[TaskDependencyMetadata, ...] = ()
+    dependency_tasks: tuple[TaskMetadata, ...] = ()
+    dependents: tuple[TaskDependencyMetadata, ...] = ()
+    dependent_tasks: tuple[TaskMetadata, ...] = ()
+    delegated_tasks: tuple[TaskMetadata, ...] = ()
+    recent_comments: tuple[TaskCommentMetadata, ...] = ()
+    recent_events: tuple[TaskEventMetadata, ...] = ()

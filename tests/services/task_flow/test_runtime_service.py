@@ -82,7 +82,9 @@ class _FakeLoop:
                 session_id=session_id,
                 message=message,
                 transport=(
-                    str(metadata.get("transport") or "").strip() if isinstance(metadata, dict) else None
+                    str(metadata.get("transport") or "").strip()
+                    if isinstance(metadata, dict)
+                    else None
                 ),
                 account_id=(
                     str(metadata.get("account_id") or "").strip()
@@ -315,8 +317,16 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
     )
     service = TaskFlowService(factory)
     try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Support operations",
+            description="Coordinate support analysis with durable docs.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
         first = await service.create_task(
             profile_id="default",
+            flow_id=flow.id,
             title="Analyze support backlog",
             description="Summarize the last ten support tickets.",
             created_by_type="human",
@@ -324,8 +334,18 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
             owner_type="ai_profile",
             owner_ref="analyst",
         )
+        await service.put_task_document(
+            profile_id="default",
+            task_id=first.id,
+            document_key="plan",
+            title="Analysis plan",
+            body="Read tickets, group themes, and report blockers.",
+            actor_type="human",
+            actor_ref="cli",
+        )
         dependent = await service.create_task(
             profile_id="default",
+            flow_id=flow.id,
             title="Send triage summary",
             description="Send the triage summary after analysis is ready.",
             created_by_type="human",
@@ -347,13 +367,17 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert listed_runs[0].id == updated.last_run_id
         assert listed_runs[0].status == "completed"
         listed_events = await service.list_task_events(profile_id="default", task_id=first.id)
-        execution_event = next(item for item in listed_events if item.event_type == "execution_completed")
+        execution_event = next(
+            item for item in listed_events if item.event_type == "execution_completed"
+        )
         assert execution_event.actor_type == "runtime"
         assert execution_event.actor_ref == "worker-a"
         assert execution_event.to_status == "completed"
         assert execution_event.details["run_id"] == listed_runs[0].run_id
         assert any(item.event_type == "comment_added" for item in listed_events)
-        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
+        fallback_comment = next(
+            item for item in listed_events if item.event_type == "comment_added"
+        )
         assert fallback_comment.message == "Completed: analysis complete"
         fetched_run = await service.get_task_run(
             profile_id="default",
@@ -377,6 +401,10 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert "This runtime is non-interactive." in observed.prompt_overlay
         assert "Do not rely on the final assistant message alone" in observed.prompt_overlay
         assert "task.update" in observed.prompt_overlay
+        assert "Task Flow Context Bundle:" in observed.message
+        assert "flow: Support operations" in observed.message
+        assert "task docs:" in observed.message
+        assert "plan r1: Analysis plan" in observed.message
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -423,10 +451,14 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         assert updated.blocked_reason_text == "Need human approval"
         assert updated.ready_at is None
         listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
-        blocked_event = next(item for item in listed_events if item.event_type == "execution_blocked")
+        blocked_event = next(
+            item for item in listed_events if item.event_type == "execution_blocked"
+        )
         assert blocked_event.message == "Need human approval"
         assert blocked_event.details["blocked_reason_code"] == "task_action_ask_question"
-        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
+        fallback_comment = next(
+            item for item in listed_events if item.event_type == "comment_added"
+        )
         assert fallback_comment.message == "Blocked: Need human approval"
 
         async with session_scope(factory) as session:
@@ -557,8 +589,13 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
         failed_event = next(item for item in listed_events if item.event_type == "execution_failed")
         assert failed_event.actor_ref == "worker-c"
         assert failed_event.details["error_code"] == "llm_timeout"
-        fallback_comment = next(item for item in listed_events if item.event_type == "comment_added")
-        assert fallback_comment.message == "Failed: Task run timed out while waiting for the LLM provider."
+        fallback_comment = next(
+            item for item in listed_events if item.event_type == "comment_added"
+        )
+        assert (
+            fallback_comment.message
+            == "Failed: Task run timed out while waiting for the LLM provider."
+        )
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -624,7 +661,9 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert task_run.error_code == "task_claim_lost"
 
         monkeypatch.setattr(runtime, "_mark_started", original_mark_started)
-        processed_retry = await runtime.execute_next_claimable_task(worker_id="worker-release-retry")
+        processed_retry = await runtime.execute_next_claimable_task(
+            worker_id="worker-release-retry"
+        )
 
         assert processed_retry is True
         completed = await service.get_task(profile_id="default", task_id=task.id)
@@ -723,7 +762,12 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
         assert fresh_run.status == "completed"
         events = await service.list_task_events(profile_id="default", task_id=task.id)
         assert any(item.event_type == "execution_completed" for item in events)
-        assert {item.event_type for item in events} >= {"created", "lease_expired", "execution_completed"}
+        assert {item.event_type for item in events} >= {
+            "created",
+            "lease_expired",
+            "recovery_action_created",
+            "execution_completed",
+        }
         fallback_comment = next(item for item in events if item.event_type == "comment_added")
         assert fallback_comment.message == "Completed: analysis complete"
         assert len(observed_calls) == 1
@@ -1027,9 +1071,14 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
         assert default_after.last_error_code == "task_lease_expired"
         assert ops_after.status == "running"
 
-        default_events = await service.list_task_events(profile_id="default", task_id=default_task.id)
+        default_events = await service.list_task_events(
+            profile_id="default", task_id=default_task.id
+        )
         ops_events = await service.list_task_events(profile_id="ops", task_id=ops_task.id)
-        assert default_events[0].event_type == "lease_expired"
+        assert [event.event_type for event in default_events[:2]] == [
+            "recovery_action_created",
+            "lease_expired",
+        ]
         assert all(item.event_type != "lease_expired" for item in ops_events)
     finally:
         await runtime.shutdown()
@@ -1305,7 +1354,9 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 worker_id="taskflow-runtime:owner-unfiltered"
             )
             assert processed is True
-            skipped_after_unfiltered = await service.get_task(profile_id="default", task_id=skipped.id)
+            skipped_after_unfiltered = await service.get_task(
+                profile_id="default", task_id=skipped.id
+            )
             assert observed_calls[1].task_id == skipped.id
             assert skipped_after_unfiltered.status == "completed"
         finally:
@@ -2198,7 +2249,9 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
             raise IntegrityError(
                 statement="UPDATE task SET status='claimed' /* ux_task_active_ai_owner */",
                 params=None,
-                orig=Exception("UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_ai_owner)"),
+                orig=Exception(
+                    "UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_ai_owner)"
+                ),
             )
         return await original_claim_next(self, **kwargs)
 
@@ -2346,7 +2399,9 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             created_by_ref="cli",
         )
 
-        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:plan-skip")
+        processed = await runtime.execute_next_claimable_task(
+            worker_id="taskflow-runtime:plan-skip"
+        )
 
         assert processed is True
         planned_after = await service.get_task(profile_id="default", task_id=planned.id)
@@ -2410,7 +2465,9 @@ async def test_taskflow_runtime_includes_task_attachments_in_execution_message(
             ),
         )
 
-        processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:attachments")
+        processed = await runtime.execute_next_claimable_task(
+            worker_id="taskflow-runtime:attachments"
+        )
 
         assert processed is True
         assert observed_calls[0].task_id == task.id
@@ -2452,6 +2509,10 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "This runtime is non-interactive." in overrides.prompt_overlay
     assert "task.update" in overrides.prompt_overlay
     assert "task.block" in overrides.prompt_overlay
+    assert "task.context.get" in overrides.prompt_overlay
+    assert "task.doc.put" in overrides.prompt_overlay
+    assert "task.doc.confirm" in overrides.prompt_overlay
+    assert "task.feed.list" in overrides.prompt_overlay
     assert "task.flow.create" in overrides.prompt_overlay
     assert "task.comment.add" in overrides.prompt_overlay
     assert "task.delegate" in overrides.prompt_overlay
