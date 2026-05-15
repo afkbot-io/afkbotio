@@ -58,7 +58,7 @@ def test_task_create_accepts_legacy_prompt_flag(monkeypatch) -> None:
 
     async def _fake_create_task_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task\":{\"id\":\"task_1\"}}"
+        return '{"task":{"id":"task_1"}}'
 
     monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
     monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
@@ -86,7 +86,7 @@ def test_task_create_prefers_description_over_prompt(monkeypatch) -> None:
 
     async def _fake_create_task_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task\":{\"id\":\"task_1\"}}"
+        return '{"task":{"id":"task_1"}}'
 
     monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
     monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
@@ -122,7 +122,7 @@ def test_task_create_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
 
     async def _fake_create_task_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task\":{\"id\":\"task_1\"}}"
+        return '{"task":{"id":"task_1"}}'
 
     monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
     monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
@@ -247,7 +247,7 @@ def test_task_update_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
 
     async def _fake_update_task_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task\":{\"id\":\"task_1\"}}"
+        return '{"task":{"id":"task_1"}}'
 
     monkeypatch.setattr(module, "update_task_payload", _fake_update_task_payload)
     monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
@@ -287,7 +287,7 @@ def test_task_list_supports_structured_owner_filter(monkeypatch) -> None:
 
     async def _fake_list_tasks_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"tasks\":[]}"
+        return '{"tasks":[]}'
 
     monkeypatch.setattr(module, "list_tasks_payload", _fake_list_tasks_payload)
 
@@ -309,6 +309,137 @@ def test_task_list_supports_structured_owner_filter(monkeypatch) -> None:
     assert captured["owner_ref"] == "papercliper:reviewer"
 
 
+def test_task_feed_supports_structured_ai_owner(monkeypatch) -> None:
+    """Feed should normalize AI profile/subagent selectors before payload generation."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    captured: dict[str, object] = {}
+
+    async def _fake_build_agent_feed_payload(**kwargs):
+        captured.update(kwargs)
+        return '{"feed":{"owner_type":"ai_subagent"}}'
+
+    monkeypatch.setattr(module, "build_agent_feed_payload", _fake_build_agent_feed_payload)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "feed",
+            "--owner-profile",
+            "papercliper",
+            "--owner-subagent",
+            "researcher",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["owner_type"] == "ai_subagent"
+    assert captured["owner_ref"] == "papercliper:researcher"
+
+
+def test_task_context_invokes_context_payload(monkeypatch) -> None:
+    """Context command should pass task id and limits to the payload layer."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    captured: dict[str, object] = {}
+
+    async def _fake_build_task_context_payload(**kwargs):
+        captured.update(kwargs)
+        return '{"task_context":{"task":{"id":"task_1"}}}'
+
+    monkeypatch.setattr(module, "build_task_context_payload", _fake_build_task_context_payload)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "context", "task_1", "--event-limit", "7", "--comment-limit", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["task_id"] == "task_1"
+    assert captured["event_limit"] == 7
+    assert captured["comment_limit"] == 3
+
+
+def test_task_doc_commands_invoke_payloads(monkeypatch) -> None:
+    """Document CLI commands should expose list, put, and confirm payloads."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    captured: dict[str, dict[str, object]] = {}
+
+    async def _fake_list_task_documents_payload(**kwargs):
+        captured["list"] = kwargs
+        return '{"documents":[]}'
+
+    async def _fake_put_task_document_payload(**kwargs):
+        captured["put"] = kwargs
+        return '{"document":{"id":"doc_1"}}'
+
+    async def _fake_confirm_task_document_payload(**kwargs):
+        captured["confirm"] = kwargs
+        return '{"document":{"id":"doc_1","confirmation_status":"confirmed"}}'
+
+    monkeypatch.setattr(module, "list_task_documents_payload", _fake_list_task_documents_payload)
+    monkeypatch.setattr(module, "put_task_document_payload", _fake_put_task_document_payload)
+    monkeypatch.setattr(
+        module, "confirm_task_document_payload", _fake_confirm_task_document_payload
+    )
+    monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
+
+    runner = CliRunner()
+    list_result = runner.invoke(
+        app,
+        ["task", "doc-list", "--scope-type", "flow", "--scope-id", "flow_1"],
+    )
+    put_result = runner.invoke(
+        app,
+        [
+            "task",
+            "doc-put",
+            "--scope-type",
+            "task",
+            "--scope-id",
+            "task_1",
+            "--key",
+            "plan",
+            "--title",
+            "Plan",
+            "--body",
+            "Do the work.",
+            "--base-revision",
+            "2",
+        ],
+    )
+    confirm_result = runner.invoke(
+        app,
+        ["task", "doc-confirm", "doc_1", "--expected-revision", "2"],
+    )
+
+    assert list_result.exit_code == 0
+    assert put_result.exit_code == 0
+    assert confirm_result.exit_code == 0
+    assert captured["list"]["scope_type"] == "flow"
+    assert captured["put"]["document_key"] == "plan"
+    assert captured["put"]["actor_ref"] == "cli_user:test"
+    assert captured["put"]["base_revision"] == 2
+    assert captured["confirm"]["document_id"] == "doc_1"
+    assert captured["confirm"]["expected_revision"] == 2
+
+
 def test_task_flow_create_supports_structured_default_owner_profile(monkeypatch) -> None:
     """Flow create should normalize structured profile-only default owner selectors."""
 
@@ -321,7 +452,7 @@ def test_task_flow_create_supports_structured_default_owner_profile(monkeypatch)
 
     async def _fake_create_flow_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task_flow\":{\"id\":\"flow_1\"}}"
+        return '{"task_flow":{"id":"flow_1"}}'
 
     monkeypatch.setattr(module, "create_flow_payload", _fake_create_flow_payload)
     monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
@@ -356,7 +487,7 @@ def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
 
     async def _fake_list_review_tasks_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"review_tasks\":[]}"
+        return '{"review_tasks":[]}'
 
     monkeypatch.setattr(module, "list_review_tasks_payload", _fake_list_review_tasks_payload)
 
@@ -378,7 +509,9 @@ def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
     assert captured["actor_ref"] == "papercliper:reviewer"
 
 
-def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(monkeypatch) -> None:
+def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
+    monkeypatch,
+) -> None:
     """Explicit human actor type should not be silently reinterpreted as an AI selector."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
@@ -411,7 +544,9 @@ def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_select
     assert "require actor_type=ai_subagent" in output
 
 
-def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(monkeypatch) -> None:
+def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(
+    monkeypatch,
+) -> None:
     """Review request-changes should normalize structured actor and reassignment selectors."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
@@ -423,9 +558,11 @@ def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(
 
     async def _fake_request_review_changes_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"task\":{\"id\":\"task_1\"}}"
+        return '{"task":{"id":"task_1"}}'
 
-    monkeypatch.setattr(module, "request_review_changes_payload", _fake_request_review_changes_payload)
+    monkeypatch.setattr(
+        module, "request_review_changes_payload", _fake_request_review_changes_payload
+    )
 
     runner = CliRunner()
     result = runner.invoke(
@@ -464,9 +601,11 @@ def test_task_stale_sweep_supports_structured_owner_filter(monkeypatch) -> None:
 
     async def _fake_sweep_stale_task_claims_payload(**kwargs):
         captured.update(kwargs)
-        return "{\"maintenance\":{\"repaired_count\":0}}"
+        return '{"maintenance":{"repaired_count":0}}'
 
-    monkeypatch.setattr(module, "sweep_stale_task_claims_payload", _fake_sweep_stale_task_claims_payload)
+    monkeypatch.setattr(
+        module, "sweep_stale_task_claims_payload", _fake_sweep_stale_task_claims_payload
+    )
 
     runner = CliRunner()
     result = runner.invoke(

@@ -6,7 +6,21 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from sqlalchemy import Delete, Select, and_, case, delete, false, func, literal, not_, or_, select, true, update
+from sqlalchemy import (
+    Delete,
+    Select,
+    and_,
+    case,
+    delete,
+    false,
+    func,
+    literal,
+    not_,
+    or_,
+    select,
+    true,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
@@ -16,6 +30,8 @@ from afkbot.db.upsert import upsert_insert_for_session
 from afkbot.models.task import Task
 from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
+from afkbot.models.task_document import TaskDocument
+from afkbot.models.task_document_revision import TaskDocumentRevision
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
 from afkbot.models.task_notification_cursor import TaskNotificationCursor
@@ -93,6 +109,199 @@ class TaskFlowRepository:
         result = await self._session.execute(statement)
         await self._session.flush()
         return _result_succeeded(result)
+
+    async def create_task_document(
+        self,
+        *,
+        document_id: str,
+        profile_id: str,
+        scope_type: str,
+        scope_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        created_by_type: str,
+        created_by_ref: str,
+    ) -> TaskDocument:
+        """Create one editable Task Flow document at revision 1."""
+
+        row = TaskDocument(
+            id=document_id,
+            profile_id=profile_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            document_key=document_key,
+            title=title,
+            body=body,
+            revision=1,
+            created_by_type=created_by_type,
+            created_by_ref=created_by_ref,
+            updated_by_type=created_by_type,
+            updated_by_ref=created_by_ref,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        revision = await self.create_task_document_revision(
+            document_id=row.id,
+            revision=row.revision,
+            title=row.title,
+            body=row.body,
+            created_by_type=created_by_type,
+            created_by_ref=created_by_ref,
+        )
+        row.latest_revision_id = revision.id
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row
+
+    async def get_task_document(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str,
+        scope_id: str,
+        document_key: str,
+    ) -> TaskDocument | None:
+        """Return one document by scope/key."""
+
+        statement: Select[tuple[TaskDocument]] = select(TaskDocument).where(
+            TaskDocument.profile_id == profile_id,
+            TaskDocument.scope_type == scope_type,
+            TaskDocument.scope_id == scope_id,
+            TaskDocument.document_key == document_key,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def get_task_document_by_id(
+        self,
+        *,
+        profile_id: str,
+        document_id: str,
+    ) -> TaskDocument | None:
+        """Return one document by id."""
+
+        statement: Select[tuple[TaskDocument]] = select(TaskDocument).where(
+            TaskDocument.profile_id == profile_id,
+            TaskDocument.id == document_id,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def list_task_documents(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str,
+        scope_id: str,
+    ) -> list[TaskDocument]:
+        """Return documents for one scope ordered by key."""
+
+        statement: Select[tuple[TaskDocument]] = (
+            select(TaskDocument)
+            .where(
+                TaskDocument.profile_id == profile_id,
+                TaskDocument.scope_type == scope_type,
+                TaskDocument.scope_id == scope_id,
+            )
+            .order_by(TaskDocument.document_key.asc())
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def update_task_document(
+        self,
+        *,
+        document: TaskDocument,
+        title: str,
+        body: str,
+        updated_by_type: str,
+        updated_by_ref: str,
+    ) -> TaskDocument:
+        """Update latest document body and append a new revision."""
+
+        document.revision = int(document.revision or 0) + 1
+        document.title = title
+        document.body = body
+        document.confirmation_status = "draft"
+        document.confirmed_revision = None
+        document.confirmed_by_type = None
+        document.confirmed_by_ref = None
+        document.confirmed_at = None
+        document.updated_by_type = updated_by_type
+        document.updated_by_ref = updated_by_ref
+        await self._session.flush()
+        revision = await self.create_task_document_revision(
+            document_id=document.id,
+            revision=document.revision,
+            title=document.title,
+            body=document.body,
+            created_by_type=updated_by_type,
+            created_by_ref=updated_by_ref,
+        )
+        document.latest_revision_id = revision.id
+        await self._session.flush()
+        await self._session.refresh(document)
+        return document
+
+    async def confirm_task_document(
+        self,
+        *,
+        document: TaskDocument,
+        confirmed_by_type: str,
+        confirmed_by_ref: str,
+        confirmed_at: datetime,
+    ) -> TaskDocument:
+        """Mark the current document revision as confirmed."""
+
+        document.confirmation_status = "confirmed"
+        document.confirmed_revision = document.revision
+        document.confirmed_by_type = confirmed_by_type
+        document.confirmed_by_ref = confirmed_by_ref
+        document.confirmed_at = confirmed_at
+        document.updated_by_type = confirmed_by_type
+        document.updated_by_ref = confirmed_by_ref
+        await self._session.flush()
+        await self._session.refresh(document)
+        return document
+
+    async def create_task_document_revision(
+        self,
+        *,
+        document_id: str,
+        revision: int,
+        title: str,
+        body: str,
+        created_by_type: str,
+        created_by_ref: str,
+    ) -> TaskDocumentRevision:
+        """Append one immutable document revision."""
+
+        row = TaskDocumentRevision(
+            document_id=document_id,
+            revision=revision,
+            title=title,
+            body=body,
+            created_by_type=created_by_type,
+            created_by_ref=created_by_ref,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_task_document_revisions(
+        self,
+        *,
+        document_id: str,
+        limit: int | None = None,
+    ) -> list[TaskDocumentRevision]:
+        """Return document revisions ordered newest first."""
+
+        statement: Select[tuple[TaskDocumentRevision]] = (
+            select(TaskDocumentRevision)
+            .where(TaskDocumentRevision.document_id == document_id)
+            .order_by(TaskDocumentRevision.revision.desc(), TaskDocumentRevision.id.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
 
     async def create_task(
         self,
@@ -232,6 +441,86 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def list_agent_inbox_tasks(
+        self,
+        *,
+        profile_id: str,
+        owner_type: str,
+        owner_ref: str,
+        limit: int | None = None,
+    ) -> list[Task]:
+        """Return tasks visible in one AI executor inbox.
+
+        This mirrors claim ownership: regular work belongs to task owner, review
+        work belongs to reviewer when set, and active claimed/running work
+        belongs to the persisted claim owner.
+        """
+
+        review_owner_type_expr = func.coalesce(func.nullif(Task.reviewer_type, ""), Task.owner_type)
+        review_owner_ref_expr = func.coalesce(func.nullif(Task.reviewer_ref, ""), Task.owner_ref)
+        active_claim_owner_type_expr = func.coalesce(
+            func.nullif(Task.claim_owner_type, ""),
+            Task.owner_type,
+        )
+        active_claim_owner_ref_expr = func.coalesce(
+            func.nullif(Task.claim_owner_ref, ""),
+            Task.owner_ref,
+        )
+        assigned_owner_candidate = and_(
+            Task.owner_type == owner_type,
+            Task.owner_ref == owner_ref,
+            Task.status.in_(("todo", "blocked", "review", "claimed", "running")),
+        )
+        review_candidate = and_(
+            Task.status == "review",
+            review_owner_type_expr == owner_type,
+            review_owner_ref_expr == owner_ref,
+        )
+        active_claim_candidate = and_(
+            Task.status.in_(("claimed", "running")),
+            active_claim_owner_type_expr == owner_type,
+            active_claim_owner_ref_expr == owner_ref,
+        )
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(
+                Task.profile_id == profile_id,
+                or_(assigned_owner_candidate, review_candidate, active_claim_candidate),
+            )
+            .order_by(
+                Task.priority.desc(),
+                Task.due_at.is_(None),
+                Task.due_at.asc(),
+                Task.created_at.asc(),
+            )
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().unique().all())
+
+    async def list_tasks_by_source(
+        self,
+        *,
+        profile_id: str,
+        source_type: str,
+        source_ref: str,
+        limit: int | None = None,
+    ) -> list[Task]:
+        """Return tasks created from one source pointer."""
+
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(
+                Task.profile_id == profile_id,
+                Task.source_type == source_type,
+                Task.source_ref == source_ref,
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def has_active_ai_task(
         self,
         *,
@@ -266,8 +555,8 @@ class TaskFlowRepository:
         ready_at: datetime | None | object = _UNSET,
         owner_type: str | None = None,
         owner_ref: str | None = None,
-        reviewer_type: str | None = None,
-        reviewer_ref: str | None = None,
+        reviewer_type: str | None | object = _UNSET,
+        reviewer_ref: str | None | object = _UNSET,
         requires_review: bool | None = None,
         labels_json: str | None = None,
         last_session_id: str | None | object = _UNSET,
@@ -296,10 +585,10 @@ class TaskFlowRepository:
             row.owner_type = owner_type
         if owner_ref is not None:
             row.owner_ref = owner_ref
-        if reviewer_type is not None:
-            row.reviewer_type = reviewer_type
-        if reviewer_ref is not None:
-            row.reviewer_ref = reviewer_ref
+        if reviewer_type is not _UNSET:
+            row.reviewer_type = cast(str | None, reviewer_type)
+        if reviewer_ref is not _UNSET:
+            row.reviewer_ref = cast(str | None, reviewer_ref)
         if requires_review is not None:
             row.requires_review = requires_review
         if labels_json is not None:
@@ -620,6 +909,43 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def list_task_feed_events_for_owner(
+        self,
+        *,
+        profile_id: str,
+        owner_type: str,
+        owner_ref: str,
+        limit: int | None = None,
+    ) -> list[TaskEvent]:
+        """Return recent feed events whose details reference one AI owner.
+
+        The JSON details payload is intentionally queried with portable LIKE
+        predicates so SQLite local runtimes and managed databases share the same
+        first-pass behavior.
+        """
+
+        statement: Select[tuple[TaskEvent]] = (
+            select(TaskEvent)
+            .join(Task, Task.id == TaskEvent.task_id)
+            .where(
+                Task.profile_id == profile_id,
+                TaskEvent.event_type.in_(
+                    (
+                        "mention_created",
+                        "wake_requested",
+                        "recovery_action_created",
+                        "runtime_claim_rejected",
+                    )
+                ),
+                TaskEvent.details_json.like(f'%"owner_type": "{owner_type}"%'),
+                TaskEvent.details_json.like(f'%"owner_ref": "{owner_ref}"%'),
+            )
+            .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def get_latest_task_event_id_for_tasks(
         self,
         *,
@@ -822,7 +1148,9 @@ class TaskFlowRepository:
 
         statement: Select[tuple[TaskRun]] = select(TaskRun)
         if profile_id is not None:
-            statement = statement.join(Task, Task.id == TaskRun.task_id).where(Task.profile_id == profile_id)
+            statement = statement.join(Task, Task.id == TaskRun.task_id).where(
+                Task.profile_id == profile_id
+            )
         if task_id is not None:
             statement = statement.where(TaskRun.task_id == task_id)
         statement = statement.order_by(TaskRun.attempt.desc(), TaskRun.id.desc())
@@ -915,10 +1243,12 @@ class TaskFlowRepository:
                 Task.due_at.label("due_at"),
                 Task.ready_at.label("ready_at"),
                 Task.created_at.label("created_at"),
-                func.row_number().over(
+                func.row_number()
+                .over(
                     partition_by=(Task.profile_id, claim_owner_type_expr, claim_owner_ref_expr),
                     order_by=_task_claim_base_ordering(Task),
-                ).label("owner_rank"),
+                )
+                .label("owner_rank"),
             )
             .where(
                 Task.profile_id == profile_id if profile_id is not None else true(),
@@ -928,7 +1258,9 @@ class TaskFlowRepository:
             )
             .cte("task_claim_candidates")
         )
-        task_claim_owner_type_expr = func.coalesce(func.nullif(Task.claim_owner_type, ""), Task.owner_type)
+        task_claim_owner_type_expr = func.coalesce(
+            func.nullif(Task.claim_owner_type, ""), Task.owner_type
+        )
         active_flow_load = (
             select(
                 Task.profile_id.label("profile_id"),
@@ -989,8 +1321,12 @@ class TaskFlowRepository:
             candidate_claim_owner_type = str(candidate_row.claim_owner_type)
             candidate_claim_owner_ref = str(candidate_row.claim_owner_ref)
             candidate_claim_source_status = str(candidate_row.claim_source_status)
-            update_review_claim_owner_type_expr = func.coalesce(func.nullif(Task.reviewer_type, ""), Task.owner_type)
-            update_review_claim_owner_ref_expr = func.coalesce(func.nullif(Task.reviewer_ref, ""), Task.owner_ref)
+            update_review_claim_owner_type_expr = func.coalesce(
+                func.nullif(Task.reviewer_type, ""), Task.owner_type
+            )
+            update_review_claim_owner_ref_expr = func.coalesce(
+                func.nullif(Task.reviewer_ref, ""), Task.owner_ref
+            )
             statement = (
                 update(Task)
                 .where(
@@ -1045,7 +1381,9 @@ class TaskFlowRepository:
             await self._session.flush()
             if not _result_succeeded(result):
                 continue
-            statement_select: Select[tuple[Task]] = select(Task).where(Task.claim_token == claim_token)
+            statement_select: Select[tuple[Task]] = select(Task).where(
+                Task.claim_token == claim_token
+            )
             return (await self._session.execute(statement_select)).scalar_one_or_none()
         return None
 
@@ -1060,7 +1398,9 @@ class TaskFlowRepository:
         """Return AI-owned claimed/running tasks whose lease has expired."""
 
         conditions = [
-            func.coalesce(func.nullif(Task.claim_owner_type, ""), Task.owner_type).in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
+            func.coalesce(func.nullif(Task.claim_owner_type, ""), Task.owner_type).in_(
+                tuple(AI_EXECUTOR_OWNER_TYPES)
+            ),
             Task.status.in_(("claimed", "running")),
             Task.claim_token.is_not(None),
             Task.lease_until.is_not(None),
@@ -1069,7 +1409,9 @@ class TaskFlowRepository:
         if profile_id is not None:
             conditions.append(Task.profile_id == profile_id)
         if owner_ref is not None:
-            conditions.append(func.coalesce(func.nullif(Task.claim_owner_ref, ""), Task.owner_ref) == owner_ref)
+            conditions.append(
+                func.coalesce(func.nullif(Task.claim_owner_ref, ""), Task.owner_ref) == owner_ref
+            )
         statement: Select[tuple[Task]] = (
             select(Task)
             .where(*conditions)
@@ -1097,9 +1439,7 @@ class TaskFlowRepository:
         if owner_ref is not None:
             conditions.append(Task.owner_ref == owner_ref)
         statement: Select[tuple[Task]] = (
-            select(Task)
-            .where(*conditions)
-            .order_by(Task.updated_at.asc(), Task.created_at.asc())
+            select(Task).where(*conditions).order_by(Task.updated_at.asc(), Task.created_at.asc())
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -1447,7 +1787,9 @@ def _task_event_visibility_predicate(
     if non_updated_types:
         clauses.append(TaskEvent.event_type.in_(non_updated_types))
     if "updated" in normalized_event_types:
-        normalized_statuses = tuple(str(item).strip() for item in updated_visible_statuses if str(item).strip())
+        normalized_statuses = tuple(
+            str(item).strip() for item in updated_visible_statuses if str(item).strip()
+        )
         updated_visibility_clauses: list[ColumnElement[bool]] = []
         if normalized_statuses:
             updated_visibility_clauses.append(TaskEvent.to_status.in_(normalized_statuses))

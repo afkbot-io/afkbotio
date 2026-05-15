@@ -72,12 +72,17 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "task.board",
         "task.comment.add",
         "task.comment.list",
+        "task.context.get",
         "task.create",
         "task.delegate",
         "task.dependency.add",
         "task.dependency.list",
         "task.dependency.remove",
+        "task.doc.confirm",
+        "task.doc.list",
+        "task.doc.put",
         "task.event.list",
+        "task.feed.list",
         "task.flow.create",
         "task.flow.get",
         "task.flow.list",
@@ -113,8 +118,13 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("task.block") is not None
     assert registry.get("task.comment.add") is not None
     assert registry.get("task.comment.list") is not None
+    assert registry.get("task.context.get") is not None
     assert registry.get("task.delegate") is not None
+    assert registry.get("task.doc.confirm") is not None
+    assert registry.get("task.doc.list") is not None
+    assert registry.get("task.doc.put") is not None
     assert registry.get("task.event.list") is not None
+    assert registry.get("task.feed.list") is not None
     assert registry.get("task.review.list") is not None
     assert registry.get("task.review.approve") is not None
     assert registry.get("task.flow.create") is not None

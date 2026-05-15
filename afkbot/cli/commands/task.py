@@ -13,14 +13,18 @@ from afkbot.services.task_flow.cli_service import (
     add_task_comment_payload,
     add_dependency_payload,
     approve_review_task_payload,
+    build_agent_feed_payload,
     build_board_payload,
     build_human_inbox_payload,
+    build_task_context_payload,
+    confirm_task_document_payload,
     create_flow_payload,
     create_task_payload,
     get_flow_payload,
     get_task_payload,
     get_task_run_payload,
     list_task_comments_payload,
+    list_task_documents_payload,
     list_flows_payload,
     list_dependencies_payload,
     list_task_events_payload,
@@ -29,6 +33,7 @@ from afkbot.services.task_flow.cli_service import (
     list_tasks_payload,
     remove_dependency_payload,
     request_review_changes_payload,
+    put_task_document_payload,
     list_stale_task_claims_payload,
     sweep_stale_task_claims_payload,
     update_task_payload,
@@ -197,6 +202,150 @@ def register(app: typer.Typer) -> None:
                     event_limit=event_limit,
                     channel=channel,
                     mark_seen=mark_seen,
+                )
+            )
+        )
+
+    @task_app.command("feed")
+    def feed_command(
+        ctx: typer.Context,
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        owner_type: str | None = typer.Option(None, "--owner-type", help="AI owner type."),
+        owner_ref: str | None = typer.Option(None, "--owner-ref", help="AI owner ref."),
+        owner_profile: str | None = typer.Option(
+            None,
+            "--owner-profile",
+            help="Structured AI owner profile. Defaults to the active profile when no owner selector is provided.",
+        ),
+        owner_subagent: str | None = typer.Option(
+            None,
+            "--owner-subagent",
+            help="Structured AI owner subagent inside --owner-profile.",
+        ),
+        task_limit: int = typer.Option(10, "--task-limit", min=1, help="Maximum preview tasks."),
+        event_limit: int = typer.Option(10, "--event-limit", min=1, help="Maximum mention events."),
+    ) -> None:
+        """Show AI assignment and mention feed for a profile or subagent."""
+
+        target_profile_id = _resolve_profile(ctx, profile)
+        resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
+            field_prefix="owner",
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            owner_profile_id=owner_profile,
+            owner_subagent_name=owner_subagent,
+        )
+        if resolved_owner_type is None and resolved_owner_ref is None:
+            resolved_owner_type = "ai_profile"
+            resolved_owner_ref = target_profile_id
+        typer.echo(
+            asyncio.run(
+                build_agent_feed_payload(
+                    profile_id=target_profile_id,
+                    owner_type=resolved_owner_type or "",
+                    owner_ref=resolved_owner_ref or "",
+                    task_limit=task_limit,
+                    event_limit=event_limit,
+                )
+            )
+        )
+
+    @task_app.command("context")
+    def context_command(
+        ctx: typer.Context,
+        task_id: str = typer.Argument(..., help="Task id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        event_limit: int = typer.Option(20, "--event-limit", min=1, help="Maximum events."),
+        comment_limit: int = typer.Option(10, "--comment-limit", min=1, help="Maximum comments."),
+    ) -> None:
+        """Show one Task Flow context bundle."""
+
+        typer.echo(
+            asyncio.run(
+                build_task_context_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    task_id=task_id,
+                    event_limit=event_limit,
+                    comment_limit=comment_limit,
+                )
+            )
+        )
+
+    @task_app.command("doc-list")
+    def doc_list_command(
+        ctx: typer.Context,
+        scope_type: str = typer.Option(..., "--scope-type", help="Document scope: flow or task."),
+        scope_id: str = typer.Option(..., "--scope-id", help="Flow id or task id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+    ) -> None:
+        """List documents for one flow or task."""
+
+        typer.echo(
+            asyncio.run(
+                list_task_documents_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    scope_type=scope_type,
+                    scope_id=scope_id,
+                )
+            )
+        )
+
+    @task_app.command("doc-put")
+    def doc_put_command(
+        ctx: typer.Context,
+        scope_type: str = typer.Option(..., "--scope-type", help="Document scope: flow or task."),
+        scope_id: str = typer.Option(..., "--scope-id", help="Flow id or task id."),
+        document_key: str = typer.Option(..., "--key", help="Document key, such as plan or spec."),
+        title: str = typer.Option(..., "--title", help="Document title."),
+        body: str = typer.Option(..., "--body", help="Complete document body."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        base_revision: int | None = typer.Option(
+            None,
+            "--base-revision",
+            min=1,
+            help="Optional optimistic base revision.",
+        ),
+    ) -> None:
+        """Create or update one flow/task document."""
+
+        typer.echo(
+            asyncio.run(
+                put_task_document_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    scope_type=scope_type,
+                    scope_id=scope_id,
+                    document_key=document_key,
+                    title=title,
+                    body=body,
+                    actor_type="human",
+                    actor_ref=resolve_local_human_ref(get_settings()),
+                    base_revision=base_revision,
+                )
+            )
+        )
+
+    @task_app.command("doc-confirm")
+    def doc_confirm_command(
+        ctx: typer.Context,
+        document_id: str = typer.Argument(..., help="Document id."),
+        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
+        expected_revision: int | None = typer.Option(
+            None,
+            "--expected-revision",
+            min=1,
+            help="Optional expected revision guard.",
+        ),
+    ) -> None:
+        """Confirm the current revision of a Task Flow document."""
+
+        typer.echo(
+            asyncio.run(
+                confirm_task_document_payload(
+                    profile_id=_resolve_profile(ctx, profile),
+                    document_id=document_id,
+                    actor_type="human",
+                    actor_ref=resolve_local_human_ref(get_settings()),
+                    expected_revision=expected_revision,
                 )
             )
         )

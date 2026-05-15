@@ -38,7 +38,11 @@ from afkbot.services.task_flow.message_factory import (
     compose_task_message,
     task_session_id,
 )
-from afkbot.services.task_flow.runtime_target import TaskFlowRuntimeTarget, build_task_flow_runtime_target
+from afkbot.services.task_flow.runtime_target import (
+    TaskFlowRuntimeTarget,
+    build_task_flow_runtime_target,
+)
+from afkbot.services.task_flow.service import TaskFlowService
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
 
@@ -119,7 +123,9 @@ class TaskFlowRuntimeService:
         self._next_maintenance_run_at = 0.0
         self._next_runtime_history_prune_at = 0.0
         self._session_runner_factory_override = session_runner_factory
-        self._session_runner_factory = session_runner_factory or _default_session_runner_factory(self._settings)
+        self._session_runner_factory = session_runner_factory or _default_session_runner_factory(
+            self._settings
+        )
 
     async def start(self) -> None:
         """Prepare storage resources when the runtime owns them."""
@@ -206,6 +212,24 @@ class TaskFlowRuntimeService:
                     to_status="todo",
                     details={"error_code": _LEASE_EXPIRED_ERROR_CODE},
                 )
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    task_run_id=row.last_run_id,
+                    event_type="recovery_action_created",
+                    actor_type="runtime",
+                    actor_ref=worker_id,
+                    message="Expired AI claim released for retry.",
+                    details={
+                        "reason_code": _LEASE_EXPIRED_ERROR_CODE,
+                        "owner_type": row.claim_owner_type or row.owner_type,
+                        "owner_ref": row.claim_owner_ref or row.owner_ref,
+                        "next_status": _claim_release_status(row),
+                        "ready_at": None
+                        if _claim_release_status(row) == "review"
+                        else now_utc.isoformat(),
+                    },
+                )
                 released_count += 1
         if released_count:
             await self._refresh_schema_invariants()
@@ -283,11 +307,7 @@ class TaskFlowRuntimeService:
             runlog_event_before=cutoff,
             batch_size=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
         )
-        if (
-            result.task_event_count
-            or result.task_run_count
-            or result.runlog_event_count
-        ):
+        if result.task_event_count or result.task_run_count or result.runlog_event_count:
             _LOGGER.info(
                 "taskflow_runtime_pruned_history worker_id=%s task_runs=%s runlog_events=%s",
                 worker_id,
@@ -347,6 +367,8 @@ class TaskFlowRuntimeService:
                 to_status="blocked",
                 details={
                     "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
+                    "owner_type": row.owner_type,
+                    "owner_ref": row.owner_ref,
                 },
             )
             moved_count += 1
@@ -462,9 +484,11 @@ class TaskFlowRuntimeService:
             )
             return
         runtime_target = await self._build_runtime_target(claimed)
+        context_summary = await self._render_task_context_summary(claimed)
         message = compose_task_message(
             claimed.description,
             attachments=claimed.attachments,
+            context_summary=context_summary,
         )
         claim_ttl = _claim_ttl(self._settings)
 
@@ -534,7 +558,10 @@ class TaskFlowRuntimeService:
         if parsed is None:
             raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
         host_profile_id, subagent_name = parsed
-        from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+        from afkbot.services.agent_loop.turn_context import (
+            TurnContextOverrides,
+            merge_turn_context_overrides,
+        )
 
         subagent_markdown = await SubagentLoader(self._settings).load_subagent_markdown(
             name=subagent_name,
@@ -555,13 +582,67 @@ class TaskFlowRuntimeService:
             ),
         )
 
+    async def _render_task_context_summary(self, claimed: ClaimedTaskExecution) -> str | None:
+        """Render a compact context bundle for the detached task prompt."""
+
+        service = TaskFlowService(self._require_session_factory(), settings=self._settings)
+        try:
+            context = await service.build_task_context(
+                profile_id=claimed.task_profile_id,
+                task_id=claimed.task_id,
+                event_limit=12,
+                comment_limit=6,
+            )
+        except Exception as exc:
+            _LOGGER.warning(
+                "taskflow_context_bundle_failed task_id=%s error=%s",
+                claimed.task_id,
+                exc,
+            )
+            return None
+        lines = ["Task Flow Context Bundle:"]
+        if context.flow is not None:
+            lines.append(f"- flow: {context.flow.title} ({context.flow.id})")
+        if context.flow_documents:
+            lines.append("- flow docs:")
+            for document in context.flow_documents[:5]:
+                lines.append(f"  - {document.document_key} r{document.revision}: {document.title}")
+        if context.task_documents:
+            lines.append("- task docs:")
+            for document in context.task_documents[:5]:
+                lines.append(f"  - {document.document_key} r{document.revision}: {document.title}")
+        if context.dependencies:
+            lines.append("- dependencies:")
+            for dependency in context.dependencies[:10]:
+                lines.append(
+                    f"  - waits for {dependency.depends_on_task_id} "
+                    f"until {dependency.satisfied_on_status}"
+                )
+        if context.delegated_tasks:
+            lines.append("- delegated tasks:")
+            for task in context.delegated_tasks[:10]:
+                lines.append(f"  - {task.id}: {task.title} [{task.status}]")
+        if context.recent_comments:
+            lines.append("- recent comments:")
+            for comment in context.recent_comments[:6]:
+                message = str(comment.message or "").replace("\n", " ").strip()
+                if len(message) > 180:
+                    message = f"{message[:177].rstrip()}..."
+                lines.append(f"  - {comment.comment_type}: {message}")
+        lines.append(
+            "Use task.context.get for full context before changing docs, blockers, delegation, or review state."
+        )
+        return "\n".join(lines)
+
     def _build_runner_for_claimed(
         self,
         session_factory: async_sessionmaker[AsyncSession],
         claimed: ClaimedTaskExecution,
     ) -> SessionTurnRunner:
         if self._session_runner_factory_override is not None:
-            return self._session_runner_factory_override(session_factory, claimed.execution_profile_id)
+            return self._session_runner_factory_override(
+                session_factory, claimed.execution_profile_id
+            )
         if claimed.executor_type != AI_SUBAGENT_OWNER_TYPE:
             return self._session_runner_factory(session_factory, claimed.execution_profile_id)
         parsed = parse_ai_subagent_owner_ref(claimed.executor_ref)
@@ -657,6 +738,23 @@ class TaskFlowRuntimeService:
                     to_status=outcome.status,
                     details=_task_event_details_for_outcome(outcome),
                 )
+                if outcome.status == "blocked" and blocked_ready_at is not None:
+                    await record_task_event(
+                        repo=repo,
+                        task_id=claimed.task_id,
+                        task_run_id=claimed.task_run_id,
+                        event_type="wake_requested",
+                        actor_type="runtime",
+                        actor_ref=claimed.worker_id,
+                        message="Blocked AI task scheduled for revisit.",
+                        details={
+                            "reason_code": outcome.blocked_reason_code or "blocked_revisit",
+                            "owner_type": claimed.owner_type,
+                            "owner_ref": claimed.owner_ref,
+                            "status": "blocked",
+                            "ready_at": blocked_ready_at.isoformat(),
+                        },
+                    )
                 await _ensure_runtime_summary_comment(
                     repo=repo,
                     claimed=claimed,
@@ -766,14 +864,10 @@ class TaskFlowRuntimeService:
                 claim_token=claimed.claim_token,
                 last_run_id=claimed.task_run_id,
                 last_error_code=(
-                    outcome.error_code
-                    if outcome.status == "failed"
-                    else _RUNTIME_UNSET
+                    outcome.error_code if outcome.status == "failed" else _RUNTIME_UNSET
                 ),
                 last_error_text=(
-                    outcome.error_text
-                    if outcome.status == "failed"
-                    else _RUNTIME_UNSET
+                    outcome.error_text if outcome.status == "failed" else _RUNTIME_UNSET
                 ),
             )
             current = await repo.get_task(
@@ -1012,8 +1106,14 @@ def _default_session_runner_factory(
 
 def _resolve_execution_profile_id(row: object) -> str:
     return resolve_ai_executor_profile_id(
-        owner_type=str(getattr(row, "claim_owner_type", None) or getattr(row, "owner_type", "") or "").strip().lower(),
-        owner_ref=str(getattr(row, "claim_owner_ref", None) or getattr(row, "owner_ref", "") or "").strip(),
+        owner_type=str(
+            getattr(row, "claim_owner_type", None) or getattr(row, "owner_type", "") or ""
+        )
+        .strip()
+        .lower(),
+        owner_ref=str(
+            getattr(row, "claim_owner_ref", None) or getattr(row, "owner_ref", "") or ""
+        ).strip(),
         task_profile_id=str(getattr(row, "profile_id", "") or "").strip(),
     )
 
@@ -1178,10 +1278,17 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         )
         if part is not None
     ).lower()
-    return "ux_task_active_ai_owner" in message or "ux_task_active_ai_claim_owner" in message or (
-        ("unique constraint failed" in message or "duplicate key value violates unique constraint" in message)
-        and ("owner_ref" in message or "claim_owner_ref" in message)
-        and "profile_id" in message
+    return (
+        "ux_task_active_ai_owner" in message
+        or "ux_task_active_ai_claim_owner" in message
+        or (
+            (
+                "unique constraint failed" in message
+                or "duplicate key value violates unique constraint" in message
+            )
+            and ("owner_ref" in message or "claim_owner_ref" in message)
+            and "profile_id" in message
+        )
     )
 
 
@@ -1219,7 +1326,9 @@ def _runtime_owner_ref(settings: Settings) -> str | None:
 
 
 def _claim_release_status(row: object) -> str:
-    source_status = str(getattr(row, "source_status", None) or getattr(row, "claim_source_status", "") or "").strip()
+    source_status = str(
+        getattr(row, "source_status", None) or getattr(row, "claim_source_status", "") or ""
+    ).strip()
     if source_status == "review":
         return "review"
     return "todo"
