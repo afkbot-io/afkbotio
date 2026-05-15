@@ -100,6 +100,9 @@ from afkbot.services.tools.plugins.task_comment_add import (
 from afkbot.services.tools.plugins.task_comment_list import (
     create_tool as create_task_comment_list_tool,
 )
+from afkbot.services.tools.plugins.task_context_get import (
+    create_tool as create_task_context_get_tool,
+)
 from afkbot.services.tools.plugins.task_create import create_tool as create_task_create_tool
 from afkbot.services.tools.plugins.task_delegate import create_tool as create_task_delegate_tool
 from afkbot.services.tools.plugins.task_dependency_add import (
@@ -111,7 +114,13 @@ from afkbot.services.tools.plugins.task_dependency_list import (
 from afkbot.services.tools.plugins.task_dependency_remove import (
     create_tool as create_task_dependency_remove_tool,
 )
+from afkbot.services.tools.plugins.task_doc_confirm import (
+    create_tool as create_task_doc_confirm_tool,
+)
+from afkbot.services.tools.plugins.task_doc_list import create_tool as create_task_doc_list_tool
+from afkbot.services.tools.plugins.task_doc_put import create_tool as create_task_doc_put_tool
 from afkbot.services.tools.plugins.task_event_list import create_tool as create_task_event_list_tool
+from afkbot.services.tools.plugins.task_feed_list import create_tool as create_task_feed_list_tool
 from afkbot.services.tools.plugins.task_flow_create import (
     create_tool as create_task_flow_create_tool,
 )
@@ -240,12 +249,17 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "task_block": create_task_block_tool,
     "task_comment_add": create_task_comment_add_tool,
     "task_comment_list": create_task_comment_list_tool,
+    "task_context_get": create_task_context_get_tool,
     "task_create": create_task_create_tool,
     "task_delegate": create_task_delegate_tool,
     "task_dependency_add": create_task_dependency_add_tool,
     "task_dependency_list": create_task_dependency_list_tool,
     "task_dependency_remove": create_task_dependency_remove_tool,
+    "task_doc_confirm": create_task_doc_confirm_tool,
+    "task_doc_list": create_task_doc_list_tool,
+    "task_doc_put": create_task_doc_put_tool,
     "task_event_list": create_task_event_list_tool,
+    "task_feed_list": create_task_feed_list_tool,
     "task_flow_create": create_task_flow_create_tool,
     "task_flow_get": create_task_flow_get_tool,
     "task_flow_list": create_task_flow_list_tool,

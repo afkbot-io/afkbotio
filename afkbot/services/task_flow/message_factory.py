@@ -33,10 +33,14 @@ def compose_task_message(
     description: str,
     *,
     attachments: Sequence[TaskMessageAttachment] = (),
+    context_summary: str | None = None,
 ) -> str:
     """Compose one detached task description for AgentLoop."""
 
     parts = [description.strip()]
+    normalized_context = str(context_summary or "").strip()
+    if normalized_context:
+        parts.extend(["", normalized_context])
     rendered_attachments = [_render_attachment_block(attachment) for attachment in attachments]
     rendered_attachments = [item for item in rendered_attachments if item]
     if rendered_attachments:
@@ -78,9 +82,7 @@ def _render_attachment_content(attachment: TaskMessageAttachment) -> str:
             return "Content: [empty text after decoding]"
         if len(text_value) > _INLINE_TEXT_ATTACHMENT_CHAR_LIMIT:
             return (
-                "Content:\n"
-                f"{text_value[:_INLINE_TEXT_ATTACHMENT_CHAR_LIMIT].rstrip()}\n"
-                "[truncated]"
+                f"Content:\n{text_value[:_INLINE_TEXT_ATTACHMENT_CHAR_LIMIT].rstrip()}\n[truncated]"
             )
         return f"Content:\n{text_value}"
     encoded = base64.b64encode(content_bytes).decode("ascii")

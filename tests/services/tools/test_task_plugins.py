@@ -310,7 +310,11 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         assert task_events[0]["event_type"] == "updated"
         assert task_events[0]["actor_type"] == "ai_profile"
         assert task_events[0]["actor_ref"] == "default"
-        assert {item["event_type"] for item in task_events} >= {"created", "comment_added", "updated"}
+        assert {item["event_type"] for item in task_events} >= {
+            "created",
+            "comment_added",
+            "updated",
+        }
 
         prereq_result = await create_tool.execute(
             ctx,
@@ -551,6 +555,159 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         listed_flows = flow_list_result.payload["task_flows"]
         assert isinstance(listed_flows, list)
         assert listed_flows[0]["id"] == flow_id
+    finally:
+        await engine.dispose()
+
+
+async def test_task_plugins_docs_context_and_agent_feed(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Agents should be able to read docs, context bundles, and mention feeds."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="s-task", run_id=1)
+        flow_tool = registry.get("task.flow.create")
+        create_tool = registry.get("task.create")
+        doc_list_tool = registry.get("task.doc.list")
+        doc_put_tool = registry.get("task.doc.put")
+        doc_confirm_tool = registry.get("task.doc.confirm")
+        context_tool = registry.get("task.context.get")
+        feed_tool = registry.get("task.feed.list")
+        comment_add_tool = registry.get("task.comment.add")
+        assert flow_tool is not None
+        assert create_tool is not None
+        assert doc_list_tool is not None
+        assert doc_put_tool is not None
+        assert doc_confirm_tool is not None
+        assert context_tool is not None
+        assert feed_tool is not None
+        assert comment_add_tool is not None
+
+        flow_result = await flow_tool.execute(
+            ctx,
+            flow_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Agent project memory",
+                    "description": "Persist plans, specs, and roadmap docs for AI work.",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert flow_result.ok is True
+        flow_id = str(flow_result.payload["task_flow"]["id"])
+
+        task_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "flow_id": flow_id,
+                    "title": "Implement context bundle",
+                    "description": "Give agents the work state before execution.",
+                    "owner_profile_id": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert task_result.ok is True
+        task_id = str(task_result.payload["task"]["id"])
+
+        list_result = await doc_list_tool.execute(
+            ctx,
+            doc_list_tool.parse_params(
+                {"profile_key": "default", "scope_type": "flow", "scope_id": flow_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert list_result.ok is True
+        assert any(
+            document["document_key"] == "roadmap" for document in list_result.payload["documents"]
+        )
+
+        put_result = await doc_put_tool.execute(
+            ctx,
+            doc_put_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "scope_type": "task",
+                    "scope_id": task_id,
+                    "document_key": "plan",
+                    "title": "Task execution plan",
+                    "body": "1. Read docs.\n2. Update task.\n3. Verify behavior.",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert put_result.ok is True
+        assert put_result.payload["document"]["revision"] == 1
+        document_id = str(put_result.payload["document"]["id"])
+
+        confirm_result = await doc_confirm_tool.execute(
+            ctx,
+            doc_confirm_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "document_id": document_id,
+                    "expected_revision": 1,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert confirm_result.ok is True
+        assert confirm_result.payload["document"]["confirmation_status"] == "confirmed"
+        assert confirm_result.payload["document"]["confirmed_revision"] == 1
+
+        comment_result = await comment_add_tool.execute(
+            ctx,
+            comment_add_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "message": "@default please continue from the plan document.",
+                    "comment_type": "note",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert comment_result.ok is True
+
+        context_result = await context_tool.execute(
+            ctx,
+            context_tool.parse_params(
+                {"profile_key": "default", "task_id": task_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert context_result.ok is True
+        bundle = context_result.payload["task_context"]
+        assert bundle["task"]["id"] == task_id
+        assert any(document["document_key"] == "plan" for document in bundle["task_documents"])
+
+        feed_result = await feed_tool.execute(
+            ctx,
+            feed_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "owner_profile_id": "default",
+                    "event_limit": 10,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert feed_result.ok is True
+        assert feed_result.payload["feed"]["owner_type"] == "ai_profile"
+        assert feed_result.payload["feed"]["mention_event_count"] == 1
     finally:
         await engine.dispose()
 
@@ -1291,7 +1448,9 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
-        _write_team_runtime_config(settings=settings, profile_id="default", team_profile_ids=("analyst",))
+        _write_team_runtime_config(
+            settings=settings, profile_id="default", team_profile_ids=("analyst",)
+        )
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -1361,7 +1520,9 @@ async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
-        _write_team_runtime_config(settings=settings, profile_id="default", team_profile_ids=("analyst",))
+        _write_team_runtime_config(
+            settings=settings, profile_id="default", team_profile_ids=("analyst",)
+        )
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -3240,7 +3401,9 @@ async def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_
             subagent_name="reviewer",
             markdown="# Reviewer\n\nReview specialist.",
         )
-        ctx = ToolContext(profile_id="papercliper", session_id="s-review-structured-invalid", run_id=2)
+        ctx = ToolContext(
+            profile_id="papercliper", session_id="s-review-structured-invalid", run_id=2
+        )
         review_list_tool = registry.get("task.review.list")
         assert review_list_tool is not None
 

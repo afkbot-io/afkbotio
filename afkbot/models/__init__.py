@@ -37,6 +37,8 @@ _MODEL_EXPORT_MODULES = {
     "Task": "task",
     "TaskAttachment": "task_attachment",
     "TaskDependency": "task_dependency",
+    "TaskDocument": "task_document",
+    "TaskDocumentRevision": "task_document_revision",
     "TaskEvent": "task_event",
     "TaskFlow": "task_flow",
     "TaskNotificationCursor": "task_notification_cursor",

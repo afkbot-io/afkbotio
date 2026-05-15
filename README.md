@@ -173,6 +173,19 @@ afk task create --profile default --title "Draft landing copy" --prompt "Write f
 afk task board --profile default
 ```
 
+Task Flow also exposes agent-facing `task.*` tools for autonomous work. Flows
+carry default editable docs for `brief`, `plan`, `roadmap`, `spec`, and
+`decisions`; tasks can add their own docs such as `plan`, `spec`, `handoff`, or
+`qa`. Agents should inspect `task.context.get` before changing a task, update
+durable docs with `task.doc.put`, confirm accepted revisions with
+`task.doc.confirm`, and use `task.feed.list` to see AI assignments plus
+explicit `@profile` / `@profile:subagent` mentions, wake requests, stale-claim
+recovery actions, and runtime claim rejects. For raw append-only audit history,
+use `task.event.list` or `afk task event-list`. Agent feeds use the same claim
+ownership model as the detached runtime: normal work is assigned by task owner,
+review work is assigned by reviewer when present, and active claimed/running work
+stays visible to the persisted claim owner.
+
 ### Create an automation
 
 Automations run prompts on a schedule or from a webhook. They are executed by the

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.8] - 2026-05-15
+
+### Added
+
+- Added Task Flow flow/task documents with revision history, confirmation state,
+  default flow docs, context bundles, AI mention feeds, and `task.doc.*`,
+  `task.context.get`, and `task.feed.list` tools for autonomous agent work.
+- Aligned AI agent feeds with runtime claim ownership so reviewer-assigned
+  review tasks and active review claims appear in the same inbox that the
+  detached scheduler uses.
+- Fixed reviewer assignment updates so explicit null reviewer fields clear stale
+  review routing while omitted reviewer fields continue to preserve existing
+  assignments.
+
 ## [1.8.7] - 2026-05-15
 
 ### Changed
