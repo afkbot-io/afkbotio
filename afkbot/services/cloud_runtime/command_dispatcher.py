@@ -11,6 +11,7 @@ from typing import Any
 
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.api_runtime import run_chat_turn
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.automations import AutomationsServiceError, get_automations_service
 from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand, CloudRuntimeGatewayClient
@@ -350,7 +351,39 @@ class CloudRuntimeCommandDispatcher:
                     "command": command.command,
                 },
             ),
+            progress_sink=self._progress_sink(command=command),
         )
+
+    def _progress_sink(self, *, command: CloudRuntimeCommand) -> Callable[[ProgressEvent], None]:
+        """Build a non-blocking progress forwarder for Cloud chat/task events.
+
+        :param command: Cloud command whose progress is being streamed.
+        :return: Synchronous progress callback accepted by AgentLoop.
+        """
+
+        def _sink(event: ProgressEvent) -> None:
+            payload = event.model_dump(mode="json")
+            payload["command_id"] = command.command_id or ""
+            payload["command"] = command.command
+            tool_call_params = event.tool_call_params
+            tool_progress = event.tool_progress
+            tool_result = event.tool_result
+            if tool_call_params is not None:
+                payload["tool_call_params"] = tool_call_params
+            if tool_progress is not None:
+                payload["tool_progress"] = tool_progress
+            if tool_result is not None:
+                payload["tool_result"] = tool_result
+            asyncio.create_task(
+                self._gateway.send_event(
+                    event_type="chat.progress" if command.command == "chat.message" else "task.progress",
+                    message=_progress_message(event),
+                    payload=payload,
+                ),
+                name=f"afk-cloud-progress-{event.event_id}",
+            )
+
+        return _sink
 
 
 def _profile_id_from_payload(payload: dict[str, Any]) -> str:
@@ -409,6 +442,12 @@ def _task_status_for_turn(result: TurnResult) -> str:
     if result.envelope.action == "block":
         return "stuck"
     return "done"
+
+
+def _progress_message(event: ProgressEvent) -> str:
+    if event.tool_name:
+        return f"{event.stage}: {event.tool_name}"
+    return event.stage
 
 
 def _task_prompt(*, title: str, description: str, payload: dict[str, Any]) -> str:

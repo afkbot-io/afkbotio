@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
 from afkbot.services.cloud_runtime.command_dispatcher import CloudRuntimeCommandDispatcher
 from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand
@@ -68,6 +69,52 @@ async def test_dispatcher_runs_chat_message() -> None:
     assert calls[0]["profile_id"] == "default"
     assert gateway.chat_results[0]["content"] == "hello from cloud"
     assert gateway.chat_results[0]["message_id"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_forwards_chat_progress_events() -> None:
+    """chat.message should forward AgentLoop progress to Cloud events."""
+
+    gateway = _FakeGateway()
+
+    async def _run_chat_turn(**kwargs: Any) -> TurnResult:
+        progress_sink = kwargs["progress_sink"]
+        progress_sink(
+            ProgressEvent(
+                event_id=1,
+                run_id=9,
+                stage="tool_call",
+                tool_name="browser.open",
+                event_type="tool.call",
+                payload={"tool": "browser.open"},
+            )
+        )
+        await asyncio.sleep(0)
+        return TurnResult(
+            run_id=9,
+            session_id=kwargs["session_id"],
+            profile_id=kwargs["profile_id"],
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    dispatcher = CloudRuntimeCommandDispatcher(
+        gateway=gateway,  # type: ignore[arg-type]
+        request_shutdown=lambda: None,
+        run_chat_turn_fn=_run_chat_turn,
+    )
+
+    await dispatcher.handle(
+        CloudRuntimeCommand(
+            command="chat.message",
+            command_id="cmd-progress",
+            payload={"message_id": "msg-progress", "content": "check page"},
+        )
+    )
+    await _drain_dispatcher(dispatcher)
+
+    assert gateway.events[0]["event_type"] == "chat.progress"
+    assert gateway.events[0]["message"] == "tool_call: browser.open"
+    assert gateway.events[0]["payload"]["command_id"] == "cmd-progress"
 
 
 @pytest.mark.asyncio

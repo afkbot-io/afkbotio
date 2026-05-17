@@ -157,6 +157,7 @@ async def run_chat_turn(
     session_id: str,
     client_msg_id: str | None = None,
     planned_tool_calls: list[ToolCall] | None = None,
+    progress_sink: Callable[[ProgressEvent], None] | None = None,
     context_overrides: TurnContextOverrides | None = None,
 ) -> TurnResult:
     """Execute one chat turn via the canonical runtime service."""
@@ -194,6 +195,7 @@ async def run_chat_turn(
             client_msg_id=normalized_client_msg_id,
             planned_tool_calls=planned_tool_calls,
             context_overrides=context_overrides,
+            progress_sink=progress_sink,
             settings=settings,
             shared_session_factory=session_factory,
             execute_turn=_execute_api_turn,
@@ -206,7 +208,7 @@ async def run_chat_turn(
         profile_id=profile_id,
         session_id=session_id,
         planned_tool_calls=planned_tool_calls,
-        progress_sink=None,
+        progress_sink=progress_sink,
         context_overrides=context_overrides,
     )
 

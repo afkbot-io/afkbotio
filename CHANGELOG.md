@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.12] - 2026-05-17
+
+### Added
+
+- Cloud-managed chat and task commands now forward AgentLoop progress events to
+  the Cloud control plane, so dashboard chat can show tool/model activity while
+  a turn is running.
+
 ## [1.8.11] - 2026-05-17
 
 ### Added

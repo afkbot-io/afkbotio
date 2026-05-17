@@ -157,6 +157,7 @@ async def run_idempotent_chat_turn(
     client_msg_id: str,
     planned_tool_calls: list[ToolCall] | None,
     context_overrides: TurnContextOverrides | None,
+    progress_sink: Callable[[ProgressEvent], None] | None = None,
     settings: Settings,
     shared_session_factory: async_sessionmaker[AsyncSession] | None,
     execute_turn: TurnExecutor,
@@ -211,7 +212,7 @@ async def run_idempotent_chat_turn(
                 profile_id=profile_id,
                 session_id=session_id,
                 planned_tool_calls=planned_tool_calls,
-                progress_sink=None,
+                progress_sink=progress_sink,
                 context_overrides=context_overrides,
             )
             return await _store_or_reuse_result(
