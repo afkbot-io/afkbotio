@@ -137,15 +137,19 @@ class CloudRuntimeGatewayClient:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if self._config.fail_closed:
+                if self._config.fail_closed and not self._ready_event.is_set():
                     raise RuntimeError("cloud runtime gateway connection failed") from exc
                 logger.warning(
                     "Cloud runtime gateway connection failed: %s",
                     redact_log_text(str(exc)),
                 )
             else:
-                if self._config.fail_closed and not self._stop_event.is_set():
-                    raise RuntimeError("cloud runtime gateway disconnected")
+                if (
+                    self._config.fail_closed
+                    and not self._ready_event.is_set()
+                    and not self._stop_event.is_set()
+                ):
+                    raise RuntimeError("cloud runtime gateway disconnected before readiness")
             if self._stop_event.is_set():
                 break
             await self._sleep_reconnect(delay)

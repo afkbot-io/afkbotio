@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.10] - 2026-05-17
+
+### Fixed
+
+- Cloud runtime gateway now fails closed only before the first successful
+  control-plane connection and reconnects after later gateway restarts, so API
+  deploys do not stop already-running managed containers.
+
 ## [1.8.9] - 2026-05-16
 
 ### Fixed

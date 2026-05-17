@@ -127,6 +127,48 @@ async def test_gateway_fails_closed_when_connection_fails(monkeypatch) -> None:
         await client.run()
 
 
+@pytest.mark.asyncio
+async def test_gateway_reconnects_after_ready_disconnect(monkeypatch) -> None:
+    """Gateway disconnects after the first ready handshake should reconnect."""
+
+    class _DisconnectAfterReadyWebSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise OSError("connection reset")
+
+    first_ws = _DisconnectAfterReadyWebSocket(inbound=[])
+    second_ws = _FakeWebSocket(inbound=[{"type": "command", "command": "shutdown", "payload": {}}])
+    sockets = [first_ws, second_ws]
+
+    def _fake_connect(url: str, **kwargs: object) -> _FakeWebSocket:
+        del url, kwargs
+        return sockets.pop(0)
+
+    commands: list[str] = []
+
+    async def _handle_command(command: CloudRuntimeCommand) -> None:
+        commands.append(command.command)
+        client.request_stop()
+
+    monkeypatch.setattr("afkbot.services.cloud_runtime.gateway.websockets.connect", _fake_connect)
+    client = CloudRuntimeGatewayClient(
+        config=CloudRuntimeGatewayConfig(
+            url="wss://api.example.test/ws/runtime/connect/",
+            token="runtime-token",
+            heartbeat_interval_sec=60.0,
+            reconnect_initial_sec=0.01,
+            reconnect_max_sec=0.01,
+            message_max_bytes=65536,
+        ),
+        command_handler=_handle_command,
+    )
+
+    await client.run()
+
+    assert first_ws.sent[0]["type"] == "hello"
+    assert second_ws.sent[0]["type"] == "hello"
+    assert commands == ["shutdown"]
+
+
 def test_gateway_is_disabled_for_local_settings(tmp_path) -> None:
     """Local/self-hosted settings should not create a cloud gateway client."""
 
