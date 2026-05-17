@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import time
 from typing import Any
 
 import typer
@@ -317,13 +318,21 @@ def _attach_remote_chat_replies(*, connection: str, payload: dict[str, object]) 
     command_id = str(payload.get("command_id") or "")
     if not command_id:
         return payload
-    messages = poll_remote_chat_messages(
-        settings=get_settings(),
-        connection_name=connection,
-        command_id=command_id,
-        limit=20,
-    )
-    return {**payload, "replies": messages.get("results", [])}
+    deadline = time.monotonic() + 60
+    results: list[object] = []
+    while time.monotonic() < deadline:
+        messages = poll_remote_chat_messages(
+            settings=get_settings(),
+            connection_name=connection,
+            command_id=command_id,
+            limit=20,
+        )
+        raw_results = messages.get("results", [])
+        results = raw_results if isinstance(raw_results, list) else []
+        if any(isinstance(item, dict) and item.get("role") == "assistant" for item in results):
+            break
+        time.sleep(2)
+    return {**payload, "replies": results}
 
 
 def _render_chat_payload(payload: dict[str, object]) -> None:

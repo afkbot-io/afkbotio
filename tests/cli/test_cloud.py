@@ -249,6 +249,32 @@ def test_cloud_chat_sends_message_through_saved_connection(monkeypatch: MonkeyPa
     assert captured["content"] == "Hello"
 
 
+def test_cloud_chat_waits_for_delayed_assistant_reply(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk cloud chat` should poll until the assistant reply is available."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.send_remote_chat_message",
+        lambda **kwargs: {"id": "msg-1", "status": "sent", "command_id": "cmd-1"},
+    )
+    attempts = iter(
+        [
+            {"results": [{"role": "user", "content": "Hello"}]},
+            {"results": [{"role": "assistant", "content": "delayed cloud reply"}]},
+        ]
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.poll_remote_chat_messages",
+        lambda **kwargs: next(attempts),
+    )
+    monkeypatch.setattr("afkbot.cli.commands.cloud.time.sleep", lambda seconds: None)
+
+    result = CliRunner().invoke(app, ["cloud", "chat", "--message", "Hello", "ops"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "delayed cloud reply"
+
+
 def test_chat_cloud_alias_sends_one_message(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     """`afk chat --cloud` should route one-shot chat through the Cloud remote API."""
 
@@ -262,13 +288,13 @@ def test_chat_cloud_alias_sends_one_message(monkeypatch: MonkeyPatch, tmp_path: 
     monkeypatch.setattr("afkbot.cli.commands.chat.send_remote_chat_message", _fake_send_remote_chat_message)
     monkeypatch.setattr(
         "afkbot.cli.commands.cloud.poll_remote_chat_messages",
-        lambda **kwargs: {"results": []},
+        lambda **kwargs: {"results": [{"role": "assistant", "content": "hello from cloud"}]},
     )
 
     result = CliRunner().invoke(app, ["chat", "--cloud", "ops", "--message", "Hello"])
 
     assert result.exit_code == 0
-    assert "message sent" in result.stdout
+    assert result.stdout.strip() == "hello from cloud"
     assert captured["connection_name"] == "ops"
     assert captured["content"] == "Hello"
 
