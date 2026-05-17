@@ -79,3 +79,14 @@ def test_redact_log_text_handles_common_secret_shapes() -> None:
     assert "token123" not in redacted
     assert "'pw'" not in redacted
     assert "[REDACTED]" in redacted
+
+
+def test_redact_log_text_handles_dict_like_secret_shapes() -> None:
+    """Dict-like exception strings should be redacted by key name."""
+
+    redacted = redact_log_text("{'api_key': 'abc123', \"refresh_token\": \"rt456\"}")
+
+    assert "abc123" not in redacted
+    assert "rt456" not in redacted
+    assert "'api_key': '[REDACTED]'" in redacted
+    assert '"refresh_token": "[REDACTED]"' in redacted

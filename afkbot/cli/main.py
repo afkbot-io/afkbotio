@@ -104,6 +104,8 @@ def _guard_setup(ctx: typer.Context) -> None:
         "service",
         "version",
         "logs",
+        "chat",
+        "start",
     }:
         return
 

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
 from afkbot.services.cloud_runtime.command_dispatcher import CloudRuntimeCommandDispatcher
 from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand
 
@@ -108,6 +109,56 @@ async def test_dispatcher_reports_task_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_rejects_cancel_without_stable_task_id() -> None:
+    """task.cancel should not acknowledge success when no target task can be identified."""
+
+    gateway = _FakeGateway()
+    dispatcher = CloudRuntimeCommandDispatcher(
+        gateway=gateway,  # type: ignore[arg-type]
+        request_shutdown=lambda: None,
+    )
+
+    await dispatcher.handle(
+        CloudRuntimeCommand(command="task.cancel", command_id="cancel-1", payload={})
+    )
+    await _drain_dispatcher(dispatcher)
+
+    assert gateway.task_results[0]["message"] == "Task cancel failed."
+    assert gateway.task_results[0]["payload"]["status"] == "stuck"
+    assert (
+        gateway.task_results[0]["payload"]["result"]["error_code"]
+        == "cloud_task_cancel_target_required"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_rejects_cancel_for_unknown_running_task() -> None:
+    """task.cancel should fail explicitly when the target task is not running."""
+
+    gateway = _FakeGateway()
+    dispatcher = CloudRuntimeCommandDispatcher(
+        gateway=gateway,  # type: ignore[arg-type]
+        request_shutdown=lambda: None,
+    )
+
+    await dispatcher.handle(
+        CloudRuntimeCommand(
+            command="task.cancel",
+            command_id="cancel-2",
+            payload={"control_plane_task_id": "task-404"},
+        )
+    )
+    await _drain_dispatcher(dispatcher)
+
+    assert gateway.task_results[0]["message"] == "Task cancel failed."
+    assert gateway.task_results[0]["payload"]["status"] == "stuck"
+    assert (
+        gateway.task_results[0]["payload"]["result"]["error_code"]
+        == "cloud_task_cancel_target_not_running"
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_stops_runtime_for_shutdown_command() -> None:
     """shutdown commands should go through the shared runtime shutdown callback."""
 
@@ -165,6 +216,57 @@ async def test_dispatcher_rejects_invalid_profile_id() -> None:
     assert calls == []
     assert gateway.events[0]["event_type"] == "runtime.command.failed"
     assert gateway.events[0]["payload"]["command_id"] == "cmd-bad-profile"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_triggers_webhook_automation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """automation.webhook should call the local automation service by token."""
+
+    gateway = _FakeGateway()
+    calls: list[dict[str, Any]] = []
+
+    class _FakeAutomationService:
+        async def trigger_webhook(self, **kwargs: Any) -> AutomationWebhookTriggerResult:
+            calls.append(kwargs)
+            return AutomationWebhookTriggerResult(
+                automation_id=10,
+                profile_id=kwargs["profile_id"],
+                session_id="automation-webhook-10",
+                payload={"ok": True},
+                deduplicated=False,
+            )
+
+    monkeypatch.setattr(
+        "afkbot.services.cloud_runtime.command_dispatcher.get_automations_service",
+        lambda settings: _FakeAutomationService(),
+    )
+    dispatcher = CloudRuntimeCommandDispatcher(
+        gateway=gateway,  # type: ignore[arg-type]
+        request_shutdown=lambda: None,
+    )
+
+    await dispatcher.handle(
+        CloudRuntimeCommand(
+            command="automation.webhook",
+            command_id="cmd-hook",
+            payload={
+                "profile_id": "default",
+                "token": "hook-token",
+                "payload": {"level": "error"},
+            },
+        )
+    )
+    await _drain_dispatcher(dispatcher)
+
+    assert calls == [
+        {
+            "profile_id": "default",
+            "token": "hook-token",
+            "payload": {"level": "error"},
+        }
+    ]
+    assert gateway.events[0]["event_type"] == "automation.webhook.accepted"
+    assert gateway.events[0]["payload"]["automation_id"] == 10
 
 
 async def _drain_dispatcher(dispatcher: CloudRuntimeCommandDispatcher) -> None:

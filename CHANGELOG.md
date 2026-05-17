@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.11] - 2026-05-17
+
+### Added
+
+- Cloud-managed runtime startup now applies the Cloud manifest before launch,
+  including profiles, channels, provider credentials, bootstrap files, skills,
+  subagents, and webhook automations.
+- Managed webhook automations can now reuse Cloud-issued webhook tokens so
+  public Cloud webhook URLs route into the active runtime container.
+
+### Fixed
+
+- Cloud runtime command payloads and error logs now redact token-like and
+  credential-like fields before sending diagnostics back to the control plane.
+- `afk chat --cloud` and `afk start --cloud` continue to work without requiring
+  local self-hosted setup on the operator machine.
+
 ## [1.8.10] - 2026-05-17
 
 ### Fixed

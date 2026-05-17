@@ -104,6 +104,34 @@ async def test_gateway_redacts_logs_before_sending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gateway_redacts_sensitive_payload_keys_before_sending() -> None:
+    """Gateway structured payloads should be redacted by key name."""
+
+    fake_ws = _FakeWebSocket(inbound=[])
+    client = CloudRuntimeGatewayClient(
+        config=CloudRuntimeGatewayConfig(
+            url="wss://api.example.test/ws/runtime/connect/",
+            token="runtime-token",
+            heartbeat_interval_sec=60.0,
+            reconnect_initial_sec=0.01,
+            reconnect_max_sec=0.01,
+            message_max_bytes=65536,
+        )
+    )
+    client._ws = fake_ws  # noqa: SLF001
+
+    await client.send_event(
+        event_type="runtime.test",
+        payload={"api_key": "abc123", "nested": {"refresh_token": "rt456"}},
+    )
+
+    assert fake_ws.sent[0]["payload"] == {
+        "api_key": "[REDACTED]",
+        "nested": {"refresh_token": "[REDACTED]"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_gateway_fails_closed_when_connection_fails(monkeypatch) -> None:
     """Managed gateway should not keep a runtime alive without control-plane access."""
 

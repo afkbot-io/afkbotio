@@ -12,17 +12,21 @@ from typing import Any
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.api_runtime import run_chat_turn
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.automations import AutomationsServiceError, get_automations_service
 from afkbot.services.cloud_runtime.gateway import CloudRuntimeCommand, CloudRuntimeGatewayClient
 from afkbot.services.error_logging import redact_log_text
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
+from afkbot.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 RunChatTurn = Callable[..., Awaitable[TurnResult]]
 
 _STOP_COMMANDS = frozenset({"shutdown", "runtime.stop"})
-_ASYNC_COMMANDS = frozenset({"chat.message", "task.create", "task.retry", "task.cancel"})
+_ASYNC_COMMANDS = frozenset(
+    {"automation.webhook", "chat.message", "task.create", "task.retry", "task.cancel"}
+)
 _DEFAULT_PROFILE_ID = "default"
 
 
@@ -101,6 +105,8 @@ class CloudRuntimeCommandDispatcher:
         try:
             if command.command == "chat.message":
                 await self._handle_chat_message(command)
+            elif command.command == "automation.webhook":
+                await self._handle_automation_webhook(command)
             elif command.command in {"task.create", "task.retry"}:
                 await self._handle_task_run(command)
             elif command.command == "task.cancel":
@@ -119,6 +125,50 @@ class CloudRuntimeCommandDispatcher:
                     "error": redact_log_text(str(exc)),
                 },
             )
+
+    async def _handle_automation_webhook(self, command: CloudRuntimeCommand) -> None:
+        payload = command.payload
+        profile_id = _profile_id_from_payload(payload)
+        token = _string_payload(payload, "token")
+        raw_payload = payload.get("payload")
+        webhook_payload = raw_payload if isinstance(raw_payload, dict) else {}
+        if not token:
+            await self._gateway.send_event(
+                event_type="automation.webhook.rejected",
+                severity="warning",
+                message="Automation webhook was rejected.",
+                payload={"command_id": command.command_id or "", "error_code": "webhook_token_required"},
+            )
+            return
+        try:
+            result = await get_automations_service(get_settings()).trigger_webhook(
+                profile_id=profile_id,
+                token=token,
+                payload={str(key): value for key, value in webhook_payload.items()},
+            )
+        except AutomationsServiceError as exc:
+            await self._gateway.send_event(
+                event_type="automation.webhook.failed",
+                severity="warning",
+                message="Automation webhook failed.",
+                payload={
+                    "command_id": command.command_id or "",
+                    "error_code": exc.error_code,
+                    "reason": redact_log_text(exc.reason),
+                },
+            )
+            return
+        await self._gateway.send_event(
+            event_type="automation.webhook.accepted",
+            message="Automation webhook accepted.",
+            payload={
+                "automation_id": result.automation_id,
+                "command_id": command.command_id or "",
+                "deduplicated": result.deduplicated,
+                "profile_id": result.profile_id,
+                "session_id": result.session_id,
+            },
+        )
 
     async def _handle_chat_message(self, command: CloudRuntimeCommand) -> None:
         payload = command.payload
@@ -226,10 +276,43 @@ class CloudRuntimeCommandDispatcher:
 
     async def _handle_task_cancel(self, command: CloudRuntimeCommand) -> None:
         payload = command.payload
-        task_key = _task_key(payload=payload, fallback=command.command_id or command.command)
+        task_key = _stable_task_key(payload)
+        if not task_key:
+            await self._gateway.send_task_result(
+                command_id=command.command_id,
+                message="Task cancel failed.",
+                payload=_task_payload(
+                    payload=payload,
+                    command=command,
+                    status="stuck",
+                    title=_string_payload(payload, "title") or "Cloud task",
+                    description=_string_payload(payload, "description"),
+                    result={
+                        "error_code": "cloud_task_cancel_target_required",
+                        "message": "Task cancellation requires a stable task id.",
+                    },
+                ),
+            )
+            return
         running_task = self._task_commands_by_id.get(task_key)
-        if running_task is not None:
-            running_task.cancel()
+        if running_task is None:
+            await self._gateway.send_task_result(
+                command_id=command.command_id,
+                message="Task cancel failed.",
+                payload=_task_payload(
+                    payload=payload,
+                    command=command,
+                    status="stuck",
+                    title=_string_payload(payload, "title") or "Cloud task",
+                    description=_string_payload(payload, "description"),
+                    result={
+                        "error_code": "cloud_task_cancel_target_not_running",
+                        "message": "No running task matched the requested task id.",
+                    },
+                ),
+            )
+            return
+        running_task.cancel()
         await self._gateway.send_task_result(
             command_id=command.command_id,
             message="Task canceled.",
@@ -281,10 +364,16 @@ def _session_id(prefix: str, value: str) -> str:
 
 def _task_key(*, payload: dict[str, Any], fallback: str) -> str:
     return (
+        _stable_task_key(payload)
+        or fallback
+    )
+
+
+def _stable_task_key(payload: dict[str, Any]) -> str:
+    return (
         _string_payload(payload, "task_id")
         or _string_payload(payload, "external_id")
         or _string_payload(payload, "control_plane_task_id")
-        or fallback
     )
 
 

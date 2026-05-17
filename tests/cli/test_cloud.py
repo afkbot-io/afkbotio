@@ -273,6 +273,29 @@ def test_chat_cloud_alias_sends_one_message(monkeypatch: MonkeyPatch, tmp_path: 
     assert captured["content"] == "Hello"
 
 
+def test_chat_cloud_alias_bypasses_local_setup_guard(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk chat --cloud` should not require local self-hosted setup."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("AFKBOT_SKIP_SETUP_GUARD", raising=False)
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat.send_remote_chat_message",
+        lambda **kwargs: {"id": "msg-1", "status": "sent", "command_id": "cmd-1"},
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.poll_remote_chat_messages",
+        lambda **kwargs: {"results": []},
+    )
+
+    result = CliRunner().invoke(app, ["chat", "--cloud", "ops", "--message", "Hello"])
+
+    assert result.exit_code == 0
+    assert "Run 'afk setup' first." not in result.stdout
+    assert "message sent" in result.stdout
+
+
 def test_start_cloud_alias_runs_remote_lifecycle(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     """`afk start --cloud` should start the saved Cloud connection instead of local services."""
 
@@ -291,6 +314,25 @@ def test_start_cloud_alias_runs_remote_lifecycle(monkeypatch: MonkeyPatch, tmp_p
     assert "cloud start accepted" in result.stdout
     assert captured["connection_name"] == "ops"
     assert captured["action"] == "start"
+
+
+def test_start_cloud_alias_bypasses_local_setup_guard(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """`afk start --cloud` should not require local self-hosted setup."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("AFKBOT_SKIP_SETUP_GUARD", raising=False)
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.cloud.run_remote_lifecycle_action",
+        lambda **kwargs: {"action": "start", "state": "starting"},
+    )
+
+    result = CliRunner().invoke(app, ["start", "--cloud", "ops"])
+
+    assert result.exit_code == 0
+    assert "Run 'afk setup' first." not in result.stdout
+    assert "cloud start accepted" in result.stdout
 
 
 def test_cloud_setup_patches_remote_profile_config(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:

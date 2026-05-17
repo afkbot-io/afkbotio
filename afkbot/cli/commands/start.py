@@ -23,6 +23,7 @@ from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeStartReport,
 )
 from afkbot.services.cloud_runtime import CloudRuntimeCommandDispatcher, CloudRuntimeGatewayClient
+from afkbot.services.cloud_runtime.bootstrap import apply_managed_cloud_manifest
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.runtime_ports import (
     find_available_runtime_port,
@@ -40,6 +41,7 @@ from afkbot.services.managed_database_guard import (
     validate_managed_database_runtime,
 )
 from afkbot.services.setup.runtime_store import read_runtime_config, write_runtime_config
+from afkbot.services.setup.state import setup_is_complete
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.upgrade import UpgradeApplyReport, UpgradeService
@@ -141,8 +143,11 @@ def register(app: typer.Typer) -> None:
         if cloud is not None:
             _run_lifecycle_command(connection=cloud, action="start", json_output=False)
             return
+        settings = get_settings()
+        if not settings.skip_setup_guard and not setup_is_complete(settings):
+            raise_usage_error("Run 'afk setup' first.", code=1)
         run_start_command(
-            settings=None,
+            settings=settings,
             host=host,
             runtime_port=runtime_port,
             api_port=api_port,
@@ -247,6 +252,13 @@ def run_start_command(
             f"to runtime_port={resolved_runtime_port} and saving it.",
             fg=typer.colors.YELLOW,
             err=True,
+        )
+    if resolved_settings.cloud_gateway_enabled:
+        asyncio.run(
+            apply_managed_cloud_manifest(
+                settings=resolved_settings,
+                profile_id=os.environ.get("AFKBOT_PROFILE", "default"),
+            )
         )
 
     typer.echo(

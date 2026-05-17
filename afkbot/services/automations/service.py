@@ -159,10 +159,11 @@ class AutomationsService:
         profile_id: str,
         name: str,
         prompt: str,
+        webhook_token: str | None = None,
         execution_mode: str = "prompt",
         graph_fallback_mode: str = "resume_with_ai_if_safe",
     ) -> AutomationMetadata:
-        """Create profile automation with generated webhook trigger token."""
+        """Create profile automation with a generated or managed webhook token."""
 
         validate_create_payload(name=name, prompt=prompt)
         _require_durable_webhook_reveal(self._settings)
@@ -170,8 +171,10 @@ class AutomationsService:
         normalized_prompt = normalize_automation_prompt(prompt)
         normalized_execution_mode = normalize_execution_mode(execution_mode)
         normalized_graph_fallback_mode = normalize_graph_fallback_mode(graph_fallback_mode)
-        for attempt in range(_WEBHOOK_TOKEN_ISSUE_ATTEMPTS):
-            token = issue_webhook_token()
+        tokens = [webhook_token.strip()] if webhook_token and webhook_token.strip() else []
+        max_attempts = 1 if tokens else _WEBHOOK_TOKEN_ISSUE_ATTEMPTS
+        for attempt in range(max_attempts):
+            token = tokens[attempt] if tokens else issue_webhook_token()
             token_hash = hash_webhook_token(token)
             encrypted_webhook_token, webhook_token_key_version = encrypt_webhook_token(
                 plaintext_token=token,

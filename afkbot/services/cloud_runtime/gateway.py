@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import Any
 
 import websockets
@@ -20,6 +21,9 @@ from afkbot.version import load_cli_version_info
 logger = logging.getLogger(__name__)
 
 CommandHandler = Callable[["CloudRuntimeCommand"], Awaitable[None]]
+_SENSITIVE_PAYLOAD_KEY_RE = re.compile(
+    r"(?i)(authorization|api[_-]?key|token|access[_-]?token|refresh[_-]?token|secret|password|passwd|cookie)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,5 +443,9 @@ def _redact_payload(payload: Any) -> Any:
     if isinstance(payload, list):
         return [_redact_payload(item) for item in payload]
     if isinstance(payload, dict):
-        return {str(key): _redact_payload(value) for key, value in payload.items()}
+        redacted: dict[str, Any] = {}
+        for key, value in payload.items():
+            safe_key = str(key)
+            redacted[safe_key] = "[REDACTED]" if _SENSITIVE_PAYLOAD_KEY_RE.search(safe_key) else _redact_payload(value)
+        return redacted
     return payload

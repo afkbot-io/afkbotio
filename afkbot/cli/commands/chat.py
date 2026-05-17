@@ -38,6 +38,7 @@ from afkbot.services.agent_loop.turn_runtime import (
 )
 from afkbot.services.session_orchestration import SerializedSessionTurnRunner
 from afkbot.services.policy import infer_workspace_scope_mode
+from afkbot.services.setup.state import setup_is_complete
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
 from afkbot.services.agent_loop.sessions import (
@@ -172,6 +173,8 @@ def register(app: typer.Typer) -> None:
                 return
             _render_chat_payload(payload)
             return
+        if not settings.skip_setup_guard and not setup_is_complete(settings):
+            raise_usage_error("Run 'afk setup' first.", code=1)
         target = resolve_cli_chat_target(
             settings=settings,
             profile_id=profile,

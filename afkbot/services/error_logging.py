@@ -17,10 +17,10 @@ _BACKUP_COUNT = 5
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s [pid=%(process)d] %(message)s"
 _SAFE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _SECRET_KEY_RE = re.compile(
-    r"(?i)\b("
+    r"(?i)([\"']?)(\b("
     r"authorization|[A-Za-z0-9_]*api[_-]?key|token|access[_-]?token|refresh[_-]?token|"
     r"secret|password|passwd|cookie"
-    r")\b(\s*[:=]\s*)([\"']?)([^,\s\"']+)([\"']?)"
+    r")\b)([\"']?)(\s*[:=]\s*)([\"']?)([^,\s\"'}]+)([\"']?)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _HANDLER_MARKER = "_afkbot_error_log_path"
@@ -101,7 +101,13 @@ def redact_log_text(value: str) -> str:
     """Redact common secret-like values from log text."""
 
     value = _BEARER_RE.sub("Bearer [REDACTED]", value)
-    return _SECRET_KEY_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", value)
+    return _SECRET_KEY_RE.sub(
+        lambda match: (
+            f"{match.group(1)}{match.group(2)}{match.group(4)}"
+            f"{match.group(5)}{match.group(6)}[REDACTED]{match.group(8)}"
+        ),
+        value,
+    )
 
 
 def _normalize_component(component: str) -> str:
