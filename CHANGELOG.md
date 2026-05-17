@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.13] - 2026-05-17
+
+### Fixed
+
+- `afk cloud chat` and `afk chat --cloud` now wait for the assistant reply
+  instead of returning immediately after the user message is accepted.
+
 ## [1.8.12] - 2026-05-17
 
 ### Added
