@@ -18,16 +18,15 @@ class ManagedDatabaseGuardError(ValueError):
 def validate_managed_database_runtime(settings: Settings) -> None:
     """Validate database settings before starting a managed runtime.
 
-    Cloud-managed containers keep state in a SQLite database inside the
-    per-bot workspace volume. That keeps each bot self-contained across image
-    versions and avoids any direct network path from the runtime to the
-    control-plane PostgreSQL service.
+    Managed containers keep state in a SQLite database inside the per-bot
+    workspace volume. That keeps each bot self-contained across image versions
+    and avoids coupling a runtime process to an external application database.
 
     :param settings: Resolved AFKBOT settings.
     :return: None.
     """
 
-    if not settings.cloud_gateway_enabled:
+    if settings.deployment_mode != "managed":
         return
     driver_name = database_driver_name(settings.db_url)
     if not driver_name.startswith("sqlite"):

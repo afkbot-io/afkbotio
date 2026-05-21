@@ -45,38 +45,13 @@ class ManagedRuntimeSchemaError(RuntimeError):
         self.reason = reason
 
 
-_MANAGED_REQUIRED_INDEXES_BY_TABLE: dict[str, tuple[str, ...]] = {
-    "task": (
-        "ix_task_profile_status",
-        "ix_task_profile_owner_status",
-        "ix_task_profile_claim_owner_status",
-        "ix_task_lease_until",
-        "ix_task_last_run_id",
-        "ux_task_active_ai_claim_owner",
-    ),
-    "run": (
-        "ix_run_profile_session_id",
-        "ix_run_profile_session_status_id",
-    ),
-    "task_event": ("ix_task_event_created_at",),
-    "task_run": ("ix_task_run_finished_at",),
-    "runlog_event": ("ix_runlog_event_created_at",),
-    "automation_trigger_webhook": ("ix_automation_webhook_token_hash",),
-}
-_MANAGED_REQUIRED_AUXILIARY_COLUMNS_BY_TABLE: dict[str, set[str]] = {
-    "afkbot_schema_migration": {"version", "description", "checksum", "applied_at"},
-}
-
-
 async def create_schema(engine: AsyncEngine) -> None:
-    """Create local schema or validate pre-migrated managed PostgreSQL schema."""
+    """Create or upgrade the local runtime schema."""
 
     load_all_models()
     settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
-        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
-            await conn.run_sync(_validate_managed_runtime_schema)
-            return
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_upgrade_schema, settings=settings)
 
@@ -88,7 +63,7 @@ def _requires_managed_runtime_schema_validation(
 ) -> bool:
     """Return True when runtime bootstrap must be read-only schema validation."""
 
-    if settings is None or not settings.cloud_gateway_enabled:
+    if settings is None or settings.deployment_mode != "managed":
         return False
     if dialect_name == "sqlite":
         return False
@@ -103,84 +78,12 @@ def _requires_managed_runtime_schema_validation(
     )
 
 
-def _validate_managed_runtime_schema(conn: Connection) -> None:
-    """Fail closed when managed Postgres has not been migrated by the control plane."""
-
-    expected_columns_by_table = {
-        table.name: {column.name for column in table.columns}
-        for table in Base.metadata.sorted_tables
-        if table.name
-    }
-    expected_columns_by_table.update(_MANAGED_REQUIRED_AUXILIARY_COLUMNS_BY_TABLE)
-    _validate_managed_table_columns(conn, expected_columns_by_table=expected_columns_by_table)
-    _validate_managed_required_indexes(conn)
-
-
-def _validate_managed_task_runtime_schema(conn: Connection) -> None:
-    """Validate the Task Flow subset needed by hot-path task claiming."""
-
-    expected_columns_by_table = {
-        table_name: {column.name for column in Base.metadata.tables[table_name].columns}
-        for table_name in ("task", "task_event", "task_run", "run", "runlog_event")
-        if table_name in Base.metadata.tables
-    }
-    _validate_managed_table_columns(conn, expected_columns_by_table=expected_columns_by_table)
-    _validate_managed_required_indexes(conn)
-
-
-def _validate_managed_table_columns(
-    conn: Connection,
-    *,
-    expected_columns_by_table: dict[str, set[str]],
-) -> None:
-    inspector = inspect(conn)
-    existing_tables = set(inspector.get_table_names())
-    missing_tables = sorted(set(expected_columns_by_table) - existing_tables)
-    if missing_tables:
-        raise ManagedRuntimeSchemaError(
-            error_code="managed_runtime_schema_missing_tables",
-            reason="Managed database is missing required table(s): " + ", ".join(missing_tables[:12]),
-        )
-
-    missing_columns: list[str] = []
-    for table_name, expected_columns in sorted(expected_columns_by_table.items()):
-        existing_columns = {str(column["name"]) for column in inspector.get_columns(table_name)}
-        for column_name in sorted(expected_columns - existing_columns):
-            missing_columns.append(f"{table_name}.{column_name}")
-    if missing_columns:
-        raise ManagedRuntimeSchemaError(
-            error_code="managed_runtime_schema_missing_columns",
-            reason="Managed database is missing required column(s): " + ", ".join(missing_columns[:16]),
-        )
-
-
-def _validate_managed_required_indexes(conn: Connection) -> None:
-    inspector = inspect(conn)
-    missing_indexes: list[str] = []
-    for table_name, expected_index_names in sorted(_MANAGED_REQUIRED_INDEXES_BY_TABLE.items()):
-        existing_index_names = {str(index["name"]) for index in inspector.get_indexes(table_name)}
-        for index_name in expected_index_names:
-            if index_name not in existing_index_names:
-                missing_indexes.append(f"{table_name}.{index_name}")
-    if missing_indexes:
-        raise ManagedRuntimeSchemaError(
-            error_code="managed_runtime_schema_missing_indexes",
-            reason="Managed database is missing required index(es): " + ", ".join(missing_indexes[:16]),
-        )
-
-
 async def list_applied_migrations(engine: AsyncEngine) -> tuple[int, ...]:
     """Return applied schema migrations for the clean runtime baseline."""
 
     settings = _resolve_engine_settings(engine)
     async with engine.connect() as conn:
-        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
-            rows = (
-                await conn.execute(
-                    text("SELECT version FROM afkbot_schema_migration ORDER BY version ASC")
-                )
-            ).all()
-            return tuple(int(row[0]) for row in rows)
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
     return ()
 
 
@@ -193,14 +96,12 @@ async def ping(engine: AsyncEngine) -> bool:
 
 
 async def ensure_task_runtime_schema(engine: AsyncEngine) -> None:
-    """Refresh local Task Flow upkeep or validate managed runtime readiness."""
+    """Refresh local Task Flow upkeep."""
 
     load_all_models()
     settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
-        if _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name):
-            await conn.run_sync(_validate_managed_task_runtime_schema)
-            return
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
         await conn.run_sync(_upgrade_task_runtime_schema)
 
 

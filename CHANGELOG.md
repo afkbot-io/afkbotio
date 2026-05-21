@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.14] - 2026-05-21
+
+### Removed
+
+- Removed AFKBOT Cloud command and managed gateway implementation from the core
+  `afkbotio` package. Cloud behavior now lives in the optional
+  `afkbot-cloud-runtime` extension package.
+- Removed `afk chat --cloud` and `afk start --cloud` aliases from core. Use
+  `afk cloud chat` and `afk cloud start` from the Cloud runtime extension.
+
+### Changed
+
+- Core managed runtime startup now uses generic runtime extension hooks instead
+  of Cloud-specific startup branches.
+- Release metadata and lockfile package metadata are aligned to `1.8.14`.
+
 ## [1.8.13] - 2026-05-17
 
 ### Fixed

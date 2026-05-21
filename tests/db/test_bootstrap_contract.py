@@ -46,7 +46,7 @@ from afkbot.services.task_flow.service import TaskFlowService
 
 
 def test_postgres_database_per_bot_contract_renders_safe_role_plan() -> None:
-    """Cloud bootstrap contract should keep admin SQL outside runtime settings."""
+    """Database-per-bot bootstrap contract should keep admin SQL outside runtime settings."""
 
     contract = build_database_per_bot_contract(bot_id="Bot-42")
     plan = render_database_per_bot_bootstrap_plan(contract)
@@ -86,8 +86,6 @@ def test_managed_database_settings_require_workspace_sqlite(tmp_path: Path) -> N
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
     )
     validate_managed_database_runtime(sqlite_settings)
 
@@ -95,8 +93,6 @@ def test_managed_database_settings_require_workspace_sqlite(tmp_path: Path) -> N
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url="postgresql+asyncpg://bot_role:secret@db.example.com/afkbot_bot_1",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
     )
     with pytest.raises(ManagedDatabaseGuardError) as postgres_exc:
         validate_managed_database_runtime(postgres_settings)
@@ -110,8 +106,6 @@ def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
         root_dir=tmp_path,
         deployment_mode="managed",
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
-        control_ws_url="wss://api.example.test/ws/runtime/connect/",
-        runtime_ws_token="runtime-token",
     )
 
     assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite") is False

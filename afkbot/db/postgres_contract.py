@@ -5,11 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from sqlalchemy.engine import make_url
-
-from afkbot.db.dialect import database_driver_name
-from afkbot.settings import Settings
-
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
@@ -104,41 +99,6 @@ def render_database_per_bot_bootstrap_plan(
             f"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA {schema} TO {runtime_role}",
         ),
     )
-
-
-def validate_managed_postgres_settings(settings: Settings) -> None:
-    """Validate the runtime DB posture expected inside a managed bot container."""
-
-    if not settings.cloud_gateway_enabled:
-        return
-    if settings.managed_database_isolation_mode != "database_per_bot":
-        raise PostgresBootstrapContractError(
-            error_code="managed_database_per_bot_required",
-            reason="Cloud Server launch currently requires database-per-bot isolation.",
-        )
-    driver_name = database_driver_name(settings.db_url)
-    try:
-        url = make_url(settings.db_url)
-    except Exception as exc:
-        raise PostgresBootstrapContractError(
-            error_code="managed_database_url_invalid",
-            reason="Managed runtime database URL is invalid.",
-        ) from exc
-    if driver_name != "postgresql+asyncpg":
-        raise PostgresBootstrapContractError(
-            error_code="managed_database_postgres_required",
-            reason="Managed runtime requires a postgresql+asyncpg database URL.",
-        )
-    if not str(url.username or "").strip():
-        raise PostgresBootstrapContractError(
-            error_code="managed_database_role_required",
-            reason="Managed runtime database URL must include the bot-scoped runtime role.",
-        )
-    if not str(url.database or "").strip():
-        raise PostgresBootstrapContractError(
-            error_code="managed_database_name_required",
-            reason="Managed runtime database URL must point to the bot-scoped database.",
-        )
 
 
 def _normalize_bot_id(bot_id: str) -> str:

@@ -9,7 +9,6 @@ from afkbot.db.postgres_contract import (
     PostgresDatabasePerBotContract,
     build_database_per_bot_contract,
     render_database_per_bot_bootstrap_plan,
-    validate_managed_postgres_settings,
 )
 
 __all__ = [
@@ -22,5 +21,4 @@ __all__ = [
     "PostgresDatabasePerBotContract",
     "build_database_per_bot_contract",
     "render_database_per_bot_bootstrap_plan",
-    "validate_managed_postgres_settings",
 ]

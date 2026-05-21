@@ -10,7 +10,6 @@ from afkbot.cli.commands.bootstrap import register as register_bootstrap
 from afkbot.cli.commands.browser import register as register_browser
 from afkbot.cli.commands.channel import register as register_channel
 from afkbot.cli.commands.chat import register as register_chat
-from afkbot.cli.commands.cloud import register as register_cloud
 from afkbot.cli.commands.connect import register as register_connect
 from afkbot.cli.commands.credentials import register as register_credentials
 from afkbot.cli.commands.doctor import register as register_doctor
@@ -31,6 +30,7 @@ from afkbot.cli.commands.uninstall import register as register_uninstall
 from afkbot.cli.commands.update import register as register_update
 from afkbot.cli.commands.upgrade import register as register_upgrade
 from afkbot.cli.commands.version import register as register_version
+from afkbot.plugins import register_cli_plugins, setup_guard_exempt_command_names
 from afkbot.services.setup.state import setup_is_complete
 from afkbot.services.error_logging import log_exception
 from afkbot.settings import get_settings
@@ -43,7 +43,7 @@ app = typer.Typer(
         "system-prompt files, `afk update` to refresh the active AFKBOT install, `afk automation` to "
         "manage scheduled tasks, `afk task` to manage Task Flow backlog items, `afk plugin` to "
         "install optional platform extensions, `afk channel` to operate external adapters, `afk memory` to "
-        "inspect profile memory, `afk cloud` to connect local CLI with AFKBOT Cloud bots, "
+        "inspect profile memory, "
         "`afk mcp` to manage profile-local MCP IDE integrations, "
         "`afk skill` and `afk subagent` to manage profile assets, `afk auth` to protect web/plugin "
         "surfaces, `afk logs` to inspect diagnostic error logs, and `afk browser install` "
@@ -62,7 +62,6 @@ register_task(app)
 register_browser(app)
 register_channel(app)
 register_chat(app)
-register_cloud(app)
 register_connect(app)
 register_credentials(app)
 register_doctor(app)
@@ -78,6 +77,7 @@ register_start(app)
 register_subagent(app)
 register_upgrade(app)
 register_version(app)
+register_cli_plugins(app)
 
 
 @app.callback(invoke_without_command=True)
@@ -96,7 +96,6 @@ def _guard_setup(ctx: typer.Context) -> None:
         "browser",
         "bootstrap",
         "upgrade",
-        "cloud",
         "mcp",
         "plugin",
         "auth",
@@ -107,6 +106,8 @@ def _guard_setup(ctx: typer.Context) -> None:
         "chat",
         "start",
     }:
+        return
+    if command in setup_guard_exempt_command_names():
         return
 
     settings = get_settings()

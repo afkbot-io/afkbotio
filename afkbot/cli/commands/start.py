@@ -14,16 +14,18 @@ import typer
 import uvicorn
 
 from afkbot.cli.command_errors import raise_usage_error
-from afkbot.cli.commands.cloud import _run_lifecycle_command
 from afkbot.api.app import create_app
+from afkbot.plugins import (
+    RuntimeExtensionHandle,
+    run_before_runtime_start_extensions,
+    start_runtime_extensions,
+)
 from afkbot.services.automations.runtime_daemon import RuntimeDaemon
 from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManager,
     ChannelRuntimeManagerError,
     ChannelRuntimeStartReport,
 )
-from afkbot.services.cloud_runtime import CloudRuntimeCommandDispatcher, CloudRuntimeGatewayClient
-from afkbot.services.cloud_runtime.bootstrap import apply_managed_cloud_manifest
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.runtime_ports import (
     find_available_runtime_port,
@@ -131,18 +133,9 @@ def register(app: typer.Typer) -> None:
             "--taskflow-owner-subagent",
             help="Optional structured Task Flow executor subagent shard inside --taskflow-owner-profile.",
         ),
-        cloud: str | None = typer.Option(
-            None,
-            "--cloud",
-            "--cloud-connection",
-            help="Start a saved AFKBOT Cloud connection instead of the local runtime stack.",
-        ),
     ) -> None:
         """Start the full AFKBOT stack and stop all owned services on exit."""
 
-        if cloud is not None:
-            _run_lifecycle_command(connection=cloud, action="start", json_output=False)
-            return
         settings = get_settings()
         if not settings.skip_setup_guard and not setup_is_complete(settings):
             raise_usage_error("Run 'afk setup' first.", code=1)
@@ -227,10 +220,10 @@ def run_start_command(
     resolved_runtime_port = bind_plan.runtime_port
     resolved_api_port = bind_plan.api_port
     persist_runtime_bind = bind_plan.persist_runtime_bind
-    if not allow_pending_upgrades and resolved_settings.cloud_gateway_enabled:
+    if not allow_pending_upgrades and resolved_settings.deployment_mode == "managed":
         upgrade_report = asyncio.run(_apply_pending_upgrades(resolved_settings))
         if upgrade_report.changed:
-            typer.echo("Applied persisted-state upgrades before Cloud runtime start.")
+            typer.echo("Applied persisted-state upgrades before managed runtime start.")
     elif not allow_pending_upgrades:
         upgrade_report = asyncio.run(_inspect_pending_upgrades(resolved_settings))
         if upgrade_report.changed:
@@ -253,9 +246,9 @@ def run_start_command(
             fg=typer.colors.YELLOW,
             err=True,
         )
-    if resolved_settings.cloud_gateway_enabled:
+    if resolved_settings.deployment_mode == "managed":
         asyncio.run(
-            apply_managed_cloud_manifest(
+            run_before_runtime_start_extensions(
                 settings=resolved_settings,
                 profile_id=os.environ.get("AFKBOT_PROFILE", "default"),
             )
@@ -354,16 +347,15 @@ async def _run_full_stack(
     registered_signals: list[signal.Signals] = []
     api_task: asyncio.Task[object] | None = None
     stop_wait_task: asyncio.Task[object] | None = None
-    cloud_gateway_task: asyncio.Task[object] | None = None
-    cloud_gateway_client: CloudRuntimeGatewayClient | None = None
-    cloud_command_dispatcher: CloudRuntimeCommandDispatcher | None = None
+    runtime_extension_handles: list[RuntimeExtensionHandle] = []
 
     def _request_shutdown() -> None:
         automation_daemon.begin_shutdown()
         taskflow_daemon.begin_shutdown()
         server.should_exit = True
-        if cloud_gateway_client is not None:
-            cloud_gateway_client.request_stop()
+        for handle in runtime_extension_handles:
+            if handle.request_stop is not None:
+                handle.request_stop()
         stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -389,48 +381,43 @@ async def _run_full_stack(
                 strict_channels=strict_channels,
             )
             _render_channel_start_report(channel_report)
-        cloud_gateway_client = CloudRuntimeGatewayClient.from_settings(settings=settings)
-        if cloud_gateway_client is not None:
-            cloud_command_dispatcher = CloudRuntimeCommandDispatcher(
-                gateway=cloud_gateway_client,
-                request_shutdown=_request_shutdown,
+        runtime_extension_handles = await start_runtime_extensions(
+            settings=settings,
+            request_shutdown=_request_shutdown,
+        )
+        for handle in runtime_extension_handles:
+            if handle.ready is None:
+                continue
+            ready_task = asyncio.ensure_future(
+                handle.ready,
             )
-            cloud_gateway_client.set_command_handler(cloud_command_dispatcher.handle)
-            cloud_gateway_task = asyncio.create_task(
-                cloud_gateway_client.run(),
-                name="afk-cloud-runtime-gateway",
-            )
-            cloud_ready_task = asyncio.create_task(
-                cloud_gateway_client.wait_until_ready(
-                    timeout_sec=max(5.0, settings.cloud_gateway_reconnect_initial_sec + 1.0),
-                ),
-                name="afk-cloud-runtime-gateway-ready",
-            )
-            cloud_ready_done, _ = await asyncio.wait(
-                {cloud_ready_task, cloud_gateway_task},
+            ready_done, _ = await asyncio.wait(
+                {ready_task, handle.task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if cloud_gateway_task in cloud_ready_done:
-                error = cloud_gateway_task.exception()
+            if handle.task in ready_done:
+                error = handle.task.exception()
                 if error is not None:
                     raise error
-                raise RuntimeError("Cloud runtime gateway exited before readiness.")
-            await cloud_ready_task
+                raise RuntimeError(f"Runtime extension {handle.name} exited before readiness.")
+            await ready_task
         api_task = asyncio.create_task(server.serve(), name="afk-api-server")
         stop_wait_task = asyncio.create_task(stop_event.wait(), name="afk-shutdown-wait")
         wait_tasks: set[asyncio.Task[Any]] = {api_task, stop_wait_task}
-        if cloud_gateway_task is not None:
-            wait_tasks.add(cloud_gateway_task)
+        wait_tasks.update(handle.task for handle in runtime_extension_handles)
         done, _ = await asyncio.wait(
             wait_tasks,
             return_when=asyncio.FIRST_COMPLETED,
         )
-        if cloud_gateway_task is not None and cloud_gateway_task in done:
-            error = cloud_gateway_task.exception()
-            if error is not None:
-                raise error
-            if not stop_event.is_set():
-                raise RuntimeError("Cloud runtime gateway exited before shutdown was requested.")
+        for handle in runtime_extension_handles:
+            if handle.task in done:
+                error = handle.task.exception()
+                if error is not None:
+                    raise error
+                if not stop_event.is_set():
+                    raise RuntimeError(
+                        f"Runtime extension {handle.name} exited before shutdown was requested."
+                    )
         if api_task in done:
             error = api_task.exception()
             if error is not None:
@@ -449,14 +436,17 @@ async def _run_full_stack(
             stop_wait_task.cancel()
             with suppress(asyncio.CancelledError):
                 await stop_wait_task
-        if cloud_gateway_client is not None:
-            cloud_gateway_client.request_stop()
-        if cloud_command_dispatcher is not None:
-            await cloud_command_dispatcher.close()
-        if cloud_gateway_task is not None:
-            cloud_gateway_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await cloud_gateway_task
+        for handle in runtime_extension_handles:
+            if handle.request_stop is not None:
+                handle.request_stop()
+        for handle in runtime_extension_handles:
+            if handle.close is not None:
+                await handle.close()
+        for handle in runtime_extension_handles:
+            if not handle.task.done():
+                handle.task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await handle.task
         await taskflow_daemon.stop()
         await automation_daemon.stop()
 
@@ -497,7 +487,7 @@ async def _inspect_pending_upgrades(settings: Settings) -> UpgradeApplyReport:
 
 
 async def _apply_pending_upgrades(settings: Settings) -> UpgradeApplyReport:
-    """Apply idempotent persisted-state upgrades before managed Cloud startup.
+    """Apply idempotent persisted-state upgrades before managed runtime startup.
 
     :param settings: Resolved runtime settings.
     :return: Upgrade report describing changed upgrade steps.

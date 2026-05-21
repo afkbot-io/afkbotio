@@ -6,7 +6,6 @@ from functools import lru_cache
 import os
 from pathlib import Path
 import sys
-from urllib.parse import urlparse
 from typing import Literal
 from collections.abc import Mapping
 
@@ -300,13 +299,6 @@ class Settings(BaseSettings):
     public_runtime_url: str | None = None
     public_chat_api_url: str | None = None
     nginx_config_path: str | None = None
-    control_ws_url: str | None = None
-    runtime_ws_token: str | None = None
-    cloud_gateway_allow_insecure_ws: bool = False
-    cloud_gateway_heartbeat_interval_sec: float = 20.0
-    cloud_gateway_reconnect_initial_sec: float = 1.0
-    cloud_gateway_reconnect_max_sec: float = 30.0
-    cloud_gateway_message_max_bytes: int = 262144
     llm_request_timeout_sec: float = DEFAULT_LLM_REQUEST_TIMEOUT_SEC
     llm_shared_request_max_parallel: int = 4
     llm_shared_request_min_interval_ms: int = 1000
@@ -413,7 +405,6 @@ class Settings(BaseSettings):
         "brave_api_key",
         "ui_auth_password_hash",
         "ui_auth_cookie_key",
-        "runtime_ws_token",
         mode="before",
     )
     @classmethod
@@ -460,7 +451,6 @@ class Settings(BaseSettings):
         "public_runtime_url",
         "public_chat_api_url",
         "nginx_config_path",
-        "control_ws_url",
         "browser_lightpanda_binary_path",
         mode="before",
     )
@@ -615,7 +605,6 @@ class Settings(BaseSettings):
         "skills_marketplace_max_json_bytes",
         "skills_marketplace_timeout_sec",
         "llm_shared_request_max_parallel",
-        "cloud_gateway_message_max_bytes",
     )
     @classmethod
     def _validate_positive_int(cls, value: int) -> int:
@@ -712,9 +701,6 @@ class Settings(BaseSettings):
         "automation_run_timeout_sec",
         "taskflow_runtime_poll_interval_sec",
         "llm_request_timeout_sec",
-        "cloud_gateway_heartbeat_interval_sec",
-        "cloud_gateway_reconnect_initial_sec",
-        "cloud_gateway_reconnect_max_sec",
     )
     @classmethod
     def _validate_positive_float(cls, value: float) -> float:
@@ -758,39 +744,6 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("runtime_shutdown_timeout_sec must be >= 0")
         return value
-
-    @model_validator(mode="after")
-    def _validate_cloud_gateway_policy(self) -> Settings:
-        """Validate managed cloud gateway settings without affecting local mode."""
-
-        if self.cloud_gateway_reconnect_initial_sec > self.cloud_gateway_reconnect_max_sec:
-            raise ValueError(
-                "cloud_gateway_reconnect_initial_sec must be <= cloud_gateway_reconnect_max_sec"
-            )
-        if not self.cloud_gateway_enabled:
-            return self
-        if not self.control_ws_url:
-            raise ValueError("control_ws_url is required when managed cloud runtime is enabled")
-        if not self.runtime_ws_token:
-            raise ValueError("runtime_ws_token is required when managed cloud runtime is enabled")
-        parsed_url = urlparse(self.control_ws_url)
-        if parsed_url.scheme not in {"ws", "wss"}:
-            raise ValueError("control_ws_url must use wss://")
-        if parsed_url.scheme == "ws" and not self.cloud_gateway_allow_insecure_ws:
-            raise ValueError(
-                "control_ws_url must use wss:// unless cloud_gateway_allow_insecure_ws is enabled"
-            )
-        return self
-
-    @property
-    def cloud_gateway_enabled(self) -> bool:
-        """Return whether this process is running as a cloud-managed runtime.
-
-        :param: None.
-        :return: True when the managed deployment contract is enabled.
-        """
-
-        return self.deployment_mode == "managed"
 
     @model_validator(mode="after")
     def _validate_ui_auth_policy(self) -> Settings:
@@ -940,13 +893,7 @@ _RUNTIME_SECRET_FIELD_NAMES = frozenset(
         "ui_auth_cookie_key",
     }
 )
-_RUNTIME_ENV_ONLY_FIELD_NAMES = frozenset(
-    {
-        "control_ws_url",
-        "runtime_ws_token",
-        "cloud_gateway_allow_insecure_ws",
-    }
-)
+_RUNTIME_ENV_ONLY_FIELD_NAMES: frozenset[str] = frozenset()
 _RUNTIME_CONFIG_FIELD_NAMES = frozenset(
     field_name
     for field_name in Settings.model_fields.keys()
