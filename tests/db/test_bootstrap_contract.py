@@ -98,6 +98,24 @@ def test_managed_database_settings_require_workspace_sqlite(tmp_path: Path) -> N
         validate_managed_database_runtime(postgres_settings)
     assert postgres_exc.value.error_code == "managed_database_sqlite_required"
 
+    outside_settings = Settings(
+        root_dir=tmp_path / "workspace",
+        deployment_mode="managed",
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'outside.db'}",
+    )
+    with pytest.raises(ManagedDatabaseGuardError) as outside_exc:
+        validate_managed_database_runtime(outside_settings)
+    assert outside_exc.value.error_code == "managed_database_outside_workspace"
+
+    memory_settings = Settings(
+        root_dir=tmp_path,
+        deployment_mode="managed",
+        db_url="sqlite+aiosqlite:///:memory:",
+    )
+    with pytest.raises(ManagedDatabaseGuardError) as memory_exc:
+        validate_managed_database_runtime(memory_settings)
+    assert memory_exc.value.error_code == "managed_database_sqlite_file_required"
+
 
 def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
     """Managed runtimes create/upgrade local SQLite schema in their workspace."""
