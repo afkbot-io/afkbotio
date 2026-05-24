@@ -19,6 +19,7 @@ from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow.context_overrides import build_task_flow_context_overrides
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
@@ -36,6 +37,22 @@ def _write_profile_subagent(
     path = settings.profiles_dir / profile_id / "subagents" / f"{subagent_name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown, encoding="utf-8")
+
+
+def _write_team_runtime_config(
+    *,
+    settings: Settings,
+    profile_id: str,
+    team_profile_ids: tuple[str, ...],
+) -> None:
+    get_profile_runtime_config_service(settings).write(
+        profile_id,
+        ProfileRuntimeConfig(
+            llm_provider=settings.llm_provider,
+            llm_model=settings.llm_model,
+            taskflow_team_profile_ids=team_profile_ids,
+        ),
+    )
 
 
 @dataclass
@@ -1105,6 +1122,11 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on stale review work.",
     )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst",),
+    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1445,6 +1467,11 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on review work.",
     )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst",),
+    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1515,6 +1542,11 @@ async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
         subagent_name="researcher",
         markdown="# Researcher\nSubagent marker: deep-brief.",
     )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst",),
+    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1551,6 +1583,7 @@ async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
         assert "Subagent: researcher" in observed_calls[0].prompt_overlay
         assert "Subagent marker: deep-brief." in observed_calls[0].prompt_overlay
         assert "Task Flow execution context." in observed_calls[0].prompt_overlay
+        assert "Task Flow worker protocol." in observed_calls[0].prompt_overlay
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -1572,6 +1605,11 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
         profile_id="analyst",
         subagent_name="reviewer",
         markdown="# Reviewer\nSubagent marker: review-queue.",
+    )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst",),
     )
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -1613,6 +1651,7 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
         assert "Subagent marker: review-queue." in observed_calls[0].prompt_overlay
         assert "source_status: review" in observed_calls[0].prompt_overlay
         assert "executor: ai_subagent:analyst:reviewer" in observed_calls[0].prompt_overlay
+        assert "Task Flow worker protocol." in observed_calls[0].prompt_overlay
 
         updated = await service.get_task(profile_id="default", task_id=task.id)
         assert updated.status == "completed"
@@ -1834,6 +1873,11 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
         profile_id="analyst",
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on review tasks.",
+    )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("analyst",),
     )
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -2524,3 +2568,39 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "actor_profile_id plus optional actor_subagent_name" in overrides.prompt_overlay
     assert "task.dependency.add" in overrides.prompt_overlay
     assert "retry_after_sec" in overrides.prompt_overlay
+    assert "ai_profile:default is the Team Orchestrator" in overrides.prompt_overlay
+    assert "focused workers" in overrides.prompt_overlay
+    assert "flow-level completion" in overrides.prompt_overlay
+    assert "do not take unrelated backlog work" in overrides.prompt_overlay
+    assert "Team Orchestrator protocol." in overrides.prompt_overlay
+    assert "docs/spec/roadmap workflow" in overrides.prompt_overlay
+    assert "task.board" in overrides.prompt_overlay
+    assert "delegate specialist execution" in overrides.prompt_overlay
+
+
+def test_taskflow_context_overrides_include_worker_guidance_for_ai_subagents() -> None:
+    """Subagent-owned Task Flow runs should receive worker-specific collaboration rules."""
+
+    overrides = build_task_flow_context_overrides(
+        task_id="task_worker",
+        task_profile_id="default",
+        owner_type="ai_subagent",
+        owner_ref="default:backend-engineer",
+        executor_type="ai_subagent",
+        executor_ref="default:backend-engineer",
+        source_status="todo",
+        flow_id="flow_demo",
+        source_type="manual",
+        source_ref=None,
+        priority=75,
+        attempt=1,
+        requires_review=False,
+    )
+
+    assert overrides.prompt_overlay is not None
+    assert "Task Flow worker protocol." in overrides.prompt_overlay
+    assert "task.context.get" in overrides.prompt_overlay
+    assert "task.feed.list" in overrides.prompt_overlay
+    assert "task.doc.put" in overrides.prompt_overlay
+    assert "task.comment.add" in overrides.prompt_overlay
+    assert "handoff" in overrides.prompt_overlay.lower()

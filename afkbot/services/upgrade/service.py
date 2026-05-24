@@ -16,6 +16,8 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.channel_endpoint import ChannelEndpoint
 from afkbot.models.profile_policy import ProfilePolicy
+from afkbot.models.task import Task
+from afkbot.models.task_flow import TaskFlow
 from afkbot.services.channels.endpoint_contracts import (
     deserialize_endpoint_config,
     serialize_endpoint_storage_payload,
@@ -53,6 +55,8 @@ from afkbot.services.profile_runtime.runtime_secrets import (
     PROFILE_RUNTIME_SECRETS_VERSION,
     get_profile_runtime_secrets_service,
 )
+from afkbot.services.task_flow.ai_executors import resolve_ai_executor_profile_id
+from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.upgrade.contracts import UpgradeApplyReport, UpgradeStepReport
 from afkbot.services.wizard.profile_catalog import infer_profile_scenario_id
@@ -66,8 +70,11 @@ class UpgradeService:
         self._settings = settings
         self._runtime_configs = get_profile_runtime_config_service(settings)
         self._runtime_secrets = get_profile_runtime_secrets_service(settings)
+        self._taskflow_team_configs = get_taskflow_team_config_service(settings)
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 
@@ -111,6 +118,12 @@ class UpgradeService:
                     apply_changes=apply_changes,
                 )
             )
+            steps.append(
+                await self._upgrade_taskflow_team_rosters(
+                    session,
+                    apply_changes=apply_changes,
+                )
+            )
         return UpgradeApplyReport(
             changed=any(item.changed for item in steps),
             steps=tuple(steps),
@@ -124,13 +137,26 @@ class UpgradeService:
     def _upgrade_runtime_config_store(self, *, apply_changes: bool) -> UpgradeStepReport:
         payload = self._read_json_object(self._settings.runtime_config_path)
         if not payload:
-            return UpgradeStepReport(name="runtime_config_store", changed=False, details="no runtime config present")
+            return UpgradeStepReport(
+                name="runtime_config_store", changed=False, details="no runtime config present"
+            )
         raw_config = payload.get("config") if isinstance(payload.get("config"), dict) else payload
         if not isinstance(raw_config, dict):
-            return UpgradeStepReport(name="runtime_config_store", changed=False, details="invalid runtime config ignored")
-        canonical_config = {str(key): value for key, value in raw_config.items() if key != "version" and key != "updated_at"}
-        if payload.get("version") == RUNTIME_STORE_VERSION and payload.get("config") == canonical_config:
-            return UpgradeStepReport(name="runtime_config_store", changed=False, details="already canonical")
+            return UpgradeStepReport(
+                name="runtime_config_store", changed=False, details="invalid runtime config ignored"
+            )
+        canonical_config = {
+            str(key): value
+            for key, value in raw_config.items()
+            if key != "version" and key != "updated_at"
+        }
+        if (
+            payload.get("version") == RUNTIME_STORE_VERSION
+            and payload.get("config") == canonical_config
+        ):
+            return UpgradeStepReport(
+                name="runtime_config_store", changed=False, details="already canonical"
+            )
         if apply_changes:
             write_runtime_config(self._settings, config=canonical_config)
         return UpgradeStepReport(
@@ -175,16 +201,24 @@ class UpgradeService:
         legacy_present = legacy_path.exists()
         setup_present = self._settings.setup_state_path.exists()
         if payload is None:
-            return UpgradeStepReport(name="setup_state", changed=False, details="no setup_state.json present")
+            return UpgradeStepReport(
+                name="setup_state", changed=False, details="no setup_state.json present"
+            )
         config = payload.get("config")
         if not isinstance(config, dict):
-            return UpgradeStepReport(name="setup_state", changed=False, details="invalid setup_state ignored")
+            return UpgradeStepReport(
+                name="setup_state", changed=False, details="invalid setup_state ignored"
+            )
 
         runtime_config = read_runtime_config(self._settings)
         policy_capabilities = _coerce_text_tuple(config.get("policy_capabilities"))
-        policy_file_access_mode = _coerce_text(config.get("policy_file_access_mode"), default="read_write")
+        policy_file_access_mode = _coerce_text(
+            config.get("policy_file_access_mode"), default="read_write"
+        )
         policy_workspace_scope_mode = _coerce_text(
-            _first_present_any(config, runtime_config, "policy_workspace_scope_mode", "policy_workspace_scope"),
+            _first_present_any(
+                config, runtime_config, "policy_workspace_scope_mode", "policy_workspace_scope"
+            ),
             default="profile_only",
         )
         policy_shell_sandbox_mode = _coerce_text(
@@ -210,7 +244,9 @@ class UpgradeService:
         )
         snapshot = SetupStateSnapshot(
             env_file=_coerce_text(config.get("env_file"), default=".unused"),
-            db_url=_coerce_text(_first_present(config, runtime_config, "db_url"), default=self._settings.db_url),
+            db_url=_coerce_text(
+                _first_present(config, runtime_config, "db_url"), default=self._settings.db_url
+            ),
             llm_provider=_coerce_text(
                 _first_present(config, runtime_config, "llm_provider"),
                 default="openai",
@@ -228,14 +264,20 @@ class UpgradeService:
                 default="none",
             ),
             llm_proxy_configured=_coerce_bool(config.get("llm_proxy_configured")),
-            credentials_master_keys_configured=_coerce_bool(config.get("credentials_master_keys_configured")),
-            runtime_host=_coerce_text(_first_present(config, runtime_config, "runtime_host"), default="127.0.0.1"),
+            credentials_master_keys_configured=_coerce_bool(
+                config.get("credentials_master_keys_configured")
+            ),
+            runtime_host=_coerce_text(
+                _first_present(config, runtime_config, "runtime_host"), default="127.0.0.1"
+            ),
             runtime_port=_coerce_int(
                 _first_present(config, runtime_config, "runtime_port"),
                 default=self._settings.runtime_port,
             ),
             nginx_enabled=_coerce_bool(_first_present(config, runtime_config, "nginx_enabled")),
-            nginx_port=_coerce_int(_first_present(config, runtime_config, "nginx_port"), default=80),
+            nginx_port=_coerce_int(
+                _first_present(config, runtime_config, "nginx_port"), default=80
+            ),
             public_runtime_url=_coerce_text(
                 _first_present(config, runtime_config, "public_runtime_url"),
                 default="",
@@ -252,10 +294,18 @@ class UpgradeService:
                 _first_present(config, runtime_config, "update_notices_enabled"),
                 default=True,
             ),
-            policy_setup_mode=_coerce_text(_first_present(config, runtime_config, "policy_setup_mode"), default="preset"),
-            policy_enabled=_coerce_bool(_first_present(config, runtime_config, "policy_enabled"), default=True),
-            policy_preset=_coerce_text(_first_present(config, runtime_config, "policy_preset"), default="medium"),
-            policy_confirmation_mode=_coerce_text(config.get("policy_confirmation_mode"), default="confirm_file_destructive_ops"),
+            policy_setup_mode=_coerce_text(
+                _first_present(config, runtime_config, "policy_setup_mode"), default="preset"
+            ),
+            policy_enabled=_coerce_bool(
+                _first_present(config, runtime_config, "policy_enabled"), default=True
+            ),
+            policy_preset=_coerce_text(
+                _first_present(config, runtime_config, "policy_preset"), default="medium"
+            ),
+            policy_confirmation_mode=_coerce_text(
+                config.get("policy_confirmation_mode"), default="confirm_file_destructive_ops"
+            ),
             policy_capabilities=policy_capabilities,
             policy_allowed_tools=_coerce_text_tuple(config.get("policy_allowed_tools")),
             policy_file_access_mode=policy_file_access_mode,
@@ -305,12 +355,17 @@ class UpgradeService:
         for config_path in self._settings.profiles_dir.glob("*/.system/agent_config.json"):
             profile_id = config_path.parent.parent.name
             payload = self._read_json_object(config_path)
-            raw_config = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+            raw_config = (
+                payload.get("config") if isinstance(payload.get("config"), dict) else payload
+            )
             if not isinstance(raw_config, dict):
                 continue
             config = ProfileRuntimeConfig.model_validate(raw_config)
             canonical_config = config.model_dump(mode="json", exclude_none=True)
-            if payload.get("version") == PROFILE_RUNTIME_CONFIG_VERSION and payload.get("config") == canonical_config:
+            if (
+                payload.get("version") == PROFILE_RUNTIME_CONFIG_VERSION
+                and payload.get("config") == canonical_config
+            ):
                 continue
             if apply_changes:
                 self._runtime_configs.write(profile_id, config)
@@ -341,13 +396,13 @@ class UpgradeService:
                 and bool(str(payload.get("ciphertext") or "").strip())
             ):
                 continue
-            raw_secrets = payload.get("secrets") if isinstance(payload.get("secrets"), dict) else payload
+            raw_secrets = (
+                payload.get("secrets") if isinstance(payload.get("secrets"), dict) else payload
+            )
             if not isinstance(raw_secrets, dict):
                 continue
             normalized = {
-                str(key): value
-                for key, value in raw_secrets.items()
-                if isinstance(value, str)
+                str(key): value for key, value in raw_secrets.items() if isinstance(value, str)
             }
             if apply_changes and not self._runtime_secrets.write(profile_id, normalized):
                 continue
@@ -366,16 +421,139 @@ class UpgradeService:
             ),
         )
 
+    async def _upgrade_taskflow_team_rosters(
+        self,
+        session: AsyncSession,
+        *,
+        apply_changes: bool,
+    ) -> UpgradeStepReport:
+        """Materialize legacy cross-profile AI participants into explicit team rosters."""
+
+        inferred_by_profile: dict[str, set[str]] = {}
+
+        def add_actor(*, profile_id: str, actor_type: str | None, actor_ref: str | None) -> None:
+            actor_profile_id = resolve_ai_executor_profile_id(
+                owner_type=actor_type,
+                owner_ref=actor_ref,
+                task_profile_id=profile_id,
+            )
+            if actor_profile_id == profile_id:
+                return
+            inferred_by_profile.setdefault(profile_id, set()).add(actor_profile_id)
+
+        task_rows = (
+            await session.execute(
+                select(
+                    Task.profile_id,
+                    Task.owner_type,
+                    Task.owner_ref,
+                    Task.reviewer_type,
+                    Task.reviewer_ref,
+                    Task.created_by_type,
+                    Task.created_by_ref,
+                    Task.claim_owner_type,
+                    Task.claim_owner_ref,
+                )
+            )
+        ).all()
+        for task_row in task_rows:
+            profile_id = str(task_row.profile_id or "").strip()
+            if not profile_id:
+                continue
+            add_actor(
+                profile_id=profile_id, actor_type=task_row.owner_type, actor_ref=task_row.owner_ref
+            )
+            add_actor(
+                profile_id=profile_id,
+                actor_type=task_row.reviewer_type,
+                actor_ref=task_row.reviewer_ref,
+            )
+            add_actor(
+                profile_id=profile_id,
+                actor_type=task_row.created_by_type,
+                actor_ref=task_row.created_by_ref,
+            )
+            add_actor(
+                profile_id=profile_id,
+                actor_type=task_row.claim_owner_type,
+                actor_ref=task_row.claim_owner_ref,
+            )
+
+        flow_rows = (
+            await session.execute(
+                select(
+                    TaskFlow.profile_id,
+                    TaskFlow.created_by_type,
+                    TaskFlow.created_by_ref,
+                    TaskFlow.default_owner_type,
+                    TaskFlow.default_owner_ref,
+                )
+            )
+        ).all()
+        for flow_row in flow_rows:
+            profile_id = str(flow_row.profile_id or "").strip()
+            if not profile_id:
+                continue
+            add_actor(
+                profile_id=profile_id,
+                actor_type=flow_row.created_by_type,
+                actor_ref=flow_row.created_by_ref,
+            )
+            add_actor(
+                profile_id=profile_id,
+                actor_type=flow_row.default_owner_type,
+                actor_ref=flow_row.default_owner_ref,
+            )
+
+        changed = 0
+        for profile_id, inferred_profile_ids in sorted(inferred_by_profile.items()):
+            if self._taskflow_team_configs.load(profile_id) is not None:
+                continue
+            legacy_config = self._runtime_configs.load(profile_id)
+            legacy_profile_ids = (
+                set(legacy_config.taskflow_team_profile_ids or ())
+                if legacy_config is not None
+                else set()
+            )
+            team_profile_ids = tuple(
+                sorted((legacy_profile_ids | inferred_profile_ids) - {profile_id})
+            )
+            if not team_profile_ids:
+                continue
+            if apply_changes:
+                self._taskflow_team_configs.write(profile_id, team_profile_ids)
+            changed += 1
+
+        return UpgradeStepReport(
+            name="taskflow_team_rosters",
+            changed=changed > 0,
+            details=(
+                f"materialized {changed} Task Flow team roster(s)"
+                if apply_changes and changed
+                else (
+                    f"{changed} Task Flow team roster(s) need materialization"
+                    if changed
+                    else "already explicit"
+                )
+            ),
+        )
+
     async def _upgrade_profile_policy_workspace_scope(
         self,
         session: AsyncSession,
         *,
         apply_changes: bool,
     ) -> UpgradeStepReport:
-        result = await session.execute(select(ProfilePolicy).order_by(ProfilePolicy.profile_id.asc()))
+        result = await session.execute(
+            select(ProfilePolicy).order_by(ProfilePolicy.profile_id.asc())
+        )
         rows = list(result.scalars().all())
         if not rows:
-            return UpgradeStepReport(name="profile_policy_workspace_scope", changed=False, details="no profile policies present")
+            return UpgradeStepReport(
+                name="profile_policy_workspace_scope",
+                changed=False,
+                details="no profile policies present",
+            )
 
         legacy_default_root = str(self._settings.root_dir.resolve(strict=False))
         changed = 0
@@ -391,7 +569,9 @@ class UpgradeService:
                 )
             )
             if apply_changes:
-                row.allowed_directories_json = json.dumps(canonical, ensure_ascii=True, sort_keys=True)
+                row.allowed_directories_json = json.dumps(
+                    canonical, ensure_ascii=True, sort_keys=True
+                )
             changed += 1
         if changed and apply_changes:
             await session.flush()
@@ -415,7 +595,9 @@ class UpgradeService:
         *,
         apply_changes: bool,
     ) -> UpgradeStepReport:
-        result = await session.execute(select(ChannelEndpoint).order_by(ChannelEndpoint.endpoint_id.asc()))
+        result = await session.execute(
+            select(ChannelEndpoint).order_by(ChannelEndpoint.endpoint_id.asc())
+        )
         rows = list(result.scalars().all())
         changed = 0
         for row in rows:
@@ -433,7 +615,9 @@ class UpgradeService:
                     "config": raw_config,
                 }
             )
-            canonical_group_trigger_mode, canonical_config = serialize_endpoint_storage_payload(config)
+            canonical_group_trigger_mode, canonical_config = serialize_endpoint_storage_payload(
+                config
+            )
             canonical_json = json.dumps(canonical_config, ensure_ascii=True, sort_keys=True)
             if (
                 str(getattr(row, "transport")) == config.transport
@@ -478,7 +662,9 @@ class UpgradeService:
         *,
         apply_changes: bool,
     ) -> UpgradeStepReport:
-        result = await session.execute(select(ProfilePolicy).order_by(ProfilePolicy.profile_id.asc()))
+        result = await session.execute(
+            select(ProfilePolicy).order_by(ProfilePolicy.profile_id.asc())
+        )
         rows = list(result.scalars().all())
         if not rows:
             return UpgradeStepReport(
@@ -493,7 +679,9 @@ class UpgradeService:
                 selection = PolicySelection(
                     enabled=bool(row.policy_enabled),
                     preset=parse_preset_level(str(row.policy_preset or "medium")),
-                    capabilities=parse_capability_ids(_decode_json_list(row.policy_capabilities_json)),
+                    capabilities=parse_capability_ids(
+                        _decode_json_list(row.policy_capabilities_json)
+                    ),
                 )
             except ValueError:
                 continue
@@ -506,7 +694,9 @@ class UpgradeService:
                 selection=selection,
                 available_tool_names=ToolRegistry.from_settings(effective_settings).list_names(),
             )
-            current_allowed_tools = tuple(_decode_json_list(getattr(row, "allowed_tools_json", "[]")))
+            current_allowed_tools = tuple(
+                _decode_json_list(getattr(row, "allowed_tools_json", "[]"))
+            )
             file_access_mode = infer_file_access_mode(allowed_tools=current_allowed_tools)
             canonical_allowed_tools = apply_file_access_mode(
                 allowed_tools=resolved.allowed_tools,
@@ -592,7 +782,6 @@ class UpgradeService:
         if not isinstance(payload, dict):
             return {}
         return {str(key): value for key, value in payload.items()}
-
 
 
 def _coerce_bool(value: object, default: bool = False) -> bool:

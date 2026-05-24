@@ -31,10 +31,12 @@ def test_subagent_runtime_policy_builds_deterministic_child_identifiers() -> Non
     policy = SubagentRuntimePolicy()
 
     assert policy.build_child_session_id(task_id="task-123") == "subagent:task-123"
-    assert (
-        policy.build_prompt_overlay(subagent_name="researcher", subagent_markdown="# researcher")
-        == "Run as a child subagent for the parent agent. "
-        "Use the following subagent-specific instructions.\n"
-        "Subagent: researcher\n\n"
-        "# researcher"
+    overlay = policy.build_prompt_overlay(
+        subagent_name="researcher",
+        subagent_markdown="# researcher",
     )
+
+    assert "Run as a child subagent for the parent agent." in overlay
+    assert "Subagent: researcher" in overlay
+    assert "Task Flow worker protocol." not in overlay
+    assert "# researcher" in overlay

@@ -1218,6 +1218,11 @@ async def test_task_block_plugin_supports_structured_ai_subagent_reassignment(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -1783,6 +1788,11 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -1836,6 +1846,11 @@ async def test_task_plugins_runtime_profile_scope_ignores_env_override_in_taskfl
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         ctx = ToolContext(
             profile_id="analyst",
@@ -2136,6 +2151,11 @@ async def test_task_create_plugin_supports_structured_ai_subagent_assignment(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -2180,6 +2200,11 @@ async def test_task_create_plugin_supports_structured_ai_profile_assignment(
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
             await ProfileRepository(session).get_or_create_default("reviewer")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper", "reviewer"),
+        )
 
         create_tool = registry.get("task.create")
         assert create_tool is not None
@@ -2219,6 +2244,11 @@ async def test_task_update_plugin_supports_structured_ai_subagent_reassignment(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -2356,6 +2386,11 @@ async def test_task_flow_create_plugin_supports_structured_ai_subagent_default_o
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -2398,6 +2433,11 @@ async def test_task_flow_create_plugin_supports_structured_ai_profile_default_ow
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
 
         flow_tool = registry.get("task.flow.create")
         assert flow_tool is not None
@@ -2742,6 +2782,11 @@ async def test_task_stale_plugins_support_structured_owner_filter(
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -3131,6 +3176,11 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",
@@ -3211,6 +3261,11 @@ async def test_task_review_tools_accept_subagent_actor_alias_for_current_runtime
         factory = create_session_factory(engine)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("papercliper")
+        _write_team_runtime_config(
+            settings=settings,
+            profile_id="default",
+            team_profile_ids=("papercliper",),
+        )
         _write_profile_subagent(
             settings=settings,
             profile_id="papercliper",

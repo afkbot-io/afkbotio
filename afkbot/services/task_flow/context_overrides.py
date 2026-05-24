@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.task_flow.team_prompts import task_flow_team_protocol_for_executor
 
 
 def build_task_flow_context_overrides(
@@ -89,8 +90,14 @@ def _build_task_flow_prompt_overlay(
         f"- source_status: {source_status}",
         f"- attempt: {attempt}",
         f"- requires_review: {str(requires_review).lower()}",
+        "Team model:",
+        f"- ai_profile:{task_profile_id} is the Team Orchestrator for this backlog.",
+        "- ai_subagent executors are focused workers. They own only their assigned task unless a task tool explicitly delegates or reassigns work.",
+        "- The orchestrator owns decomposition, project docs, dependencies, review routing, and flow-level completion.",
+        "- Workers own implementation or review for their assigned task and must leave durable handoff notes.",
         "Treat the incoming user message as the detached task description.",
         "This runtime is non-interactive. Do not ask the user follow-up questions inside this run.",
+        task_flow_team_protocol_for_executor(executor_type=executor_type),
         "Use task.* tools to manage backlog items in task_profile_id. When you need to touch the backlog, prefer passing profile_id=task_profile_id explicitly.",
         "Start by using the provided Task Flow Context Bundle in the task message. If you need more detail, call task.context.get for the current task_id before changing docs, blockers, delegation, or review state.",
         "Use task.doc.list/task.doc.put for durable flow/task docs such as plan, spec, roadmap, decisions, and handoff notes. Confirm an agreed revision with task.doc.confirm before decomposing or executing work that depends on approval.",
@@ -105,6 +112,8 @@ def _build_task_flow_prompt_overlay(
         "Before the task ends in review, blocked, completed, failed, or human handoff state, add a durable task.comment.add note that summarizes outcome, remaining work, and any review context.",
         "When the current task needs help from another specialist, prefer task.delegate to create a self-contained task for another AI executor (ai_profile or ai_subagent) and leave a durable handoff trail.",
         "When delegated work must finish before this task can continue, let task.delegate or task.dependency.add connect it so the current task can stay in dependency_wait and resume only after the delegated task completes.",
+        "When running as the Team Orchestrator, check task.feed.list, task.board, delegated tasks, blocked tasks, and review queues before claiming the flow is complete.",
+        "When running as a focused worker, do not take unrelated backlog work; use @mentions, comments, task.block, or task.delegate for collaboration.",
         "If the blocker is external and worth rechecking later, prefer task.block with retry_after_sec or ready_at so the blocker reason stays explicit. If the blocker needs human input or approval, use task.block without a timer or hand it off to a human owner with task.update.",
         "If the current task should be handed off to a human, update the current task_id with task.update:",
         "- set owner_type=human and owner_ref to the intended human owner",

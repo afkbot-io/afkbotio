@@ -78,6 +78,12 @@ execution_mode: executable
 
 Manage durable Task Flow backlog items via `task.*` tools.
 
+Task Flow has an AI team model:
+- the `ai_profile:<profile_id>` executor is the Team Orchestrator for that profile backlog;
+- `ai_subagent:<profile_id>:<name>` executors are focused workers;
+- the orchestrator owns project docs, decomposition, dependencies, assignment, review routing, and flow-level completion;
+- workers own their assigned tasks and communicate through docs, comments, mentions, review actions, and delegated tasks.
+
 Use this skill for explicit backlog/task requests:
 - create/update/list/get tasks
 - add/remove/list task dependencies
@@ -107,7 +113,8 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
    - name the expected result
    - encode important constraints directly in the prompt
 4. For sequencing, create prerequisite tasks first, then create dependent tasks with `depends_on_task_ids`.
-5. For reassignment or handoff, use `task.update`:
+5. Treat the profile AI executor as the default orchestrator. Assign execution work to focused subagents when the backlog has matching workers.
+6. For reassignment or handoff, use `task.update`:
    - prefer `owner_profile_id=<profile_id>` to assign an AI profile/orchestrator without hand-building `owner_ref`
    - prefer `owner_profile_id=<profile_id>` plus `owner_subagent_name=<subagent_name>` to assign a specific worker subagent
    - raw `owner_type/owner_ref` still work when you already have canonical refs
@@ -115,21 +122,23 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
    - `status=review` when ready for human review
    - `status=blocked` when waiting for human input/approval
    - `status=todo` when simply re-queueing or reassigning
-6. After tool calls, report concrete ids, owners, statuses, and dependencies from payloads.
-7. When executing or resuming a task, inspect `task.context.get` first unless the runtime already supplied a sufficient Task Flow Context Bundle.
+7. After tool calls, report concrete ids, owners, statuses, and dependencies from payloads.
+8. When executing or resuming a task, inspect `task.context.get` first unless the runtime already supplied a sufficient Task Flow Context Bundle.
    - Use the bundle to understand flow docs, task docs, dependencies, delegated tasks, recent comments, and recent events.
-8. When the user wants the current backlog picture, inspect `task.board` before narrating the state by hand.
+9. When the user wants the current backlog picture, inspect `task.board` before narrating the state by hand.
    - Prefer `owner_profile_id=<profile_id>` plus optional `owner_subagent_name=<subagent_name>` over raw `owner_ref` filters for AI executors.
-9. When the user wants review work for a specific person/profile, inspect `task.review.list` instead of approximating it from owner filters.
+10. When the user wants review work for a specific person/profile, inspect `task.review.list` instead of approximating it from owner filters.
    - Prefer `actor_profile_id=<profile_id>` plus optional `actor_subagent_name=<subagent_name>` for AI reviewers.
-10. When an AI profile or subagent needs to see assignments, @mentions, wake requests, recovery actions, or runtime claim rejects, inspect `task.feed.list`.
-11. When a plan/spec/roadmap/decision should survive across agents, use `task.doc.put`; use `task.doc.confirm` when the current revision has been accepted.
-12. When investigating what happened during background execution, inspect `task.run.list` and `task.run.get` instead of guessing from the current task state.
-13. When you need the durable business history for a task, inspect `task.event.list` to see create/update/review/dependency/runtime outcome events in reverse chronological order.
-14. When the user wants the human backlog summary or startup-style digest for one person, inspect `task.inbox`.
-15. When the user wants durable discussion or review notes on a task, use `task.comment.add` and `task.comment.list`.
-16. Treat `task.inbox` as read-only from tool execution; startup/CLI flows advance seen cursors, not background AI turns.
-17. When the user needs operator-style repair visibility for stuck background work, inspect `task.stale.list` first and only then use `task.stale.sweep`.
+11. When an AI profile or subagent needs to see assignments, @mentions, wake requests, recovery actions, or runtime claim rejects, inspect `task.feed.list`.
+12. When a plan/spec/roadmap/decision should survive across agents, use `task.doc.put`; use `task.doc.confirm` when the current revision has been accepted.
+13. When investigating what happened during background execution, inspect `task.run.list` and `task.run.get` instead of guessing from the current task state.
+14. When you need the durable business history for a task, inspect `task.event.list` to see create/update/review/dependency/runtime outcome events in reverse chronological order.
+15. When you are acting as the Team Orchestrator, check board, feed, delegated tasks, blocked tasks, and review queues before declaring flow completion.
+16. When you are acting as a worker subagent, stay inside the assigned task unless you create a documented delegation, mention, blocker, or review action.
+17. When the user wants the human backlog summary or startup-style digest for one person, inspect `task.inbox`.
+18. When the user wants durable discussion or review notes on a task, use `task.comment.add` and `task.comment.list`.
+19. Treat `task.inbox` as read-only from tool execution; startup/CLI flows advance seen cursors, not background AI turns.
+20. When the user needs operator-style repair visibility for stuck background work, inspect `task.stale.list` first and only then use `task.stale.sweep`.
    - Prefer `owner_profile_id=<profile_id>` plus optional `owner_subagent_name=<subagent_name>` when scoping stale AI work.
 
 ## Rules

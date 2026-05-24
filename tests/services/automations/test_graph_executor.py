@@ -19,6 +19,7 @@ from afkbot.services.automations.graph.contracts import (
 )
 from afkbot.services.automations.graph.os_sandbox import CodeNodeLaunch
 from afkbot.services.automations.graph.os_sandbox import OSSandboxUnavailableError
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.subagents.contracts import (
     SubagentResultResponse,
     SubagentRunAccepted,
@@ -41,6 +42,22 @@ def _prepare_profile_subagent(root_dir: Path, *, profile_id: str, subagent_name:
     path = root_dir / "profiles" / profile_id / "subagents" / f"{subagent_name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"# {subagent_name}", encoding="utf-8")
+
+
+def _write_team_runtime_config(
+    *,
+    settings: Settings,
+    profile_id: str,
+    team_profile_ids: tuple[str, ...],
+) -> None:
+    get_profile_runtime_config_service(settings).write(
+        profile_id,
+        ProfileRuntimeConfig(
+            llm_provider=settings.llm_provider,
+            llm_model=settings.llm_model,
+            taskflow_team_profile_ids=team_profile_ids,
+        ),
+    )
 
 
 class _GraphPersistingRunner(SubagentRunner):
@@ -1303,6 +1320,11 @@ async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
     try:
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=service._settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         created = await service.create_webhook(
             profile_id="default",
@@ -1374,6 +1396,11 @@ async def test_graph_executor_task_create_node_supports_structured_ai_subagent_a
     try:
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=service._settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         created = await service.create_webhook(
             profile_id="default",
