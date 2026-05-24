@@ -80,7 +80,9 @@ def register(registry: PluginRuntimeRegistry) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (root / "web/dist/index.html").write_text("<html><body>demo mounted</body></html>\n", encoding="utf-8")
+    (root / "web/dist/index.html").write_text(
+        "<html><body>demo mounted</body></html>\n", encoding="utf-8"
+    )
 
 
 def _write_failing_lifecycle_plugin(root: Path) -> None:
@@ -159,22 +161,43 @@ def test_create_app_mounts_installed_plugin(tmp_path: Path, monkeypatch: MonkeyP
         assert plugins_payload[0]["runtime"]["startup_hook_count"] == 1
         assert config_response.status_code == 200
         assert config_response.json()["plugin_config"]["source"] == "default"
-        assert config_response.json()["plugin_config"]["config"] == {"theme": "neon", "refresh_sec": 5}
-        assert config_response.json()["plugin_config"]["config_schema"]["fields"]["refresh_sec"]["type"] == "integer"
-        set_config_response = client.put("/v1/plugins/demo/config", json={"config": {"theme": "midnight"}})
+        assert config_response.json()["plugin_config"]["config"] == {
+            "theme": "neon",
+            "refresh_sec": 5,
+        }
+        assert (
+            config_response.json()["plugin_config"]["config_schema"]["fields"]["refresh_sec"][
+                "type"
+            ]
+            == "integer"
+        )
+        set_config_response = client.put(
+            "/v1/plugins/demo/config", json={"config": {"theme": "midnight"}}
+        )
         assert set_config_response.status_code == 200
         assert set_config_response.json()["plugin_config"]["source"] == "persisted"
-        assert set_config_response.json()["plugin_config"]["config"] == {"theme": "midnight", "refresh_sec": 5}
-        invalid_config_response = client.put("/v1/plugins/demo/config", json={"config": {"theme": "midnight", "oops": True}})
+        assert set_config_response.json()["plugin_config"]["config"] == {
+            "theme": "midnight",
+            "refresh_sec": 5,
+        }
+        invalid_config_response = client.put(
+            "/v1/plugins/demo/config", json={"config": {"theme": "midnight", "oops": True}}
+        )
         assert invalid_config_response.status_code == 400
         reset_config_response = client.delete("/v1/plugins/demo/config")
         assert reset_config_response.status_code == 200
         assert reset_config_response.json()["plugin_config"]["source"] == "default"
-        assert reset_config_response.json()["plugin_config"]["config"] == {"theme": "neon", "refresh_sec": 5}
+        assert reset_config_response.json()["plugin_config"]["config"] == {
+            "theme": "neon",
+            "refresh_sec": 5,
+        }
         assert plugin_response.status_code == 200
         assert plugin_response.json()["plugin"]["plugin_id"] == "demo"
         assert plugin_response.json()["config"]["source"] == "default"
-        assert plugin_response.json()["config"]["config_schema"]["fields"]["theme"]["choices"] == ["neon", "midnight"]
+        assert plugin_response.json()["config"]["config_schema"]["fields"]["theme"]["choices"] == [
+            "neon",
+            "midnight",
+        ]
         assert plugin_response.json()["config"]["config"] == {"theme": "neon", "refresh_sec": 5}
         assert api_response.status_code == 200
         assert api_response.json() == {"plugin": "demo"}

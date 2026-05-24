@@ -59,7 +59,9 @@ class DiffsRenderTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -118,7 +120,9 @@ class DiffsRenderTool(ToolBase):
         except ValueError as exc:
             return ToolResult.error(error_code="diffs_render_invalid", reason=str(exc))
         except OSError as exc:
-            return ToolResult.error(error_code="diffs_render_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="diffs_render_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
     @staticmethod
     def _resolve_source(
@@ -147,7 +151,9 @@ class DiffsRenderTool(ToolBase):
         if not resolved.is_file():
             raise ValueError(f"Path is not a file: {raw_path}")
         text, truncated = _read_text_prefix(path=resolved, max_chars=max_chars)
-        label = (explicit_label or to_workspace_relative(base_dir=base_dir, path=resolved)).strip() or default_label
+        label = (
+            explicit_label or to_workspace_relative(base_dir=base_dir, path=resolved)
+        ).strip() or default_label
         return text, label, truncated
 
 

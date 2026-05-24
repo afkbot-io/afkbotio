@@ -72,12 +72,16 @@ class AppDefinition:
             raise ValueError(f"Unknown action schema models for app {self.name}: {targets}")
 
         normalized_source = normalize_name(self.source) or "builtin"
-        normalized_source_path = None if self.source_path is None else str(self.source_path).strip() or None
+        normalized_source_path = (
+            None if self.source_path is None else str(self.source_path).strip() or None
+        )
 
         object.__setattr__(self, "name", normalized_name)
         object.__setattr__(self, "allowed_skills", normalized_skills)
         object.__setattr__(self, "allowed_actions", normalized_actions)
-        object.__setattr__(self, "action_params_models", MappingProxyType(dict(normalized_action_models)))
+        object.__setattr__(
+            self, "action_params_models", MappingProxyType(dict(normalized_action_models))
+        )
         object.__setattr__(self, "source", normalized_source)
         object.__setattr__(self, "source_path", normalized_source_path)
 

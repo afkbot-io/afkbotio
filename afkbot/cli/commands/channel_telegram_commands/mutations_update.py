@@ -144,7 +144,9 @@ def run_telegram_update(
                 )
             )
             if interactive
-            else normalize_telegram_group_trigger_mode(group_trigger_mode or current.group_trigger_mode)
+            else normalize_telegram_group_trigger_mode(
+                group_trigger_mode or current.group_trigger_mode
+            )
         )
         resolved_tool_profile = (
             normalize_channel_tool_profile(
@@ -204,7 +206,11 @@ def run_telegram_update(
                 ),
             )
             if interactive
-            else (current.ingress_batch.enabled if ingress_batch_enabled is None else ingress_batch_enabled)
+            else (
+                current.ingress_batch.enabled
+                if ingress_batch_enabled is None
+                else ingress_batch_enabled
+            )
         )
         resolved_ingress_batch = merge_ingress_batch_config(
             current=current.ingress_batch,
@@ -330,7 +336,9 @@ def run_telegram_update(
                 detail_ru="Показывать индикатор печати и добавлять небольшие задержки перед ответами.",
             )
             if interactive
-            else (current.reply_humanization.enabled if humanize_replies is None else humanize_replies)
+            else (
+                current.reply_humanization.enabled if humanize_replies is None else humanize_replies
+            )
         )
         resolved_reply_humanization = merge_reply_humanization_config(
             current=current.reply_humanization,

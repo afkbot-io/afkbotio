@@ -18,6 +18,7 @@ class CredentialsProfileMixin:
     """Profile lifecycle operations mixed into credentials service."""
 
     if TYPE_CHECKING:
+
         async def _with_repo(
             self,
             op: Callable[[CredentialsRepository], Awaitable[TRepoValue]],
@@ -36,7 +37,9 @@ class CredentialsProfileMixin:
 
         normalized_integration = normalize_integration_name(integration_name)
         normalized_profile_key = normalize_profile_key(profile_key)
-        normalized_display_name = (display_name or normalized_profile_key).strip() or normalized_profile_key
+        normalized_display_name = (
+            display_name or normalized_profile_key
+        ).strip() or normalized_profile_key
 
         async def _op(repo: CredentialsRepository) -> CredentialProfileMetadata:
             await ensure_profile_exists(repo, profile_id=profile_id)

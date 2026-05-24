@@ -99,14 +99,12 @@ def _infer_policy_setup_mode_from_resolved_policy(
         and resolved_policy.file_access_mode == PolicyFileAccessMode.NONE.value
         and resolved_policy.workspace_scope_mode == "profile_only"
     )
-    return (
-        PolicySetupMode.RECOMMENDED.value
-        if is_recommended
-        else PolicySetupMode.CUSTOM.value
-    )
+    return PolicySetupMode.RECOMMENDED.value if is_recommended else PolicySetupMode.CUSTOM.value
 
 
-def _network_allowlist_for_policy(*, network_mode: str, capabilities: tuple[str, ...]) -> tuple[str, ...]:
+def _network_allowlist_for_policy(
+    *, network_mode: str, capabilities: tuple[str, ...]
+) -> tuple[str, ...]:
     """Resolve one network allowlist for already-mapped high-level policy."""
 
     normalized = network_mode.strip().lower()
@@ -261,9 +259,13 @@ def collect_setup_config(
         planning_mode_value=None,
         default_provider=provider_default,
         default_model=defaults.get("AFKBOT_LLM_MODEL", settings.llm_model),
-        default_thinking_level=defaults.get("AFKBOT_LLM_THINKING_LEVEL", settings.llm_thinking_level),
+        default_thinking_level=defaults.get(
+            "AFKBOT_LLM_THINKING_LEVEL", settings.llm_thinking_level
+        ),
         default_base_url=defaults.get("AFKBOT_LLM_BASE_URL", settings.llm_base_url or ""),
-        default_custom_interface=str(defaults.get("AFKBOT_CUSTOM_INTERFACE", settings.custom_interface)),
+        default_custom_interface=str(
+            defaults.get("AFKBOT_CUSTOM_INTERFACE", settings.custom_interface)
+        ),
         default_proxy_type=defaults.get("AFKBOT_LLM_PROXY_TYPE", settings.llm_proxy_type),
         default_proxy_url=defaults.get("AFKBOT_LLM_PROXY_URL", settings.llm_proxy_url or ""),
         default_planning_mode=None,
@@ -458,7 +460,9 @@ def collect_setup_config(
         )
 
     if profile_setup_only or platform_seed_only:
-        runtime_host_resolved = (runtime_host or defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host)).strip()
+        runtime_host_resolved = (
+            runtime_host or defaults.get("AFKBOT_RUNTIME_HOST", settings.runtime_host)
+        ).strip()
         try:
             validate_runtime_exposure(
                 settings=settings,
@@ -474,9 +478,7 @@ def collect_setup_config(
             host=runtime_host_resolved,
         )
         runtime_port_resolved = int(
-            runtime_port
-            if runtime_port is not None
-            else runtime_port_default
+            runtime_port if runtime_port is not None else runtime_port_default
         )
         nginx_enabled_resolved = (
             nginx_enabled
@@ -499,7 +501,9 @@ def collect_setup_config(
             certbot_email_value=certbot_email,
             runtime_host_default=defaults.get("AFKBOT_NGINX_RUNTIME_HOST", ""),
             api_host_default=defaults.get("AFKBOT_NGINX_API_HOST", ""),
-            runtime_https_default=read_bool_default(defaults.get("AFKBOT_NGINX_RUNTIME_HTTPS"), False),
+            runtime_https_default=read_bool_default(
+                defaults.get("AFKBOT_NGINX_RUNTIME_HTTPS"), False
+            ),
             api_https_default=read_bool_default(defaults.get("AFKBOT_NGINX_API_HTTPS"), False),
             certbot_email_default=defaults.get("AFKBOT_CERTBOT_EMAIL", ""),
             interactive=False,
@@ -563,7 +567,9 @@ def collect_setup_config(
             certbot_email_value=certbot_email,
             runtime_host_default=defaults.get("AFKBOT_NGINX_RUNTIME_HOST", ""),
             api_host_default=defaults.get("AFKBOT_NGINX_API_HOST", ""),
-            runtime_https_default=read_bool_default(defaults.get("AFKBOT_NGINX_RUNTIME_HTTPS"), False),
+            runtime_https_default=read_bool_default(
+                defaults.get("AFKBOT_NGINX_RUNTIME_HTTPS"), False
+            ),
             api_https_default=read_bool_default(defaults.get("AFKBOT_NGINX_API_HTTPS"), False),
             certbot_email_default=defaults.get("AFKBOT_CERTBOT_EMAIL", ""),
             interactive=interactive,
@@ -626,6 +632,8 @@ def collect_setup_config(
         wizard_isolation=str(wizard_metadata_resolved["wizard_isolation"]),
         wizard_confirmation=str(wizard_metadata_resolved["wizard_confirmation"]),
         wizard_network=str(wizard_metadata_resolved["wizard_network"]),
-        wizard_network_allowlist=_metadata_text_tuple(wizard_metadata_resolved, "wizard_network_allowlist"),
+        wizard_network_allowlist=_metadata_text_tuple(
+            wizard_metadata_resolved, "wizard_network_allowlist"
+        ),
         runtime_secrets_update=dict(resolved_runtime_secrets_update or {}),
     )

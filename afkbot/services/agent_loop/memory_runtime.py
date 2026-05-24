@@ -63,7 +63,9 @@ class MemoryRuntime:
         self._auto_save_enabled = auto_save_enabled
         self._auto_save_scope_mode = auto_save_scope_mode
         self._auto_promote_enabled = auto_promote_enabled
-        self._auto_save_kinds = tuple(item.strip().lower() for item in auto_save_kinds if item.strip())
+        self._auto_save_kinds = tuple(
+            item.strip().lower() for item in auto_save_kinds if item.strip()
+        )
         self._auto_save_max_chars = max(64, auto_save_max_chars)
         self._consolidation_service = consolidation_service
 
@@ -161,7 +163,8 @@ class MemoryRuntime:
                 "ok": True,
                 "hits": len(compact_items),
                 "scope_kind": target_scope.scope_kind,
-                "include_global": self._auto_search_include_global and self._global_fallback_enabled,
+                "include_global": self._auto_search_include_global
+                and self._global_fallback_enabled,
             },
         )
         if not compact_items:

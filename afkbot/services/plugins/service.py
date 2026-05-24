@@ -315,7 +315,11 @@ class PluginService:
         install_root: Path,
         manifest: PluginManifest,
     ) -> None:
-        if manifest.capabilities.static_web and manifest.paths.web_root and manifest.mounts.web_prefix:
+        if (
+            manifest.capabilities.static_web
+            and manifest.paths.web_root
+            and manifest.mounts.web_prefix
+        ):
             web_root = registry.resolve_path(manifest.paths.web_root)
             if web_root.exists() and web_root.is_dir():
                 registry.register_static_dir(
@@ -360,8 +364,7 @@ class PluginService:
             raise PluginServiceError(
                 error_code="plugin_entrypoint_missing",
                 reason=(
-                    f"Plugin entrypoint function is missing or not callable: "
-                    f"{manifest.entrypoint}"
+                    f"Plugin entrypoint function is missing or not callable: {manifest.entrypoint}"
                 ),
             )
         return cast(Callable[[PluginRuntimeRegistry], None], callback)
@@ -489,7 +492,9 @@ class PluginService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _read_validated_config(self, *, record: InstalledPluginRecord) -> tuple[dict[str, object], str]:
+    def _read_validated_config(
+        self, *, record: InstalledPluginRecord
+    ) -> tuple[dict[str, object], str]:
         config, source = read_plugin_config(
             path=self._config_path(record.plugin_id),
             default_config=record.manifest.default_config,
@@ -587,7 +592,10 @@ def _parse_github_source(source: str) -> _PluginSourceDescriptor | None:
 
     url_part, _, explicit_ref = normalized.partition("@")
     parsed = urlparse(url_part)
-    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {"github.com", "www.github.com"}:
+    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {
+        "github.com",
+        "www.github.com",
+    }:
         return None
     parts = [item for item in parsed.path.strip("/").split("/") if item]
     if len(parts) < 2:

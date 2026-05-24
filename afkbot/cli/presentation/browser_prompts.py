@@ -54,16 +54,20 @@ def prompt_browser_backend(
 
     options = "/".join(choices)
     while True:
-        value = str(
-            typer.prompt(
-                msg(
-                    lang,
-                    en=f"Browser backend ({options})",
-                    ru=f"Способ запуска браузера ({options})",
-                ),
-                default=default_backend,
+        value = (
+            str(
+                typer.prompt(
+                    msg(
+                        lang,
+                        en=f"Browser backend ({options})",
+                        ru=f"Способ запуска браузера ({options})",
+                    ),
+                    default=default_backend,
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if value in choices:
             return cast(BrowserBackendId, value)
         typer.echo(

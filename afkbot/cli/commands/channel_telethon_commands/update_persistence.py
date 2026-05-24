@@ -9,7 +9,9 @@ from afkbot.cli.commands.channel_shared import (
     resolve_binding_update_inputs,
 )
 from afkbot.cli.commands.channel_telethon_commands.common import split_csv_patterns
-from afkbot.cli.commands.channel_telethon_commands.legacy import run_legacy_channel_endpoint_service_sync
+from afkbot.cli.commands.channel_telethon_commands.legacy import (
+    run_legacy_channel_endpoint_service_sync,
+)
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channels.endpoint_contracts import (
     ChannelAccessPolicy,

@@ -246,7 +246,9 @@ async def graph_run_list_payload(
             automation_id=automation_id,
             limit=limit,
         )
-        return json.dumps({"runs": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True)
+        return json.dumps(
+            {"runs": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+        )
     except AutomationsServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
     finally:

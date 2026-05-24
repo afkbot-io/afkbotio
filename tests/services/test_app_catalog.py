@@ -115,7 +115,9 @@ async def test_app_catalog_service_builds_runtime_and_mentions(monkeypatch, tmp_
         "available": True,
     }
     assert catalog.mentions[1].kind == "subagent"
-    assert catalog.mentions[1].description == "Collect factual context from local files and contracts."
+    assert (
+        catalog.mentions[1].description == "Collect factual context from local files and contracts."
+    )
     assert catalog.mentions[2].origin == "profile"
     assert catalog.mentions[2].available is False
 

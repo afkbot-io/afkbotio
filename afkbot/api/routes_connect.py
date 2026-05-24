@@ -97,7 +97,9 @@ class ConnectRevokeResponse(BaseModel):
 
 
 @router.post("/claim", response_model=ConnectClaimResponse)
-async def post_connect_claim(request: ConnectClaimRequest, http_request: Request) -> ConnectClaimResponse:
+async def post_connect_claim(
+    request: ConnectClaimRequest, http_request: Request
+) -> ConnectClaimResponse:
     """Consume one-time claim token and issue desktop session tokens."""
 
     try:
@@ -127,7 +129,9 @@ async def post_connect_claim(request: ConnectClaimRequest, http_request: Request
 
 
 @router.post("/refresh", response_model=ConnectRefreshResponse)
-async def post_connect_refresh(request: ConnectRefreshRequest, http_request: Request) -> ConnectRefreshResponse:
+async def post_connect_refresh(
+    request: ConnectRefreshRequest, http_request: Request
+) -> ConnectRefreshResponse:
     """Validate refresh token and issue new access token."""
 
     try:
@@ -154,7 +158,9 @@ async def post_connect_refresh(request: ConnectRefreshRequest, http_request: Req
 
 
 @router.post("/revoke", response_model=ConnectRevokeResponse)
-async def post_connect_revoke(request: ConnectRevokeRequest, http_request: Request) -> ConnectRevokeResponse:
+async def post_connect_revoke(
+    request: ConnectRevokeRequest, http_request: Request
+) -> ConnectRevokeResponse:
     """Revoke refresh-session token."""
 
     try:

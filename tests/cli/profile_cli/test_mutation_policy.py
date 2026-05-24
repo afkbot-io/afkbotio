@@ -108,7 +108,10 @@ def test_profile_update_updates_history_memory_and_compaction(
     assert payload["profile"]["effective_runtime"]["memory_auto_context_item_chars"] == 180
     assert payload["profile"]["effective_runtime"]["memory_auto_save_enabled"] is True
     assert payload["profile"]["effective_runtime"]["memory_auto_save_scope_mode"] == "auto"
-    assert payload["profile"]["effective_runtime"]["memory_auto_save_kinds"] == ["preference", "decision"]
+    assert payload["profile"]["effective_runtime"]["memory_auto_save_kinds"] == [
+        "preference",
+        "decision",
+    ]
     assert payload["profile"]["effective_runtime"]["memory_auto_save_max_chars"] == 900
     assert payload["profile"]["effective_runtime"]["session_compaction_enabled"] is True
     assert payload["profile"]["effective_runtime"]["session_compaction_trigger_turns"] == 16

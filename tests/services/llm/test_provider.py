@@ -66,7 +66,9 @@ class _SpyProvider(OpenAICompatibleChatProvider):
         self.last_responses_payload: dict[str, object] | None = None
         self.last_timeout_sec: float | None = None
 
-    async def _post_chat(self, payload: dict[str, object], *, timeout_sec: float) -> dict[str, object]:  # noqa: SLF001
+    async def _post_chat(
+        self, payload: dict[str, object], *, timeout_sec: float
+    ) -> dict[str, object]:  # noqa: SLF001
         self.last_chat_payload = payload
         self.last_timeout_sec = timeout_sec
         return self.chat_payload
@@ -136,7 +138,10 @@ def test_parse_response_falls_back_when_content_and_tool_calls_missing() -> None
     response = provider._parse_response(payload, _request())  # noqa: SLF001
 
     assert response.kind == "final"
-    assert response.final_message == "LLM provider is temporarily unavailable. Please try again shortly."
+    assert (
+        response.final_message
+        == "LLM provider is temporarily unavailable. Please try again shortly."
+    )
     assert response.error_code == "llm_provider_unavailable"
 
 
@@ -417,7 +422,9 @@ def test_build_llm_provider_reads_openai_codex_token_from_file_each_time(tmp_pat
     assert rebuilt._api_key == "refreshed-file-token"  # noqa: SLF001
 
 
-def test_build_llm_provider_codex_file_source_fails_closed_when_file_missing(tmp_path: Path) -> None:
+def test_build_llm_provider_codex_file_source_fails_closed_when_file_missing(
+    tmp_path: Path,
+) -> None:
     """Codex source=file should not fall back to stale copied secrets."""
 
     missing_token_path = tmp_path / "missing-auth.json"
@@ -646,10 +653,10 @@ def test_openai_codex_sse_decoder_returns_completed_response_object() -> None:
     """Codex SSE decoder should return the response object from response.completed event."""
 
     sse_payload = (
-        'event: response.created\n'
+        "event: response.created\n"
         'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}\n'
         "\n"
-        'event: response.completed\n'
+        "event: response.completed\n"
         'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}}\n'
         "\n"
     )
@@ -670,13 +677,13 @@ def test_openai_codex_sse_decoder_rehydrates_output_items_from_done_events() -> 
         base_url="https://chatgpt.com/backend-api/codex",
     )
     sse_payload = (
-        'event: response.created\n'
+        "event: response.created\n"
         'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress","output":[]}}\n'
         "\n"
-        'event: response.output_item.done\n'
+        "event: response.output_item.done\n"
         'data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"ok"}]},"output_index":0,"sequence_number":7}\n'
         "\n"
-        'event: response.completed\n'
+        "event: response.completed\n"
         'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[]}}\n'
         "\n"
     )
@@ -967,7 +974,9 @@ def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request() -> N
     assert "item with id" in response.error_detail.lower()
 
 
-def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request_using_raw_detail() -> None:
+def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request_using_raw_detail() -> (
+    None
+):
     """Codex replay classification should use raw detail even when surfaced detail is truncated."""
 
     provider = OpenAICompatibleChatProvider(
@@ -977,9 +986,8 @@ def test_openai_codex_http_status_404_item_lookup_maps_to_invalid_request_using_
         base_url="https://chatgpt.com/backend-api/codex",
     )
     detail = (
-        ("X" * 350)
-        + " Item with id 'rs_123' not found. Items are not persisted when `store` is set to false."
-    )
+        "X" * 350
+    ) + " Item with id 'rs_123' not found. Items are not persisted when `store` is set to false."
 
     response = provider._fallback_http_status(  # noqa: SLF001
         _request(),
@@ -1171,7 +1179,9 @@ def test_provider_complete_maps_http_status_errors_to_exact_status_code() -> Non
             _ = payload
             _ = timeout_sec
             request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
-            response = httpx.Response(400, request=request, json={"error": {"message": "bad request"}})
+            response = httpx.Response(
+                400, request=request, json={"error": {"message": "bad request"}}
+            )
             raise httpx.HTTPStatusError("bad request", request=request, response=response)
 
     provider = _HTTPStatusProvider(

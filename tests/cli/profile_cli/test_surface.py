@@ -91,7 +91,10 @@ def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert show_payload["profile"]["effective_runtime"]["memory_auto_save_scope_mode"] == "auto"
     assert show_payload["profile"]["runtime_config"]["session_compaction_enabled"] is True
     assert show_payload["profile"]["runtime_config"]["session_compaction_prune_raw_turns"] is True
-    assert show_payload["profile"]["runtime_config_path"] == "profiles/analyst/.system/agent_config.json"
+    assert (
+        show_payload["profile"]["runtime_config_path"]
+        == "profiles/analyst/.system/agent_config.json"
+    )
     assert show_payload["profile"]["bootstrap_dir"] == "profiles/analyst/bootstrap"
     assert show_payload["profile"]["skills_dir"] == "profiles/analyst/skills"
     assert show_payload["profile"]["subagents_dir"] == "profiles/analyst/subagents"
@@ -112,7 +115,10 @@ def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert show_payload["effective_permissions"]["file_scope_mode"] == "profile_only"
     assert show_payload["effective_permissions"]["tool_access"]["files"] == "none"
     assert show_payload["effective_permissions"]["memory_behavior"]["capability"] == "disabled"
-    assert show_payload["effective_permissions"]["memory_behavior"]["explicit_cross_chat_access"] == "disabled"
+    assert (
+        show_payload["effective_permissions"]["memory_behavior"]["explicit_cross_chat_access"]
+        == "disabled"
+    )
     assert show_payload["linked_channels"] == []
 
     assert list_result.exit_code == 0
@@ -199,7 +205,7 @@ def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: Monk
                 group_trigger_mode="mention_or_reply",
                 tool_profile="support_readonly",
             )
-        )
+        ),
     )
 
     # Act
@@ -227,7 +233,10 @@ def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: Monk
     assert inspection["effective_permissions"]["tool_access"]["files"] == "read_only"
     assert inspection["effective_permissions"]["tool_access"]["shell"] == "disabled"
     assert inspection["effective_permissions"]["tool_access"]["memory"] == "enabled"
-    assert inspection["effective_permissions"]["tool_access"]["credentials"] == "blocked_in_user_channel"
+    assert (
+        inspection["effective_permissions"]["tool_access"]["credentials"]
+        == "blocked_in_user_channel"
+    )
 
 
 def test_profile_help_exposes_update_and_hides_runtime_group(
@@ -295,7 +304,10 @@ def test_profile_show_and_list_default_to_human_output(
     assert show_result.exit_code == 0
     assert "Profile `default`" in show_result.stdout
     assert "- merge_order: explicit > current > inherited > system" in show_result.stdout
-    assert "- inherited_defaults_source: global runtime settings and setup defaults" in show_result.stdout
+    assert (
+        "- inherited_defaults_source: global runtime settings and setup defaults"
+        in show_result.stdout
+    )
     assert "- linked_channels: none" in show_result.stdout
 
 
@@ -346,7 +358,7 @@ def test_profile_show_human_output_includes_channel_narrowing(
                 group_trigger_mode="mention_or_reply",
                 tool_profile="support_readonly",
             )
-        )
+        ),
     )
 
     # Act
@@ -358,7 +370,9 @@ def test_profile_show_human_output_includes_channel_narrowing(
     assert "effective_tools=files=read_only,shell=disabled,memory=enabled" in show_result.stdout
 
 
-def test_profile_delete_removes_profile_and_folder(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_profile_delete_removes_profile_and_folder(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Profile CLI should delete one non-default profile and its workspace tree."""
 
     # Arrange

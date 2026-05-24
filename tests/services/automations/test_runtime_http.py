@@ -71,7 +71,9 @@ async def test_runtime_daemon_webhook_endpoints(tmp_path: Path) -> None:
         return profile_id == "default" and token == "token-valid"
 
     settings = build_settings(tmp_path)
-    daemon = RuntimeDaemon(settings=settings, service=service, webhook_token_validator=token_validator)
+    daemon = RuntimeDaemon(
+        settings=settings, service=service, webhook_token_validator=token_validator
+    )
     await daemon.start()
     try:
         status, payload = await request_json(

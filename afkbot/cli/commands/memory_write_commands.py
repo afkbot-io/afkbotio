@@ -39,13 +39,25 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Target scope: auto, profile, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
         text: str | None = typer.Option(None, "--text", help="Inline semantic content."),
         from_file: Path | None = typer.Option(
             None,
@@ -115,7 +127,9 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
             content = resolve_optional_text_or_file(text=text, from_file=from_file)
             details_md = resolve_optional_text_or_file(text=details_text, from_file=details_file)
             if content is None and summary is None and details_md is None:
-                raise_usage_error("Provide semantic content via --text/--from-file or summary/details.")
+                raise_usage_error(
+                    "Provide semantic content via --text/--from-file or summary/details."
+                )
             item = run_memory_service_sync(
                 settings,
                 lambda service: service.upsert(
@@ -160,13 +174,25 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Target scope: auto, profile, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
     ) -> None:
         """Delete one scoped memory item by logical key."""
 
@@ -194,7 +220,12 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
                     scope=resolved_scope,
                 ),
             )
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -218,13 +249,25 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Source scope: auto, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve source scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve source scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
         target_memory_key: str | None = typer.Option(
             None,
             "--target-memory-key",
@@ -258,7 +301,12 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
                     target_memory_key=target_memory_key,
                 ),
             )
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -284,7 +332,9 @@ def register_memory_write_commands(memory_app: typer.Typer) -> None:
 
         try:
             settings = get_settings()
-            normalized_profile_id = validate_profile_id(profile_id) if profile_id is not None else None
+            normalized_profile_id = (
+                validate_profile_id(profile_id) if profile_id is not None else None
+            )
             deleted = run_memory_service_sync(
                 settings,
                 lambda service: service.garbage_collect(profile_id=normalized_profile_id),

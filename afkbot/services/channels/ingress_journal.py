@@ -24,7 +24,9 @@ class ChannelIngressJournalService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 

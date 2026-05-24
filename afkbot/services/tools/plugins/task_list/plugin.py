@@ -38,7 +38,9 @@ class TaskListTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskListParams) else TaskListParams.model_validate(params)
+        payload = (
+            params if isinstance(params, TaskListParams) else TaskListParams.model_validate(params)
+        )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
             payload=payload,
@@ -65,7 +67,9 @@ class TaskListTool(ToolBase):
                 flow_id=payload.flow_id,
                 limit=payload.limit,
             )
-            return ToolResult(ok=True, payload={"tasks": [item.model_dump(mode="json") for item in items]})
+            return ToolResult(
+                ok=True, payload={"tasks": [item.model_dump(mode="json") for item in items]}
+            )
         except TaskOwnerInputError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except TaskFlowServiceError as exc:

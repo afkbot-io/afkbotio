@@ -1,6 +1,5 @@
 """Telegram runtime and operational CLI tests."""
 
-
 import asyncio
 from pathlib import Path
 
@@ -113,7 +112,10 @@ def test_channel_telegram_status_and_reset_offset(tmp_path: Path, monkeypatch: M
     endpoint = asyncio.run(endpoint_service.get(endpoint_id="support-bot"))
     assert endpoint.enabled is False
 
-def test_channel_telegram_poll_once_requires_endpoint_id(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_telegram_poll_once_requires_endpoint_id(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """`poll-once` must keep its required endpoint id argument documented and enforced."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -122,4 +124,7 @@ def test_channel_telegram_poll_once_requires_endpoint_id(tmp_path: Path, monkeyp
     result = runner.invoke(app, ["channel", "telegram", "poll-once"])
 
     assert result.exit_code != 0
-    assert "Missing argument 'CHANNEL_ID'" in result.stdout or "Missing argument 'CHANNEL_ID'" in result.stderr
+    assert (
+        "Missing argument 'CHANNEL_ID'" in result.stdout
+        or "Missing argument 'CHANNEL_ID'" in result.stderr
+    )

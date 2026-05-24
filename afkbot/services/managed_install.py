@@ -253,7 +253,9 @@ def _stage_remote_archive(*, source_url: str, source_ref: str) -> Path:
         _safe_extract_tar(archive=archive, destination=extract_dir)
     entries = [item for item in extract_dir.iterdir() if item.is_dir()]
     if len(entries) != 1:
-        raise ValueError(f"Managed source archive did not contain one root directory: {archive_url}")
+        raise ValueError(
+            f"Managed source archive did not contain one root directory: {archive_url}"
+        )
     root = entries[0]
     if not (root / "pyproject.toml").exists():
         raise ValueError(f"Managed source archive is missing pyproject.toml: {archive_url}")
@@ -268,7 +270,10 @@ def _build_archive_url(*, source_url: str, source_ref: str) -> str:
         normalized = "https://github.com/" + normalized.removeprefix("git@github.com:")
     normalized = normalized.removesuffix(".git").rstrip("/")
     parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {"github.com", "www.github.com"}:
+    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {
+        "github.com",
+        "www.github.com",
+    }:
         raise ValueError(f"Managed remote installs require a GitHub repository URL: {source_url}")
     if not source_ref.strip():
         raise ValueError("Managed source ref is required")

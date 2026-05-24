@@ -5,7 +5,9 @@ from __future__ import annotations
 from afkbot.services.task_flow.message_factory import TaskMessageAttachment, compose_task_message
 
 
-def _attachment(*, name: str, content_bytes: bytes, content_type: str | None = None) -> TaskMessageAttachment:
+def _attachment(
+    *, name: str, content_bytes: bytes, content_type: str | None = None
+) -> TaskMessageAttachment:
     return TaskMessageAttachment(
         id=f"att_{name}",
         name=name,

@@ -67,7 +67,9 @@ def test_upgrade_service_migrates_legacy_plaintext_runtime_secrets(tmp_path: Pat
     assert "secrets" not in payload
 
 
-def test_read_runtime_secrets_supports_legacy_plaintext_payload_before_upgrade(tmp_path: Path) -> None:
+def test_read_runtime_secrets_supports_legacy_plaintext_payload_before_upgrade(
+    tmp_path: Path,
+) -> None:
     """Legacy plaintext runtime secrets should still be readable before upgrade apply runs."""
 
     settings = Settings(root_dir=tmp_path)

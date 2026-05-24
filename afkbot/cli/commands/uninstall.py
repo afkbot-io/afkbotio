@@ -55,8 +55,7 @@ def _confirm_uninstall(*, yes: bool) -> None:
     raise_usage_error("uninstall cancelled by user")
 
 
-def _format_uninstall_success(
-) -> str:
+def _format_uninstall_success() -> str:
     lines = ["AFKBOT uninstall complete."]
     lines.append("Local SQLite database: removed when present")
     lines.append("Runtime config: removed")

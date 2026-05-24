@@ -444,11 +444,15 @@ async def run_telegram_action(
                         message_thread_id=send_payload.message_thread_id,
                         parse_mode=send_payload.parse_mode,
                         disable_web_page_preview=send_payload.disable_web_page_preview,
-                        reply_markup=send_payload.reply_markup if index == len(message_parts) - 1 else None,
+                        reply_markup=send_payload.reply_markup
+                        if index == len(message_parts) - 1
+                        else None,
                         timeout_sec=ctx.timeout_sec,
                     )
                 )
-            return ToolResult(ok=True, payload=_build_chunked_response(action="send_message", responses=responses))
+            return ToolResult(
+                ok=True, payload=_build_chunked_response(action="send_message", responses=responses)
+            )
 
         if normalized_action == "send_message_draft":
             draft_payload = _SendMessageDraftParams.model_validate(params)

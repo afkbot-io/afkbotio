@@ -27,7 +27,9 @@ from afkbot.settings import Settings, get_settings
 _HOST_SERVICE_MARKER = "afkbot-managed-runtime-service"
 _SYSTEMD_SERVICE_NAME = "afkbot.service"
 _IMPORT_TIME_HOME_PATH = Path.home()
-_SYSTEMD_USER_SERVICE_PATH_DEFAULT = _IMPORT_TIME_HOME_PATH / ".config" / "systemd" / "user" / _SYSTEMD_SERVICE_NAME
+_SYSTEMD_USER_SERVICE_PATH_DEFAULT = (
+    _IMPORT_TIME_HOME_PATH / ".config" / "systemd" / "user" / _SYSTEMD_SERVICE_NAME
+)
 _SYSTEMD_USER_SERVICE_PATH = _SYSTEMD_USER_SERVICE_PATH_DEFAULT
 _SYSTEMD_SYSTEM_SERVICE_BASENAME = "afkbot"
 _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH = Path("/etc/systemd/system/afkbot.service")
@@ -134,7 +136,9 @@ def ensure_managed_runtime_service(
         if existing.installed:
             cleanup_result = remove_managed_runtime_service()
             if cleanup_result.status == "removed":
-                cleanup_note = " Removed the existing managed service until `afk setup` is completed."
+                cleanup_note = (
+                    " Removed the existing managed service until `afk setup` is completed."
+                )
             elif cleanup_result.reason:
                 cleanup_note = f" {cleanup_result.reason}"
         return ManagedRuntimeServiceResult(
@@ -191,7 +195,9 @@ def start_managed_runtime_service(settings: Settings) -> ManagedRuntimeServiceRe
     return ensure_managed_runtime_service(settings, start=True)
 
 
-def restart_managed_runtime_service(settings: Settings | None = None) -> ManagedRuntimeServiceResult:
+def restart_managed_runtime_service(
+    settings: Settings | None = None,
+) -> ManagedRuntimeServiceResult:
     """Restart the detected managed AFKBOT service."""
 
     resolved_settings = settings or get_settings()
@@ -770,11 +776,11 @@ def _render_launchd_plist(*, settings: Settings, launcher_path: Path) -> str:
     command = _render_service_start_guard()
     return "\n".join(
         [
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            '<?xml version="1.0" encoding="UTF-8"?>',
             f"<!-- {_HOST_SERVICE_MARKER} -->",
-            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
-            "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
-            "<plist version=\"1.0\">",
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+            '<plist version="1.0">',
             "<dict>",
             "  <key>Label</key>",
             f"  <string>{_LAUNCHD_SERVICE_NAME}</string>",
@@ -967,7 +973,9 @@ def _systemd_user_service_path() -> Path:
 def _launchd_service_path() -> Path:
     if _LAUNCHD_SERVICE_PATH != _LAUNCHD_SERVICE_PATH_DEFAULT:
         return _LAUNCHD_SERVICE_PATH
-    return _resolve_target_home_path() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
+    return (
+        _resolve_target_home_path() / "Library" / "LaunchAgents" / f"{_LAUNCHD_SERVICE_NAME}.plist"
+    )
 
 
 def _read_command_state(result: subprocess.CompletedProcess[str], *, fallback: str) -> str:
@@ -1064,7 +1072,10 @@ def _wait_for_runtime_stop(settings: Settings) -> ManagedRuntimeServiceInspectio
 
 def _probe_runtime_stack(settings: Settings) -> RuntimeStackProbe:
     runtime_config = read_runtime_config(settings)
-    host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
+    host = (
+        str(runtime_config.get("runtime_host", settings.runtime_host)).strip()
+        or settings.runtime_host
+    )
     runtime_port = resolve_default_runtime_port(
         settings=settings,
         host=host,
@@ -1323,7 +1334,11 @@ def _resolve_linux_service_account() -> _LinuxServiceAccount | None:
     if os.geteuid() == 0 and sudo_user:
         try:
             user_record = pwd.getpwnam(sudo_user)
-            group_id = int(str(os.getenv("SUDO_GID") or "").strip()) if os.getenv("SUDO_GID") else user_record.pw_gid
+            group_id = (
+                int(str(os.getenv("SUDO_GID") or "").strip())
+                if os.getenv("SUDO_GID")
+                else user_record.pw_gid
+            )
             group_record = grp.getgrgid(group_id)
         except (KeyError, ValueError):
             return None
@@ -1406,9 +1421,9 @@ def _service_file_belongs_to_current_user(path: Path) -> bool:
 
 
 def _legacy_systemd_system_service_belongs_to_current_user() -> bool:
-    return _managed_service_file_present(_SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH) and _service_file_belongs_to_current_user(
+    return _managed_service_file_present(
         _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH
-    )
+    ) and _service_file_belongs_to_current_user(_SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH)
 
 
 def _cleanup_linux_secondary_services(active_system_path: Path | None) -> str | None:
@@ -1424,7 +1439,9 @@ def _cleanup_linux_secondary_services(active_system_path: Path | None) -> str | 
         active_system_path != _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH
         and _legacy_systemd_system_service_belongs_to_current_user()
     ):
-        result = _remove_systemd_system_service(_SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH, allow_failure=True)
+        result = _remove_systemd_system_service(
+            _SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH, allow_failure=True
+        )
         if result.status != "removed":
             notices.append("legacy system-level AFKBOT unit was left in place")
     if not notices:

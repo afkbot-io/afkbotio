@@ -9,7 +9,9 @@ from hashlib import sha256
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 
 _SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization")
-_SENSITIVE_VALUE_HINT_FIELDS = frozenset({"name", "field", "key", "slug", "credential_name", "credential_slug"})
+_SENSITIVE_VALUE_HINT_FIELDS = frozenset(
+    {"name", "field", "key", "slug", "credential_name", "credential_slug"}
+)
 _SECURITY_GUARD = SecurityGuard()
 
 

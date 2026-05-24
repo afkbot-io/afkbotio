@@ -17,7 +17,13 @@ class Task(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_task_profile_status", "profile_id", "status"),
         Index("ix_task_profile_owner_status", "profile_id", "owner_type", "owner_ref", "status"),
-        Index("ix_task_profile_claim_owner_status", "profile_id", "claim_owner_type", "claim_owner_ref", "status"),
+        Index(
+            "ix_task_profile_claim_owner_status",
+            "profile_id",
+            "claim_owner_type",
+            "claim_owner_ref",
+            "status",
+        ),
         Index("ix_task_profile_flow", "profile_id", "flow_id"),
         Index("ix_task_due_at", "due_at"),
         Index("ix_task_lease_until", "lease_until"),

@@ -19,11 +19,7 @@ def policy_capability_option_help() -> str:
         if spec.id not in _LEGACY_CAPABILITY_ALIASES
     )
     legacy_values = ",".join(alias.value for alias in _LEGACY_CAPABILITY_ALIASES)
-    return (
-        "Capability id (repeatable): "
-        f"{canonical_values} "
-        f"(legacy aliases: {legacy_values})"
-    )
+    return f"Capability id (repeatable): {canonical_values} (legacy aliases: {legacy_values})"
 
 
 __all__ = ["policy_capability_option_help"]

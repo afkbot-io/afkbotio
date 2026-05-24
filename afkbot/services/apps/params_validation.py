@@ -30,14 +30,10 @@ def collect_validation_details(
     """Extract required/optional/missing/unexpected field details from ValidationError."""
 
     required_params = sorted(
-        field_name
-        for field_name, field in model.model_fields.items()
-        if field.is_required()
+        field_name for field_name, field in model.model_fields.items() if field.is_required()
     )
     optional_params = sorted(
-        field_name
-        for field_name, field in model.model_fields.items()
-        if not field.is_required()
+        field_name for field_name, field in model.model_fields.items() if not field.is_required()
     )
 
     missing_params: list[str] = []
@@ -65,7 +61,9 @@ def collect_validation_details(
 
     missing_params = sorted(set(missing_params))
     unexpected_params = sorted(set(unexpected_params))
-    invalid_params = sorted(invalid_params, key=lambda item: (item["field"], item["type"], item["message"]))
+    invalid_params = sorted(
+        invalid_params, key=lambda item: (item["field"], item["type"], item["message"])
+    )
     allowed_params = required_params + optional_params
     return ValidationDetails(
         required_params=required_params,

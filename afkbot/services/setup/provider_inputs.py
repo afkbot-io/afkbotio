@@ -194,22 +194,30 @@ def resolve_provider_base_url_default(
 
     spec = get_provider_spec(provider_id)
     if provider_id == LLMProviderId.OPENROUTER:
-        provider_value = defaults.get("AFKBOT_OPENROUTER_BASE_URL", settings.openrouter_base_url).strip()
+        provider_value = defaults.get(
+            "AFKBOT_OPENROUTER_BASE_URL", settings.openrouter_base_url
+        ).strip()
     elif provider_id == LLMProviderId.OPENAI:
         provider_value = defaults.get("AFKBOT_OPENAI_BASE_URL", settings.openai_base_url).strip()
     elif provider_id == LLMProviderId.OPENAI_CODEX:
-        provider_value = defaults.get("AFKBOT_OPENAI_CODEX_BASE_URL", settings.openai_codex_base_url).strip()
+        provider_value = defaults.get(
+            "AFKBOT_OPENAI_CODEX_BASE_URL", settings.openai_codex_base_url
+        ).strip()
     elif provider_id == LLMProviderId.CLAUDE:
         provider_value = defaults.get("AFKBOT_CLAUDE_BASE_URL", settings.claude_base_url).strip()
     elif provider_id == LLMProviderId.MOONSHOT:
-        provider_value = defaults.get("AFKBOT_MOONSHOT_BASE_URL", settings.moonshot_base_url).strip()
+        provider_value = defaults.get(
+            "AFKBOT_MOONSHOT_BASE_URL", settings.moonshot_base_url
+        ).strip()
     elif provider_id == LLMProviderId.MOONSHOT_CN:
         provider_value = defaults.get(
             "AFKBOT_MOONSHOT_CN_BASE_URL",
             settings.moonshot_cn_base_url,
         ).strip()
     elif provider_id == LLMProviderId.DEEPSEEK:
-        provider_value = defaults.get("AFKBOT_DEEPSEEK_BASE_URL", settings.deepseek_base_url).strip()
+        provider_value = defaults.get(
+            "AFKBOT_DEEPSEEK_BASE_URL", settings.deepseek_base_url
+        ).strip()
     elif provider_id == LLMProviderId.XAI:
         provider_value = defaults.get("AFKBOT_XAI_BASE_URL", settings.xai_base_url).strip()
     elif provider_id == LLMProviderId.QWEN:

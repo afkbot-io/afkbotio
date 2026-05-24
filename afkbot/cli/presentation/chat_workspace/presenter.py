@@ -49,11 +49,7 @@ def build_chat_workspace_surface_state(
     )
     session_line = build_chat_workspace_session_line(state)
     return ChatWorkspaceSurfaceState(
-        status_lines=tuple(
-            line
-            for line in (session_line, status_line)
-            if line
-        ),
+        status_lines=tuple(line for line in (session_line, status_line) if line),
         queue_lines=build_chat_workspace_queue_lines(state),
     )
 

@@ -86,7 +86,9 @@ def test_channel_partyflow_add_persists_polling_shape(
     assert "- ingress_batch.enabled: True" in shown
     assert "- ingress_batch.debounce_ms: 2000" in shown
 
-    binding = asyncio.run(get_channel_binding_service(get_settings()).get(binding_id="ops-partyflow"))
+    binding = asyncio.run(
+        get_channel_binding_service(get_settings()).get(binding_id="ops-partyflow")
+    )
     assert binding.transport == "partyflow"
     assert binding.profile_id == "default"
 

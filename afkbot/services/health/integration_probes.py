@@ -187,9 +187,7 @@ def telegram_probe_sync(*, token: str, timeout_sec: int) -> None:
         payload = json.loads(response.read().decode("utf-8", errors="replace"))
     if not isinstance(payload, dict) or payload.get("ok") is not True:
         description = (
-            str(payload.get("description"))
-            if isinstance(payload, dict)
-            else "invalid_response"
+            str(payload.get("description")) if isinstance(payload, dict) else "invalid_response"
         )
         raise RuntimeError(f"telegram_probe_failed: {description}")
 

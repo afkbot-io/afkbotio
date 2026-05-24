@@ -32,7 +32,9 @@ async def test_runtime_target_allows_internal_transport_fallback_without_binding
 ) -> None:
     """Internal transports should preserve fallback behavior when no binding matches."""
 
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}")
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
+    )
 
     target = await resolve_runtime_target(
         settings=settings,
@@ -59,7 +61,9 @@ async def test_runtime_target_requires_binding_match_for_external_transport_by_d
 ) -> None:
     """External transports should fail closed when binding resolution finds no match."""
 
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}")
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
+    )
 
     with pytest.raises(ChannelBindingServiceError) as exc_info:
         await resolve_runtime_target(
@@ -83,7 +87,9 @@ async def test_runtime_target_requires_binding_match_for_external_transport_by_d
 async def test_runtime_target_normalizes_transport_case_for_binding_match(tmp_path) -> None:
     """Mixed-case transport selectors should still match lowercase persisted bindings."""
 
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}")
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
+    )
     profiles = ProfileService(settings)
     bindings = ChannelBindingService(settings)
     try:
@@ -155,10 +161,14 @@ async def test_runtime_target_uses_settings_fallback_policy(tmp_path) -> None:
     assert target.session_id == "fallback-session"
 
 
-async def test_routing_context_overrides_add_public_channel_overlay_for_external_transport(tmp_path) -> None:
+async def test_routing_context_overrides_add_public_channel_overlay_for_external_transport(
+    tmp_path,
+) -> None:
     """External transports should receive trusted user-facing prompt guidance."""
 
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}")
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
+    )
     profiles = ProfileService(settings)
     bindings = ChannelBindingService(settings)
     try:
@@ -222,10 +232,14 @@ async def test_routing_context_overrides_add_public_channel_overlay_for_external
         await profiles.shutdown()
 
 
-async def test_routing_context_overrides_skip_public_channel_overlay_for_internal_transport(tmp_path) -> None:
+async def test_routing_context_overrides_skip_public_channel_overlay_for_internal_transport(
+    tmp_path,
+) -> None:
     """Internal transports should not receive user-facing channel guidance."""
 
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}")
+    settings = Settings(
+        root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
+    )
     target = await resolve_runtime_target(
         settings=settings,
         explicit_profile_id="default",

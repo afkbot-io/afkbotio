@@ -227,7 +227,9 @@ class MemoryService:
             content=query, summary=None, details_md=None
         )
         normalized_limit = self._normalize_limit(limit)
-        normalized_global_limit = None if global_limit is None else self._normalize_limit(global_limit)
+        normalized_global_limit = (
+            None if global_limit is None else self._normalize_limit(global_limit)
+        )
         query_embedding = self._embed_text(normalized_query)
         normalized_memory_kinds = None if memory_kinds is None else tuple(memory_kinds)
         normalized_source_kinds = None if source_kinds is None else tuple(source_kinds)
@@ -285,7 +287,9 @@ class MemoryService:
             if include_global and scope is not None and not scope.is_profile_scope:
                 global_results = await _search_scope(
                     repo,
-                    scope_key=MemoryScopeDescriptor.profile_scope(session_id=scope.session_id).scope_key(),
+                    scope_key=MemoryScopeDescriptor.profile_scope(
+                        session_id=scope.session_id
+                    ).scope_key(),
                     visibility_filter="promoted_global",
                     result_limit=normalized_global_limit or normalized_limit,
                 )
@@ -331,10 +335,7 @@ class MemoryService:
             memory_kind=source_item.memory_kind,
             visibility="promoted_global",
         )
-        if (
-            self._settings is not None
-            and self._settings.memory_core_enabled
-        ):
+        if self._settings is not None and self._settings.memory_core_enabled:
             await get_memory_consolidation_service(self._settings).mirror_item_to_core(
                 profile_id=profile_id,
                 item=promoted,

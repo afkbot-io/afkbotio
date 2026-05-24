@@ -238,7 +238,11 @@ class BashExecSessionManager:
                     chars_written=chars_written,
                 )
 
-            if snapshot.exit_code is not None and post_exit_deadline is not None and now >= post_exit_deadline:
+            if (
+                snapshot.exit_code is not None
+                and post_exit_deadline is not None
+                and now >= post_exit_deadline
+            ):
                 await self._discard_session(session.session_id, terminate=False)
                 return self._build_result(
                     session=session,

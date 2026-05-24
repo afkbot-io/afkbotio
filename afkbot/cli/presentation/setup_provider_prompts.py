@@ -6,7 +6,11 @@ from typing import Final
 
 import typer
 
-from afkbot.cli.presentation.inline_select import confirm_space, run_inline_single_select, select_option_dialog
+from afkbot.cli.presentation.inline_select import (
+    confirm_space,
+    run_inline_single_select,
+    select_option_dialog,
+)
 from afkbot.cli.presentation.prompt_i18n import (
     PromptLanguage,
     msg,
@@ -60,16 +64,20 @@ def prompt_provider(*, default: str, lang: PromptLanguage = PromptLanguage.EN) -
         return selected_default
     options = "/".join(LLM_PROVIDER_CHOICES)
     while True:
-        provider = str(
-            typer.prompt(
-                msg(
-                    lang,
-                    en=f"AI provider ({options})",
-                    ru=f"AI-провайдер ({options})",
-                ),
-                default=selected_default,
+        provider = (
+            str(
+                typer.prompt(
+                    msg(
+                        lang,
+                        en=f"AI provider ({options})",
+                        ru=f"AI-провайдер ({options})",
+                    ),
+                    default=selected_default,
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if provider in LLM_PROVIDER_CHOICES:
             return provider
         typer.echo(
@@ -177,7 +185,11 @@ def prompt_thinking_level(
         options=[
             (
                 "low",
-                msg(lang, en="low - fastest, for simple replies", ru="low - быстрее всего, для простых ответов"),
+                msg(
+                    lang,
+                    en="low - fastest, for simple replies",
+                    ru="low - быстрее всего, для простых ответов",
+                ),
             ),
             (
                 "medium",
@@ -185,11 +197,19 @@ def prompt_thinking_level(
             ),
             (
                 "high",
-                msg(lang, en="high - deeper work for coding and analysis", ru="high - глубже для кода и анализа"),
+                msg(
+                    lang,
+                    en="high - deeper work for coding and analysis",
+                    ru="high - глубже для кода и анализа",
+                ),
             ),
             (
                 "very_high",
-                msg(lang, en="very_high - maximum reasoning for hard tasks", ru="very_high - максимум для сложных задач"),
+                msg(
+                    lang,
+                    en="very_high - maximum reasoning for hard tasks",
+                    ru="very_high - максимум для сложных задач",
+                ),
             ),
         ],
         default_value=selected_default,
@@ -200,16 +220,20 @@ def prompt_thinking_level(
     if selected is None:
         return selected_default
     while True:
-        value = str(
-            typer.prompt(
-                msg(
-                    lang,
-                    en="Default reasoning effort (low/medium/high/very_high)",
-                    ru="Глубина рассуждения по умолчанию (low/medium/high/very_high)",
-                ),
-                default=selected_default,
+        value = (
+            str(
+                typer.prompt(
+                    msg(
+                        lang,
+                        en="Default reasoning effort (low/medium/high/very_high)",
+                        ru="Глубина рассуждения по умолчанию (low/medium/high/very_high)",
+                    ),
+                    default=selected_default,
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if value in THINKING_LEVEL_CHOICES:
             return value
         typer.echo(
@@ -275,14 +299,25 @@ def prompt_proxy_config(
             ru="Выберите протокол прокси. Используйте `socks5h`, если DNS тоже должен выполняться через прокси.",
         ),
         options=[
-            (HTTP_PROXY_TYPE, msg(lang, en="http - common HTTP proxy", ru="http - обычный HTTP-прокси")),
+            (
+                HTTP_PROXY_TYPE,
+                msg(lang, en="http - common HTTP proxy", ru="http - обычный HTTP-прокси"),
+            ),
             (
                 SOCKS5_PROXY_TYPE,
-                msg(lang, en="socks5 - SOCKS proxy, local DNS", ru="socks5 - SOCKS-прокси, DNS локально"),
+                msg(
+                    lang,
+                    en="socks5 - SOCKS proxy, local DNS",
+                    ru="socks5 - SOCKS-прокси, DNS локально",
+                ),
             ),
             (
                 SOCKS5H_PROXY_TYPE,
-                msg(lang, en="socks5h - SOCKS proxy, DNS through proxy", ru="socks5h - SOCKS-прокси, DNS через прокси"),
+                msg(
+                    lang,
+                    en="socks5h - SOCKS proxy, DNS through proxy",
+                    ru="socks5h - SOCKS-прокси, DNS через прокси",
+                ),
             ),
         ],
         default_value=(default_type if default_type in PROXY_TYPE_CHOICES else HTTP_PROXY_TYPE),
@@ -292,9 +327,13 @@ def prompt_proxy_config(
     if proxy_type == HTTP_PROXY_TYPE:
         recommended = default_url if default_type == HTTP_PROXY_TYPE else "http://127.0.0.1:7890"
     elif proxy_type == SOCKS5H_PROXY_TYPE:
-        recommended = default_url if default_type == SOCKS5H_PROXY_TYPE else "socks5h://127.0.0.1:1080"
+        recommended = (
+            default_url if default_type == SOCKS5H_PROXY_TYPE else "socks5h://127.0.0.1:1080"
+        )
     else:
-        recommended = default_url if default_type == SOCKS5_PROXY_TYPE else "socks5://127.0.0.1:1080"
+        recommended = (
+            default_url if default_type == SOCKS5_PROXY_TYPE else "socks5://127.0.0.1:1080"
+        )
 
     typer.echo(
         msg(
@@ -345,7 +384,9 @@ def prompt_secret_ack(*, lang: PromptLanguage = PromptLanguage.EN) -> bool:
             ),
         ),
         default=False,
-        title=msg(lang, en="Setup: Security acknowledgment", ru="Настройка: Подтверждение безопасности"),
+        title=msg(
+            lang, en="Setup: Security acknowledgment", ru="Настройка: Подтверждение безопасности"
+        ),
         yes_label=yes_label(lang),
         no_label=no_label(lang),
         hint_text=single_hint(lang),

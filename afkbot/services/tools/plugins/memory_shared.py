@@ -56,6 +56,7 @@ class MemoryScopedParams(ToolParameters):
         normalized = value.strip()
         return normalized or None
 
+
 class MemorySearchParams(MemoryScopedParams):
     """Parameters for scoped semantic memory search."""
 

@@ -612,8 +612,7 @@ def _render_terminal_entry(
     rendered_lines = lines
     if entry.kind in {"notice", "activity", "system"} and lines:
         rendered_lines = tuple(
-            f"• {line}" if index == 0 else f"  {line}"
-            for index, line in enumerate(lines)
+            f"• {line}" if index == 0 else f"  {line}" for index, line in enumerate(lines)
         )
     for index, line in enumerate(rendered_lines):
         if index > 0:

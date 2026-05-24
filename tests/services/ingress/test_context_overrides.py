@@ -36,10 +36,8 @@ def test_build_ingress_context_overrides_returns_none_for_empty_input() -> None:
 def test_tool_profile_policy_overlay_roundtrip() -> None:
     """Policy overlay helper should expose tool-profile value for runtime filters."""
 
-    runtime_metadata = build_tool_profile_policy_overlay_metadata(
-        tool_profile="support_readonly"
+    runtime_metadata = build_tool_profile_policy_overlay_metadata(tool_profile="support_readonly")
+    assert (
+        resolve_tool_profile_policy_overlay_value(runtime_metadata=runtime_metadata)
+        == "support_readonly"
     )
-    assert resolve_tool_profile_policy_overlay_value(
-        runtime_metadata=runtime_metadata
-    ) == "support_readonly"
-

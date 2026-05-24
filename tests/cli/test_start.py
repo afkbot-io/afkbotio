@@ -213,7 +213,15 @@ def test_start_supports_structured_taskflow_owner_selector(monkeypatch) -> None:
         persist_runtime_bind: bool,
         settings,
     ) -> None:
-        del host, runtime_port, api_port, start_channels, channel_ids, strict_channels, persist_runtime_bind
+        del (
+            host,
+            runtime_port,
+            api_port,
+            start_channels,
+            channel_ids,
+            strict_channels,
+            persist_runtime_bind,
+        )
         calls.append((settings.taskflow_runtime_profile_id, settings.taskflow_runtime_owner_ref))
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
@@ -300,7 +308,9 @@ def test_start_runtime_port_override_updates_default_api_port(monkeypatch) -> No
     get_settings.cache_clear()
 
 
-def test_start_uses_auto_selected_exotic_port_when_runtime_port_is_unconfigured(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_start_uses_auto_selected_exotic_port_when_runtime_port_is_unconfigured(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
     """When no runtime port is configured, start should use the resolved exotic default."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
@@ -550,7 +560,9 @@ def test_start_rejects_pending_upgrades_by_default(monkeypatch, tmp_path) -> Non
             ),
         )
 
-    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.start.is_runtime_port_pair_available",
         lambda *, host, runtime_port: True,
@@ -576,7 +588,11 @@ def test_managed_start_applies_pending_upgrades(monkeypatch, tmp_path) -> None: 
         assert settings.deployment_mode == "managed"
         return UpgradeApplyReport(
             changed=True,
-            steps=(UpgradeStepReport(name="profile_runtime_configs", changed=True, details="rewritten"),),
+            steps=(
+                UpgradeStepReport(
+                    name="profile_runtime_configs", changed=True, details="rewritten"
+                ),
+            ),
         )
 
     async def _fake_inspect_pending_upgrades(settings):  # type: ignore[no-untyped-def]
@@ -596,8 +612,12 @@ def test_managed_start_applies_pending_upgrades(monkeypatch, tmp_path) -> None: 
         del start_channels, channel_ids, strict_channels, persist_runtime_bind, settings
         calls.append((host, runtime_port, api_port))
 
-    monkeypatch.setattr("afkbot.cli.commands.start._apply_pending_upgrades", _fake_apply_pending_upgrades)
-    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start._apply_pending_upgrades", _fake_apply_pending_upgrades
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.start.is_runtime_port_pair_available",
         lambda *, host, runtime_port: True,
@@ -641,7 +661,9 @@ def test_start_can_bypass_pending_upgrade_guard(monkeypatch, tmp_path) -> None: 
         del settings, strict_channels, persist_runtime_bind
         calls.append((host, runtime_port, api_port, start_channels, channel_ids))
 
-    monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.start._inspect_pending_upgrades", _fake_inspect_pending_upgrades
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.start.is_runtime_port_pair_available",
         lambda *, host, runtime_port: True,
@@ -707,7 +729,16 @@ def test_start_formats_bind_conflicts_as_usage_errors(monkeypatch) -> None:  # t
         persist_runtime_bind: bool,
         settings,
     ) -> None:
-        del host, runtime_port, api_port, start_channels, channel_ids, strict_channels, settings, persist_runtime_bind
+        del (
+            host,
+            runtime_port,
+            api_port,
+            start_channels,
+            channel_ids,
+            strict_channels,
+            settings,
+            persist_runtime_bind,
+        )
         raise OSError(48, "address already in use")
 
     monkeypatch.setattr("afkbot.cli.commands.start._inspect_pending_upgrades", _no_pending_upgrades)
@@ -841,7 +872,9 @@ async def test_run_full_stack_starts_and_stops_taskflow_runtime(monkeypatch, tmp
     assert lifecycle[-3:] == ["channels:stop", "taskflow:stop", "automation:stop"]
 
 
-async def test_run_full_stack_fails_when_api_server_exits_unexpectedly(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+async def test_run_full_stack_fails_when_api_server_exits_unexpectedly(
+    monkeypatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
     """A clean API task exit before shutdown should fail the overall runtime start."""
 
     class _FakeAutomationDaemon:

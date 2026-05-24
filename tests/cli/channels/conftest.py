@@ -1,4 +1,3 @@
-
 """Pytest fixtures for channel CLI test modules."""
 
 import asyncio

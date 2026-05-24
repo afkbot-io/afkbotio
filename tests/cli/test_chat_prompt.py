@@ -48,10 +48,14 @@ def test_chat_prompt_completer_suggests_commands_capabilities_and_files() -> Non
 
     # Act
     command_items = list(completer.get_completions(Document("//pl", cursor_position=4), None))
-    activity_command_items = list(completer.get_completions(Document("//ac", cursor_position=4), None))
+    activity_command_items = list(
+        completer.get_completions(Document("//ac", cursor_position=4), None)
+    )
     slash_items = list(completer.get_completions(Document("/", cursor_position=1), None))
     slash_command_items = list(completer.get_completions(Document("/cap", cursor_position=4), None))
-    plan_argument_items = list(completer.get_completions(Document("//plan o", cursor_position=8), None))
+    plan_argument_items = list(
+        completer.get_completions(Document("//plan o", cursor_position=8), None)
+    )
     thinking_argument_items = list(
         completer.get_completions(Document("//thinking v", cursor_position=12), None)
     )
@@ -74,8 +78,13 @@ def test_chat_prompt_completer_suggests_commands_capabilities_and_files() -> Non
     assert any(item.text == "very_high" for item in thinking_argument_items)
     assert any(item.text == "$security-secrets" for item in capability_items)
     assert any(item.text == "$telegram" and item.display_meta_text == "app" for item in app_items)
-    assert any(item.text == "$alpha" and item.display_meta_text == "mcp server" for item in mcp_items)
-    assert any(item.text == "$mcp.alpha.search" and item.display_meta_text == "mcp tool" for item in mcp_tool_items)
+    assert any(
+        item.text == "$alpha" and item.display_meta_text == "mcp server" for item in mcp_items
+    )
+    assert any(
+        item.text == "$mcp.alpha.search" and item.display_meta_text == "mcp tool"
+        for item in mcp_tool_items
+    )
     assert any(item.text == "@bootstrap/AGENTS.md" for item in file_items)
     assert any(item.text == "@bootstrap/AGENTS.md" for item in fallback_file_items)
 
@@ -103,7 +112,6 @@ def test_chat_prompt_completer_reserves_at_for_files_only() -> None:
     # Assert
     assert any(item.text == "@notes/reviewer.md" for item in items)
     assert all(item.display_meta_text == "file" for item in items)
-
 
 
 def test_chat_prompt_completer_reads_latest_catalog_snapshot() -> None:
@@ -216,6 +224,7 @@ def test_chat_repl_local_commands_reject_extra_args_and_can_reset_to_defaults() 
     assert plan_reset.message == "Planning mode reset to: auto"
     assert thinking_reset.message == "Thinking level reset to: medium"
 
+
 def test_chat_repl_local_command_rejects_invalid_planning_mode_without_crashing() -> None:
     """Invalid `//plan` values should return one usage error instead of raising."""
 
@@ -321,8 +330,7 @@ def test_chat_repl_status_and_activity_surface_latest_activity() -> None:
 
     # Assert
     assert activity_result.message == (
-        "Latest activity\n"
-        "- tool: bash.exec · detail=cmd=pytest tests/cli · running=True"
+        "Latest activity\n- tool: bash.exec · detail=cmd=pytest tests/cli · running=True"
     )
     assert "activity: tool: bash.exec · detail=cmd=pytest tests/cli · running=True" in status_text
     assert surface_state.status_lines == ()
@@ -379,7 +387,9 @@ def test_chat_workspace_status_line_formats_elapsed_time_and_activity(
     assert rendered == (
         "• Working (2s • esc to interrupt) · calling tool: bash.exec · queued 1 message"
     )
-    assert build_chat_workspace_surface_state(state).queue_lines == ("◦ Queued 1 message for the next turn.",)
+    assert build_chat_workspace_surface_state(state).queue_lines == (
+        "◦ Queued 1 message for the next turn.",
+    )
 
 
 def test_chat_workspace_surface_shows_active_plan_summary() -> None:
@@ -454,14 +464,17 @@ def test_chat_workspace_status_line_formats_minutes_and_hours(monkeypatch) -> No
         "afkbot.cli.presentation.chat_workspace.toolbar.monotonic",
         lambda: 10.0 + 100,
     )
-    assert build_chat_workspace_status_line(state).startswith("• Working (1m 40s • esc to interrupt)")
+    assert build_chat_workspace_status_line(state).startswith(
+        "• Working (1m 40s • esc to interrupt)"
+    )
 
     monkeypatch.setattr(
         "afkbot.cli.presentation.chat_workspace.toolbar.monotonic",
         lambda: 10.0 + 3_700,
     )
-    assert build_chat_workspace_status_line(state).startswith("• Working (1h 01m 40s • esc to interrupt)")
-
+    assert build_chat_workspace_status_line(state).startswith(
+        "• Working (1h 01m 40s • esc to interrupt)"
+    )
 
 
 def test_chat_repl_help_mentions_inline_popup_and_aliases() -> None:
@@ -480,9 +493,12 @@ def test_chat_repl_help_mentions_inline_popup_and_aliases() -> None:
 
     # Assert
     assert help_result.consumed is True
-    assert "type `/` to open inline command suggestions in the composer" in (help_result.message or "")
-    assert "slash aliases are also available: /help, /status, /activity" in (help_result.message or "")
-
+    assert "type `/` to open inline command suggestions in the composer" in (
+        help_result.message or ""
+    )
+    assert "slash aliases are also available: /help, /status, /activity" in (
+        help_result.message or ""
+    )
 
 
 def test_chat_repl_capabilities_command_renders_catalog_sections() -> None:

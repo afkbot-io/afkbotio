@@ -90,12 +90,18 @@ def test_channel_setup_scenario_returns_selected_defaults_in_tty(
 def test_telethon_reply_mode_disabled_label_is_read_only_not_access_rejection() -> None:
     """Telethon reply mode uses disabled as read-only mode, not as a chat access block."""
 
-    assert _channel_choice_label(
-        "disabled",
-        lang=PromptLanguage.RU,
-        label_overrides=TELETHON_REPLY_MODE_LABEL_OVERRIDES,
-    ) == "disabled - только читать входящие сообщения, не отправлять ответы"
-    assert _channel_choice_label("disabled", lang=PromptLanguage.RU) == "Полностью запретить этот тип чата"
+    assert (
+        _channel_choice_label(
+            "disabled",
+            lang=PromptLanguage.RU,
+            label_overrides=TELETHON_REPLY_MODE_LABEL_OVERRIDES,
+        )
+        == "disabled - только читать входящие сообщения, не отправлять ответы"
+    )
+    assert (
+        _channel_choice_label("disabled", lang=PromptLanguage.RU)
+        == "Полностью запретить этот тип чата"
+    )
 
 
 def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(

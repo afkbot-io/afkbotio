@@ -6,7 +6,10 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from afkbot.services.chat_session.input_catalog import ChatInputCatalogStore, build_chat_input_catalog
+from afkbot.services.chat_session.input_catalog import (
+    ChatInputCatalogStore,
+    build_chat_input_catalog,
+)
 from afkbot.settings import Settings
 
 CatalogRefreshFn = Callable[[], Coroutine[Any, Any, None]]

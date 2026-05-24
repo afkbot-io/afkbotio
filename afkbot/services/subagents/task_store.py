@@ -33,7 +33,9 @@ class SubagentTaskStore:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 
@@ -138,9 +140,13 @@ class SubagentTaskStore:
                 profile_id=profile_id,
                 session_id=session_id,
             )
-            if mark_overdue_timeout and row.status == "running" and is_task_overdue(
-                row,
-                settings=self._settings,
+            if (
+                mark_overdue_timeout
+                and row.status == "running"
+                and is_task_overdue(
+                    row,
+                    settings=self._settings,
+                )
             ):
                 await repo.finish_task(
                     task_id=row.task_id,

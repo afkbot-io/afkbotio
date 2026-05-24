@@ -234,7 +234,9 @@ async def logout_telethon_endpoint(
         credentials = None
     if credentials is not None and credentials.session_string:
         try:
-            await validate_telethon_profile_policy(settings=settings, profile_id=endpoint.profile_id)
+            await validate_telethon_profile_policy(
+                settings=settings, profile_id=endpoint.profile_id
+            )
         except TelethonUserServiceError as exc:
             if exc.error_code != "telethon_policy_network_unsupported":
                 raise
@@ -366,17 +368,27 @@ def _render_sent_code_message(*, sent_code: object, phone: str) -> str:
     if isinstance(timeout, int) and timeout > 0:
         parts.append(f"Telegram timeout hint: {timeout}s before the next retry path may unlock.")
     if next_type == "sms":
-        parts.append("If nothing appears now, wait for the timeout window; Telegram may allow SMS next.")
+        parts.append(
+            "If nothing appears now, wait for the timeout window; Telegram may allow SMS next."
+        )
     elif next_type == "call":
-        parts.append("If nothing appears now, wait for the timeout window; Telegram may allow a phone call next.")
+        parts.append(
+            "If nothing appears now, wait for the timeout window; Telegram may allow a phone call next."
+        )
     elif next_type == "flash_call":
-        parts.append("If nothing appears now, wait for the timeout window; Telegram may allow a flash call next.")
+        parts.append(
+            "If nothing appears now, wait for the timeout window; Telegram may allow a flash call next."
+        )
     elif next_type == "telegram_app":
         parts.append("Telegram still prefers in-app delivery for the next attempt too.")
     if code_type == "telegram_app":
-        parts.append("Check all active Telegram clients for that account, including archived system chats.")
+        parts.append(
+            "Check all active Telegram clients for that account, including archived system chats."
+        )
     else:
-        parts.append("If the code still does not arrive, avoid spamming retries; repeated attempts can delay delivery.")
+        parts.append(
+            "If the code still does not arrive, avoid spamming retries; repeated attempts can delay delivery."
+        )
     return " ".join(parts)
 
 
@@ -399,7 +411,9 @@ def _render_qr_login_message(*, qr_login: object) -> str:
     parts.append(f"QR login URL: {url}")
     rendered_qr = render_terminal_qr(url)
     if rendered_qr is None:
-        parts.append("Terminal QR rendering is unavailable; open the URL above or install the qrcode package.")
+        parts.append(
+            "Terminal QR rendering is unavailable; open the URL above or install the qrcode package."
+        )
         return " ".join(parts)
     return " ".join(parts) + "\n\n" + rendered_qr
 

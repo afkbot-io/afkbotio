@@ -156,7 +156,9 @@ async def test_doctor_reports_runtime_bind_summary(
         "afkbot.cli.commands.doctor.resolve_default_runtime_port",
         lambda *, settings, host, runtime_config: 46341,
     )
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_runtime.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_runtime.db'}", root_dir=tmp_path
+    )
 
     assert await _run_doctor(settings, integrations=False, upgrades=False) is True
     out = capsys.readouterr().out
@@ -177,7 +179,9 @@ async def test_doctor_reports_running_daemon_health(
 
     monkeypatch.setattr(
         "afkbot.cli.commands.doctor.describe_managed_runtime_service",
-        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+        lambda: SimpleNamespace(
+            installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"
+        ),
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.doctor.probe_runtime_stack",
@@ -188,7 +192,9 @@ async def test_doctor_reports_running_daemon_health(
             api=SimpleNamespace(ok=True, url="http://127.0.0.1:46342/healthz"),
         ),
     )
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_daemon.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_daemon.db'}", root_dir=tmp_path
+    )
 
     assert await _run_doctor(settings, integrations=False, upgrades=False) is True
     out = capsys.readouterr().out
@@ -210,7 +216,9 @@ async def test_doctor_fails_when_managed_service_is_installed_but_daemon_is_down
 
     monkeypatch.setattr(
         "afkbot.cli.commands.doctor.describe_managed_runtime_service",
-        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+        lambda: SimpleNamespace(
+            installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"
+        ),
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.doctor.probe_runtime_stack",
@@ -251,7 +259,9 @@ async def test_doctor_does_not_require_daemon_when_setup_is_incomplete(
     monkeypatch.setattr("afkbot.cli.commands.doctor.setup_is_complete", lambda settings: False)
     monkeypatch.setattr(
         "afkbot.cli.commands.doctor.describe_managed_runtime_service",
-        lambda: SimpleNamespace(installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"),
+        lambda: SimpleNamespace(
+            installed=True, kind="systemd-user", path=tmp_path / "afkbot.service"
+        ),
     )
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'doctor_incomplete_setup.db'}",

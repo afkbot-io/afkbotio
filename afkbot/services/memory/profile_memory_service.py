@@ -20,7 +20,9 @@ from afkbot.settings import Settings
 ProfileMemorySourceKind = str
 TValue = TypeVar("TValue")
 _SERVICES_BY_ROOT: dict[str, "ProfileMemoryService"] = {}
-_SECRET_PATTERN = re.compile(r"(api[_ -]?key|token|password|secret|sk-[a-z0-9_-]{8,})", re.IGNORECASE)
+_SECRET_PATTERN = re.compile(
+    r"(api[_ -]?key|token|password|secret|sk-[a-z0-9_-]{8,})", re.IGNORECASE
+)
 _VOLATILE_PATTERN = re.compile(
     r"(for this chat only|in this chat only|this session|temporary|temporarily|for now only|только в этом чате|на эту сессию|временно)",
     re.IGNORECASE,
@@ -221,7 +223,9 @@ class ProfileMemoryService:
 
         async def _op(repo: ProfileMemoryRepository) -> ProfileMemoryItemMetadata:
             await self._ensure_profile_exists(repo, profile_id)
-            row = await repo.mark_stale(profile_id=profile_id, memory_key=normalized_key, stale=stale)
+            row = await repo.mark_stale(
+                profile_id=profile_id, memory_key=normalized_key, stale=stale
+            )
             if row is None:
                 raise ProfileMemoryServiceError(
                     error_code="profile_memory_not_found",
@@ -244,7 +248,9 @@ class ProfileMemoryService:
         normalized_max_chars = self._normalize_limit(max_chars, ceiling=8000)
         normalized_max_items = self._normalize_limit(max_items, ceiling=500)
         normalized_min_confidence = self._normalize_confidence(min_confidence)
-        rows = await self.list(profile_id=profile_id, include_stale=False, limit=normalized_max_items)
+        rows = await self.list(
+            profile_id=profile_id, include_stale=False, limit=normalized_max_items
+        )
         lines: list[tuple[str, str]] = []
         for row in rows:
             if row.stale or row.confidence < normalized_min_confidence:
@@ -269,7 +275,9 @@ class ProfileMemoryService:
             included_keys.append(key)
         if not included_keys:
             first_key, first_line = lines[0]
-            content = f"{header}\n{first_line[: max(0, normalized_max_chars - len(header) - 1)]}".rstrip()
+            content = (
+                f"{header}\n{first_line[: max(0, normalized_max_chars - len(header) - 1)]}".rstrip()
+            )
             included_keys = [first_key] if len(content) > len(header) else []
             truncated = True
         return ProfileMemoryPromptBlock(

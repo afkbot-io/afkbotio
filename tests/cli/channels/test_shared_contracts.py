@@ -1,6 +1,5 @@
 """Cross-family channel CLI contracts and shared mutation behavior."""
 
-
 import asyncio
 from pathlib import Path
 
@@ -80,6 +79,7 @@ def test_channel_mutations_request_managed_runtime_reload(
     assert add_calls == [str(tmp_path)]
     assert toggle_calls == [str(tmp_path)]
 
+
 def test_channel_update_rejects_unknown_profile_for_both_transports(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -106,40 +106,46 @@ def test_channel_update_rejects_unknown_profile_for_both_transports(
         )
     )
 
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telegram",
-            "add",
-            "support-bot",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "bot-main",
-            "--account-id",
-            "bot-main",
-            "--no-binding",
-            "--yes",
-        ],
-    ).exit_code == 0
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telethon",
-            "add",
-            "personal-user",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "tg-user",
-            "--account-id",
-            "personal-user",
-            "--no-binding",
-            "--yes",
-        ],
-    ).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telegram",
+                "add",
+                "support-bot",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "bot-main",
+                "--account-id",
+                "bot-main",
+                "--no-binding",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telethon",
+                "add",
+                "personal-user",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "tg-user",
+                "--account-id",
+                "personal-user",
+                "--no-binding",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
 
     telegram_update = runner.invoke(
         app,
@@ -154,6 +160,7 @@ def test_channel_update_rejects_unknown_profile_for_both_transports(
     assert "Profile not found: missing-profile" in (telegram_update.stdout + telegram_update.stderr)
     assert telethon_update.exit_code == 2
     assert "Profile not found: missing-profile" in (telethon_update.stdout + telethon_update.stderr)
+
 
 def test_channel_update_binding_sync_preserves_existing_binding_metadata(
     tmp_path: Path,
@@ -181,79 +188,91 @@ def test_channel_update_binding_sync_preserves_existing_binding_metadata(
         )
     )
 
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telegram",
-            "add",
-            "support-bot",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "bot-main",
-            "--account-id",
-            "support-bot",
-            "--binding",
-            "--session-policy",
-            "per-user-in-group",
-            "--priority",
-            "7",
-            "--prompt-overlay",
-            "keep telegram overlay",
-            "--yes",
-        ],
-    ).exit_code == 0
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telegram",
-            "update",
-            "support-bot",
-            "--binding",
-            "--group-trigger-mode",
-            "mention_only",
-            "--yes",
-        ],
-    ).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telegram",
+                "add",
+                "support-bot",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "bot-main",
+                "--account-id",
+                "support-bot",
+                "--binding",
+                "--session-policy",
+                "per-user-in-group",
+                "--priority",
+                "7",
+                "--prompt-overlay",
+                "keep telegram overlay",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telegram",
+                "update",
+                "support-bot",
+                "--binding",
+                "--group-trigger-mode",
+                "mention_only",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
 
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telethon",
-            "add",
-            "personal-user",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "tg-user",
-            "--account-id",
-            "personal-user",
-            "--binding",
-            "--session-policy",
-            "per-user-in-group",
-            "--priority",
-            "9",
-            "--prompt-overlay",
-            "keep telethon overlay",
-            "--yes",
-        ],
-    ).exit_code == 0
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telethon",
-            "update",
-            "personal-user",
-            "--binding",
-            "--reply-mode",
-            "same_chat",
-            "--yes",
-        ],
-    ).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telethon",
+                "add",
+                "personal-user",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "tg-user",
+                "--account-id",
+                "personal-user",
+                "--binding",
+                "--session-policy",
+                "per-user-in-group",
+                "--priority",
+                "9",
+                "--prompt-overlay",
+                "keep telethon overlay",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telethon",
+                "update",
+                "personal-user",
+                "--binding",
+                "--reply-mode",
+                "same_chat",
+                "--yes",
+            ],
+        ).exit_code
+        == 0
+    )
 
     binding_service = get_channel_binding_service(settings)
     telegram_binding = asyncio.run(binding_service.get(binding_id="support-bot"))
@@ -280,7 +299,10 @@ def test_channel_update_binding_sync_preserves_existing_binding_metadata(
         prompt_overlay="keep telethon overlay",
     )
 
-def test_channel_telethon_enable_rejects_non_telethon_endpoint(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_telethon_enable_rejects_non_telethon_endpoint(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Telethon enable/disable path should reject endpoints from another channel family."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -324,7 +346,10 @@ def test_channel_telethon_enable_rejects_non_telethon_endpoint(tmp_path: Path, m
     assert status_result.exit_code == 2
     assert "channel_endpoint_type_mismatch" in status_result.stderr
 
-def test_channel_telegram_enable_rejects_non_telegram_endpoint(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_telegram_enable_rejects_non_telegram_endpoint(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Telegram enable/disable path should reject endpoints from another channel family."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -363,6 +388,7 @@ def test_channel_telegram_enable_rejects_non_telegram_endpoint(tmp_path: Path, m
 
     assert result.exit_code == 2
     assert "channel_endpoint_type_mismatch" in result.stderr
+
 
 def test_channel_telegram_show_and_delete_reject_non_telegram_endpoint(
     tmp_path: Path,

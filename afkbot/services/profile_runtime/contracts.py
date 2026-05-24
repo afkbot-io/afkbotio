@@ -43,7 +43,9 @@ class ProfileRuntimeConfig(BaseModel):
     memory_core_max_items: int | None = None
     memory_core_max_chars: int | None = None
     memory_auto_search_enabled: bool | None = None
-    memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None = None
+    memory_auto_search_scope_mode: (
+        Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None
+    ) = None
     memory_auto_search_limit: int | None = None
     memory_auto_search_include_global: bool | None = None
     memory_auto_search_chat_limit: int | None = None
@@ -51,7 +53,9 @@ class ProfileRuntimeConfig(BaseModel):
     memory_global_fallback_enabled: bool | None = None
     memory_auto_context_item_chars: int | None = None
     memory_auto_save_enabled: bool | None = None
-    memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None = None
+    memory_auto_save_scope_mode: (
+        Literal["auto", "profile", "chat", "thread", "user_in_chat"] | None
+    ) = None
     memory_auto_promote_enabled: bool | None = None
     memory_auto_save_kinds: tuple[MemoryAutoSaveKind, ...] | None = None
     memory_auto_save_max_chars: int | None = None
@@ -168,7 +172,9 @@ class ProfileRuntimeResolved(BaseModel):
     memory_core_max_items: int = 8
     memory_core_max_chars: int = 600
     memory_auto_search_enabled: bool = False
-    memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
+    memory_auto_search_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = (
+        "auto"
+    )
     memory_auto_search_limit: int = 3
     memory_auto_search_include_global: bool = True
     memory_auto_search_chat_limit: int = 3
@@ -176,7 +182,9 @@ class ProfileRuntimeResolved(BaseModel):
     memory_global_fallback_enabled: bool = True
     memory_auto_context_item_chars: int = 240
     memory_auto_save_enabled: bool = False
-    memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = "auto"
+    memory_auto_save_scope_mode: Literal["auto", "profile", "chat", "thread", "user_in_chat"] = (
+        "auto"
+    )
     memory_auto_promote_enabled: bool = False
     memory_auto_save_kinds: tuple[MemoryAutoSaveKind, ...] = (
         "fact",

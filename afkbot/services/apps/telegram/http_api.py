@@ -566,7 +566,9 @@ def _post_download_file_sync(
         "action": "download_file",
         "file_id": normalized_file_id,
         "file_path": file_path,
-        "path": local_path.resolve(strict=False).relative_to(base_dir.resolve(strict=False)).as_posix(),
+        "path": local_path.resolve(strict=False)
+        .relative_to(base_dir.resolve(strict=False))
+        .as_posix(),
         "file_name": local_path.name,
         "mime_type": mime_type,
         "size_bytes": downloaded,
@@ -585,7 +587,9 @@ def _download_url_to_path(
     with urlopen(request, timeout=float(timeout_sec)) as response:
         content_length = response.headers.get("Content-Length")
         if content_length and content_length.isdigit() and int(content_length) > max_bytes:
-            raise ValueError(f"Telegram file exceeds max download size: {content_length} > {max_bytes}")
+            raise ValueError(
+                f"Telegram file exceeds max download size: {content_length} > {max_bytes}"
+            )
         with path.open("wb") as handle:
             while True:
                 chunk = response.read(64 * 1024)
@@ -595,7 +599,9 @@ def _download_url_to_path(
                 if downloaded > max_bytes:
                     handle.close()
                     path.unlink(missing_ok=True)
-                    raise ValueError(f"Telegram file exceeds max download size: {downloaded} > {max_bytes}")
+                    raise ValueError(
+                        f"Telegram file exceeds max download size: {downloaded} > {max_bytes}"
+                    )
                 handle.write(chunk)
     return downloaded
 
@@ -774,8 +780,7 @@ def _request_json_multipart(
     body.extend(f"--{boundary}\r\n".encode("utf-8"))
     body.extend(
         (
-            f'Content-Disposition: form-data; name="{file_field_name}"; '
-            f'filename="{file_name}"\r\n'
+            f'Content-Disposition: form-data; name="{file_field_name}"; filename="{file_name}"\r\n'
         ).encode("utf-8")
     )
     body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"))
@@ -799,7 +804,9 @@ def _request_json_multipart(
     return {str(key): value for key, value in payload.items()}
 
 
-async def _resolve_workspace_media_path(*, settings: Settings, profile_id: str, raw_value: str) -> Path | None:
+async def _resolve_workspace_media_path(
+    *, settings: Settings, profile_id: str, raw_value: str
+) -> Path | None:
     return await resolve_channel_outbound_media_path(
         settings=settings,
         profile_id=profile_id,

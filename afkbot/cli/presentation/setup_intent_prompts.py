@@ -56,14 +56,18 @@ def prompt_profile_intent_work_contexts(
 
     choices = list_profile_intent_work_contexts(include_expert=include_expert)
     return select_multi_option_dialog(
-        title=msg(lang, en="Setup: Where will the bot work?", ru="Настройка: Где будет работать бот?"),
+        title=msg(
+            lang, en="Setup: Where will the bot work?", ru="Настройка: Где будет работать бот?"
+        ),
         text=msg(
             lang,
             en="Choose one or more surfaces. AFKBOT will ask only the follow-up questions that matter.",
             ru="Выберите один или несколько вариантов. AFKBOT задаст только нужные уточняющие вопросы.",
         ),
         options=[(choice.id, choice.label(lang=lang)) for choice in choices],
-        default_values=tuple(value for value in default_values if value in {choice.id for choice in choices}),
+        default_values=tuple(
+            value for value in default_values if value in {choice.id for choice in choices}
+        ),
         hint_text=multi_hint(lang),
     )
 
@@ -81,7 +85,11 @@ def prompt_profile_intent_actions(
         work_contexts,
         include_expert=include_expert,
     )
-    defaults = default_values if default_values is not None else profile_intent_default_actions(work_contexts)
+    defaults = (
+        default_values
+        if default_values is not None
+        else profile_intent_default_actions(work_contexts)
+    )
     return select_multi_option_dialog(
         title=msg(lang, en="Setup: What may the bot do?", ru="Настройка: Что боту можно делать?"),
         text=msg(
@@ -96,7 +104,9 @@ def prompt_profile_intent_actions(
             ),
         ),
         options=[(choice.id, choice.label(lang=lang)) for choice in choices],
-        default_values=tuple(value for value in defaults if value in {choice.id for choice in choices}),
+        default_values=tuple(
+            value for value in defaults if value in {choice.id for choice in choices}
+        ),
         hint_text=multi_hint(lang),
     )
 

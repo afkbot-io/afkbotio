@@ -244,6 +244,4 @@ def _idempotency_wait_poll_delay(attempt: int) -> float:
 
     if attempt <= 0:
         return IDEMPOTENCY_WAIT_POLL_SEC
-    return float(
-        min(IDEMPOTENCY_WAIT_MAX_POLL_SEC, IDEMPOTENCY_WAIT_POLL_SEC * (2**attempt))
-    )
+    return float(min(IDEMPOTENCY_WAIT_MAX_POLL_SEC, IDEMPOTENCY_WAIT_POLL_SEC * (2**attempt)))

@@ -16,6 +16,7 @@ from afkbot.services.policy.evaluation_helpers import (
     normalize_path,
     parse_string_set,
 )
+
 _FIXED_OUTBOUND_HOSTS_BY_TOOL: dict[str, tuple[str, ...]] = {
     "channel.history.list": ("api.partyflow.ru",),
     "web.search": ("api.search.brave.com",),
@@ -78,7 +79,9 @@ class PolicyEngine:
         for name in available_names:
             if any(_tool_rule_matches(rule=rule, tool_name=name) for rule in denied):
                 continue
-            if allowed and not any(_tool_rule_matches(rule=rule, tool_name=name) for rule in allowed):
+            if allowed and not any(
+                _tool_rule_matches(rule=rule, tool_name=name) for rule in allowed
+            ):
                 continue
             visible.append(name)
         return tuple(visible)
@@ -143,7 +146,9 @@ class PolicyEngine:
         )
         if approved_tool_names and tool_name in approved_tool_names:
             return
-        if allowed and not any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in allowed):
+        if allowed and not any(
+            _tool_rule_matches(rule=rule, tool_name=tool_name) for rule in allowed
+        ):
             raise PolicyViolationError(reason=f"Tool is not allowed by policy: {tool_name}")
 
     def _enforce_session_job_nested_tools(
@@ -215,7 +220,9 @@ class PolicyEngine:
                 raise PolicyViolationError(reason=f"Shell command is denied by policy: {command}")
         for command in commands:
             if allowed and command not in allowed:
-                raise PolicyViolationError(reason=f"Shell command is not allowed by policy: {command}")
+                raise PolicyViolationError(
+                    reason=f"Shell command is not allowed by policy: {command}"
+                )
 
     def _enforce_network_allowlist(
         self,

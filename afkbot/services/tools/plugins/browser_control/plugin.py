@@ -69,18 +69,21 @@ class BrowserControlParams(RoutedToolParameters):
     label: str | None = Field(default=None, min_length=1, max_length=2048)
     placeholder: str | None = Field(default=None, min_length=1, max_length=2048)
     field_name: str | None = Field(default=None, min_length=1, max_length=512)
-    role: Literal[
-        "button",
-        "link",
-        "textbox",
-        "searchbox",
-        "combobox",
-        "checkbox",
-        "radio",
-        "option",
-        "menuitem",
-        "tab",
-    ] | None = None
+    role: (
+        Literal[
+            "button",
+            "link",
+            "textbox",
+            "searchbox",
+            "combobox",
+            "checkbox",
+            "radio",
+            "option",
+            "menuitem",
+            "tab",
+        ]
+        | None
+    ) = None
     key: str | None = Field(default=None, min_length=1, max_length=128)
     value: str | None = Field(default=None, max_length=50_000)
     path: str | None = Field(default=None, min_length=1, max_length=2048)
@@ -141,7 +144,10 @@ def _browser_error_metadata(*, error_code: str, reason: str) -> dict[str, object
             "suggested_next_action": "fix_request",
             "session_state": "unknown",
         }
-    if "targetclosederror" in lowered or "target page, context or browser has been closed" in lowered:
+    if (
+        "targetclosederror" in lowered
+        or "target page, context or browser has been closed" in lowered
+    ):
         return {
             "browser_error_class": "browser_target_closed",
             "retryable": True,
@@ -369,7 +375,9 @@ class BrowserControlTool(ToolBase):
             "url": str(getattr(session.page, "url", "") or ""),
         }
 
-    async def _navigate(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _navigate(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         if payload.url is None:
             raise ValueError("url is required for navigate action")
         session = await self._require_session(ctx)
@@ -448,7 +456,9 @@ class BrowserControlTool(ToolBase):
             "url": str(getattr(session.page, "url", "") or ""),
         }
 
-    async def _select(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _select(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         if not self._has_target(payload):
             raise ValueError(
                 "select action requires one browser target: selector, label, placeholder, "
@@ -488,7 +498,9 @@ class BrowserControlTool(ToolBase):
             "url": str(getattr(session.page, "url", "") or ""),
         }
 
-    async def _scroll(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _scroll(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         session = await self._require_session(ctx)
         locator = self._maybe_target_locator(session.page, payload=payload, action="scroll")
         if locator is not None:
@@ -523,7 +535,9 @@ class BrowserControlTool(ToolBase):
                 state=payload.state,
             )
             wait_target = "selector"
-        elif (locator := self._maybe_target_locator(session.page, payload=payload, action="wait")) is not None:
+        elif (
+            locator := self._maybe_target_locator(session.page, payload=payload, action="wait")
+        ) is not None:
             await locator.wait_for(timeout=payload.timeout_ms, state=payload.state)
             wait_target = "target"
         elif payload.text is not None:
@@ -546,7 +560,9 @@ class BrowserControlTool(ToolBase):
             "timeout_ms": payload.timeout_ms,
         }
 
-    async def _content(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _content(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         session = await self._require_session(ctx)
         content = str(await session.page.content())
         html_excerpt, html_truncated = self._truncate_raw_text(content, limit=payload.max_chars)
@@ -565,7 +581,9 @@ class BrowserControlTool(ToolBase):
             "interactives": snapshot.get("interactives") or [],
         }
 
-    async def _snapshot(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _snapshot(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         session = await self._require_session(ctx)
         html = str(await session.page.content())
         snapshot = await capture_browser_page_snapshot(session.page, max_chars=payload.max_chars)
@@ -627,7 +645,9 @@ class BrowserControlTool(ToolBase):
             },
         }
 
-    async def _screenshot(self, *, ctx: ToolContext, payload: BrowserControlParams) -> dict[str, object]:
+    async def _screenshot(
+        self, *, ctx: ToolContext, payload: BrowserControlParams
+    ) -> dict[str, object]:
         session = await self._require_session(ctx)
         path = self._resolve_screenshot_path(ctx=ctx, requested_path=payload.path)
         await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
@@ -777,7 +797,9 @@ class BrowserControlTool(ToolBase):
             raise ValueError("screenshot path must stay within workspace root") from exc
         return resolved
 
-    def _resolve_snapshot_paths(self, *, ctx: ToolContext, requested_path: str | None) -> dict[str, Path]:
+    def _resolve_snapshot_paths(
+        self, *, ctx: ToolContext, requested_path: str | None
+    ) -> dict[str, Path]:
         root = self._settings.root_dir.resolve()
         if requested_path is None:
             safe_session = re.sub(r"[^a-zA-Z0-9_.-]+", "-", ctx.session_id).strip("-") or "session"

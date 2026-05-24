@@ -40,7 +40,9 @@ class SkillProfileUpsertTool(ToolBase):
                 name=payload.name,
                 content=payload.markdown,
             )
-            return ToolResult(ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)}
+            )
         except ProfileFilesLockedError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except ValueError as exc:

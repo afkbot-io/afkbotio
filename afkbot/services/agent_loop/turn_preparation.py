@@ -215,7 +215,9 @@ class TurnPreparationRuntime:
                     None if context_overrides is None else context_overrides.approved_tool_names
                 ),
                 channel_owned_tool_names=(
-                    None if context_overrides is None else context_overrides.channel_owned_tool_names
+                    None
+                    if context_overrides is None
+                    else context_overrides.channel_owned_tool_names
                 ),
                 cli_approval_surface_enabled=(
                     False
@@ -235,7 +237,9 @@ class TurnPreparationRuntime:
                     automation_intent=automation_intent,
                     runtime_metadata=runtime_metadata,
                     trusted_runtime_context=(
-                        None if context_overrides is None else context_overrides.trusted_runtime_context
+                        None
+                        if context_overrides is None
+                        else context_overrides.trusted_runtime_context
                     ),
                     approved_tool_names=(
                         None if context_overrides is None else context_overrides.approved_tool_names
@@ -262,7 +266,9 @@ class TurnPreparationRuntime:
                     automation_intent=automation_intent,
                     runtime_metadata=runtime_metadata,
                     trusted_runtime_context=(
-                        None if context_overrides is None else context_overrides.trusted_runtime_context
+                        None
+                        if context_overrides is None
+                        else context_overrides.trusted_runtime_context
                     ),
                     approved_tool_names=(
                         None if context_overrides is None else context_overrides.approved_tool_names
@@ -369,18 +375,12 @@ class TurnPreparationRuntime:
         )
         current_names = set(current_visible_tool_names)
         later_visible_tools = [
-            tool
-            for tool in execution_surface.visible_tools
-            if tool.name not in current_names
+            tool for tool in execution_surface.visible_tools if tool.name not in current_names
         ]
         if not later_visible_tools:
             return None
         listed_names = ", ".join(
-            (
-                f"`{tool.name}` (approval)"
-                if tool.requires_confirmation
-                else f"`{tool.name}`"
-            )
+            (f"`{tool.name}` (approval)" if tool.requires_confirmation else f"`{tool.name}`")
             for tool in later_visible_tools[:_PLAN_ONLY_EXECUTION_SURFACE_NOTE_MAX_TOOLS]
         )
         remaining_count = len(later_visible_tools) - min(

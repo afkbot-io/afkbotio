@@ -73,7 +73,9 @@ class ToolExposureBuilder:
         """Return visible tools plus the subset executable without extra approval."""
 
         if self._tool_registry is None:
-            return ToolSurface(visible_tools=(), executable_tool_names=(), approval_required_tool_names=())
+            return ToolSurface(
+                visible_tools=(), executable_tool_names=(), approval_required_tool_names=()
+            )
         allowed_names = self._policy_engine.allowed_tool_names(
             policy=policy,
             available_names=self._tool_registry.list_names(),
@@ -343,10 +345,7 @@ class ToolExposureBuilder:
                     tool_access_mode=tool_access_mode,
                     blocked_sensitive_names=blocked_sensitive_names,
                 )
-                or (
-                    not automation_intent
-                    and self._tool_requires_automation_intent(tool_name=name)
-                )
+                or (not automation_intent and self._tool_requires_automation_intent(tool_name=name))
             ):
                 continue
             approval_names.append(name)
@@ -510,7 +509,10 @@ class ToolExposureBuilder:
         if self._tool_registry is None or skill_route is None or not skill_route.has_selection:
             return tuple(allowed_names)
         if self._is_background_runtime(runtime_metadata=runtime_metadata):
-            if skill_route.has_explicit_selection and skill_route.has_unavailable_blocking_selection:
+            if (
+                skill_route.has_explicit_selection
+                and skill_route.has_unavailable_blocking_selection
+            ):
                 return ()
             return self._ordered_tool_names(
                 tool_names=list(allowed_names),

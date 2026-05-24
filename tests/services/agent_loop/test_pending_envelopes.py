@@ -119,7 +119,9 @@ def test_build_profile_selection_envelope_uses_ask_question_instead_of_secure_pr
         )
     ]
 
-    envelope = builder.build_profile_selection_envelope(tool_calls=tool_calls, tool_results=tool_results)
+    envelope = builder.build_profile_selection_envelope(
+        tool_calls=tool_calls, tool_results=tool_results
+    )
 
     assert envelope is not None
     assert envelope.action == "ask_question"
@@ -170,7 +172,9 @@ def test_build_profile_selection_envelope_handles_single_available_profile() -> 
         )
     ]
 
-    envelope = builder.build_profile_selection_envelope(tool_calls=tool_calls, tool_results=tool_results)
+    envelope = builder.build_profile_selection_envelope(
+        tool_calls=tool_calls, tool_results=tool_results
+    )
 
     assert envelope is not None
     assert envelope.action == "ask_question"

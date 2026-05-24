@@ -230,7 +230,9 @@ class SkillMarketplaceService:
             execution_mode=skill_info.manifest.execution_mode,
         )
 
-    def _list_direct_source_sync(self, descriptor: SourceDescriptor) -> list[SkillMarketplaceListItem]:
+    def _list_direct_source_sync(
+        self, descriptor: SourceDescriptor
+    ) -> list[SkillMarketplaceListItem]:
         if descriptor.direct_url is None:
             raise SkillMarketplaceError(
                 error_code="skill_marketplace_invalid_source",
@@ -253,7 +255,9 @@ class SkillMarketplaceService:
             )
         ]
 
-    def _list_repo_source_sync(self, descriptor: SourceDescriptor) -> list[SkillMarketplaceListItem]:
+    def _list_repo_source_sync(
+        self, descriptor: SourceDescriptor
+    ) -> list[SkillMarketplaceListItem]:
         owner = descriptor.owner
         repo = descriptor.repo
         if owner is None or repo is None:

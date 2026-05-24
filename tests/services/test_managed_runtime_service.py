@@ -41,7 +41,9 @@ def test_ensure_managed_runtime_service_prefers_linux_system_unit_when_available
         "afkbot.services.managed_runtime_service._preferred_systemd_system_service_path",
         lambda: service_path,
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         legacy_service_path,
@@ -143,7 +145,9 @@ def test_ensure_managed_runtime_service_falls_back_to_linux_user_unit_when_syste
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         legacy_service_path,
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._resolve_current_afk_launcher_path",
         lambda: launcher_path,
@@ -201,7 +205,9 @@ def test_ensure_managed_runtime_service_reports_linger_guidance_when_user_bus_is
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         legacy_service_path,
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._resolve_current_afk_launcher_path",
         lambda: launcher_path,
@@ -240,8 +246,12 @@ def test_ensure_managed_runtime_service_does_not_bootstrap_launchd_when_start_is
     calls: list[list[str]] = []
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Darwin")
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._LAUNCHD_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._LAUNCHD_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._resolve_current_afk_launcher_path",
         lambda: launcher_path,
@@ -296,7 +306,9 @@ def test_ensure_managed_runtime_service_refuses_to_replace_unmanaged_system_unit
         "afkbot.services.managed_runtime_service._preferred_systemd_system_service_path",
         lambda: service_path,
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         legacy_service_path,
@@ -314,7 +326,9 @@ def test_ensure_managed_runtime_service_refuses_to_replace_unmanaged_system_unit
         "afkbot.services.managed_runtime_service.subprocess.run",
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True
+    )
 
     result = ensure_managed_runtime_service(settings, start=False)
 
@@ -335,9 +349,15 @@ def test_ensure_managed_runtime_service_defers_install_until_setup_is_complete(
     service_path = tmp_path / "systemd-user" / "afkbot.service"
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Linux")
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.shutil.which", lambda value: "/bin/systemctl")
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.shutil.which", lambda value: "/bin/systemctl"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.describe_managed_runtime_service",
         lambda: SimpleNamespace(installed=False, kind=None, path=None),
@@ -382,8 +402,12 @@ def test_stop_launchd_service_reports_domain_failure(
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'service.db'}")
 
     monkeypatch.setattr("afkbot.services.managed_runtime_service.platform.system", lambda: "Darwin")
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._LAUNCHD_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._LAUNCHD_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False
+    )
 
     def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 3, stdout="", stderr="Could not find service")
@@ -418,8 +442,12 @@ def test_restart_managed_runtime_service_fails_when_health_never_recovers(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         tmp_path / "systemd-system" / "afkbot-legacy.service",
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.inspect_managed_runtime_service",
         lambda settings: SimpleNamespace(
@@ -489,8 +517,12 @@ def test_restart_managed_runtime_service_requires_active_manager_state(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         tmp_path / "systemd-system" / "afkbot-legacy.service",
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.inspect_managed_runtime_service",
         lambda settings: SimpleNamespace(
@@ -526,7 +558,9 @@ def test_restart_managed_runtime_service_requires_completed_setup(
     """Restart should fail clearly until full `afk setup` has completed."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'service.db'}")
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: False
+    )
 
     result = restart_managed_runtime_service(settings)
 
@@ -555,8 +589,12 @@ def test_stop_managed_runtime_service_fails_when_one_endpoint_is_still_healthy(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         tmp_path / "systemd-system" / "afkbot-legacy.service",
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path)
-    monkeypatch.setattr("afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", service_path
+    )
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service.setup_is_complete", lambda settings: True
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service.inspect_managed_runtime_service",
         lambda settings: SimpleNamespace(
@@ -603,7 +641,9 @@ def test_remove_managed_runtime_service_removes_linux_system_service(
         "afkbot.services.managed_runtime_service._preferred_systemd_system_service_path",
         lambda: service_path,
     )
-    monkeypatch.setattr("afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path)
+    monkeypatch.setattr(
+        "afkbot.services.managed_runtime_service._SYSTEMD_USER_SERVICE_PATH", user_service_path
+    )
     monkeypatch.setattr(
         "afkbot.services.managed_runtime_service._SYSTEMD_LEGACY_SYSTEM_SERVICE_PATH",
         legacy_service_path,

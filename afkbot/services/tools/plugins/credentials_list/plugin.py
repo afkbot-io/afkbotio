@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field, model_validator
 
-from afkbot.services.credentials import CredentialsService, CredentialsServiceError, get_credentials_service
+from afkbot.services.credentials import (
+    CredentialsService,
+    CredentialsServiceError,
+    get_credentials_service,
+)
 from afkbot.services.credentials.contracts import CredentialBindingMetadata
 from afkbot.services.credentials.env_alias import compute_env_key
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult

@@ -47,9 +47,7 @@ class _FakeCompaction:
 
 class _FakeRetention:
     async def garbage_collect_session(self, **kwargs: object):
-        raise AssertionError(
-            "garbage_collect_session should not be called when persist_turn=False"
-        )
+        raise AssertionError("garbage_collect_session should not be called when persist_turn=False")
 
 
 @pytest.mark.asyncio

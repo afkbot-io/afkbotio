@@ -163,7 +163,9 @@ class SkillMarketplaceInstallTool(ToolBase):
                 target_name=payload.target_name,
                 overwrite=payload.overwrite,
             )
-            return ToolResult(ok=True, payload={"skill": marketplace_install_record_to_payload(record)})
+            return ToolResult(
+                ok=True, payload={"skill": marketplace_install_record_to_payload(record)}
+            )
         except ProfileFilesLockedError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except SkillMarketplaceError as exc:
@@ -173,6 +175,7 @@ class SkillMarketplaceInstallTool(ToolBase):
                 error_code="skill_marketplace_install_failed",
                 reason=f"{exc.__class__.__name__}: {exc}",
             )
+
 
 def _render_marketplace_display_text(
     *,
@@ -185,7 +188,9 @@ def _render_marketplace_display_text(
     items = list(listing.items)
     if not items:
         if query:
-            return f"No marketplace skills found for query `{query}` in source `{requested_source}`."
+            return (
+                f"No marketplace skills found for query `{query}` in source `{requested_source}`."
+            )
         return f"No marketplace skills found in source `{requested_source}`."
     heading = (
         f"Marketplace skills for `{query}` in `{requested_source}`:"

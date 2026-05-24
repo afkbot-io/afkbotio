@@ -70,7 +70,9 @@ def render_human_task_startup_summary(
             )
         )
         for event in inbox.recent_events:
-            lines.append(f"- {event.task_title}: {_render_inbox_event_preview(event=event, lang=lang)}")
+            lines.append(
+                f"- {event.task_title}: {_render_inbox_event_preview(event=event, lang=lang)}"
+            )
         lines.append("")
     lines.append(
         msg(
@@ -84,12 +86,22 @@ def render_human_task_startup_summary(
         counts.append(msg(lang, en=f"todo: {summary.todo_count}", ru=f"todo: {summary.todo_count}"))
     if summary.blocked_count:
         counts.append(
-            msg(lang, en=f"blocked: {summary.blocked_count}", ru=f"blocked: {summary.blocked_count}")
+            msg(
+                lang, en=f"blocked: {summary.blocked_count}", ru=f"blocked: {summary.blocked_count}"
+            )
         )
     if summary.review_count:
-        counts.append(msg(lang, en=f"review: {summary.review_count}", ru=f"review: {summary.review_count}"))
+        counts.append(
+            msg(lang, en=f"review: {summary.review_count}", ru=f"review: {summary.review_count}")
+        )
     if summary.overdue_count:
-        counts.append(msg(lang, en=f"overdue: {summary.overdue_count}", ru=f"просрочено: {summary.overdue_count}"))
+        counts.append(
+            msg(
+                lang,
+                en=f"overdue: {summary.overdue_count}",
+                ru=f"просрочено: {summary.overdue_count}",
+            )
+        )
     if counts:
         lines.append(", ".join(counts))
     for task in summary.tasks:
@@ -196,11 +208,17 @@ def _render_inbox_event_preview(
     if event.event_type == "execution_review_ready":
         return msg(lang, en="ready for review", ru="готово к ревью")
     if event.event_type == "execution_blocked":
-        return event.message or msg(lang, en="blocked and waiting for input", ru="заблокировано и ждёт ввода")
+        return event.message or msg(
+            lang, en="blocked and waiting for input", ru="заблокировано и ждёт ввода"
+        )
     if event.event_type == "review_changes_requested":
         return event.message or msg(lang, en="changes requested", ru="запрошены правки")
     if event.event_type == "dependencies_satisfied":
-        return msg(lang, en="dependencies satisfied, task is ready", ru="зависимости закрыты, задача готова")
+        return msg(
+            lang,
+            en="dependencies satisfied, task is ready",
+            ru="зависимости закрыты, задача готова",
+        )
     if event.event_type == "created":
         return msg(lang, en="new task assigned", ru="вам назначена новая задача")
     if event.event_type == "updated":

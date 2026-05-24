@@ -99,7 +99,9 @@ def dialog_notifications_enabled(
     if mute_until is None:
         return True
     if isinstance(mute_until, datetime):
-        muted_until = mute_until if mute_until.tzinfo is not None else mute_until.replace(tzinfo=UTC)
+        muted_until = (
+            mute_until if mute_until.tzinfo is not None else mute_until.replace(tzinfo=UTC)
+        )
         return muted_until <= effective_now
     if isinstance(mute_until, (int, float)):
         if mute_until <= 0:
@@ -352,7 +354,7 @@ def build_watcher_context_overrides(
             "event_count": len(events),
             "dialog_count": len({item.chat_id for item in events}),
             "dialogs": tuple(sorted({item.chat_title for item in events})),
-        }
+        },
     }
     serialized_delivery_target = build_delivery_target_runtime_metadata(delivery_target)
     if serialized_delivery_target is not None:

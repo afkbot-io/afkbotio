@@ -40,13 +40,17 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_LLM_MODEL": str(runtime_config.get("llm_model", settings.llm_model)),
         "AFKBOT_LLM_BASE_URL": str(runtime_config.get("llm_base_url", settings.llm_base_url or "")),
         "AFKBOT_LLM_PROXY_TYPE": str(runtime_config.get("llm_proxy_type", settings.llm_proxy_type)),
-        "AFKBOT_LLM_PROXY_URL": str(runtime_config.get("llm_proxy_url", settings.llm_proxy_url or "")),
+        "AFKBOT_LLM_PROXY_URL": str(
+            runtime_config.get("llm_proxy_url", settings.llm_proxy_url or "")
+        ),
         "AFKBOT_CREDENTIALS_MASTER_KEYS": str(
             runtime_secrets.get("credentials_master_keys", settings.credentials_master_keys or "")
         ),
         "AFKBOT_DB_URL": str(runtime_config.get("db_url", settings.db_url)),
         "AFKBOT_DB_POOL_SIZE": str(runtime_config.get("db_pool_size", settings.db_pool_size)),
-        "AFKBOT_DB_MAX_OVERFLOW": str(runtime_config.get("db_max_overflow", settings.db_max_overflow)),
+        "AFKBOT_DB_MAX_OVERFLOW": str(
+            runtime_config.get("db_max_overflow", settings.db_max_overflow)
+        ),
         "AFKBOT_DB_POOL_TIMEOUT_SEC": str(
             runtime_config.get("db_pool_timeout_sec", settings.db_pool_timeout_sec)
         ),
@@ -133,7 +137,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             runtime_config.get("policy_network_mode", PolicyNetworkMode.UNRESTRICTED.value)
         ),
         "AFKBOT_POLICY_NETWORK_ALLOWLIST": ",".join(policy_network_allowlist_default),
-        "AFKBOT_WIZARD_SETUP_DEPTH": str(runtime_config.get("wizard_setup_depth", "legacy") or "legacy"),
+        "AFKBOT_WIZARD_SETUP_DEPTH": str(
+            runtime_config.get("wizard_setup_depth", "legacy") or "legacy"
+        ),
         "AFKBOT_WIZARD_WORK_CONTEXTS": ",".join(
             normalize_runtime_string_seq(runtime_config.get("wizard_work_contexts"))
         ),
@@ -152,12 +158,18 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_OPENROUTER_BASE_URL": str(
             runtime_config.get("openrouter_base_url", settings.openrouter_base_url)
         ),
-        "AFKBOT_OPENAI_BASE_URL": str(runtime_config.get("openai_base_url", settings.openai_base_url)),
+        "AFKBOT_OPENAI_BASE_URL": str(
+            runtime_config.get("openai_base_url", settings.openai_base_url)
+        ),
         "AFKBOT_OPENAI_CODEX_BASE_URL": str(
             runtime_config.get("openai_codex_base_url", settings.openai_codex_base_url)
         ),
-        "AFKBOT_CLAUDE_BASE_URL": str(runtime_config.get("claude_base_url", settings.claude_base_url)),
-        "AFKBOT_MOONSHOT_BASE_URL": str(runtime_config.get("moonshot_base_url", settings.moonshot_base_url)),
+        "AFKBOT_CLAUDE_BASE_URL": str(
+            runtime_config.get("claude_base_url", settings.claude_base_url)
+        ),
+        "AFKBOT_MOONSHOT_BASE_URL": str(
+            runtime_config.get("moonshot_base_url", settings.moonshot_base_url)
+        ),
         "AFKBOT_MOONSHOT_CN_BASE_URL": str(
             runtime_config.get("moonshot_cn_base_url", settings.moonshot_cn_base_url)
         ),
@@ -172,13 +184,19 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_GITHUB_COPILOT_BASE_URL": str(
             runtime_config.get("github_copilot_base_url", settings.github_copilot_base_url)
         ),
-        "AFKBOT_CUSTOM_BASE_URL": str(runtime_config.get("custom_base_url", settings.custom_base_url)),
-        "AFKBOT_CUSTOM_INTERFACE": str(runtime_config.get("custom_interface", settings.custom_interface)),
+        "AFKBOT_CUSTOM_BASE_URL": str(
+            runtime_config.get("custom_base_url", settings.custom_base_url)
+        ),
+        "AFKBOT_CUSTOM_INTERFACE": str(
+            runtime_config.get("custom_interface", settings.custom_interface)
+        ),
         "AFKBOT_LLM_API_KEY": str(runtime_secrets.get("llm_api_key", settings.llm_api_key or "")),
         "AFKBOT_OPENROUTER_API_KEY": str(
             runtime_secrets.get("openrouter_api_key", settings.openrouter_api_key or "")
         ),
-        "AFKBOT_OPENAI_API_KEY": str(runtime_secrets.get("openai_api_key", settings.openai_api_key or "")),
+        "AFKBOT_OPENAI_API_KEY": str(
+            runtime_secrets.get("openai_api_key", settings.openai_api_key or "")
+        ),
         "AFKBOT_OPENAI_CODEX_API_KEY": str(
             runtime_secrets.get("openai_codex_api_key", settings.openai_codex_api_key or "")
         ),
@@ -189,9 +207,13 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             )
         ),
         "AFKBOT_OPENAI_CODEX_API_KEY_FILE": str(
-            runtime_secrets.get("openai_codex_api_key_file", settings.openai_codex_api_key_file or "")
+            runtime_secrets.get(
+                "openai_codex_api_key_file", settings.openai_codex_api_key_file or ""
+            )
         ),
-        "AFKBOT_CLAUDE_API_KEY": str(runtime_secrets.get("claude_api_key", settings.claude_api_key or "")),
+        "AFKBOT_CLAUDE_API_KEY": str(
+            runtime_secrets.get("claude_api_key", settings.claude_api_key or "")
+        ),
         "AFKBOT_MOONSHOT_API_KEY": str(
             runtime_secrets.get("moonshot_api_key", settings.moonshot_api_key or "")
         ),
@@ -202,7 +224,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
             runtime_secrets.get("deepseek_api_key", settings.deepseek_api_key or "")
         ),
         "AFKBOT_XAI_API_KEY": str(runtime_secrets.get("xai_api_key", settings.xai_api_key or "")),
-        "AFKBOT_QWEN_API_KEY": str(runtime_secrets.get("qwen_api_key", settings.qwen_api_key or "")),
+        "AFKBOT_QWEN_API_KEY": str(
+            runtime_secrets.get("qwen_api_key", settings.qwen_api_key or "")
+        ),
         "AFKBOT_MINIMAX_PORTAL_API_KEY": str(
             runtime_secrets.get("minimax_portal_api_key", settings.minimax_portal_api_key or "")
         ),
@@ -230,7 +254,9 @@ def load_env_defaults(*, settings: Settings) -> dict[str, str]:
         "AFKBOT_GITHUB_COPILOT_API_KEY": str(
             runtime_secrets.get("github_copilot_api_key", settings.github_copilot_api_key or "")
         ),
-        "AFKBOT_CUSTOM_API_KEY": str(runtime_secrets.get("custom_api_key", settings.custom_api_key or "")),
+        "AFKBOT_CUSTOM_API_KEY": str(
+            runtime_secrets.get("custom_api_key", settings.custom_api_key or "")
+        ),
     }
     for key in tuple(merged.keys()):
         env_value = os.getenv(key)

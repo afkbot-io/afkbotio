@@ -187,7 +187,9 @@ async def test_telethon_user_service_cleans_up_when_sender_registration_fails(
         with pytest.raises(ChannelSenderRegistryError) as exc_info:
             await service.start()
     finally:
-        await registry.unregister(transport="telegram_user", account_id="tg-user", sender=occupied_sender)
+        await registry.unregister(
+            transport="telegram_user", account_id="tg-user", sender=occupied_sender
+        )
         await service.stop()
 
     assert exc_info.value.error_code == "channel_sender_conflict"

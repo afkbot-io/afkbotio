@@ -179,10 +179,13 @@ def resolve_profile_runtime_core(
             default=default_custom_interface,
             lang=lang,
         )
-    provider_default_base_url = provider_default_base_url_override or resolve_provider_base_url_default(
-        defaults={},
-        settings=settings,
-        provider_id=provider_id,
+    provider_default_base_url = (
+        provider_default_base_url_override
+        or resolve_provider_base_url_default(
+            defaults={},
+            settings=settings,
+            provider_id=provider_id,
+        )
     )
     provider_changed = resolved_provider.strip().lower() != default_provider.strip().lower()
     if provider_changed and base_url_value is None:
@@ -268,7 +271,9 @@ def build_profile_runtime_config(
         llm_proxy_url=runtime_core.llm_proxy_url,
         llm_thinking_level=runtime_core.llm_thinking_level,
         llm_history_turns=(
-            llm_history_turns if llm_history_turns is not None else (current.llm_history_turns if current else None)
+            llm_history_turns
+            if llm_history_turns is not None
+            else (current.llm_history_turns if current else None)
         ),
         chat_planning_mode=runtime_core.chat_planning_mode,
         chat_secret_guard_enabled=(
@@ -276,7 +281,9 @@ def build_profile_runtime_config(
             if chat_secret_guard_enabled is not None
             else (current.chat_secret_guard_enabled if current else None)
         ),
-        enabled_tool_plugins=tool_plugins if tool_plugins else (current.enabled_tool_plugins if current else None),
+        enabled_tool_plugins=tool_plugins
+        if tool_plugins
+        else (current.enabled_tool_plugins if current else None),
         memory_auto_search_enabled=(
             memory_auto_search_enabled
             if memory_auto_search_enabled is not None
@@ -333,7 +340,9 @@ def build_profile_runtime_config(
             else (current.memory_auto_promote_enabled if current else None)
         ),
         memory_auto_save_kinds=(
-            memory_auto_save_kinds if memory_auto_save_kinds else (current.memory_auto_save_kinds if current else None)
+            memory_auto_save_kinds
+            if memory_auto_save_kinds
+            else (current.memory_auto_save_kinds if current else None)
         ),
         memory_auto_save_max_chars=(
             memory_auto_save_max_chars
@@ -431,7 +440,9 @@ def normalize_policy_file_access_mode_value(value: str) -> str:
 
     normalized = value.strip().lower()
     if normalized not in {"none", "read_only", "read_write"}:
-        raise typer.BadParameter("policy file access mode must be one of: none, read_only, read_write")
+        raise typer.BadParameter(
+            "policy file access mode must be one of: none, read_only, read_write"
+        )
     return normalized
 
 
@@ -499,7 +510,9 @@ def resolve_policy_allowed_directories_from_scope(
     )
     if normalized_scope_mode == "custom":
         if not custom_allowed_directories:
-            raise typer.BadParameter("custom workspace scope requires --policy-allowed-dir on create/update")
+            raise typer.BadParameter(
+                "custom workspace scope requires --policy-allowed-dir on create/update"
+            )
         return resolve_allowed_directories_for_scope_mode(
             root_dir=root_dir,
             profile_root=profile_root,
@@ -550,10 +563,14 @@ def resolve_profile_policy_inputs(
     intent_policy = None
     if can_use_intent_wizard:
         stored_intent = profile_intent_selection_from_defaults(defaults)
-        selected_depth = prompt_profile_intent_depth(
-            default=stored_intent.depth if stored_intent is not None else "guided",
-            lang=lang,
-        ).strip().lower()
+        selected_depth = (
+            prompt_profile_intent_depth(
+                default=stored_intent.depth if stored_intent is not None else "guided",
+                lang=lang,
+            )
+            .strip()
+            .lower()
+        )
         if selected_depth in {"quick", "guided"}:
             if selected_depth == "quick":
                 wizard_intent = quick_safe_profile_intent_selection()
@@ -607,9 +624,7 @@ def resolve_profile_policy_inputs(
                     parse_policy_network_hosts(
                         raw_values=prompt_profile_intent_network_allowlist(
                             default_values=(
-                                stored_intent.network_allowlist
-                                if stored_intent is not None
-                                else ()
+                                stored_intent.network_allowlist if stored_intent is not None else ()
                             ),
                             lang=lang,
                         ),
@@ -669,8 +684,13 @@ def resolve_profile_policy_inputs(
             )
         )
     policy_details_interactive = interactive and resolved_policy_enabled and intent_policy is None
-    current_workspace_scope_default = str(defaults.get("AFKBOT_POLICY_WORKSPACE_SCOPE", "profile_only"))
-    if "files" not in set(resolved_policy_capabilities) or resolved_policy_file_access_mode == "none":
+    current_workspace_scope_default = str(
+        defaults.get("AFKBOT_POLICY_WORKSPACE_SCOPE", "profile_only")
+    )
+    if (
+        "files" not in set(resolved_policy_capabilities)
+        or resolved_policy_file_access_mode == "none"
+    ):
         resolved_policy_workspace_scope = "profile_only"
     elif policy_workspace_scope_value is not None:
         resolved_policy_workspace_scope = normalize_policy_workspace_scope_mode_value(
@@ -695,8 +715,8 @@ def resolve_profile_policy_inputs(
         raw_values=policy_allowed_dir_values,
         current_allowed_directories=current_allowed_directories,
     )
-    shell_capability_enabled = (
-        resolved_policy_enabled and "shell" in set(resolved_policy_capabilities)
+    shell_capability_enabled = resolved_policy_enabled and "shell" in set(
+        resolved_policy_capabilities
     )
     if not shell_capability_enabled:
         resolved_shell_sandbox_mode = "disabled"
@@ -764,7 +784,9 @@ def resolve_profile_policy_inputs(
     if intent_policy is not None and not policy_network_host_values:
         if intent_policy.network_mode == "custom":
             resolved_network_mode = "custom"
-            resolved_network_allowlist = wizard_intent.network_allowlist if wizard_intent is not None else ()
+            resolved_network_allowlist = (
+                wizard_intent.network_allowlist if wizard_intent is not None else ()
+            )
         else:
             resolved_network_mode, resolved_network_allowlist = _resolve_scenario_network_settings(
                 network_mode=intent_policy.network_mode,
@@ -929,9 +951,6 @@ def _offer_shell_sandbox_backend_install_if_needed(
                 "Sandbox backend install did not finish successfully. "
                 f"Last status: {installed.reason}"
             ),
-            ru=(
-                "Установить sandbox backend не удалось. "
-                f"Последний статус: {installed.reason}"
-            ),
+            ru=(f"Установить sandbox backend не удалось. Последний статус: {installed.reason}"),
         )
     )

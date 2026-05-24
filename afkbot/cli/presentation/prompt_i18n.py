@@ -61,7 +61,9 @@ def normalize_prompt_language(*, value: str | None, ru: bool) -> PromptLanguage:
     raise ValueError("prompt language must be one of: en, ru")
 
 
-def resolve_prompt_language(*, settings: Settings | None, value: str | None, ru: bool) -> PromptLanguage:
+def resolve_prompt_language(
+    *, settings: Settings | None, value: str | None, ru: bool
+) -> PromptLanguage:
     """Resolve prompt language from explicit flags, persisted project config, then system locale."""
 
     normalized = str(value or "").strip()

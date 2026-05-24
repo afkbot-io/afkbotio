@@ -65,7 +65,9 @@ def read_install_source_from_runtime_config(payload: Mapping[str, object]) -> In
     )
 
 
-def read_install_source_resolved_target_from_runtime_config(payload: Mapping[str, object]) -> str | None:
+def read_install_source_resolved_target_from_runtime_config(
+    payload: Mapping[str, object],
+) -> str | None:
     """Read one persisted resolved installer target from runtime config."""
 
     value = str(payload.get(INSTALL_SOURCE_RESOLVED_TARGET_CONFIG_KEY) or "").strip()

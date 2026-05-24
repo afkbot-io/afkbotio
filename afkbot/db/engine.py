@@ -46,7 +46,9 @@ def _postgres_engine_kwargs(settings: Settings) -> dict[str, object]:
     server_settings: dict[str, str] = {
         "application_name": settings.db_application_name,
         "statement_timeout": str(max(0, settings.db_statement_timeout_ms)),
-        "idle_in_transaction_session_timeout": str(max(0, settings.db_idle_in_transaction_timeout_ms)),
+        "idle_in_transaction_session_timeout": str(
+            max(0, settings.db_idle_in_transaction_timeout_ms)
+        ),
     }
     return {
         "pool_size": max(1, settings.db_pool_size),
@@ -123,7 +125,10 @@ def _sqlite_supports_wal(db_url: str) -> bool:
     database = str(url.database or "").strip()
     if not database or database == ":memory:":
         return False
-    if database.startswith("file:") and str(url.query.get("mode") or "").strip().lower() == "memory":
+    if (
+        database.startswith("file:")
+        and str(url.query.get("mode") or "").strip().lower() == "memory"
+    ):
         return False
     return True
 

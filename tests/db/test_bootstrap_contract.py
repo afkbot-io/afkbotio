@@ -57,8 +57,14 @@ def test_postgres_database_per_bot_contract_renders_safe_role_plan() -> None:
     assert "PASSWORD :migrator_role_password" in plan.cluster_statements[0]
     assert "PASSWORD :runtime_role_password" in plan.cluster_statements[1]
     assert "NOSUPERUSER NOCREATEDB NOCREATEROLE" in plan.cluster_statements[1]
-    assert 'CREATE DATABASE "afkbot_bot_42" OWNER "afkbot_bot_42_migrator"' in plan.cluster_statements[2]
-    assert 'GRANT CONNECT ON DATABASE "afkbot_bot_42" TO "afkbot_bot_42_runtime"' in plan.cluster_statements[3]
+    assert (
+        'CREATE DATABASE "afkbot_bot_42" OWNER "afkbot_bot_42_migrator"'
+        in plan.cluster_statements[2]
+    )
+    assert (
+        'GRANT CONNECT ON DATABASE "afkbot_bot_42" TO "afkbot_bot_42_runtime"'
+        in plan.cluster_statements[3]
+    )
     assert plan.migration_statements[0] == "SELECT pg_advisory_lock(hashtext(current_database()))"
     assert "CREATE TABLE IF NOT EXISTS afkbot_schema_migration" in plan.migration_statements[1]
     assert "version INTEGER PRIMARY KEY" in plan.migration_statements[1]
@@ -126,7 +132,10 @@ def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'managed.db'}",
     )
 
-    assert _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite") is False
+    assert (
+        _requires_managed_runtime_schema_validation(settings=settings, dialect_name="sqlite")
+        is False
+    )
     with pytest.raises(ManagedRuntimeSchemaError) as exc:
         _requires_managed_runtime_schema_validation(settings=settings, dialect_name="postgresql")
     assert exc.value.error_code == "managed_database_sqlite_required"
@@ -137,6 +146,7 @@ def test_managed_runtime_schema_creation_uses_sqlite(tmp_path: Path) -> None:
         )
         is False
     )
+
 
 def test_dialect_aware_upsert_insert_compiles_for_sqlite_and_postgres() -> None:
     """Hot-path upserts should not be tied to the SQLite insert implementation."""
@@ -240,7 +250,9 @@ async def test_create_engine_registers_explicit_sqlite_datetime_adapters(tmp_pat
             warnings.simplefilter("always", DeprecationWarning)
             adapted = sqlite3.adapt(datetime.now(timezone.utc))
         assert isinstance(adapted, str)
-        assert not [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
+        assert not [
+            warning for warning in caught if issubclass(warning.category, DeprecationWarning)
+        ]
     finally:
         await engine.dispose()
 
@@ -386,7 +398,9 @@ async def test_create_schema_materializes_run_hot_path_indexes(tmp_path: Path) -
     await engine.dispose()
 
 
-async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(tmp_path: Path) -> None:
+async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(
+    tmp_path: Path,
+) -> None:
     """Repeated bootstrap should backfill run indexes for legacy databases that missed them."""
 
     db_path = tmp_path / "run-indexes-legacy.db"
@@ -408,7 +422,9 @@ async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(t
     await engine.dispose()
 
 
-async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_exist(tmp_path: Path) -> None:
+async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_exist(
+    tmp_path: Path,
+) -> None:
     """Bootstrap should preserve live duplicates but keep the unique guard active for healthy owners."""
 
     db_path = tmp_path / "task-legacy-duplicates.db"
@@ -479,7 +495,10 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     assert "ux_task_active_ai_owner" in index_names
     index_sql_text = str(index_sql)
     assert "ON task (profile_id, owner_type, owner_ref)" in index_sql_text
-    assert "NOT (profile_id = 'default' AND owner_type = 'ai_profile' AND owner_ref = 'analyst')" in index_sql_text
+    assert (
+        "NOT (profile_id = 'default' AND owner_type = 'ai_profile' AND owner_ref = 'analyst')"
+        in index_sql_text
+    )
     assert first_after.status == "running"
     assert second_after.status == "claimed"
     assert second_after.last_error_code is None
@@ -640,12 +659,20 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     assert prune_result.runlog_event_count == 1
 
     async with session_scope(factory) as session:
-        remaining_task_events = (await session.execute(text("SELECT COUNT(*) FROM task_event"))).scalar_one()
-        remaining_task_runs = (await session.execute(text("SELECT COUNT(*) FROM task_run"))).scalar_one()
-        remaining_runlog_events = (await session.execute(text("SELECT COUNT(*) FROM runlog_event"))).scalar_one()
+        remaining_task_events = (
+            await session.execute(text("SELECT COUNT(*) FROM task_event"))
+        ).scalar_one()
+        remaining_task_runs = (
+            await session.execute(text("SELECT COUNT(*) FROM task_run"))
+        ).scalar_one()
+        remaining_runlog_events = (
+            await session.execute(text("SELECT COUNT(*) FROM runlog_event"))
+        ).scalar_one()
         remaining_task_event_types = (
-            await session.execute(text("SELECT event_type FROM task_event ORDER BY id ASC"))
-        ).scalars().all()
+            (await session.execute(text("SELECT event_type FROM task_event ORDER BY id ASC")))
+            .scalars()
+            .all()
+        )
         kept_run_exists = await session.get(TaskRun, kept_run_id)
         orphan_run_exists = await session.get(TaskRun, orphan_run_id)
 
@@ -762,9 +789,7 @@ async def test_prune_runtime_history_rejects_non_positive_batch_size(tmp_path: P
             except ValueError as exc:
                 assert str(exc) == "batch_size must be >= 1"
             else:
-                raise AssertionError(
-                    f"Expected ValueError for batch_size={invalid_batch_size}"
-                )
+                raise AssertionError(f"Expected ValueError for batch_size={invalid_batch_size}")
     finally:
         await engine.dispose()
 
@@ -830,7 +855,9 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
     async with session_scope(factory) as session:
         protected_run_exists = await session.get(TaskRun, protected_run_id)
         task_last_run_id = (
-            await session.execute(text("SELECT last_run_id FROM task WHERE id = :task_id"), {"task_id": task.id})
+            await session.execute(
+                text("SELECT last_run_id FROM task WHERE id = :task_id"), {"task_id": task.id}
+            )
         ).scalar_one()
 
     assert protected_run_exists is not None
@@ -890,6 +917,8 @@ async def test_sqlite_connect_degrades_gracefully_when_wal_pragma_fails(tmp_path
     finally:
         sqlite3.connect = original_connect
         await engine.dispose()
+
+
 async def test_create_schema_backfills_task_description_from_legacy_prompt_column(
     tmp_path: Path,
 ) -> None:
@@ -1058,9 +1087,7 @@ async def test_create_schema_preserves_existing_description_over_legacy_prompt(
             str(row[1])
             for row in (await conn.execute(text("PRAGMA table_info('task')"))).fetchall()
         }
-        rows = (
-            await conn.execute(text("SELECT id, description FROM task ORDER BY id"))
-        ).fetchall()
+        rows = (await conn.execute(text("SELECT id, description FROM task ORDER BY id"))).fetchall()
 
     assert "prompt" not in columns
     assert dict(rows) == {
@@ -1406,7 +1433,9 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
     await engine.dispose()
 
 
-async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(tmp_path: Path) -> None:
+async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
+    tmp_path: Path,
+) -> None:
     """Legacy task_event tables should raise one structured compatibility error instead of raw DB failure."""
 
     db_path = tmp_path / "legacy_task_event_schema_mismatch.db"

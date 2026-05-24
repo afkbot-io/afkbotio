@@ -76,7 +76,9 @@ def test_uninstall_clears_local_state(tmp_path: Path, monkeypatch) -> None:
     assert not settings.setup_state_path.exists()
 
 
-def test_uninstall_requires_confirmation_in_non_interactive_mode(tmp_path: Path, monkeypatch) -> None:
+def test_uninstall_requires_confirmation_in_non_interactive_mode(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Uninstall should fail closed without --yes in non-interactive mode."""
 
     # Arrange

@@ -228,7 +228,9 @@ class BrowserSessionManager:
         await self._prune_session_lock_if_unused(key, lock)
         return closed_handle or cleared_persisted_state
 
-    async def close_all_for_root(self, *, root_dir: Path, clear_persisted_state: bool = False) -> int:
+    async def close_all_for_root(
+        self, *, root_dir: Path, clear_persisted_state: bool = False
+    ) -> int:
         """Close every live browser session for one workspace root."""
 
         root_key = str(root_dir.resolve())
@@ -280,7 +282,9 @@ class BrowserSessionManager:
             if removed:
                 closed += 1
                 await self._prune_session_lock_if_unused(key, lock)
-        await self._schedule_next_idle_cleanup(root_key=root_key, idle_ttl_sec=idle_ttl_sec, now=now)
+        await self._schedule_next_idle_cleanup(
+            root_key=root_key, idle_ttl_sec=idle_ttl_sec, now=now
+        )
         return closed
 
     async def persist_session_state(
@@ -371,8 +375,8 @@ class BrowserSessionManager:
             deadline = self._root_cleanup_deadlines.get(root_key, 0.0)
             if deadline > now:
                 return 0
-            self._root_cleanup_deadlines[root_key] = (
-                now + self._idle_cleanup_interval_sec(idle_ttl_sec)
+            self._root_cleanup_deadlines[root_key] = now + self._idle_cleanup_interval_sec(
+                idle_ttl_sec
             )
         return await self.close_idle_sessions(root_dir=root_dir, idle_ttl_sec=idle_ttl_sec)
 
@@ -386,8 +390,8 @@ class BrowserSessionManager:
         if now is None:
             now = time.monotonic()
         async with self._index_lock:
-            self._root_cleanup_deadlines[root_key] = (
-                now + self._idle_cleanup_interval_sec(idle_ttl_sec)
+            self._root_cleanup_deadlines[root_key] = now + self._idle_cleanup_interval_sec(
+                idle_ttl_sec
             )
 
     async def _prune_session_lock_if_unused(
@@ -527,7 +531,9 @@ class BrowserSessionManager:
                 try:
                     context = await new_context(storage_state=str(storage_state_path))
                 except Exception:
-                    await asyncio.to_thread(BrowserSessionManager._unlink_path_sync, storage_state_path)
+                    await asyncio.to_thread(
+                        BrowserSessionManager._unlink_path_sync, storage_state_path
+                    )
                     context = await new_context()
                     loaded_from_storage = False
                 else:

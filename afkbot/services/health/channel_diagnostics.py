@@ -26,6 +26,7 @@ from afkbot.services.profile_id import validate_profile_id
 from afkbot.services.profile_runtime.service import ProfileServiceError, get_profile_service
 from afkbot.settings import Settings
 
+
 async def run_channel_routing_diagnostics(settings: Settings) -> DoctorRoutingReport:
     """Return aggregated in-memory channel-routing telemetry for current runtime root."""
 
@@ -95,7 +96,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else False
         )
-        binding_count = sum(1 for item in telegram_bindings if item.enabled and item.account_id == account_id)
+        binding_count = sum(
+            1 for item in telegram_bindings if item.enabled and item.account_id == account_id
+        )
         state_path = endpoint_service.telegram_polling_state_path(endpoint_id=endpoint.endpoint_id)
         telegram_reports.append(
             TelegramPollingEndpointReport(
@@ -144,7 +147,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else False
         )
-        binding_count = sum(1 for item in partyflow_bindings if item.enabled and item.account_id == account_id)
+        binding_count = sum(
+            1 for item in partyflow_bindings if item.enabled and item.account_id == account_id
+        )
         state_path = endpoint_service.partyflow_polling_state_path(endpoint_id=endpoint.endpoint_id)
         partyflow_reports.append(
             PartyFlowPollingEndpointReport(
@@ -180,7 +185,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else set()
         )
-        binding_count = sum(1 for item in telethon_bindings if item.enabled and item.account_id == account_id)
+        binding_count = sum(
+            1 for item in telethon_bindings if item.enabled and item.account_id == account_id
+        )
         state_path = endpoint_service.telethon_user_state_path(endpoint_id=endpoint.endpoint_id)
         telethon_reports.append(
             TelethonUserEndpointReport(

@@ -24,14 +24,18 @@ class _FakeRuntimeService:
     ) -> None:
         self._descriptors = descriptors
         self._configs = configs
-        self._call_payload = {
-            "server": "github",
-            "tool_name": "search_issues",
-            "content": [{"type": "text", "text": "found bug"}],
-            "structured_content": {"count": 1},
-            "is_error": False,
-            "text": "found bug",
-        } if call_payload is None else call_payload
+        self._call_payload = (
+            {
+                "server": "github",
+                "tool_name": "search_issues",
+                "content": [{"type": "text", "text": "found bug"}],
+                "structured_content": {"count": 1},
+                "is_error": False,
+                "text": "found bug",
+            }
+            if call_payload is None
+            else call_payload
+        )
 
     async def list_tools(
         self,

@@ -279,7 +279,13 @@ class TurnFinalizer:
         credential_profile_key = str(patch.get("credential_profile_key") or "default").strip()
         tool_name = str(patch.get("tool_name") or "").strip() or None
         nonce = str(patch.get("secure_nonce") or "").strip()
-        if not question_id or not secure_field or not integration_name or not credential_name or not nonce:
+        if (
+            not question_id
+            or not secure_field
+            or not integration_name
+            or not credential_name
+            or not nonce
+        ):
             return
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._secure_request_ttl_sec)
         await self._pending_secure_repo.create(

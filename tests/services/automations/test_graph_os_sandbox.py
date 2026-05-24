@@ -35,7 +35,11 @@ async def test_macos_os_sandbox_denies_external_file_reads(tmp_path: Path) -> No
     )
 
     launch = build_code_node_launch(
-        base_argv=(sys.executable, "-c", f"from pathlib import Path; print(Path({str(secret_path)!r}).read_text())"),
+        base_argv=(
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; print(Path({str(secret_path)!r}).read_text())",
+        ),
         sandbox_root=worker_dir,
         settings=settings,
     )
@@ -112,10 +116,7 @@ async def test_macos_os_sandbox_denies_child_exec(tmp_path: Path) -> None:
         base_argv=(
             sys.executable,
             "-c",
-            (
-                "import os\n"
-                "os.execv('/bin/echo', ['/bin/echo', 'sandbox-bypass'])\n"
-            ),
+            ("import os\nos.execv('/bin/echo', ['/bin/echo', 'sandbox-bypass'])\n"),
         ),
         sandbox_root=worker_dir,
         settings=settings,

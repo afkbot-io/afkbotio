@@ -262,7 +262,9 @@ class InteractiveChatUX:
             frame_index=frame_index,
         )
         rendered_lines = [f"  {self._active_tool_color}\033[1m{rendered_status}\033[0m"]
-        rendered_lines.extend(f"    \033[90m{line}\033[0m" for line in self._active_tool_detail_lines)
+        rendered_lines.extend(
+            f"    \033[90m{line}\033[0m" for line in self._active_tool_detail_lines
+        )
 
         self._erase_active_tool_block_locked()
         for line in rendered_lines:

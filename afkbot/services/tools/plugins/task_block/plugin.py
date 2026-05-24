@@ -48,7 +48,11 @@ class TaskBlockTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskBlockParams) else TaskBlockParams.model_validate(params)
+        payload = (
+            params
+            if isinstance(params, TaskBlockParams)
+            else TaskBlockParams.model_validate(params)
+        )
         explicit_fields = set(getattr(payload, "model_fields_set", set()))
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,

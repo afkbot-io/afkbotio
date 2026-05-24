@@ -108,9 +108,7 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         encode_tool_name, decode_tool_name = build_tool_name_codec(
             visible_tool_names=(definition.name for definition in request.available_tools),
             historical_tool_names=(
-                call.name
-                for item in request.history
-                for call in item.tool_calls
+                call.name for item in request.history for call in item.tool_calls
             ),
         )
         api_surface = self._resolve_api_surface(self._model)
@@ -154,9 +152,13 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
                 error_detail="provider_request_timeout",
             )
         except (httpx.TransportError, OSError) as exc:
-            self._emit_debug_diagnostics(stage="network_error", path=request_path, timeout_sec=timeout_sec)
+            self._emit_debug_diagnostics(
+                stage="network_error", path=request_path, timeout_sec=timeout_sec
+            )
             detail = str(exc).strip()
-            error_detail = exc.__class__.__name__ if not detail else f"{exc.__class__.__name__}: {detail}"
+            error_detail = (
+                exc.__class__.__name__ if not detail else f"{exc.__class__.__name__}: {detail}"
+            )
             return self._fallback_response(
                 request,
                 error_code="llm_provider_network_error",
@@ -171,12 +173,12 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             )
             return self._fallback_http_status(request, exc)
         except (ValueError, json.JSONDecodeError) as exc:
-            self._emit_debug_diagnostics(stage="invalid_response", path=request_path, timeout_sec=timeout_sec)
+            self._emit_debug_diagnostics(
+                stage="invalid_response", path=request_path, timeout_sec=timeout_sec
+            )
             detail = str(exc).strip()
             error_detail = (
-                "provider_response_invalid"
-                if not detail
-                else f"{exc.__class__.__name__}: {detail}"
+                "provider_response_invalid" if not detail else f"{exc.__class__.__name__}: {detail}"
             )
             return self._fallback_response(
                 request,
@@ -269,7 +271,9 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         *,
         timeout_sec: float,
     ) -> dict[str, Any]:
-        return await self._post_json(path="/chat/completions", payload=payload, timeout_sec=timeout_sec)
+        return await self._post_json(
+            path="/chat/completions", payload=payload, timeout_sec=timeout_sec
+        )
 
     async def _post_responses(
         self,
@@ -407,7 +411,10 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             response_obj = payload.get("response")
             if isinstance(response_obj, dict):
                 event_type = str(payload.get("type") or "").strip()
-                is_completed = event_type == "response.completed" or str(response_obj.get("status") or "").strip() == "completed"
+                is_completed = (
+                    event_type == "response.completed"
+                    or str(response_obj.get("status") or "").strip() == "completed"
+                )
                 return response_obj, is_completed
             return None, False
 
@@ -530,9 +537,9 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             MINIMAX_PORTAL_PROVIDER_BASE_URL_GLOBAL.rstrip("/"),
             MINIMAX_PORTAL_PROVIDER_BASE_URL_CN.rstrip("/"),
         }:
-            self._base_url = minimax_portal_provider_base_url_for_region(self._minimax_portal_region).rstrip(
-                "/"
-            )
+            self._base_url = minimax_portal_provider_base_url_for_region(
+                self._minimax_portal_region
+            ).rstrip("/")
 
     def _persist_minimax_runtime_secrets(self) -> None:
         if self._runtime_secrets_update_hook is None:
@@ -600,7 +607,9 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         provider_detail = (
             self._truncate_provider_detail(provider_detail_raw) if provider_detail_raw else None
         )
-        if self._is_context_window_error(status_code=status_code, provider_detail=provider_detail_raw):
+        if self._is_context_window_error(
+            status_code=status_code, provider_detail=provider_detail_raw
+        ):
             detail_suffix = f" Provider detail: {provider_detail}" if provider_detail else ""
             message_text = self._localized_message(
                 request,
@@ -639,7 +648,8 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
             return self._fallback_response(
                 request,
                 error_code="llm_provider_auth_error",
-                error_detail=f"HTTP {status_code}" + (f": {provider_detail}" if provider_detail else ""),
+                error_detail=f"HTTP {status_code}"
+                + (f": {provider_detail}" if provider_detail else ""),
                 message=self._provider_auth_error_message(
                     request,
                     status_code=status_code,
@@ -797,7 +807,9 @@ class OpenAICompatibleChatProvider(OpenAICompatiblePayloadRuntime, BaseLLMProvid
         )
 
     @staticmethod
-    def _extract_provider_error_detail(response: httpx.Response, *, truncate: bool = True) -> str | None:
+    def _extract_provider_error_detail(
+        response: httpx.Response, *, truncate: bool = True
+    ) -> str | None:
         """Return a short provider-supplied 4xx detail when one is available."""
 
         def _normalize(value: str) -> str:

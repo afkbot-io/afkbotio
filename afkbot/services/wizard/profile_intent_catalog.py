@@ -363,22 +363,32 @@ def list_profile_intent_depths() -> tuple[ProfileIntentChoice, ...]:
     return _DEPTHS
 
 
-def list_profile_intent_work_contexts(*, include_expert: bool = True) -> tuple[ProfileIntentChoice, ...]:
+def list_profile_intent_work_contexts(
+    *, include_expert: bool = True
+) -> tuple[ProfileIntentChoice, ...]:
     """Return work-context choices."""
 
-    return _filter_choices(_WORK_CONTEXTS, include_expert=include_expert, include_dangerous=include_expert)
+    return _filter_choices(
+        _WORK_CONTEXTS, include_expert=include_expert, include_dangerous=include_expert
+    )
 
 
 def list_profile_intent_actions(*, include_expert: bool = True) -> tuple[ProfileIntentChoice, ...]:
     """Return allowed-action choices."""
 
-    return _filter_choices(_ACTIONS, include_expert=include_expert, include_dangerous=include_expert)
+    return _filter_choices(
+        _ACTIONS, include_expert=include_expert, include_dangerous=include_expert
+    )
 
 
-def list_profile_intent_isolations(*, include_dangerous: bool = True) -> tuple[ProfileIntentChoice, ...]:
+def list_profile_intent_isolations(
+    *, include_dangerous: bool = True
+) -> tuple[ProfileIntentChoice, ...]:
     """Return isolation choices."""
 
-    return _filter_choices(_ISOLATIONS, include_expert=include_dangerous, include_dangerous=include_dangerous)
+    return _filter_choices(
+        _ISOLATIONS, include_expert=include_dangerous, include_dangerous=include_dangerous
+    )
 
 
 def list_profile_intent_confirmations() -> tuple[ProfileIntentChoice, ...]:
@@ -387,7 +397,9 @@ def list_profile_intent_confirmations() -> tuple[ProfileIntentChoice, ...]:
     return _CONFIRMATIONS
 
 
-def list_profile_intent_networks(*, include_dangerous: bool = True) -> tuple[ProfileIntentChoice, ...]:
+def list_profile_intent_networks(
+    *, include_dangerous: bool = True
+) -> tuple[ProfileIntentChoice, ...]:
     """Return network choices."""
 
     return _filter_choices(_NETWORKS, include_expert=True, include_dangerous=include_dangerous)
@@ -425,7 +437,9 @@ def profile_intent_action_choices_for_contexts(
     if "channels" in contexts:
         allowed.update(("reply", "channel_history", "channel_send", "taskflow"))
     if "project" in contexts:
-        allowed.update(("project_read", "project_write", "taskflow", "internet_docs", "external_services"))
+        allowed.update(
+            ("project_read", "project_write", "taskflow", "internet_docs", "external_services")
+        )
     if "automations" in contexts:
         allowed.update(("automation", "taskflow", "internet_docs", "external_services"))
     if "sandbox" in contexts:

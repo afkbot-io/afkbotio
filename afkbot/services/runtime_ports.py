@@ -104,7 +104,9 @@ def probe_runtime_stack(
 ) -> RuntimeStackProbe:
     """Probe AFKBOT-specific health endpoints on the runtime and API sibling ports."""
 
-    resolved_api_port = api_port if api_port is not None else runtime_port + _DEFAULT_API_PORT_OFFSET
+    resolved_api_port = (
+        api_port if api_port is not None else runtime_port + _DEFAULT_API_PORT_OFFSET
+    )
     probe_host = _normalize_probe_host(host)
     runtime = _probe_json_health_endpoint(
         url=f"http://{probe_host}:{runtime_port}/healthz",
@@ -119,7 +121,9 @@ def probe_runtime_stack(
     if runtime.ok and api.ok:
         runtime_payload = runtime.payload or {}
         api_payload = api.payload or {}
-        if _health_payload_has_expected_service(runtime_payload, expected="afkbot-runtime") and _health_payload_has_expected_service(
+        if _health_payload_has_expected_service(
+            runtime_payload, expected="afkbot-runtime"
+        ) and _health_payload_has_expected_service(
             api_payload,
             expected="afkbot-api",
         ):

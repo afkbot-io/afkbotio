@@ -146,7 +146,7 @@ async def test_memory_runtime_compacts_search_results() -> None:
         "auto_memory": [
             {
                 "memory_key": "nick",
-                    "summary": "Chat fact: user nickname is Niki",
+                "summary": "Chat fact: user nickname is Niki",
                 "score": 0.2,
                 "memory_kind": "fact",
                 "scope_kind": "chat",

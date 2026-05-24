@@ -20,11 +20,7 @@ class ConnectClientMetadata:
             "platform": (self.platform or "").strip(),
             "app_version": (self.app_version or "").strip(),
         }
-        return {
-            key: value
-            for key, value in payload.items()
-            if value
-        }
+        return {key: value for key, value in payload.items() if value}
 
 
 @dataclass(slots=True, frozen=True)

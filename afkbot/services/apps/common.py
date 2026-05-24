@@ -79,8 +79,7 @@ async def resolve_credential_placeholders(
 
         if isinstance(value, dict):
             return {
-                str(key): await _resolve(item, field_name=str(key))
-                for key, item in value.items()
+                str(key): await _resolve(item, field_name=str(key)) for key, item in value.items()
             }
         if isinstance(value, list):
             return [await _resolve(item) for item in value]
@@ -202,7 +201,9 @@ async def ensure_host_allowed(
     session_factory = create_session_factory(engine)
     try:
         async with session_scope(session_factory) as session:
-            policy = await ProfilePolicyRepository(session).get_or_create_default(context.profile_id)
+            policy = await ProfilePolicyRepository(session).get_or_create_default(
+                context.profile_id
+            )
             policy_engine = PolicyEngine(root_dir=settings.root_dir)
             approved_tool_names = set(context.approved_tool_names) or None
             approved_network_hosts = set(context.approved_network_hosts) or None

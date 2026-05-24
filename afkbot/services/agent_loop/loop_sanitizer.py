@@ -6,7 +6,9 @@ from afkbot.services.agent_loop.security_guard import SecurityGuard
 
 _SENSITIVE_FIELD_PARTS = ("secret", "token", "password", "api_key", "authorization")
 _NON_SECRET_ID_FIELDS = frozenset({"id", "task_id", "tool_call_id", "call_id", "question_id"})
-_SENSITIVE_VALUE_HINT_FIELDS = frozenset({"name", "field", "key", "slug", "credential_name", "credential_slug"})
+_SENSITIVE_VALUE_HINT_FIELDS = frozenset(
+    {"name", "field", "key", "slug", "credential_name", "credential_slug"}
+)
 _SECURITY_GUARD = SecurityGuard()
 
 

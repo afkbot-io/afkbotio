@@ -364,7 +364,9 @@ class OpenAICompatiblePayloadRuntime:
         return cls._normalize_provider_items(items)
 
     @classmethod
-    def _chat_provider_items_from_message(cls, message: Mapping[str, Any]) -> list[dict[str, object]]:
+    def _chat_provider_items_from_message(
+        cls, message: Mapping[str, Any]
+    ) -> list[dict[str, object]]:
         reasoning_content = message.get("reasoning_content")
         if not isinstance(reasoning_content, str) or not reasoning_content.strip():
             return []

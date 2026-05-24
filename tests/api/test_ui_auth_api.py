@@ -109,7 +109,9 @@ def test_protected_plugin_surfaces_require_login_and_accept_cookie(
         session_before_login = client.get("/v1/auth/session")
         plugins_response = client.get("/v1/plugins")
         api_response = client.get("/v1/plugins/demo/ping")
-        web_response = client.get("/plugins/demo/?tab=skills&profile=default", follow_redirects=False)
+        web_response = client.get(
+            "/plugins/demo/?tab=skills&profile=default", follow_redirects=False
+        )
 
         assert session_before_login.status_code == 200
         assert session_before_login.json() == {

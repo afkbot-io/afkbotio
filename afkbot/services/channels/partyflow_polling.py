@@ -512,9 +512,7 @@ class PartyFlowPollingService:
         self._pending_retry_tasks[key] = task
         task.add_done_callback(self._build_retry_task_done_callback(key))
 
-    def _build_retry_task_done_callback(
-        self, key: str
-    ) -> Callable[[asyncio.Task[None]], None]:
+    def _build_retry_task_done_callback(self, key: str) -> Callable[[asyncio.Task[None]], None]:
         def _done_callback(completed: asyncio.Task[None]) -> None:
             self._clear_retry_task(key, completed)
 

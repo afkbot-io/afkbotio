@@ -26,7 +26,9 @@ class ConnectClaimToken(Base, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(128), index=True)
     claim_pin_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     claim_failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    claim_blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claim_blocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     allow_diagnostics: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     runtime_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_overlay: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -104,38 +104,44 @@ def test_channel_telethon_update_preserves_unspecified_fields_and_root_list_show
             policy_network_allowlist=("*",),
         )
     )
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telegram",
-            "add",
-            "support-bot",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "bot-main",
-        ],
-    ).exit_code == 0
-    assert runner.invoke(
-        app,
-        [
-            "channel",
-            "telethon",
-            "add",
-            "personal-user",
-            "--profile",
-            "default",
-            "--credential-profile",
-            "tg-user",
-            "--reply-mode",
-            "same_chat",
-            "--tool-profile",
-            "chat_minimal",
-            "--group-invocation-mode",
-            "reply_only",
-        ],
-    ).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telegram",
+                "add",
+                "support-bot",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "bot-main",
+            ],
+        ).exit_code
+        == 0
+    )
+    assert (
+        runner.invoke(
+            app,
+            [
+                "channel",
+                "telethon",
+                "add",
+                "personal-user",
+                "--profile",
+                "default",
+                "--credential-profile",
+                "tg-user",
+                "--reply-mode",
+                "same_chat",
+                "--tool-profile",
+                "chat_minimal",
+                "--group-invocation-mode",
+                "reply_only",
+            ],
+        ).exit_code
+        == 0
+    )
 
     # Act
     updated = runner.invoke(

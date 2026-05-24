@@ -200,7 +200,9 @@ def test_collect_setup_config_does_not_rerun_policy_setup_mode_when_policy_alrea
     )
 
     def _fail(**_: object) -> str:
-        raise AssertionError("resolve_policy_setup_mode should not run when policy is already resolved")
+        raise AssertionError(
+            "resolve_policy_setup_mode should not run when policy is already resolved"
+        )
 
     monkeypatch.setattr(
         "afkbot.services.setup.config_resolver.resolve_policy_setup_mode",

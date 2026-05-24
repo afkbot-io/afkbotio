@@ -264,7 +264,9 @@ def test_profile_runtime_config_applies_profile_local_brave_search_key(tmp_path:
         },
     )
 
-    resolved = config_service.build_effective_settings(profile_id="searcher", base_settings=settings)
+    resolved = config_service.build_effective_settings(
+        profile_id="searcher", base_settings=settings
+    )
     summary = config_service.resolved_runtime(resolved)
 
     assert resolved.brave_api_key == "profile-brave-key"

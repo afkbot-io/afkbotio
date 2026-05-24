@@ -112,9 +112,13 @@ def _collect_app_names(*, settings: Settings, profile_id: str) -> tuple[str, ...
 def _collect_mcp_server_names(*, settings: Settings, profile_id: str) -> tuple[str, ...]:
     try:
         loader = MCPProfileLoader(settings)
-        return tuple(sorted({item.server for item in loader.load_profile(profile_id) if item.enabled}))
+        return tuple(
+            sorted({item.server for item in loader.load_profile(profile_id) if item.enabled})
+        )
     except Exception as exc:
-        _LOGGER.warning("chat input catalog skipped MCP servers for profile %s: %s", profile_id, exc)
+        _LOGGER.warning(
+            "chat input catalog skipped MCP servers for profile %s: %s", profile_id, exc
+        )
         return ()
 
 
@@ -125,7 +129,9 @@ async def _collect_mcp_tool_names(*, settings: Settings, profile_id: str) -> tup
         catalog.schedule_refresh(profile_id=profile_id)
         return tuple(sorted(item.runtime_name for item in descriptors))
     except Exception as exc:
-        _LOGGER.warning("chat input catalog skipped MCP runtime tools for profile %s: %s", profile_id, exc)
+        _LOGGER.warning(
+            "chat input catalog skipped MCP runtime tools for profile %s: %s", profile_id, exc
+        )
         return ()
 
 

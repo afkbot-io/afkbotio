@@ -72,11 +72,7 @@ class ProfilePolicyRepository:
             sort_keys=True,
         )
         normalized_allowed_directories = sorted(
-            {
-                item.strip()
-                for item in allowed_directories
-                if item and item.strip()
-            }
+            {item.strip() for item in allowed_directories if item and item.strip()}
         )
         row.allowed_directories_json = json.dumps(
             normalized_allowed_directories,
@@ -91,11 +87,7 @@ class ProfilePolicyRepository:
         )
         row.denied_tools_json = "[]"
         normalized_network_allowlist = sorted(
-            {
-                item.strip().lower()
-                for item in network_allowlist
-                if item and item.strip()
-            }
+            {item.strip().lower() for item in network_allowlist if item and item.strip()}
         )
         row.network_allowlist_json = json.dumps(
             normalized_network_allowlist,

@@ -20,7 +20,9 @@ class SubagentProfileGetTool(ToolBase):
     """Read one custom profile subagent markdown file."""
 
     name = "subagent.profile.get"
-    description = "Read one profile subagent markdown by name (localized labels are normalized to safe slug)."
+    description = (
+        "Read one profile subagent markdown by name (localized labels are normalized to safe slug)."
+    )
     parameters_model = SubagentProfileGetParams
     required_skill = "subagent-manager"
 
@@ -34,7 +36,9 @@ class SubagentProfileGetTool(ToolBase):
         service = get_profile_subagent_service(self._settings)
         try:
             item = await service.get(profile_id=ctx.profile_id, name=payload.name)
-            return ToolResult(ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)}
+            )
         except FileNotFoundError as exc:
             return ToolResult.error(error_code="profile_subagent_not_found", reason=str(exc))
         except ValueError as exc:

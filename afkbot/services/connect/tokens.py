@@ -48,7 +48,9 @@ async def claim_connect_token(
 
     token = claim_token.strip()
     if not token:
-        raise ConnectServiceError(error_code="connect_token_invalid", reason="Claim token is empty.")
+        raise ConnectServiceError(
+            error_code="connect_token_invalid", reason="Claim token is empty."
+        )
 
     now = datetime.now(tz=UTC)
     claim_hash = hash_token(token)
@@ -98,7 +100,13 @@ async def claim_connect_token(
                 raise
             failed_attempts = int(getattr(claim_row, "claim_failed_attempts", 0) or 0) + 1
             max_attempts = max(
-                int(getattr(settings, "connect_claim_pin_max_attempts", DEFAULT_CONNECT_CLAIM_PIN_MAX_ATTEMPTS)),
+                int(
+                    getattr(
+                        settings,
+                        "connect_claim_pin_max_attempts",
+                        DEFAULT_CONNECT_CLAIM_PIN_MAX_ATTEMPTS,
+                    )
+                ),
                 1,
             )
             blocked_at = now if failed_attempts >= max_attempts else None

@@ -98,9 +98,15 @@ async def test_run_repo_get_latest_run_id(tmp_path: Path) -> None:
             latest_for_s1 = await repo.create_run(session_id="s-1", profile_id="default")
             other_profile = await repo.create_run(session_id="s-3", profile_id="other")
 
-            assert await repo.get_latest_run_id(profile_id="default", session_id="s-1") == latest_for_s1.id
+            assert (
+                await repo.get_latest_run_id(profile_id="default", session_id="s-1")
+                == latest_for_s1.id
+            )
             assert await repo.get_latest_run_id(profile_id="default", session_id="s-2") == second.id
-            assert await repo.get_latest_run_id(profile_id="other", session_id="s-3") == other_profile.id
+            assert (
+                await repo.get_latest_run_id(profile_id="other", session_id="s-3")
+                == other_profile.id
+            )
             assert await repo.get_latest_run_id(profile_id="other", session_id="s-1") is None
             assert await repo.get_latest_run_id(profile_id="default", session_id="missing") is None
             assert latest_for_s1.id > first.id

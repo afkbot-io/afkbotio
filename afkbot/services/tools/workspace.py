@@ -44,7 +44,9 @@ def resolve_tool_workspace_base_dir(*, settings: Settings, profile_id: str) -> P
     return base_dir
 
 
-async def resolve_tool_workspace_scope_roots(*, settings: Settings, profile_id: str) -> tuple[Path, ...]:
+async def resolve_tool_workspace_scope_roots(
+    *, settings: Settings, profile_id: str
+) -> tuple[Path, ...]:
     """Return hard scope roots enforced by tool runtime for one profile."""
 
     base_dir = resolve_tool_workspace_base_dir(settings=settings, profile_id=profile_id)
@@ -96,7 +98,9 @@ def _normalize_scope_roots(raw_roots: tuple[str, ...]) -> tuple[Path, ...]:
 def _prepend_scope_root(*, primary: Path, roots: tuple[Path, ...]) -> tuple[Path, ...]:
     """Preserve the profile workspace as default cwd while keeping broader scope roots."""
 
-    return _normalize_scope_roots((str(primary.resolve(strict=False)), *(str(root) for root in roots)))
+    return _normalize_scope_roots(
+        (str(primary.resolve(strict=False)), *(str(root) for root in roots))
+    )
 
 
 def _resolve_candidate(*, base_dir: Path, raw_path: str) -> Path:

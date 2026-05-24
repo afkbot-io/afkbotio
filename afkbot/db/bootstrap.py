@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from afkbot.db.bootstrap_runtime import ManagedRuntimeSchemaError, create_schema, list_applied_migrations, ping
+from afkbot.db.bootstrap_runtime import (
+    ManagedRuntimeSchemaError,
+    create_schema,
+    list_applied_migrations,
+    ping,
+)
 from afkbot.db.postgres_contract import (
     PostgresBootstrapContractError,
     PostgresBootstrapPlan,

@@ -113,14 +113,10 @@ class SkillRouter:
         all_skills = list(skills)
         available_skills = [item for item in all_skills if item.available]
         explicit = {
-            name.strip()
-            for name in (explicit_skill_names or set())
-            if name and name.strip()
+            name.strip() for name in (explicit_skill_names or set()) if name and name.strip()
         }
         affinity = {
-            name.strip()
-            for name in (affinity_skill_names or set())
-            if name and name.strip()
+            name.strip() for name in (affinity_skill_names or set()) if name and name.strip()
         }
 
         selected: set[str] = set(explicit) | set(affinity)
@@ -131,13 +127,9 @@ class SkillRouter:
             if self._matches_any_trigger(lowered_message, skill.manifest.triggers):
                 selected.add(skill.name)
 
-        ordered_selected = tuple(
-            skill.name for skill in all_skills if skill.name in selected
-        )
+        ordered_selected = tuple(skill.name for skill in all_skills if skill.name in selected)
         ordered_explicit = tuple(
-            skill_name
-            for skill_name in ordered_selected
-            if skill_name in explicit
+            skill_name for skill_name in ordered_selected if skill_name in explicit
         )
         ordered_affinity = tuple(
             skill_name
@@ -151,9 +143,7 @@ class SkillRouter:
         )
 
         selected_skill_set = set(ordered_selected)
-        selected_skills = [
-            skill for skill in all_skills if skill.name in selected_skill_set
-        ]
+        selected_skills = [skill for skill in all_skills if skill.name in selected_skill_set]
         executable_skills = [
             skill
             for skill in selected_skills
@@ -164,11 +154,7 @@ class SkillRouter:
             for skill in selected_skills
             if skill.available and skill.manifest.execution_mode == "advisory"
         ]
-        unavailable_skills = [
-            skill
-            for skill in selected_skills
-            if not skill.available
-        ]
+        unavailable_skills = [skill for skill in selected_skills if not skill.available]
         unavailable_blocking_skills = [
             skill
             for skill in unavailable_skills

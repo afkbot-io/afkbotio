@@ -153,13 +153,13 @@ def _format_service_result(result: object) -> str:
 
 
 def _format_port_result(*, runtime_port: int, host: str) -> str:
-    return f"runtime bind saved: host={host}, runtime_port={runtime_port}, api_port={runtime_port + 1}"
+    return (
+        f"runtime bind saved: host={host}, runtime_port={runtime_port}, api_port={runtime_port + 1}"
+    )
 
 
 def _format_port_restore_result(*, runtime_port: int, host: str) -> str:
-    return (
-        f"runtime bind restored: host={host}, runtime_port={runtime_port}, api_port={runtime_port + 1}"
-    )
+    return f"runtime bind restored: host={host}, runtime_port={runtime_port}, api_port={runtime_port + 1}"
 
 
 def _format_service_inspection(inspection: object) -> str:
@@ -307,7 +307,9 @@ def _persist_runtime_bind_and_reload_service(
             start=setup_is_complete(restored_settings),
         )
         restored_host = (
-            str(previous_runtime_config.get("runtime_host") or restored_settings.runtime_host).strip()
+            str(
+                previous_runtime_config.get("runtime_host") or restored_settings.runtime_host
+            ).strip()
             or restored_settings.runtime_host
         )
         restored_port = _resolve_current_runtime_port(

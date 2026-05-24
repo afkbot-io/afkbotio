@@ -199,8 +199,7 @@ class TelegramPollingRuntimeMixin:
             )
             if not result.ok:
                 lines.append(
-                    f"- {attachment.kind}: download failed"
-                    f" ({result.error_code or 'unknown_error'})"
+                    f"- {attachment.kind}: download failed ({result.error_code or 'unknown_error'})"
                 )
                 continue
             payload = result.payload

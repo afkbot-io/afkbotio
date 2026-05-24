@@ -57,7 +57,9 @@ async def test_telegram_polling_requires_mention_in_group_chat(tmp_path: Path) -
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -110,7 +112,9 @@ async def test_telegram_polling_all_messages_mode_processes_group_chat_without_m
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(group_trigger_mode="all_messages"),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -170,7 +174,9 @@ async def test_telegram_polling_access_policy_drops_unlisted_private_sender(
                 allow_from=("12345",),
             )
         ),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -223,7 +229,9 @@ async def test_telegram_polling_strips_bot_mention_and_uses_thread_session(
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -280,7 +288,9 @@ async def test_telegram_polling_accepts_command_targeted_at_bot_in_group(tmp_pat
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -323,7 +333,9 @@ async def test_telegram_polling_propagates_non_no_match_binding_errors(
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
     )

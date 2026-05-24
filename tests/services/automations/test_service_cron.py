@@ -232,7 +232,9 @@ async def test_service_tick_cron_keeps_prompt_and_graph_modes_isolated(
         assert fake_loop.calls[0]["message"] == "prompt path"
         assert fake_loop.calls[0]["session_id"].startswith(f"automation-cron-{prompt_created.id}-")
 
-        graph_runs = await service.list_graph_runs(profile_id="default", automation_id=graph_created.id)
+        graph_runs = await service.list_graph_runs(
+            profile_id="default", automation_id=graph_created.id
+        )
         assert len(graph_runs) == 1
         assert graph_runs[0].status == "succeeded"
     finally:

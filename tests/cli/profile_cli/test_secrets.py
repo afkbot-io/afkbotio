@@ -82,7 +82,9 @@ def test_profile_add_and_profile_secrets_commands_manage_local_provider_keys(
         "openai_api_key",
     ]
     assert add_payload["profile"]["runtime_secrets"]["has_profile_secrets"] is True
-    assert add_payload["profile"]["runtime_secrets_path"] == "profiles/ops/.system/agent_secrets.json"
+    assert (
+        add_payload["profile"]["runtime_secrets_path"] == "profiles/ops/.system/agent_secrets.json"
+    )
 
     assert show_result.exit_code == 0
     show_payload = json.loads(show_result.stdout)
@@ -140,7 +142,9 @@ def test_profile_codex_provider_secret_uses_secret_source_and_clears_file_metada
             "--skip-llm-token-verify",
         ],
     )
-    clear_result = runner.invoke(app, ["profile", "secrets", "clear", "codex", "--provider-api-key"])
+    clear_result = runner.invoke(
+        app, ["profile", "secrets", "clear", "codex", "--provider-api-key"]
+    )
 
     assert add_result.exit_code == 0
     add_payload = json.loads(add_result.stdout)

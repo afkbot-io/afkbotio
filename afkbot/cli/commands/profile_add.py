@@ -375,7 +375,8 @@ def register_add(profile_app: typer.Typer) -> None:
                     policy_preset=mutation_inputs.resolved_policy.preset,
                     policy_capabilities=mutation_inputs.resolved_policy.capabilities,
                     policy_file_access_mode=mutation_inputs.resolved_policy.file_access_mode,
-                    policy_allowed_directories=mutation_inputs.resolved_policy.allowed_directories or None,
+                    policy_allowed_directories=mutation_inputs.resolved_policy.allowed_directories
+                    or None,
                     policy_shell_sandbox_mode=mutation_inputs.resolved_policy.shell_sandbox_mode,
                     policy_shell_allowed_commands=mutation_inputs.resolved_policy.shell_allowed_commands,
                     policy_network_allowlist=mutation_inputs.resolved_policy.network_allowlist,

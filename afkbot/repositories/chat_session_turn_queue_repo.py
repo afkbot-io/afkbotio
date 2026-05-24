@@ -206,9 +206,9 @@ class ChatSessionTurnQueueRepository:
                 select(
                     ChatSessionTurnQueueItem.profile_id,
                     ChatSessionTurnQueueItem.session_id,
-                    func.sum(
-                        case((ChatSessionTurnQueueItem.status == "queued", 1), else_=0)
-                    ).label("queued_turn_count"),
+                    func.sum(case((ChatSessionTurnQueueItem.status == "queued", 1), else_=0)).label(
+                        "queued_turn_count"
+                    ),
                     func.sum(
                         case((ChatSessionTurnQueueItem.status == "running", 1), else_=0)
                     ).label("running_turn_count"),

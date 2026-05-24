@@ -61,7 +61,11 @@ class TaskCreateTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskCreateParams) else TaskCreateParams.model_validate(params)
+        payload = (
+            params
+            if isinstance(params, TaskCreateParams)
+            else TaskCreateParams.model_validate(params)
+        )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
             payload=payload,
@@ -91,7 +95,9 @@ class TaskCreateTool(ToolBase):
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
             session_id_explicit = "session_id" in explicit_fields
             session_profile_id_explicit = "session_profile_id" in explicit_fields
-            if actor.actor_type == "automation" and (session_id_explicit or session_profile_id_explicit):
+            if actor.actor_type == "automation" and (
+                session_id_explicit or session_profile_id_explicit
+            ):
                 return ToolResult.error(
                     error_code="task_session_binding_forbidden",
                     reason="automation graph runtime does not support explicit task session bindings",
@@ -112,11 +118,15 @@ class TaskCreateTool(ToolBase):
                 and effective_session_id.startswith("taskflow:")
                 and not session_profile_id_explicit
             ):
-                runtime_taskflow = ctx.runtime_metadata.get("taskflow") if isinstance(ctx.runtime_metadata, dict) else None
+                runtime_taskflow = (
+                    ctx.runtime_metadata.get("taskflow")
+                    if isinstance(ctx.runtime_metadata, dict)
+                    else None
+                )
                 if isinstance(runtime_taskflow, dict):
-                        runtime_profile_id = runtime_taskflow.get("task_profile_id")
-                        if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
-                            effective_session_profile_id = runtime_profile_id.strip()
+                    runtime_profile_id = runtime_taskflow.get("task_profile_id")
+                    if isinstance(runtime_profile_id, str) and runtime_profile_id.strip():
+                        effective_session_profile_id = runtime_profile_id.strip()
             if (
                 effective_session_profile_id is None
                 and effective_session_id is not None

@@ -31,6 +31,7 @@ class CredentialsBindingMixin:
     """Binding CRUD operations mixed into credentials service."""
 
     if TYPE_CHECKING:
+
         async def _with_repo(
             self,
             op: Callable[[CredentialsRepository], Awaitable[TRepoValue]],
@@ -257,7 +258,9 @@ class CredentialsBindingMixin:
             integration_name=integration_name,
         )
         normalized_profile_key = (
-            None if credential_profile_key is None else normalize_profile_key(credential_profile_key)
+            None
+            if credential_profile_key is None
+            else normalize_profile_key(credential_profile_key)
         )
 
         async def _op(repo: CredentialsRepository) -> list[CredentialBindingMetadata]:

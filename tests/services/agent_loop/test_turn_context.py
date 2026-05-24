@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+from afkbot.services.agent_loop.turn_context import (
+    TurnContextOverrides,
+    merge_turn_context_overrides,
+)
 
 
 def test_merge_turn_context_overrides_skips_effectively_empty_payload() -> None:
@@ -36,7 +39,9 @@ def test_merge_turn_context_overrides_combines_metadata_prompt_and_thinking() ->
 
     assert merged is not None
     assert merged.runtime_metadata == {"channel": "telegram"}
-    assert merged.trusted_runtime_context == {"taskflow_detached_runtime": {"owner_type": "ai_subagent"}}
+    assert merged.trusted_runtime_context == {
+        "taskflow_detached_runtime": {"owner_type": "ai_subagent"}
+    }
     assert merged.cli_approval_surface_enabled is True
     assert merged.approved_tool_names == ("bash.exec", "file.read")
     assert merged.prompt_overlay == "base\n\noverlay"

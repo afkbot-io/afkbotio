@@ -74,8 +74,14 @@ async def test_trusted_runtime_facts_service_renders_detected_environment(
     assert "- has_sudo: yes" in block
     assert "- has_systemctl: yes" in block
     assert "- package_managers: apt" in block
-    assert "- Prefer prompt_language for default responses unless the user clearly asked for another language." in block
-    assert "- This session is already a valid execution environment for the current host and workspace above." in block
+    assert (
+        "- Prefer prompt_language for default responses unless the user clearly asked for another language."
+        in block
+    )
+    assert (
+        "- This session is already a valid execution environment for the current host and workspace above."
+        in block
+    )
     assert (
         "- If shell or file tools are visible and policy allows, execute current-host tasks here "
         "instead of turning them into manual instructions."

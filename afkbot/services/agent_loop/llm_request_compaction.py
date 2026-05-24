@@ -98,7 +98,9 @@ class LLMRequestCompactionService:
             len(history_before),
             self._resolve_keep_recent_messages(attempt=attempt),
         )
-        older_history = history_before[:-keep_recent_messages] if keep_recent_messages > 0 else history_before
+        older_history = (
+            history_before[:-keep_recent_messages] if keep_recent_messages > 0 else history_before
+        )
         recent_history = history_before[-keep_recent_messages:] if keep_recent_messages > 0 else []
 
         if older_history:
@@ -181,7 +183,9 @@ class LLMRequestCompactionService:
     def _render_history_message(self, message: LLMMessage) -> str:
         role = message.role
         if role == "assistant" and message.tool_calls:
-            rendered_calls = ", ".join(self._render_tool_call(call) for call in message.tool_calls[:4])
+            rendered_calls = ", ".join(
+                self._render_tool_call(call) for call in message.tool_calls[:4]
+            )
             return f"- Assistant requested tools: {rendered_calls}"
         if role == "tool":
             tool_name = (message.tool_name or "tool").strip()
@@ -230,7 +234,9 @@ class LLMRequestCompactionService:
             excerpt_limit = self._context_excerpt_limit(priority=priority, attempt=attempt)
             normalized_body = body.strip()
             if len(normalized_body) > excerpt_limit:
-                normalized_body = f"{normalized_body[:excerpt_limit].rstrip()}\n{_CONTEXT_TRUNCATION_NOTICE}"
+                normalized_body = (
+                    f"{normalized_body[:excerpt_limit].rstrip()}\n{_CONTEXT_TRUNCATION_NOTICE}"
+                )
             rendered_sections.append((priority, f"{heading}\n{normalized_body}".strip()))
         return self._fit_context_sections(rendered_sections, max_chars=max_chars)
 

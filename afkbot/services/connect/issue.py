@@ -10,7 +10,10 @@ from afkbot.repositories.connect_repo import ConnectRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.sessions import SessionProfileMismatchError, SessionService
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-from afkbot.services.connect.context_snapshot import serialize_runtime_metadata, snapshot_from_turn_context
+from afkbot.services.connect.context_snapshot import (
+    serialize_runtime_metadata,
+    snapshot_from_turn_context,
+)
 from afkbot.services.connect.contracts import ConnectIssueResult, ConnectServiceError
 from afkbot.services.connect.helpers import (
     build_connect_url,
@@ -81,7 +84,9 @@ async def issue_connect_url(
             session_id=normalized_session_id,
             base_url=normalized_base_url,
             token_hash=claim_token_hash,
-            claim_pin_hash=None if normalized_claim_pin is None else hash_token(normalized_claim_pin),
+            claim_pin_hash=None
+            if normalized_claim_pin is None
+            else hash_token(normalized_claim_pin),
             allow_diagnostics=allow_diagnostics,
             runtime_metadata_json=serialize_runtime_metadata(
                 None if context_snapshot is None else context_snapshot.runtime_metadata

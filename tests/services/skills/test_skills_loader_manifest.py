@@ -128,7 +128,7 @@ async def test_skills_loader_reads_browser_control_manifest_overlay(tmp_path: Pa
         skill_dir,
         "\n".join(
             [
-                'manifest_version = 1',
+                "manifest_version = 1",
                 'name = "browser-control"',
                 'description = "Browser skill."',
                 'execution_mode = "executable"',
@@ -136,7 +136,7 @@ async def test_skills_loader_reads_browser_control_manifest_overlay(tmp_path: Pa
                 'aliases = ["browser"]',
                 'triggers = ["через браузер", "browser"]',
                 'tool_names = ["browser.control"]',
-                'app_names = []',
+                "app_names = []",
                 'preferred_tool_order = ["browser.control"]',
                 "",
                 "[requires]",
@@ -203,7 +203,9 @@ async def test_skills_loader_does_not_block_availability_on_inferred_bins(tmp_pa
     assert demo_info.manifest.suggested_bins == ("definitely-missing-binary",)
 
 
-async def test_skills_loader_pdf_keywords_do_not_grant_surface_without_manifest(tmp_path: Path) -> None:
+async def test_skills_loader_pdf_keywords_do_not_grant_surface_without_manifest(
+    tmp_path: Path,
+) -> None:
     """PDF-only wording should not infer executable tool surface."""
 
     # Arrange
@@ -370,7 +372,7 @@ async def test_skills_loader_merges_afkbot_manifest_overlay(tmp_path: Path) -> N
         skill_dir,
         "\n".join(
             [
-                'manifest_version = 1',
+                "manifest_version = 1",
                 'name = "doc"',
                 'description = "Executable doc workflow."',
                 'execution_mode = "executable"',
@@ -379,8 +381,8 @@ async def test_skills_loader_merges_afkbot_manifest_overlay(tmp_path: Path) -> N
                 "",
                 "[requires]",
                 'bins = ["python3"]',
-                'env = []',
-                'python_packages = []',
+                "env = []",
+                "python_packages = []",
                 "",
                 "[source]",
                 'kind = "marketplace"',

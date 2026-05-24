@@ -49,9 +49,13 @@ class MarketplacePopularityResolver:
         source_stats = SkillMarketplaceSourceStats()
         enriched = list(items)
         if descriptor.owner and descriptor.repo:
-            source_stats = self._resolve_github_repo_stats(owner=descriptor.owner, repo=descriptor.repo)
-            skills_sh_items, total_installs, total_installs_display = self._resolve_skills_sh_installs(
-                descriptor=descriptor,
+            source_stats = self._resolve_github_repo_stats(
+                owner=descriptor.owner, repo=descriptor.repo
+            )
+            skills_sh_items, total_installs, total_installs_display = (
+                self._resolve_skills_sh_installs(
+                    descriptor=descriptor,
+                )
             )
             if skills_sh_items or total_installs is not None or total_installs_display:
                 source_stats = replace(
@@ -61,7 +65,9 @@ class MarketplacePopularityResolver:
                     total_installs_display=total_installs_display,
                 )
             if skills_sh_items:
-                enriched = self._merge_install_stats(items=enriched, installs_by_name=skills_sh_items)
+                enriched = self._merge_install_stats(
+                    items=enriched, installs_by_name=skills_sh_items
+                )
         return enriched, source_stats
 
     def _resolve_skills_sh_installs(
@@ -140,10 +146,7 @@ class MarketplacePopularityResolver:
                     item.name,
                 )
             )
-            enriched = [
-                replace(item, rank=index)
-                for index, item in enumerate(enriched, start=1)
-            ]
+            enriched = [replace(item, rank=index) for index, item in enumerate(enriched, start=1)]
         return enriched
 
 
@@ -180,7 +183,11 @@ class _SkillsShRepoParser(HTMLParser):
             self._capture_h3 = True
         elif self._current_slug is not None and tag == "span":
             class_name = attr_map.get("class") or ""
-            if "font-mono" in class_name and "text-sm" in class_name and "text-foreground" in class_name:
+            if (
+                "font-mono" in class_name
+                and "text-sm" in class_name
+                and "text-foreground" in class_name
+            ):
                 self._capture_install_span = True
 
     def handle_endtag(self, tag: str) -> None:
@@ -194,7 +201,9 @@ class _SkillsShRepoParser(HTMLParser):
         elif tag == "span":
             self._capture_install_span = False
         elif tag == "a" and self._current_slug is not None:
-            installs_display = " ".join(part for part in self._current_install_parts if part).strip()
+            installs_display = " ".join(
+                part for part in self._current_install_parts if part
+            ).strip()
             installs = parse_compact_count(installs_display)
             if installs is not None:
                 self.results[self._current_slug] = (installs, installs_display)

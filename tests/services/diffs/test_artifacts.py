@@ -49,7 +49,9 @@ def test_cleanup_expired_diff_artifacts_removes_stale_dirs(tmp_path: Path) -> No
         json.dumps(
             {
                 "id": "stale",
-                "expires_at": (datetime.now(tz=UTC) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+                "expires_at": (datetime.now(tz=UTC) - timedelta(seconds=1))
+                .isoformat()
+                .replace("+00:00", "Z"),
             }
         ),
         encoding="utf-8",

@@ -228,7 +228,9 @@ def _resolve_request_timeout_sec(
 ) -> float:
     """Resolve one-request timeout without exceeding the selected total task budget."""
 
-    request_timeout_sec = clamp_llm_request_timeout_sec(float(base_timeout_sec) * timeout_multiplier)
+    request_timeout_sec = clamp_llm_request_timeout_sec(
+        float(base_timeout_sec) * timeout_multiplier
+    )
     if explicit_budget_sec is None:
         return request_timeout_sec
     return min(

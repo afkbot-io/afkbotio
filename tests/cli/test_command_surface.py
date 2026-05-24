@@ -132,7 +132,6 @@ def test_task_help_exposes_dependency_and_run_management() -> None:
     assert "stale-sweep" in output
 
 
-
 def test_plugin_help_exposes_install_lifecycle() -> None:
     """Plugin CLI help should expose install/inspect/lifecycle commands."""
 

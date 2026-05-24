@@ -37,4 +37,3 @@ class UIAuthState:
         """Return whether UI auth is active and has the minimum secret state."""
 
         return self.mode == "password" and bool(self.username) and self.password_hash_present
-

@@ -40,9 +40,7 @@ def resolve_task_owner_inputs(
     normalized_ref = _normalize_optional_text(owner_ref)
     normalized_profile_id = _normalize_optional_text(owner_profile_id)
     normalized_subagent_name = _normalize_optional_text(owner_subagent_name)
-    structured_present = (
-        normalized_profile_id is not None or normalized_subagent_name is not None
-    )
+    structured_present = normalized_profile_id is not None or normalized_subagent_name is not None
     if not structured_present:
         return normalized_type, normalized_ref
     if normalized_profile_id is None:
@@ -102,8 +100,7 @@ def resolve_task_owner_inputs(
         raise TaskOwnerInputError(
             error_code="invalid_owner_ref",
             reason=(
-                f"{field_prefix}_ref must be one canonical "
-                "`<profile_id>:<subagent_name>` value"
+                f"{field_prefix}_ref must be one canonical `<profile_id>:<subagent_name>` value"
             ),
         )
     normalized_raw_ref = f"{parsed_raw_ref[0]}:{parsed_raw_ref[1]}"

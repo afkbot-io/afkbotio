@@ -45,7 +45,9 @@ class FileEditTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -110,7 +112,9 @@ class FileEditTool(ToolBase):
         except (ValueError, UnicodeError) as exc:
             return ToolResult.error(error_code="file_edit_invalid", reason=str(exc))
         except OSError as exc:
-            return ToolResult.error(error_code="file_edit_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="file_edit_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
 
 def create_tool(settings: Settings) -> ToolBase:

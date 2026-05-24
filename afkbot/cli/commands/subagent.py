@@ -8,7 +8,10 @@ from pathlib import Path
 
 import typer
 
-from afkbot.cli.commands.runtime_assets_common import emit_structured_error, resolve_inline_or_file_text
+from afkbot.cli.commands.runtime_assets_common import (
+    emit_structured_error,
+    resolve_inline_or_file_text,
+)
 from afkbot.services.policy import PolicyViolationError
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
@@ -152,7 +155,9 @@ def register(app: typer.Typer) -> None:
             _assert_profile_exists(settings=settings, profile_id=normalized_profile_id)
             result = asyncio.run(
                 get_subagent_service(settings).run(
-                    ctx=ToolContext(profile_id=normalized_profile_id, session_id=session_id, run_id=0),
+                    ctx=ToolContext(
+                        profile_id=normalized_profile_id, session_id=session_id, run_id=0
+                    ),
                     prompt=prompt,
                     subagent_name=name,
                     timeout_sec=timeout_sec,

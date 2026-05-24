@@ -293,6 +293,7 @@ async def test_mcp_service_add_rejects_symlinked_fallback_target_outside_profile
     assert "outside profile scope" in str(error_info.value)
     assert outside_file.read_text(encoding="utf-8") == '{"servers": []}'
 
+
 async def test_mcp_service_remove_clears_fallback_server_entry(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

@@ -61,6 +61,7 @@ if TYPE_CHECKING:
         SubagentWaitResponse,
     )
 
+
 class _ToolLookup(Protocol):
     """Minimal lookup surface needed for automation-intent policy checks."""
 
@@ -262,7 +263,9 @@ class TriggerInputNodeAdapter:
     """Expose the raw trigger payload as the graph entry payload."""
 
     async def execute(self, invocation: NodeInvocation) -> NodeAdapterResult:
-        return NodeAdapterResult.success(ports={"default": dict(invocation.context.trigger_payload)})
+        return NodeAdapterResult.success(
+            ports={"default": dict(invocation.context.trigger_payload)}
+        )
 
 
 class PassthroughNodeAdapter:
@@ -285,10 +288,7 @@ class SwitchValueNodeAdapter:
         value = _resolve_path(payload, path) if path else payload
         raw_cases = invocation.config.get("cases")
         cases_payload = raw_cases if isinstance(raw_cases, Mapping) else {}
-        cases = {
-            str(key): str(inner)
-            for key, inner in cases_payload.items()
-        }
+        cases = {str(key): str(inner) for key, inner in cases_payload.items()}
         selected_port = cases.get(str(value))
         default_port = str(invocation.config.get("default_port") or "").strip()
         if not selected_port:
@@ -349,10 +349,12 @@ class CodePythonNodeAdapter:
             return NodeAdapterResult.failure(
                 error_code="graph_node_resource_limit",
                 reason=f"Code node request exceeded {io_limit} bytes",
-        )
+            )
         with tempfile.TemporaryDirectory(prefix="afkbot-graph-node-") as temp_dir:
             source_path = Path(temp_dir) / "node_impl.py"
-            await asyncio.to_thread(source_path.write_text, version.source_code or "", encoding="utf-8")
+            await asyncio.to_thread(
+                source_path.write_text, version.source_code or "", encoding="utf-8"
+            )
             try:
                 launch = build_code_node_launch(
                     base_argv=(sys.executable, "-I", "-B", str(worker_path), str(source_path)),
@@ -402,7 +404,7 @@ class CodePythonNodeAdapter:
                     reason=str(exc),
                 )
         if process.returncode != 0:
-            reason = (stderr.decode("utf-8", errors="replace").strip() or "code node failed")
+            reason = stderr.decode("utf-8", errors="replace").strip() or "code node failed"
             return NodeAdapterResult.failure(
                 error_code="graph_node_failed",
                 reason=_sanitize_reason_text(reason),
@@ -431,7 +433,9 @@ class CodePythonNodeAdapter:
                 unsafe_side_effects=unsafe,
             )
         ports = _normalize_json_mapping(parsed.get("ports"))
-        selected_ports = tuple(str(item) for item in parsed.get("selected_ports", tuple(ports.keys())))
+        selected_ports = tuple(
+            str(item) for item in parsed.get("selected_ports", tuple(ports.keys()))
+        )
         metadata = _normalize_json_mapping(parsed.get("metadata"))
         return NodeAdapterResult.success(
             ports=ports,
@@ -543,7 +547,8 @@ class AgentNodeAdapter:
                     reason="Subagent did not finish before timeout",
                     metadata={
                         "child_task_id": accepted.task_id,
-                        "child_session_id": cancelled.child_session_id or wait_response.child_session_id,
+                        "child_session_id": cancelled.child_session_id
+                        or wait_response.child_session_id,
                         "child_run_id": cancelled.child_run_id or wait_response.child_run_id,
                     },
                     effects=(
@@ -620,7 +625,9 @@ class TaskCreateNodeAdapter:
             return (f"task.create node `{node_key}` config must be one object",)
         errors: list[str] = []
         if not _has_config_value(config, field="title"):
-            errors.append(f"task.create node `{node_key}` requires config.title or config.title_path")
+            errors.append(
+                f"task.create node `{node_key}` requires config.title or config.title_path"
+            )
         if not _has_config_value(config, field="description"):
             errors.append(
                 f"task.create node `{node_key}` requires config.description or config.description_path"
@@ -866,9 +873,8 @@ class ToolRunNodeAdapter:
                 error_code="graph_node_invalid",
                 reason="action.tool.run config.params must be one object",
             )
-        session_id = (
-            invocation.context.parent_session_id
-            or _default_runtime_session_id(prefix="automation-graph-tool", invocation=invocation)
+        session_id = invocation.context.parent_session_id or _default_runtime_session_id(
+            prefix="automation-graph-tool", invocation=invocation
         )
         ctx = _build_graph_tool_context(invocation=invocation, session_id=session_id)
         tool_call = ToolCall(name=tool_name, params=raw_params)
@@ -876,7 +882,8 @@ class ToolRunNodeAdapter:
         if not guarded.allow:
             return NodeAdapterResult.failure(
                 error_code=guarded.error_code or "tool_blocked_in_automation_graph",
-                reason=guarded.blocked_reason or f"Tool `{tool_name}` is blocked in automation graph runtime",
+                reason=guarded.blocked_reason
+                or f"Tool `{tool_name}` is blocked in automation graph runtime",
             )
         sensitive_block = _blocked_sensitive_tool_result(
             tool_name=tool_name,
@@ -927,9 +934,13 @@ class ToolRunNodeAdapter:
                 ),
                 unsafe_side_effects=tool_name not in _AUTOMATION_GRAPH_SAFE_TOOL_NAMES,
             )
-        result = results[0] if results else ToolResult.error(
-            error_code="tool_execution_failed",
-            reason=f"Tool did not return one result: {tool_name}",
+        result = (
+            results[0]
+            if results
+            else ToolResult.error(
+                error_code="tool_execution_failed",
+                reason=f"Tool did not return one result: {tool_name}",
+            )
         )
         safety_class = _graph_tool_safety_class(tool_name)
         effect = GraphNodeEffect(
@@ -998,9 +1009,8 @@ class AppRunNodeAdapter:
         dynamic_params = _config_mapping(invocation, field="params", allow_path_only=True)
         merged_params = dict(params)
         merged_params.update(dynamic_params)
-        session_id = (
-            invocation.context.parent_session_id
-            or _default_runtime_session_id(prefix="automation-graph-action", invocation=invocation)
+        session_id = invocation.context.parent_session_id or _default_runtime_session_id(
+            prefix="automation-graph-action", invocation=invocation
         )
         raw_params: dict[str, object] = {
             "app_name": app_name,
@@ -1056,9 +1066,15 @@ def build_default_node_adapter_registry() -> AutomationGraphNodeAdapterRegistry:
     """Build the canonical adapter registry for runtime and validation surfaces."""
 
     registry = AutomationGraphNodeAdapterRegistry()
-    registry.register(node_kind="builtin", node_type="trigger.input", adapter=TriggerInputNodeAdapter())
-    registry.register(node_kind="builtin", node_type="passthrough", adapter=PassthroughNodeAdapter())
-    registry.register(node_kind="builtin", node_type="switch.value", adapter=SwitchValueNodeAdapter())
+    registry.register(
+        node_kind="builtin", node_type="trigger.input", adapter=TriggerInputNodeAdapter()
+    )
+    registry.register(
+        node_kind="builtin", node_type="passthrough", adapter=PassthroughNodeAdapter()
+    )
+    registry.register(
+        node_kind="builtin", node_type="switch.value", adapter=SwitchValueNodeAdapter()
+    )
     registry.register(node_kind="builtin", node_type="error.raise", adapter=ErrorRaiseNodeAdapter())
     registry.register(node_kind="code", node_type="python", adapter=CodePythonNodeAdapter())
     registry.register(node_kind="ai", node_type="prompt", adapter=AiPromptNodeAdapter())
@@ -1372,6 +1388,7 @@ class AutomationGraphExecutor:
     ) -> None:
         data = metadata or {}
         safe_reason = _sanitize_reason_text(reason)
+
         async def _op(repo: AutomationGraphRepository) -> None:
             await repo.update_node_run(
                 run_id=run_id,
@@ -1401,6 +1418,7 @@ class AutomationGraphExecutor:
 
         await self._with_repo(_op)
 
+
 def _normalize_state_inputs(inputs: Mapping[str, list[object]]) -> dict[str, object]:
     normalized: dict[str, object] = {}
     for key, values in inputs.items():
@@ -1417,7 +1435,9 @@ def _compute_final_output(
     outgoing_by_id: Mapping[int, list[AutomationEdge]],
     outputs_by_node_id: Mapping[int, dict[str, object]],
 ) -> dict[str, object] | None:
-    leaf_nodes = [node for node in nodes if not outgoing_by_id[node.id] and node.id in outputs_by_node_id]
+    leaf_nodes = [
+        node for node in nodes if not outgoing_by_id[node.id] and node.id in outputs_by_node_id
+    ]
     if not leaf_nodes:
         return None
     if len(leaf_nodes) == 1:
@@ -1550,9 +1570,7 @@ def _config_optional_datetime(
 
 
 def _default_runtime_session_id(*, prefix: str, invocation: NodeInvocation) -> str:
-    return (
-        f"{prefix}-{invocation.context.automation_id}-{invocation.context.run_id}-{invocation.node.node_key}"
-    )
+    return f"{prefix}-{invocation.context.automation_id}-{invocation.context.run_id}-{invocation.node.node_key}"
 
 
 def _tool_result_to_failure(
@@ -1829,8 +1847,12 @@ async def _communicate_limited(
     process.stdin.write(stdin_bytes)
     await process.stdin.drain()
     process.stdin.close()
-    stdout_task = asyncio.create_task(_read_stream_limited(process.stdout, io_limit, stream_name="stdout"))
-    stderr_task = asyncio.create_task(_read_stream_limited(process.stderr, io_limit, stream_name="stderr"))
+    stdout_task = asyncio.create_task(
+        _read_stream_limited(process.stdout, io_limit, stream_name="stdout")
+    )
+    stderr_task = asyncio.create_task(
+        _read_stream_limited(process.stderr, io_limit, stream_name="stderr")
+    )
     wait_task = asyncio.create_task(process.wait())
     try:
         stdout, stderr, _ = await asyncio.gather(stdout_task, stderr_task, wait_task)
@@ -1950,8 +1972,7 @@ def _blocked_channel_tool_result(
 
 def _sanitize_mapping(value: Mapping[str, object]) -> dict[str, object]:
     return {
-        str(key): sanitize_payload_value(inner, field_name=str(key))
-        for key, inner in value.items()
+        str(key): sanitize_payload_value(inner, field_name=str(key)) for key, inner in value.items()
     }
 
 

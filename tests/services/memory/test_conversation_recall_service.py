@@ -34,14 +34,26 @@ async def _prepare(tmp_path: Path) -> tuple[AsyncEngine, ConversationRecallServi
         chat_sessions = ChatSessionRepository(session)
         await chat_sessions.create("chat:100", "default", title="Allowed Session")
         await chat_sessions.create("chat:200", "default", title="Foreign Session")
-        await chat_sessions.create("profile:default:chat:100", "default", title="Routed Allowed Session")
-        await chat_sessions.create("profile:default:chat:200", "default", title="Routed Foreign Session")
+        await chat_sessions.create(
+            "profile:default:chat:100", "default", title="Routed Allowed Session"
+        )
+        await chat_sessions.create(
+            "profile:default:chat:200", "default", title="Routed Foreign Session"
+        )
         await chat_sessions.create("taskflow:task-1", "default", title="Task Session")
         await chat_sessions.create("taskflow:task-2", "default", title="Task Session 2")
-        await chat_sessions.create("automation-webhook-11-inbound", "default", title="Automation Session")
-        await chat_sessions.create("automation-webhook-11-foreign", "default", title="Automation Session 2")
-        await chat_sessions.create("automation-cron-11-nightly", "default", title="Automation Cron Session")
-        await chat_sessions.create("automation-cron-22-foreign", "default", title="Automation Cron Session 2")
+        await chat_sessions.create(
+            "automation-webhook-11-inbound", "default", title="Automation Session"
+        )
+        await chat_sessions.create(
+            "automation-webhook-11-foreign", "default", title="Automation Session 2"
+        )
+        await chat_sessions.create(
+            "automation-cron-11-nightly", "default", title="Automation Cron Session"
+        )
+        await chat_sessions.create(
+            "automation-cron-22-foreign", "default", title="Automation Cron Session 2"
+        )
         session.add(
             ChatTurn(
                 id=1,

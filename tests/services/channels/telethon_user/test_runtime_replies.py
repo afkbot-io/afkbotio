@@ -153,7 +153,9 @@ async def test_telethon_user_service_filters_reactive_replies_by_chat_name_patte
                 is_group=False,
                 chat_id=43,
                 sender_id=778,
-                sender=SimpleNamespace(first_name="Аркадий", last_name="Нестеров", username="arkady"),
+                sender=SimpleNamespace(
+                    first_name="Аркадий", last_name="Нестеров", username="arkady"
+                ),
                 chat=SimpleNamespace(first_name="Аркадий", last_name="Нестеров", username="arkady"),
                 is_reply=False,
             )
@@ -167,7 +169,9 @@ async def test_telethon_user_service_filters_reactive_replies_by_chat_name_patte
                 is_group=False,
                 chat_id=44,
                 sender_id=779,
-                sender=SimpleNamespace(first_name="Андрей", last_name="Нестеров", username="andrey"),
+                sender=SimpleNamespace(
+                    first_name="Андрей", last_name="Нестеров", username="andrey"
+                ),
                 chat=SimpleNamespace(first_name="Андрей", last_name="Нестеров", username="andrey"),
                 is_reply=False,
             )
@@ -311,7 +315,9 @@ async def test_telethon_user_service_reply_filters_match_private_username_withou
                 is_group=False,
                 chat_id=46,
                 sender_id=781,
-                sender=SimpleNamespace(first_name="Андрей", last_name="Нестеров", username="andrey"),
+                sender=SimpleNamespace(
+                    first_name="Андрей", last_name="Нестеров", username="andrey"
+                ),
                 chat=SimpleNamespace(first_name="Андрей", last_name="Нестеров", username="andrey"),
                 is_reply=False,
             )

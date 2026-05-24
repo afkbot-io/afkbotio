@@ -294,7 +294,7 @@ async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_pa
                 {
                     "kind": "bash",
                     "cmd": (
-                        f"{python_bin} -c \"import pathlib,time; "
+                        f'{python_bin} -c "import pathlib,time; '
                         f"pathlib.Path(r'{first_start_path}').write_text(str(time.monotonic())); "
                         "time.sleep(0.25); print('first')\""
                     ),
@@ -302,7 +302,7 @@ async def test_session_job_run_runs_non_interactive_commands_concurrently(tmp_pa
                 {
                     "kind": "bash",
                     "cmd": (
-                        f"{python_bin} -c \"import pathlib,time; "
+                        f'{python_bin} -c "import pathlib,time; '
                         f"pathlib.Path(r'{second_start_path}').write_text(str(time.monotonic())); "
                         "time.sleep(0.25); print('second')\""
                     ),
@@ -703,9 +703,7 @@ async def test_bash_exec_required_sandbox_fails_closed_without_backend(
 
     monkeypatch.setattr(
         "afkbot.services.tools.shell_sandbox.resolve_trusted_executable",
-        lambda _names, *, candidate_dirs: (_ for _ in ()).throw(
-            TrustedExecutableError("missing")
-        ),
+        lambda _names, *, candidate_dirs: (_ for _ in ()).throw(TrustedExecutableError("missing")),
     )
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'required-sandbox.db'}",
@@ -1591,7 +1589,7 @@ async def test_bash_exec_shell_mode_ignores_user_controlled_shell_and_path(
         tool.parse_params(
             {
                 "profile_key": "default",
-                "cmd": "printf '%s|%s' \"$SHELL\" \"$PATH\"",
+                "cmd": 'printf \'%s|%s\' "$SHELL" "$PATH"',
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,

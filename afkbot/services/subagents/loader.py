@@ -236,7 +236,4 @@ def _format_missing_subagent_error(
     visible_names = ", ".join(available_names[:_NOT_FOUND_HINT_MAX_NAMES])
     remaining = len(available_names) - min(len(available_names), _NOT_FOUND_HINT_MAX_NAMES)
     suffix = f", and {remaining} more" if remaining > 0 else ""
-    return (
-        f"Subagent not found: {requested_label}. "
-        f"Available subagents: {visible_names}{suffix}"
-    )
+    return f"Subagent not found: {requested_label}. Available subagents: {visible_names}{suffix}"

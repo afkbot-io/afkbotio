@@ -117,10 +117,12 @@ class ToolExecutionRuntime:
             trusted_runtime_context=trusted_runtime_context,
         )
         effective_approved_tool_names = filter_generic_approved_tool_names(approved_tool_names)
-        effective_approved_tool_names.update(filter_channel_owned_approved_tool_names(
-            trusted_runtime_context=trusted_runtime_context,
-            approved_tool_names=channel_owned_tool_names,
-        ))
+        effective_approved_tool_names.update(
+            filter_channel_owned_approved_tool_names(
+                trusted_runtime_context=trusted_runtime_context,
+                approved_tool_names=channel_owned_tool_names,
+            )
+        )
         effective_approved_network_hosts = filter_channel_owned_approved_network_hosts(
             trusted_runtime_context=trusted_runtime_context,
             approved_tool_names=channel_owned_tool_names,
@@ -535,8 +537,7 @@ class ToolExecutionRuntime:
                 tuple(
                     str(item.get("subagent_name") or "").strip()
                     for item in jobs
-                    if isinstance(item, dict)
-                    and str(item.get("kind") or "").strip() == "subagent"
+                    if isinstance(item, dict) and str(item.get("kind") or "").strip() == "subagent"
                 )
                 if isinstance(jobs, list)
                 else ("",)

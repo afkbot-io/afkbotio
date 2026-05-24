@@ -25,7 +25,9 @@ from afkbot.settings import Settings
 async def test_session_compaction_refreshes_incrementally(tmp_path: Path) -> None:
     """Compaction should summarize only older turns and append new compactable turns later."""
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_compaction.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_compaction.db'}", root_dir=tmp_path
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -35,10 +37,30 @@ async def test_session_compaction_refreshes_incrementally(tmp_path: Path) -> Non
         await ChatSessionRepository(session).create(session_id="s-1", profile_id="default")
         session.add_all(
             [
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u1", assistant_message="a1"),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u2", assistant_message="a2"),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u3", assistant_message="a3"),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u4", assistant_message="a4"),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u1",
+                    assistant_message="a1",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u2",
+                    assistant_message="a2",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u3",
+                    assistant_message="a3",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u4",
+                    assistant_message="a4",
+                ),
             ]
         )
         await session.flush()
@@ -74,7 +96,11 @@ async def test_session_compaction_refreshes_incrementally(tmp_path: Path) -> Non
         )
         assert [row.id for row in remaining_after_first] == [1, 2, 3, 4]
 
-        session.add(ChatTurn(profile_id="default", session_id="s-1", user_message="u5", assistant_message="a5"))
+        session.add(
+            ChatTurn(
+                profile_id="default", session_id="s-1", user_message="u5", assistant_message="a5"
+            )
+        )
         await session.flush()
 
         second = await service.refresh_if_needed(profile_id="default", session_id="s-1")
@@ -117,23 +143,44 @@ async def test_session_compaction_refreshes_incrementally(tmp_path: Path) -> Non
     await engine.dispose()
 
 
-async def test_session_compaction_uses_llm_merge_when_summary_budget_is_tight(tmp_path: Path) -> None:
+async def test_session_compaction_uses_llm_merge_when_summary_budget_is_tight(
+    tmp_path: Path,
+) -> None:
     """Large persisted summaries should switch to hybrid LLM merge before pruning too aggressively."""
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_compaction_llm.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_compaction_llm.db'}", root_dir=tmp_path
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
-    llm = MockLLMProvider([LLMResponse.final("Goal: keep context compact\nNext: continue with turn three")])
+    llm = MockLLMProvider(
+        [LLMResponse.final("Goal: keep context compact\nNext: continue with turn three")]
+    )
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
         await ChatSessionRepository(session).create(session_id="s-1", profile_id="default")
         session.add_all(
             [
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u1 " * 40, assistant_message="a1 " * 40),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u2 " * 40, assistant_message="a2 " * 40),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u3 " * 40, assistant_message="a3 " * 40),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u1 " * 40,
+                    assistant_message="a1 " * 40,
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u2 " * 40,
+                    assistant_message="a2 " * 40,
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u3 " * 40,
+                    assistant_message="a3 " * 40,
+                ),
             ]
         )
         await session.flush()
@@ -244,7 +291,9 @@ async def test_agent_loop_uses_compacted_summary_in_followup_history(tmp_path: P
 async def test_session_retention_garbage_collects_profile_in_bounded_batch(tmp_path: Path) -> None:
     """Profile GC should prune compacted raw turns across sessions without unbounded deletes."""
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_retention.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'session_retention.db'}", root_dir=tmp_path
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -255,12 +304,42 @@ async def test_session_retention_garbage_collects_profile_in_bounded_batch(tmp_p
             await ChatSessionRepository(session).create(session_id=session_id, profile_id="default")
         session.add_all(
             [
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u1", assistant_message="a1"),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u2", assistant_message="a2"),
-                ChatTurn(profile_id="default", session_id="s-1", user_message="u3", assistant_message="a3"),
-                ChatTurn(profile_id="default", session_id="s-2", user_message="u4", assistant_message="a4"),
-                ChatTurn(profile_id="default", session_id="s-2", user_message="u5", assistant_message="a5"),
-                ChatTurn(profile_id="default", session_id="s-2", user_message="u6", assistant_message="a6"),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u1",
+                    assistant_message="a1",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u2",
+                    assistant_message="a2",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-1",
+                    user_message="u3",
+                    assistant_message="a3",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-2",
+                    user_message="u4",
+                    assistant_message="a4",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-2",
+                    user_message="u5",
+                    assistant_message="a5",
+                ),
+                ChatTurn(
+                    profile_id="default",
+                    session_id="s-2",
+                    user_message="u6",
+                    assistant_message="a6",
+                ),
             ]
         )
         await session.flush()

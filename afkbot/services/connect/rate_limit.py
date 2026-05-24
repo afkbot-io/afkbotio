@@ -84,10 +84,7 @@ async def enforce_connect_rate_limit(
     retry_after_sec = max(retry_after_values)
     raise ConnectServiceError(
         error_code="connect_rate_limited",
-        reason=(
-            f"Too many connect {scope} requests. "
-            f"Retry after {retry_after_sec} seconds."
-        ),
+        reason=(f"Too many connect {scope} requests. Retry after {retry_after_sec} seconds."),
         retry_after_sec=retry_after_sec,
     )
 

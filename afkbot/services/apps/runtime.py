@@ -51,7 +51,9 @@ class AppRuntime:
         if not normalized_app:
             return ToolResult.error(error_code="app_not_supported", reason="app is required")
         if not normalized_action:
-            return ToolResult.error(error_code="app_action_not_supported", reason="action is required")
+            return ToolResult.error(
+                error_code="app_action_not_supported", reason="action is required"
+            )
 
         app_registry = self._app_registry or get_app_registry(
             settings=self._settings,

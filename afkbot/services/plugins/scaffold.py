@@ -99,11 +99,15 @@ def scaffold_plugin(
     if static_web:
         web_root = plugin_root / "web" / "dist"
         web_root.mkdir(parents=True, exist_ok=True)
-        (web_root / "index.html").write_text(_index_html(plugin_id=plugin_id, name=name), encoding="utf-8")
+        (web_root / "index.html").write_text(
+            _index_html(plugin_id=plugin_id, name=name), encoding="utf-8"
+        )
     if skills:
         skills_root = plugin_root / "skills" / plugin_id
         skills_root.mkdir(parents=True, exist_ok=True)
-        (skills_root / "SKILL.md").write_text(_skill_markdown(plugin_id=plugin_id, name=name), encoding="utf-8")
+        (skills_root / "SKILL.md").write_text(
+            _skill_markdown(plugin_id=plugin_id, name=name), encoding="utf-8"
+        )
 
     entrypoint_path = python_package_dir / "plugin.py"
     entrypoint_path.write_text(
@@ -116,7 +120,9 @@ def scaffold_plugin(
         ),
         encoding="utf-8",
     )
-    (plugin_root / "README.md").write_text(_readme(plugin_id=plugin_id, name=name), encoding="utf-8")
+    (plugin_root / "README.md").write_text(
+        _readme(plugin_id=plugin_id, name=name), encoding="utf-8"
+    )
 
     return PluginScaffoldResult(
         plugin_root=plugin_root,
@@ -129,15 +135,15 @@ def _write_router_stub(*, plugin_root: Path, plugin_id: str) -> None:
     router_path = plugin_root / "python" / f"afkbot_plugin_{plugin_id}" / "router.py"
     router_path.write_text(
         f'''"""FastAPI router for the {plugin_id} plugin."""\n\n'''
-        'from __future__ import annotations\n\n'
-        'from fastapi import APIRouter\n\n\n'
-        'def build_router(*, api_prefix: str) -> APIRouter:\n'
+        "from __future__ import annotations\n\n"
+        "from fastapi import APIRouter\n\n\n"
+        "def build_router(*, api_prefix: str) -> APIRouter:\n"
         '    """Build one minimal plugin router."""\n\n'
         '    router = APIRouter(prefix=api_prefix, tags=["plugin"])\n\n'
         '    @router.get("/health")\n'
-        '    async def health() -> dict[str, str]:\n'
+        "    async def health() -> dict[str, str]:\n"
         f'        return {{"status": "ok", "plugin": "{plugin_id}"}}\n\n'
-        '    return router\n',
+        "    return router\n",
         encoding="utf-8",
     )
 

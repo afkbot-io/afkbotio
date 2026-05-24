@@ -52,8 +52,7 @@ class PendingEnvelopeBuilder:
             reason = str(result.reason or metadata.get("approval_reason") or "").strip()
             question_id = f"approval:{uuid4().hex}"
             message = (
-                f"Safety confirmation required ({mode}): {reason} "
-                "Approve execution with yes/no."
+                f"Safety confirmation required ({mode}): {reason} Approve execution with yes/no."
             )
             call_params = self._params_normalizer(call.params)
             call_params.pop(CONFIRM_ACK_PARAM, None)

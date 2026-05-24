@@ -218,9 +218,7 @@ def list_channel_scenarios(*, transport: str) -> tuple[ChannelWizardScenario, ..
 
     normalized = transport.strip().lower()
     return tuple(
-        scenario
-        for scenario in _CHANNEL_SCENARIOS.values()
-        if scenario.transport == normalized
+        scenario for scenario in _CHANNEL_SCENARIOS.values() if scenario.transport == normalized
     )
 
 
@@ -244,46 +242,193 @@ def channel_plan(transport: str) -> WizardPlan:
         _question("channel_id", "base", "text", "Channel id", "Идентификатор канала"),
         _question("profile", "base", "single", "Channel: Profile", "Канал: Профиль"),
         _question("enabled", "base", "confirm", "Enable channel?", "Включить канал?"),
-        _question("channel_tool_profile", "base", "single", "What can the agent do from this channel?", "Что агент может делать из этого канала?"),
-        _question("routing_binding", "routing", "confirm", "Create matching routing binding?", "Создать привязку маршрутизации?"),
-        _question("session_policy", "routing", "single", "How should conversations be grouped?", "Как группировать диалоги", shown_when="routing_binding"),
-        _question("private_access", "access", "single", "Private chat access", "Доступ в личных чатах"),
-        _question("private_allowlist", "access", "text", "Allowed private sender ids", "ID отправителей для личных чатов", shown_when="private_access == allowlist"),
+        _question(
+            "channel_tool_profile",
+            "base",
+            "single",
+            "What can the agent do from this channel?",
+            "Что агент может делать из этого канала?",
+        ),
+        _question(
+            "routing_binding",
+            "routing",
+            "confirm",
+            "Create matching routing binding?",
+            "Создать привязку маршрутизации?",
+        ),
+        _question(
+            "session_policy",
+            "routing",
+            "single",
+            "How should conversations be grouped?",
+            "Как группировать диалоги",
+            shown_when="routing_binding",
+        ),
+        _question(
+            "private_access", "access", "single", "Private chat access", "Доступ в личных чатах"
+        ),
+        _question(
+            "private_allowlist",
+            "access",
+            "text",
+            "Allowed private sender ids",
+            "ID отправителей для личных чатов",
+            shown_when="private_access == allowlist",
+        ),
         _question("group_access", "access", "single", "Group access", "Доступ в группах"),
-        _question("group_allowlist", "access", "text", "Allowed group ids", "ID групп/каналов", shown_when="group_access == allowlist"),
-        _question("group_sender_allowlist", "access", "text", "Allowed group sender ids", "ID отправителей в группах", shown_when="group_access == allowlist"),
-        _question("outbound_send_targets", "access", "text", "Allowed outbound chat/user ids", "Chat/user ID для исходящих сообщений", shown_when="tool_profile_may_send"),
-        _question("ingress_batch", "runtime", "confirm", "Merge message bursts before replying?", "Объединять всплески сообщений перед ответом?"),
-        _question("ingress_debounce", "runtime", "integer", "Quiet window before merge (ms)", "Окно тишины перед объединением (мс)", shown_when="ingress_batch"),
+        _question(
+            "group_allowlist",
+            "access",
+            "text",
+            "Allowed group ids",
+            "ID групп/каналов",
+            shown_when="group_access == allowlist",
+        ),
+        _question(
+            "group_sender_allowlist",
+            "access",
+            "text",
+            "Allowed group sender ids",
+            "ID отправителей в группах",
+            shown_when="group_access == allowlist",
+        ),
+        _question(
+            "outbound_send_targets",
+            "access",
+            "text",
+            "Allowed outbound chat/user ids",
+            "Chat/user ID для исходящих сообщений",
+            shown_when="tool_profile_may_send",
+        ),
+        _question(
+            "ingress_batch",
+            "runtime",
+            "confirm",
+            "Merge message bursts before replying?",
+            "Объединять всплески сообщений перед ответом?",
+        ),
+        _question(
+            "ingress_debounce",
+            "runtime",
+            "integer",
+            "Quiet window before merge (ms)",
+            "Окно тишины перед объединением (мс)",
+            shown_when="ingress_batch",
+        ),
     ]
     if normalized == "telegram":
         questions.extend(
             (
-                _question("telegram_group_trigger", "transport", "single", "Telegram group trigger mode", "Режим триггера для Telegram групп"),
-                _question("telegram_bot_token", "credentials", "secret", "Telegram bot token", "Токен Telegram-бота"),
-                _question("telegram_default_chat_id", "credentials", "secret", "Default Telegram chat id", "Telegram chat id по умолчанию", advanced=True),
+                _question(
+                    "telegram_group_trigger",
+                    "transport",
+                    "single",
+                    "Telegram group trigger mode",
+                    "Режим триггера для Telegram групп",
+                ),
+                _question(
+                    "telegram_bot_token",
+                    "credentials",
+                    "secret",
+                    "Telegram bot token",
+                    "Токен Telegram-бота",
+                ),
+                _question(
+                    "telegram_default_chat_id",
+                    "credentials",
+                    "secret",
+                    "Default Telegram chat id",
+                    "Telegram chat id по умолчанию",
+                    advanced=True,
+                ),
             )
         )
     elif normalized == "telethon":
         questions.extend(
             (
-                _question("telethon_reply_mode", "transport", "single", "Telethon reply mode", "Режим ответов Telethon"),
-                _question("telethon_group_invocation", "transport", "single", "Telethon group invocation mode", "Режим вызова Telethon в группах"),
-                _question("telethon_self_commands", "transport", "confirm", "Process self commands?", "Обрабатывать собственные команды?"),
-                _question("telethon_command_prefix", "transport", "text", "Command prefix", "Префикс команды", shown_when="telethon_self_commands"),
-                _question("telethon_watcher_digest", "transport", "confirm", "Enable watcher digests?", "Включить дайджесты наблюдателя?"),
-                _question("telethon_api_id", "credentials", "secret", "Telethon API id", "Telethon API id"),
-                _question("telethon_api_hash", "credentials", "secret", "Telethon API hash", "Telethon API hash"),
-                _question("telethon_phone", "credentials", "secret", "Telegram phone", "Телефон Telegram"),
+                _question(
+                    "telethon_reply_mode",
+                    "transport",
+                    "single",
+                    "Telethon reply mode",
+                    "Режим ответов Telethon",
+                ),
+                _question(
+                    "telethon_group_invocation",
+                    "transport",
+                    "single",
+                    "Telethon group invocation mode",
+                    "Режим вызова Telethon в группах",
+                ),
+                _question(
+                    "telethon_self_commands",
+                    "transport",
+                    "confirm",
+                    "Process self commands?",
+                    "Обрабатывать собственные команды?",
+                ),
+                _question(
+                    "telethon_command_prefix",
+                    "transport",
+                    "text",
+                    "Command prefix",
+                    "Префикс команды",
+                    shown_when="telethon_self_commands",
+                ),
+                _question(
+                    "telethon_watcher_digest",
+                    "transport",
+                    "confirm",
+                    "Enable watcher digests?",
+                    "Включить дайджесты наблюдателя?",
+                ),
+                _question(
+                    "telethon_api_id", "credentials", "secret", "Telethon API id", "Telethon API id"
+                ),
+                _question(
+                    "telethon_api_hash",
+                    "credentials",
+                    "secret",
+                    "Telethon API hash",
+                    "Telethon API hash",
+                ),
+                _question(
+                    "telethon_phone", "credentials", "secret", "Telegram phone", "Телефон Telegram"
+                ),
             )
         )
     else:
         questions.extend(
             (
-                _question("partyflow_trigger_mode", "transport", "single", "PartyFlow trigger mode", "Режим триггера PartyFlow"),
-                _question("partyflow_trigger_keywords", "transport", "text", "PartyFlow trigger keywords", "Ключевые слова-триггеры PartyFlow", shown_when="partyflow_trigger_mode == keywords"),
-                _question("partyflow_reply_mode", "transport", "single", "PartyFlow reply mode", "Режим ответа PartyFlow"),
-                _question("partyflow_bot_token", "credentials", "secret", "PartyFlow bot token", "Токен бота PartyFlow"),
+                _question(
+                    "partyflow_trigger_mode",
+                    "transport",
+                    "single",
+                    "PartyFlow trigger mode",
+                    "Режим триггера PartyFlow",
+                ),
+                _question(
+                    "partyflow_trigger_keywords",
+                    "transport",
+                    "text",
+                    "PartyFlow trigger keywords",
+                    "Ключевые слова-триггеры PartyFlow",
+                    shown_when="partyflow_trigger_mode == keywords",
+                ),
+                _question(
+                    "partyflow_reply_mode",
+                    "transport",
+                    "single",
+                    "PartyFlow reply mode",
+                    "Режим ответа PartyFlow",
+                ),
+                _question(
+                    "partyflow_bot_token",
+                    "credentials",
+                    "secret",
+                    "PartyFlow bot token",
+                    "Токен бота PartyFlow",
+                ),
             )
         )
     return WizardPlan(

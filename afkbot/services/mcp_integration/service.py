@@ -152,7 +152,9 @@ class MCPProfileService:
         )
         storage_mode = self._safe_storage_mode(normalized_profile_id)
         target_path = self._store.target_path(normalized_profile_id, storage_mode=storage_mode)
-        existing_servers = {item.server for item in self._loader.load_profile(normalized_profile_id)}
+        existing_servers = {
+            item.server for item in self._loader.load_profile(normalized_profile_id)
+        }
         return MCPAddPreview(
             profile_id=normalized_profile_id,
             storage_mode=storage_mode,
@@ -201,7 +203,9 @@ class MCPProfileService:
         storage_mode = self._safe_storage_mode(normalized_profile_id)
 
         async with self._profile_files_lock.acquire(normalized_profile_id):
-            effective_before = {item.server for item in self._loader.load_profile(normalized_profile_id)}
+            effective_before = {
+                item.server for item in self._loader.load_profile(normalized_profile_id)
+            }
             current = self._operator_entries_for_storage(
                 profile_id=normalized_profile_id,
                 storage_mode=storage_mode,

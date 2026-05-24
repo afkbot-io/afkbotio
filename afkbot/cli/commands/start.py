@@ -188,14 +188,14 @@ def run_start_command(
         updated_settings = resolved_settings.model_dump()
         if taskflow_profile is not None:
             try:
-                updated_settings["taskflow_runtime_profile_id"] = validate_profile_id(taskflow_profile)
+                updated_settings["taskflow_runtime_profile_id"] = validate_profile_id(
+                    taskflow_profile
+                )
             except InvalidProfileIdError as exc:
                 raise_usage_error(str(exc))
         if resolved_taskflow_owner_ref is not None:
             updated_settings["taskflow_runtime_owner_ref"] = resolved_taskflow_owner_ref
-        resolved_settings = Settings(
-            **updated_settings
-        )
+        resolved_settings = Settings(**updated_settings)
     resolved_host = host or resolved_settings.runtime_host
     try:
         validate_runtime_exposure(
@@ -228,9 +228,7 @@ def run_start_command(
         upgrade_report = asyncio.run(_inspect_pending_upgrades(resolved_settings))
         if upgrade_report.changed:
             details = "; ".join(
-                f"{step.name}: {step.details}"
-                for step in upgrade_report.steps
-                if step.changed
+                f"{step.name}: {step.details}" for step in upgrade_report.steps if step.changed
             )
             reason = "Pending persisted-state upgrades detected."
             if details:
@@ -300,7 +298,11 @@ def run_start_command(
             component="runtime",
             message="Runtime startup failed",
             exc=exc,
-            context={"host": resolved_host, "runtime_port": resolved_runtime_port, "api_port": resolved_api_port},
+            context={
+                "host": resolved_host,
+                "runtime_port": resolved_runtime_port,
+                "api_port": resolved_api_port,
+            },
         )
         raise_usage_error(f"Runtime startup failed: {exc}")
     except Exception as exc:
@@ -309,7 +311,11 @@ def run_start_command(
             component="runtime",
             message="Unhandled runtime exception",
             exc=exc,
-            context={"host": resolved_host, "runtime_port": resolved_runtime_port, "api_port": resolved_api_port},
+            context={
+                "host": resolved_host,
+                "runtime_port": resolved_runtime_port,
+                "api_port": resolved_api_port,
+            },
         )
         raise
     except KeyboardInterrupt:

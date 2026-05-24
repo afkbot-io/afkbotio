@@ -1,6 +1,5 @@
 """Telegram channel update-command tests."""
 
-
 import asyncio
 from pathlib import Path
 
@@ -188,7 +187,7 @@ def test_channel_telegram_update_binding_replaces_old_account_rules(
         for item in bindings
     ) == [
         ("support-bot", "ops", "new-account", None, None),
-        ("support-bot:dm:12345", "ops", "new-account", "12345", "12345")
+        ("support-bot:dm:12345", "ops", "new-account", "12345", "12345"),
     ]
 
 
@@ -250,6 +249,7 @@ def test_channel_telegram_update_interactive_uses_current_defaults(
     assert "- ingress_batch.enabled: False" in shown
     assert "- reply_humanization.enabled: False" in shown
 
+
 def test_channel_telegram_update_falls_back_when_current_credential_profile_is_missing(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -303,7 +303,9 @@ def test_channel_telegram_update_falls_back_when_current_credential_profile_is_m
             assert endpoint_id == "support-bot"
             return current
 
-        async def update(self, endpoint: TelegramPollingEndpointConfig) -> TelegramPollingEndpointConfig:
+        async def update(
+            self, endpoint: TelegramPollingEndpointConfig
+        ) -> TelegramPollingEndpointConfig:
             saved["endpoint"] = endpoint
             return endpoint
 
@@ -324,6 +326,7 @@ def test_channel_telegram_update_falls_back_when_current_credential_profile_is_m
 
     assert result.exit_code == 0
     assert saved["endpoint"].credential_profile_key == "support-bot"
+
 
 def test_channel_telegram_update_normalizes_scripted_choice_values(
     tmp_path: Path,
@@ -385,6 +388,7 @@ def test_channel_telegram_update_normalizes_scripted_choice_values(
     assert "- group_trigger_mode: reply_only" in shown
     assert "- tool_profile: support_readonly" in shown
 
+
 def test_channel_telegram_update_normalizes_profile_override(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -441,6 +445,7 @@ def test_channel_telegram_update_normalizes_profile_override(
     assert updated.exit_code == 0
     shown = runner.invoke(app, ["channel", "telegram", "show", "support-bot"]).stdout
     assert "- profile: default" in shown
+
 
 def test_channel_telegram_ingress_cli_validation_matches_endpoint_bounds(
     tmp_path: Path,
@@ -519,6 +524,7 @@ def test_channel_telegram_ingress_cli_validation_matches_endpoint_bounds(
     assert update_result.exit_code == 2
     assert "Maximum merged text size (chars) must be >= 256" in update_result.stderr
 
+
 def test_channel_telegram_humanization_update_validates_scripted_values(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -574,6 +580,7 @@ def test_channel_telegram_humanization_update_validates_scripted_values(
 
     assert update_result.exit_code == 2
     assert "Typing speed (chars/sec) must be >= 1" in update_result.stderr
+
 
 def test_channel_telegram_humanization_update_preserves_enabled_state_for_subflags(
     tmp_path: Path,

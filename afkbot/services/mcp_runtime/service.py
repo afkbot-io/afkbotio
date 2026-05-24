@@ -154,10 +154,10 @@ def _serialize_mcp_content(content: object) -> list[dict[str, object]]:
     return serialized
 
 
-def _json_safe_mapping(payload: Mapping[str, object] | Mapping[object, object]) -> dict[str, object]:
-    return {
-        str(key): _to_jsonable(value) for key, value in payload.items()
-    }
+def _json_safe_mapping(
+    payload: Mapping[str, object] | Mapping[object, object],
+) -> dict[str, object]:
+    return {str(key): _to_jsonable(value) for key, value in payload.items()}
 
 
 def _to_jsonable(value: object) -> object:

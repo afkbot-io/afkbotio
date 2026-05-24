@@ -514,7 +514,9 @@ def _uses_file_backed_provider_token(*, llm_provider: str, runtime_secrets: dict
     return source_field is not None and runtime_secrets.get(source_field) == TOKEN_SOURCE_FILE
 
 
-def _apply_provider_token_source_cleanup(*, llm_provider: str, runtime_secrets: dict[str, str]) -> None:
+def _apply_provider_token_source_cleanup(
+    *, llm_provider: str, runtime_secrets: dict[str, str]
+) -> None:
     source_field = provider_token_source_field(llm_provider)
     if source_field is None:
         return

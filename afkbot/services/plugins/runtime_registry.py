@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from afkbot.services.path_scope import resolve_in_scope
-from afkbot.services.plugins.config_store import read_plugin_config, reset_plugin_config, write_plugin_config
+from afkbot.services.plugins.config_store import (
+    read_plugin_config,
+    reset_plugin_config,
+    write_plugin_config,
+)
 from afkbot.services.plugins.contracts import (
     InstalledPluginRecord,
     LoadedPluginRuntime,

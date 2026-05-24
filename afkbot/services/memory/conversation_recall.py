@@ -109,7 +109,9 @@ class ConversationRecallService:
             compacted_until_turn_id = 0
             if compaction and compaction.summary_text.strip():
                 compacted_until_turn_id = int(compaction.compacted_until_turn_id)
-                compaction_score = self._score_text(query=normalized_query, text=compaction.summary_text)
+                compaction_score = self._score_text(
+                    query=normalized_query, text=compaction.summary_text
+                )
                 if compaction_score is not None:
                     candidates.append(
                         (
@@ -124,7 +126,9 @@ class ConversationRecallService:
                             ),
                         )
                     )
-            raw_turns = await turns.list_recent(profile_id=profile_id, session_id=session_id, limit=25)
+            raw_turns = await turns.list_recent(
+                profile_id=profile_id, session_id=session_id, limit=25
+            )
             for turn in raw_turns:
                 if compacted_until_turn_id and int(turn.id) <= compacted_until_turn_id:
                     continue
@@ -202,7 +206,12 @@ class ConversationRecallService:
     async def _with_repos(
         self,
         op: Callable[
-            [AsyncSession, ChatSessionCompactionRepository, ChatTurnRepository, ChatSessionRepository],
+            [
+                AsyncSession,
+                ChatSessionCompactionRepository,
+                ChatTurnRepository,
+                ChatSessionRepository,
+            ],
             Awaitable[TValue],
         ],
     ) -> TValue:
@@ -274,7 +283,9 @@ class ConversationRecallService:
     ) -> ConversationRecallTarget:
         normalized_target = " ".join((target_session_id or "").strip().split()) or actor.session_id
         if normalized_target == actor.session_id:
-            return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=profile_id)
+            return ConversationRecallTarget(
+                session_id=normalized_target, owner_profile_id=profile_id
+            )
         if is_user_facing_transport(actor.transport):
             if not self._is_target_allowed_for_trusted_actor(
                 actor=actor,
@@ -285,7 +296,9 @@ class ConversationRecallService:
                     error_code="memory_cross_scope_forbidden",
                     reason="Actor is not authorized to access recall for the requested session.",
                 )
-            return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=profile_id)
+            return ConversationRecallTarget(
+                session_id=normalized_target, owner_profile_id=profile_id
+            )
         if actor.transport not in _TRUSTED_FOREIGN_RECALL_TRANSPORTS:
             raise ConversationRecallServiceError(
                 error_code="memory_cross_scope_forbidden",
@@ -306,7 +319,9 @@ class ConversationRecallService:
                 error_code="memory_cross_scope_forbidden",
                 reason="Actor is not authorized to access recall for the requested session.",
             )
-        return ConversationRecallTarget(session_id=normalized_target, owner_profile_id=owner_profile_id)
+        return ConversationRecallTarget(
+            session_id=normalized_target, owner_profile_id=owner_profile_id
+        )
 
     async def _lookup_session_owner_profile_id(self, *, session_id: str) -> str | None:
         async def _op(
@@ -337,9 +352,9 @@ class ConversationRecallService:
             account_id = actor.account_id
             if not account_id:
                 return False
-            return session_id.startswith(f"automation-webhook-{account_id}-") or session_id.startswith(
-                f"automation-cron-{account_id}-"
-            )
+            return session_id.startswith(
+                f"automation-webhook-{account_id}-"
+            ) or session_id.startswith(f"automation-cron-{account_id}-")
         if transport == "cli":
             return True
         if not is_user_facing_transport(transport):
@@ -375,10 +390,14 @@ class ConversationRecallService:
 
         scope_components = ("thread", "user")
         actor_scope_keys = {
-            component for component in scope_components if actor_components.get(component) is not None
+            component
+            for component in scope_components
+            if actor_components.get(component) is not None
         }
         target_scope_keys = {
-            component for component in scope_components if target_components.get(component) is not None
+            component
+            for component in scope_components
+            if target_components.get(component) is not None
         }
         if actor_scope_keys != target_scope_keys:
             return False
@@ -398,7 +417,9 @@ class ConversationRecallService:
         if not normalized_session:
             return None
 
-        scoped_prefix = compose_bounded_session_id("profile", encode_session_component(profile_id)) + ":"
+        scoped_prefix = (
+            compose_bounded_session_id("profile", encode_session_component(profile_id)) + ":"
+        )
         if normalized_session.startswith(scoped_prefix):
             normalized_session = normalized_session[len(scoped_prefix) :]
 

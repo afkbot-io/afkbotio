@@ -18,7 +18,11 @@ from afkbot.services.skills.marketplace_service import (
     get_skill_marketplace_service,
     reset_skill_marketplace_services,
 )
-from afkbot.services.skills.doctor import SkillDoctorRecord, SkillDoctorService, get_skill_doctor_service
+from afkbot.services.skills.doctor import (
+    SkillDoctorRecord,
+    SkillDoctorService,
+    get_skill_doctor_service,
+)
 from afkbot.services.skills.skills import SkillInfo, SkillLoader, SkillManifest
 
 __all__ = [

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from afkbot.services.policy.presets_catalog import get_preset, list_capability_specs, list_preset_levels
+from afkbot.services.policy.presets_catalog import (
+    get_preset,
+    list_capability_specs,
+    list_preset_levels,
+)
 from afkbot.services.policy.presets_contracts import (
     PolicySelection,
     PolicyCapabilityId,
@@ -78,12 +82,16 @@ def resolve_policy(
 
     preset = get_preset(selection.preset)
     capability_ids = selection.capabilities
-    selected_specs = {item.id: item for item in list_capability_specs() if item.id in capability_ids}
+    selected_specs = {
+        item.id: item for item in list_capability_specs() if item.id in capability_ids
+    }
 
     allowed: list[str] = []
     for tool_name in sorted(set(available_tool_names)):
         for spec in selected_specs.values():
-            if _matches_capability(tool_name=tool_name, tool_names=spec.tool_names, prefixes=spec.tool_prefixes):
+            if _matches_capability(
+                tool_name=tool_name, tool_names=spec.tool_names, prefixes=spec.tool_prefixes
+            ):
                 allowed.append(tool_name)
                 break
     if PolicyCapabilityId.MCP in capability_ids:
@@ -99,7 +107,9 @@ def resolve_policy(
     )
 
 
-def _matches_capability(*, tool_name: str, tool_names: tuple[str, ...], prefixes: tuple[str, ...]) -> bool:
+def _matches_capability(
+    *, tool_name: str, tool_names: tuple[str, ...], prefixes: tuple[str, ...]
+) -> bool:
     if tool_name in tool_names:
         return True
     return any(tool_name.startswith(prefix) for prefix in prefixes)

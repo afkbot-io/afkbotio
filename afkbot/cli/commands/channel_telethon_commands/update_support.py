@@ -256,7 +256,9 @@ def update_telethon_channel(
             )
         )
         if interactive
-        else normalize_telethon_group_invocation_mode(group_invocation_mode or current.group_invocation_mode)
+        else normalize_telethon_group_invocation_mode(
+            group_invocation_mode or current.group_invocation_mode
+        )
     )
     resolved_process_self_commands = (
         resolve_channel_bool(
@@ -270,7 +272,11 @@ def update_telethon_channel(
             detail_ru="Включайте только если ваши собственные сообщения в Telegram должны управлять userbot.",
         )
         if interactive
-        else (current.process_self_commands if process_self_commands is None else process_self_commands)
+        else (
+            current.process_self_commands
+            if process_self_commands is None
+            else process_self_commands
+        )
     )
     resolved_command_prefix = (
         resolve_channel_text(
@@ -302,7 +308,11 @@ def update_telethon_channel(
             ),
         )
         if interactive
-        else (current.ingress_batch.enabled if ingress_batch_enabled is None else ingress_batch_enabled)
+        else (
+            current.ingress_batch.enabled
+            if ingress_batch_enabled is None
+            else ingress_batch_enabled
+        )
     )
     resolved_ingress_batch = merge_ingress_batch_config(
         current=current.ingress_batch,
@@ -488,7 +498,11 @@ def update_telethon_channel(
             detail_ru="Отправлять отметку о прочтении перед ответом.",
         )
         if interactive
-        else (current.mark_read_before_reply if mark_read_before_reply is None else mark_read_before_reply)
+        else (
+            current.mark_read_before_reply
+            if mark_read_before_reply is None
+            else mark_read_before_reply
+        )
     )
     resolved_watcher_enabled = (
         resolve_channel_bool(
@@ -632,10 +646,14 @@ def update_telethon_channel(
             else None
         ),
         blocked_chat_patterns=(
-            None if watcher_blocked_chat_patterns is None else split_csv_patterns(watcher_blocked_chat_patterns)
+            None
+            if watcher_blocked_chat_patterns is None
+            else split_csv_patterns(watcher_blocked_chat_patterns)
         ),
         allowed_chat_patterns=(
-            None if watcher_allowed_chat_patterns is None else split_csv_patterns(watcher_allowed_chat_patterns)
+            None
+            if watcher_allowed_chat_patterns is None
+            else split_csv_patterns(watcher_allowed_chat_patterns)
         ),
         delivery_transport=watcher_delivery_transport,
         delivery_account_id=watcher_delivery_account_id,

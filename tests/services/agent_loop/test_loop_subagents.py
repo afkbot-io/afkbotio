@@ -58,7 +58,9 @@ async def test_subagent_run_returns_accepted_payload_without_internal_wait_chain
             raise AssertionError("internal subagent.wait/result chain must not run")
 
         monkeypatch.setattr(loop._tool_execution, "execute_tool_call", _fake_execute_tool_call)  # noqa: SLF001
-        monkeypatch.setattr(loop._tool_execution, "_execute_internal_tool_with_logging", _unexpected_internal)  # noqa: SLF001
+        monkeypatch.setattr(
+            loop._tool_execution, "_execute_internal_tool_with_logging", _unexpected_internal
+        )  # noqa: SLF001
 
         result = await loop._tool_execution._execute_prepared_tool_call(  # noqa: SLF001
             _PreparedToolExecution(

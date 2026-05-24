@@ -363,7 +363,7 @@ def test_credentials_default_output_is_human_readable(
     )
     assert create_result.exit_code == 0
     assert "Credential saved:" in create_result.stdout
-    assert "\"ok\"" not in create_result.stdout
+    assert '"ok"' not in create_result.stdout
 
     list_result = runner.invoke(
         app,

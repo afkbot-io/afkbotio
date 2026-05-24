@@ -64,5 +64,7 @@ class PendingResumeEnvelopeRepository:
         )
         normalized_secure_field = (secure_field or "").strip()
         if normalized_secure_field:
-            statement = statement.where(PendingResumeEnvelope.secure_field == normalized_secure_field)
+            statement = statement.where(
+                PendingResumeEnvelope.secure_field == normalized_secure_field
+            )
         return (await self._session.execute(statement)).scalar_one_or_none()

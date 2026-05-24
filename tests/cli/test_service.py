@@ -81,7 +81,9 @@ def test_service_port_command_reports_restored_bind_after_reload_failure(
     monkeypatch.setattr("afkbot.cli.commands.service.setup_is_complete", lambda settings: True)
     results = iter(
         [
-            SimpleNamespace(status="failed", kind="systemd-user", reason="daemon did not become healthy"),
+            SimpleNamespace(
+                status="failed", kind="systemd-user", reason="daemon did not become healthy"
+            ),
             SimpleNamespace(status="installed", kind="systemd-user"),
         ]
     )
@@ -96,8 +98,13 @@ def test_service_port_command_reports_restored_bind_after_reload_failure(
     assert result.exit_code == 1
     config = read_runtime_config(get_settings())
     assert config == {}
-    assert "runtime bind restored: host=127.0.0.1, runtime_port=46339, api_port=46340" in result.stdout
-    assert "runtime bind saved: host=127.0.0.1, runtime_port=19000, api_port=19001" not in result.stdout
+    assert (
+        "runtime bind restored: host=127.0.0.1, runtime_port=46339, api_port=46340" in result.stdout
+    )
+    assert (
+        "runtime bind saved: host=127.0.0.1, runtime_port=19000, api_port=19001"
+        not in result.stdout
+    )
     get_settings.cache_clear()
 
 
@@ -240,6 +247,7 @@ def test_service_port_command_allows_host_then_port_switch_when_wildcard_pair_is
     assert config["runtime_host"] == "0.0.0.0"
     assert config["runtime_port"] == new_runtime_port
     get_settings.cache_clear()
+
 
 def test_service_start_command_exits_zero_when_daemon_was_started(
     tmp_path,

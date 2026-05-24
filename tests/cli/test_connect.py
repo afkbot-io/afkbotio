@@ -182,7 +182,9 @@ def test_connect_rejects_invalid_profile_id(monkeypatch: MonkeyPatch, tmp_path: 
     assert "Invalid profile id: Default" in result.stderr
 
 
-def test_connect_prefers_saved_public_chat_api_url(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_connect_prefers_saved_public_chat_api_url(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     """Saved public chat/api URL should override runtime host fallback when --host is omitted."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -425,7 +427,9 @@ def test_connect_can_generate_claim_pin(monkeypatch: MonkeyPatch, tmp_path: Path
     assert captured["claim_pin"] == "246810"
 
 
-def test_connect_rejects_conflicting_claim_pin_flags(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_connect_rejects_conflicting_claim_pin_flags(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     """CLI should reject mutually exclusive explicit and generated claim PIN options."""
 
     _prepare_env(tmp_path, monkeypatch)

@@ -87,7 +87,9 @@ def canonicalize_skill_markdown(*, name: str, content: str) -> str:
     if not description:
         description = _normalize_line(_string_value(metadata.get("summary", "")))
     if not description:
-        description = _extract_legacy_summary(body if raw_frontmatter_lines is not None else content)
+        description = _extract_legacy_summary(
+            body if raw_frontmatter_lines is not None else content
+        )
     if not description:
         description = f"Use this skill when the task explicitly requires `{name}`."
 
@@ -105,7 +107,10 @@ def canonicalize_skill_markdown(*, name: str, content: str) -> str:
     elif not _starts_with_heading(normalized_body):
         normalized_body = f"# {name}\n\n{normalized_body}"
 
-    frontmatter_lines = [f"name: {name}", f"description: {json.dumps(description, ensure_ascii=False)}"]
+    frontmatter_lines = [
+        f"name: {name}",
+        f"description: {json.dumps(description, ensure_ascii=False)}",
+    ]
     for raw in extra_lines:
         frontmatter_lines.append(raw)
 
@@ -164,11 +169,7 @@ def _parse_inline_value(value: str) -> FrontmatterValue:
         inner = normalized[1:-1].strip()
         if not inner:
             return []
-        return [
-            _strip_wrapping_quotes(item.strip())
-            for item in inner.split(",")
-            if item.strip()
-        ]
+        return [_strip_wrapping_quotes(item.strip()) for item in inner.split(",") if item.strip()]
     return _strip_wrapping_quotes(normalized)
 
 

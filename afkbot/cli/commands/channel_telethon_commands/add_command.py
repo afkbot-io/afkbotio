@@ -41,7 +41,9 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
             "--account-id",
             help="Logical account id used by bindings and routing telemetry. Defaults to the channel id.",
         ),
-        enabled: bool | None = typer.Option(None, "--enabled/--disabled", help="Enable or disable this endpoint."),
+        enabled: bool | None = typer.Option(
+            None, "--enabled/--disabled", help="Enable or disable this endpoint."
+        ),
         reply_mode: str | None = typer.Option(
             None,
             "--reply-mode",
@@ -255,7 +257,9 @@ def register_telethon_add_command(telethon_app: typer.Typer) -> None:
             "--prompt-overlay",
             help="Optional routing prompt overlay applied through the matching binding.",
         ),
-        priority: int = typer.Option(0, "--priority", help="Binding priority when --binding is enabled."),
+        priority: int = typer.Option(
+            0, "--priority", help="Binding priority when --binding is enabled."
+        ),
         yes: bool = typer.Option(
             False,
             "--yes",

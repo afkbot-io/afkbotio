@@ -32,10 +32,7 @@ def _write_demo_plugin(root: Path) -> None:
                 "afkbot_version": "*",
                 "kind": "embedded",
                 "entrypoint": "afkbot_plugin_demo.plugin:register",
-                "default_config": {
-                    "poll_interval_sec": 5,
-                    "theme": "neon"
-                },
+                "default_config": {"poll_interval_sec": 5, "theme": "neon"},
                 "config_schema": {
                     "fields": {
                         "poll_interval_sec": {
@@ -132,7 +129,9 @@ def register(registry: PluginRuntimeRegistry) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (root / "web/dist/index.html").write_text("<html><body>demo plugin</body></html>\n", encoding="utf-8")
+    (root / "web/dist/index.html").write_text(
+        "<html><body>demo plugin</body></html>\n", encoding="utf-8"
+    )
     (root / "skills/demo-plugin/SKILL.md").write_text(
         "---\nname: demo-plugin\ndescription: Demo plugin skill.\n---\n# Demo\n",
         encoding="utf-8",
@@ -244,7 +243,9 @@ def test_plugin_service_update_reinstalls_from_saved_source(tmp_path: Path) -> N
     installed_index = install_root / "web/dist/index.html"
     assert "demo plugin" in installed_index.read_text(encoding="utf-8")
 
-    (source_root / "web/dist/index.html").write_text("<html><body>demo plugin updated</body></html>\n", encoding="utf-8")
+    (source_root / "web/dist/index.html").write_text(
+        "<html><body>demo plugin updated</body></html>\n", encoding="utf-8"
+    )
 
     updated = service.update(plugin_id="demo", enable=False)
 
@@ -253,7 +254,9 @@ def test_plugin_service_update_reinstalls_from_saved_source(tmp_path: Path) -> N
     assert "demo plugin updated" in installed_index.read_text(encoding="utf-8")
 
 
-def test_plugin_service_concurrent_runtime_loads_do_not_break_package_import(tmp_path: Path) -> None:
+def test_plugin_service_concurrent_runtime_loads_do_not_break_package_import(
+    tmp_path: Path,
+) -> None:
     """Concurrent runtime loads should not reset one plugin package out from under another import."""
 
     source_root = tmp_path / "demo-plugin-src"
@@ -265,7 +268,9 @@ def test_plugin_service_concurrent_runtime_loads_do_not_break_package_import(tmp
     manifest["entrypoint"] = "afkbot_plugin_race.plugin:register"
     manifest["mounts"]["api_prefix"] = "/v1/plugins/race"
     manifest["mounts"]["web_prefix"] = "/plugins/race"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+    )
 
     package_root = source_root / "python"
     (package_root / "afkbot_plugin_demo").rename(package_root / "afkbot_plugin_race")

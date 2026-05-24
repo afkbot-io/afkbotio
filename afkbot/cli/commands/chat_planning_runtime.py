@@ -114,13 +114,17 @@ def build_repl_planning_callbacks(
     elif planning_mode == "on":
         confirm_plan_execution = accept_plan_automatically
         if interactive_confirm:
-            def _present_plan(plan_result: TurnResult, plan_snapshot: ChatPlanSnapshot | None) -> None:
+
+            def _present_plan(
+                plan_result: TurnResult, plan_snapshot: ChatPlanSnapshot | None
+            ) -> None:
                 print_intermediate(
                     render_captured_plan(
                         plan_result=plan_result,
                         plan_snapshot=plan_snapshot,
                     )
                 )
+
             present_plan = _present_plan
 
     return ChatReplPlanningCallbacks(

@@ -38,7 +38,7 @@ async def test_skills_loader_prefers_frontmatter_description_for_summary(tmp_pat
     write_skill(
         tmp_path,
         "afkbot/skills/described",
-        "---\nname: described\ndescription: \"Use this exact description for routing.\"\n---\n# Wrong heading\nBody text.",
+        '---\nname: described\ndescription: "Use this exact description for routing."\n---\n# Wrong heading\nBody text.',
     )
     loader = build_loader(tmp_path)
 
@@ -183,7 +183,9 @@ async def test_skills_loader_uses_core_mandatory_security_when_profile_override_
     assert await loader.load_skill("security-secrets", "p1") == "# core security"
 
 
-async def test_skills_loader_profile_listing_keeps_profile_security_override(tmp_path: Path) -> None:
+async def test_skills_loader_profile_listing_keeps_profile_security_override(
+    tmp_path: Path,
+) -> None:
     """list_profile_skills should keep profile-origin security-secrets entry."""
 
     # Arrange
@@ -230,12 +232,12 @@ async def test_skills_loader_invalidates_process_cache_after_skill_update(tmp_pa
     write_skill(
         tmp_path,
         "afkbot/skills/security-secrets",
-        "---\nname: security-secrets\ndescription: \"Keep secrets safe.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Keep secrets safe."\n---\n# security',
     )
     described_dir = write_skill(
         tmp_path,
         "afkbot/skills/described",
-        "---\nname: described\ndescription: \"First summary.\"\n---\n# described",
+        '---\nname: described\ndescription: "First summary."\n---\n# described',
     )
     loader = build_loader(tmp_path)
 
@@ -244,7 +246,7 @@ async def test_skills_loader_invalidates_process_cache_after_skill_update(tmp_pa
 
     time.sleep(0.01)
     (described_dir / "SKILL.md").write_text(
-        "---\nname: described\ndescription: \"Updated summary.\"\n---\n# described",
+        '---\nname: described\ndescription: "Updated summary."\n---\n# described',
         encoding="utf-8",
     )
 

@@ -46,7 +46,9 @@ def build_profile_defaults(defaults: dict[str, str]) -> dict[str, str]:
     return resolved
 
 
-def build_policy_defaults_from_details(*, root_dir: Path, details: ProfileDetails) -> dict[str, str]:
+def build_policy_defaults_from_details(
+    *, root_dir: Path, details: ProfileDetails
+) -> dict[str, str]:
     """Build policy-default map from one persisted profile for interactive update."""
 
     policy_setup_mode = (
@@ -98,10 +100,9 @@ def build_policy_defaults_from_details(*, root_dir: Path, details: ProfileDetail
             "AFKBOT_WIZARD_NETWORK_ALLOWLIST": ",".join(runtime.wizard_network_allowlist or ()),
         }
     )
-    if (
-        policy_setup_mode == PolicySetupMode.RECOMMENDED.value
-        and defaults["AFKBOT_WIZARD_SETUP_DEPTH"] in {"", "legacy"}
-    ):
+    if policy_setup_mode == PolicySetupMode.RECOMMENDED.value and defaults[
+        "AFKBOT_WIZARD_SETUP_DEPTH"
+    ] in {"", "legacy"}:
         defaults["AFKBOT_WIZARD_SETUP_DEPTH"] = "quick"
         defaults["AFKBOT_WIZARD_WORK_CONTEXTS"] = "channels"
         defaults["AFKBOT_WIZARD_ACTIONS"] = "reply,channel_history,taskflow,memory"

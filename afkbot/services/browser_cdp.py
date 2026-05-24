@@ -72,16 +72,12 @@ def _compose_shorthand_url(
     cleaned_host = host.strip()
     cleaned_port = port.strip()
     if not cleaned_host or not cleaned_port.isdigit():
-        raise ValueError(
-            "Browser CDP URL shorthand must include a hostname and numeric port."
-        )
+        raise ValueError("Browser CDP URL shorthand must include a hostname and numeric port.")
     if username is None and password is None:
         return f"http://{cleaned_host}:{cleaned_port}"
     cleaned_username = (username or "").strip()
     cleaned_password = (password or "").strip()
     if not cleaned_username or not cleaned_password:
-        raise ValueError(
-            "Browser CDP URL shorthand auth must be host:port:user:pass."
-        )
+        raise ValueError("Browser CDP URL shorthand auth must be host:port:user:pass.")
     auth = f"{quote(cleaned_username, safe='')}:{quote(cleaned_password, safe='')}"
     return f"http://{auth}@{cleaned_host}:{cleaned_port}"

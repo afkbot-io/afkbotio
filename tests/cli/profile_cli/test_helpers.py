@@ -53,7 +53,9 @@ def _profile_details(
     )
 
 
-def test_resolve_current_runtime_config_preserves_scoped_memory_fields_from_effective_runtime() -> None:
+def test_resolve_current_runtime_config_preserves_scoped_memory_fields_from_effective_runtime() -> (
+    None
+):
     """Fallback runtime reconstruction should keep scoped-memory fields on legacy profiles."""
 
     # Arrange
@@ -161,14 +163,14 @@ def test_build_policy_defaults_from_details_recognizes_recommended_setup_shape(
         bootstrap_dir="profiles/default/bootstrap",
         skills_dir="profiles/default/skills",
         subagents_dir="profiles/default/subagents",
-            policy=ProfilePolicyView(
-                enabled=True,
-                preset="medium",
-                capabilities=recommended_policy_capabilities(),
-                file_access_mode="none",
-                allowed_directories=(str(profile_root.resolve(strict=False)),),
-                network_allowlist=(),
-            ),
+        policy=ProfilePolicyView(
+            enabled=True,
+            preset="medium",
+            capabilities=recommended_policy_capabilities(),
+            file_access_mode="none",
+            allowed_directories=(str(profile_root.resolve(strict=False)),),
+            network_allowlist=(),
+        ),
     )
 
     # Act

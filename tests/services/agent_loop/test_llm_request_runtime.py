@@ -205,7 +205,10 @@ async def test_llm_request_runtime_logs_reason_and_detail_for_final_error_respon
     ]
     done_payload = events[-1]["payload"]
     assert isinstance(done_payload, dict)
-    assert done_payload["reason"] == "LLM provider is temporarily unavailable. Please try again shortly."
+    assert (
+        done_payload["reason"]
+        == "LLM provider is temporarily unavailable. Please try again shortly."
+    )
     assert done_payload["error_detail"] == "HTTP 503"
 
 
@@ -246,7 +249,9 @@ async def test_llm_request_runtime_throttles_repeated_tick_events(
 ) -> None:
     """Long-running calls should not emit every internal tick to the runlog."""
 
-    monkeypatch.setattr("afkbot.services.agent_loop.llm_request_runtime._LLM_PROGRESS_TICK_SEC", 0.01)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.llm_request_runtime._LLM_PROGRESS_TICK_SEC", 0.01
+    )
     monkeypatch.setattr(
         "afkbot.services.agent_loop.llm_request_runtime._LLM_PROGRESS_LOG_MIN_INTERVAL_SEC",
         0.05,

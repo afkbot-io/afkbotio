@@ -41,7 +41,7 @@ def render_chat_plan(
         )
     body = "\n".join(f"  {line}" for line in lines)
     if include_header:
-        body = ((_PLAN_HEADER if use_ansi else "AFK Plan") + "\n" + body)
+        body = (_PLAN_HEADER if use_ansi else "AFK Plan") + "\n" + body
     if leading_blank_line:
         return "\n" + body
     return body

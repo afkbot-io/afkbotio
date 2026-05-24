@@ -127,7 +127,10 @@ def _policy_supports_memory(*, policy: ProfilePolicyView) -> bool:
 def _policy_supports_readonly_files(*, policy: ProfilePolicyView) -> bool:
     if not policy.enabled:
         return True
-    return "files" in set(policy.capabilities) and policy.file_access_mode in {"read_only", "read_write"}
+    return "files" in set(policy.capabilities) and policy.file_access_mode in {
+        "read_only",
+        "read_write",
+    }
 
 
 def _policy_supports_taskflow(*, policy: ProfilePolicyView) -> bool:

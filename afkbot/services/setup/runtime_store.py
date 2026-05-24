@@ -44,7 +44,11 @@ def read_runtime_secrets(settings: Settings) -> dict[str, str]:
 
     encryption = str(payload.get("encryption") or "").strip().lower()
     ciphertext = payload.get("ciphertext")
-    if encryption != _SECRETS_ENCRYPTION_SCHEME or not isinstance(ciphertext, str) or not ciphertext:
+    if (
+        encryption != _SECRETS_ENCRYPTION_SCHEME
+        or not isinstance(ciphertext, str)
+        or not ciphertext
+    ):
         return {}
 
     key = _resolve_runtime_secrets_key(settings=settings, create_if_missing=False)
@@ -150,4 +154,3 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     return payload
-

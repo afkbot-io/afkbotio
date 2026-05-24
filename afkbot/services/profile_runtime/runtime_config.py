@@ -121,7 +121,9 @@ class ProfileRuntimeConfigService:
             self.ensure_layout(profile_id)
         settings = base_settings or self._settings
         config = self.load(profile_id)
-        effective_settings = settings if config is None else self.apply_to_settings(settings=settings, config=config)
+        effective_settings = (
+            settings if config is None else self.apply_to_settings(settings=settings, config=config)
+        )
         secrets = self._runtime_secrets.load(profile_id)
         if not secrets:
             return effective_settings
@@ -195,7 +197,9 @@ class ProfileRuntimeConfigService:
             session_compaction_keep_recent_turns=settings.session_compaction_keep_recent_turns,
             session_compaction_max_chars=settings.session_compaction_max_chars,
             session_compaction_prune_raw_turns=settings.session_compaction_prune_raw_turns,
-            provider_api_key_configured=bool(resolve_api_key(settings=settings, provider_id=provider_id)),
+            provider_api_key_configured=bool(
+                resolve_api_key(settings=settings, provider_id=provider_id)
+            ),
             brave_api_key_configured=bool((settings.brave_api_key or "").strip()),
         )
 
@@ -216,7 +220,6 @@ class ProfileRuntimeConfigService:
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid JSON object in {path}")
         return payload
-
 
 
 def get_profile_runtime_config_service(settings: Settings) -> ProfileRuntimeConfigService:

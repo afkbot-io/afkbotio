@@ -17,8 +17,7 @@ async def test_live_integration_matrix_probe() -> None:
     settings = get_settings()
     profile_id = os.getenv("AFKBOT_LIVE_PROFILE_ID", "default").strip() or "default"
     credential_profile_key = (
-        os.getenv("AFKBOT_LIVE_CREDENTIAL_PROFILE", "default").strip()
-        or "default"
+        os.getenv("AFKBOT_LIVE_CREDENTIAL_PROFILE", "default").strip() or "default"
     )
     report = await run_integration_matrix(
         settings,

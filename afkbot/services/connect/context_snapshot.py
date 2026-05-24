@@ -112,7 +112,11 @@ def merge_client_metadata(
     if not client_payload:
         return snapshot
 
-    runtime_metadata = {} if snapshot is None or snapshot.runtime_metadata is None else dict(snapshot.runtime_metadata)
+    runtime_metadata = (
+        {}
+        if snapshot is None or snapshot.runtime_metadata is None
+        else dict(snapshot.runtime_metadata)
+    )
     existing_client = runtime_metadata.get("client")
     if isinstance(existing_client, dict):
         merged_client = {str(key): value for key, value in existing_client.items()}

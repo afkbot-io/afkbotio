@@ -7,7 +7,9 @@ import pytest
 from afkbot.services.channel_routing.service import reset_channel_binding_services_async
 from afkbot.services.channels.endpoint_service import reset_channel_endpoint_services_async
 from afkbot.services.channels.ingress_journal import reset_channel_ingress_journal_services_async
-from afkbot.services.channels.ingress_persistence import reset_channel_ingress_pending_services_async
+from afkbot.services.channels.ingress_persistence import (
+    reset_channel_ingress_pending_services_async,
+)
 from afkbot.services.channels.runtime_lease_registry import reset_channel_runtime_lease_registries
 from afkbot.services.channels.sender_registry import reset_channel_sender_registries
 from afkbot.services.profile_runtime.service import reset_profile_services_async

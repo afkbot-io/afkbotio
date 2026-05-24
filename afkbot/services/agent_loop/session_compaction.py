@@ -119,7 +119,8 @@ class SessionCompactionService:
             session_id=session_id,
             summary_text=summary_build.summary_text,
             compacted_until_turn_id=new_turns[-1].id,
-            source_turn_count=(0 if snapshot is None else snapshot.source_turn_count) + len(new_turns),
+            source_turn_count=(0 if snapshot is None else snapshot.source_turn_count)
+            + len(new_turns),
             strategy=summary_build.strategy or _COMPACTION_STRATEGY,
         )
         return SessionCompactionResult(

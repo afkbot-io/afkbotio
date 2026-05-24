@@ -62,7 +62,9 @@ async def test_telegram_polling_processes_private_message_and_replies(tmp_path: 
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -147,7 +149,9 @@ async def test_telegram_polling_downloads_media_before_agent_turn(tmp_path: Path
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=FakeDeliveryService(),  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -194,7 +198,9 @@ async def test_telegram_polling_acknowledges_callback_queries(tmp_path: Path) ->
                         "chat": {"id": 42, "type": "private"},
                         "text": "Approve?",
                         "reply_markup": {
-                            "inline_keyboard": [[{"text": "Approve", "callback_data": "approve:42"}]]
+                            "inline_keyboard": [
+                                [{"text": "Approve", "callback_data": "approve:42"}]
+                            ]
                         },
                     },
                 },
@@ -215,7 +221,9 @@ async def test_telegram_polling_acknowledges_callback_queries(tmp_path: Path) ->
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=FakeDeliveryService(),  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -226,7 +234,9 @@ async def test_telegram_polling_acknowledges_callback_queries(tmp_path: Path) ->
     assert processed == 1
     assert len(captured) == 1
     assert "Telegram button pressed:" in str(captured[0]["message"])
-    callback_call = next(call for call in app_runtime.calls if call["action"] == "answer_callback_query")
+    callback_call = next(
+        call for call in app_runtime.calls if call["action"] == "answer_callback_query"
+    )
     assert callback_call["params"] == {"callback_query_id": "callback-1"}
 
 
@@ -270,7 +280,9 @@ async def test_telegram_polling_suppresses_llm_error_replies(tmp_path: Path) -> 
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -328,7 +340,9 @@ async def test_telegram_polling_emits_typing_action_before_reply_when_humanizati
                 chars_per_second=120,
             )
         ),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -339,7 +353,9 @@ async def test_telegram_polling_emits_typing_action_before_reply_when_humanizati
 
     # Assert
     assert processed == 1
-    chat_action_call = next(call for call in app_runtime.calls if call["action"] == "send_chat_action")
+    chat_action_call = next(
+        call for call in app_runtime.calls if call["action"] == "send_chat_action"
+    )
     assert chat_action_call["params"] == {
         "chat_id": "42",
         "action": "typing",
@@ -391,7 +407,9 @@ async def test_telegram_polling_ignores_typing_timeout_and_still_delivers_reply(
                 chars_per_second=120,
             )
         ),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -447,7 +465,9 @@ async def test_telegram_polling_retries_delivery_timeout_in_process(tmp_path: Pa
                 cooldown_sec=0,
             )
         ),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,
@@ -499,7 +519,9 @@ async def test_telegram_polling_does_not_send_non_finalize_envelopes(tmp_path: P
     service = TelegramPollingService(
         settings,
         endpoint=endpoint(),
-        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main"),
+        state_path=get_channel_endpoint_service(settings).telegram_polling_state_path(
+            endpoint_id="telegram-main"
+        ),
         app_runtime=app_runtime,
         channel_delivery_service=delivery,  # type: ignore[arg-type]
         run_chat_turn_fn=_fake_run_chat_turn,

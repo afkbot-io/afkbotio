@@ -82,7 +82,9 @@ async def test_secure_flow_resumes_with_planned_tool_call(monkeypatch: MonkeyPat
     ) -> tuple[bool, str]:
         return True, "ok"
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret"
+    )
 
     result = await run_turn_with_secure_resolution(
         message="send telegram",
@@ -145,7 +147,9 @@ async def test_secure_flow_preserves_secret_whitespace(monkeypatch: MonkeyPatch)
         submitted["value"] = secret_value
         return True, "ok"
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "  value  ")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "  value  "
+    )
 
     result = await run_turn_with_secure_resolution(
         message="save secret",
@@ -504,7 +508,9 @@ async def test_secure_flow_blocks_when_submit_returns_error(monkeypatch: MonkeyP
     ) -> tuple[bool, str]:
         return False, "secure_request_invalid_or_expired"
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret"
+    )
 
     result = await run_turn_with_secure_resolution(
         message="save creds",
@@ -557,7 +563,9 @@ async def test_secure_flow_without_resume_tool_finishes_after_store(
                     },
                 ),
             )
-        assert message.startswith("secure_resume: a required credential was captured via secure input.")
+        assert message.startswith(
+            "secure_resume: a required credential was captured via secure input."
+        )
         assert "integration=telegram" in message
         assert "field=telegram_token" in message
         return TurnResult(
@@ -576,7 +584,9 @@ async def test_secure_flow_without_resume_tool_finishes_after_store(
     ) -> tuple[bool, str]:
         return True, "ok"
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret"
+    )
 
     result = await run_turn_with_secure_resolution(
         message="save creds",
@@ -742,7 +752,9 @@ async def test_profile_selection_question_resumes_tool_with_selected_profile(
             envelope=ActionEnvelope(action="finalize", message="done"),
         )
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "work")
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "work"
+    )
 
     result = await run_turn_with_secure_resolution(
         message="send telegram",
@@ -964,7 +976,9 @@ async def test_tool_not_allowed_question_allow_session_updates_session_approved_
     assert session_approved_tools == {"bash.exec"}
 
 
-async def test_tool_not_allowed_question_with_stable_signature_blocks_retries_for_same_tool_params() -> None:
+async def test_tool_not_allowed_question_with_stable_signature_blocks_retries_for_same_tool_params() -> (
+    None
+):
     """Tool-not-allowed prompt should not loop indefinitely when tool is still rejected."""
 
     call_count = 0

@@ -51,7 +51,9 @@ def status_payload(result: BrowserRuntimeStatus, *, settings: Settings) -> dict[
     return payload
 
 
-def install_payload(result: BrowserRuntimeInstallResult, *, settings: Settings) -> dict[str, object]:
+def install_payload(
+    result: BrowserRuntimeInstallResult, *, settings: Settings
+) -> dict[str, object]:
     """Build deterministic JSON for browser runtime install responses."""
 
     payload: dict[str, object] = {
@@ -175,7 +177,9 @@ def browser_install_question(
                 ru="На Linux Playwright может установить необходимые системные библиотеки через пакетный менеджер ОС.",
             )
         )
-    intro = msg(lang, en="This command will do the following:", ru="Эта команда выполнит следующее:")
+    intro = msg(
+        lang, en="This command will do the following:", ru="Эта команда выполнит следующее:"
+    )
     outro = msg(lang, en="Continue?", ru="Продолжить?")
     return f"{intro}\n- " + "\n- ".join(actions) + f"\n\n{outro}"
 
@@ -330,7 +334,9 @@ def stop_managed_browser_runtime(settings: Settings) -> LightpandaRunResult:
     return stop_lightpanda_runtime(settings=settings)
 
 
-def managed_runtime_payload(result: LightpandaRunResult, *, settings: Settings) -> dict[str, object]:
+def managed_runtime_payload(
+    result: LightpandaRunResult, *, settings: Settings
+) -> dict[str, object]:
     """Return deterministic JSON payload for managed Lightpanda control commands."""
 
     return {

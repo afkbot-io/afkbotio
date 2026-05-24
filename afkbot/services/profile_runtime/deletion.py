@@ -59,7 +59,9 @@ async def purge_profile_rows(
         int(item)
         for item in (
             await session.execute(
-                select(ToolCredentialBinding.secret_id).where(ToolCredentialBinding.profile_id == profile_id)
+                select(ToolCredentialBinding.secret_id).where(
+                    ToolCredentialBinding.profile_id == profile_id
+                )
             )
         ).scalars()
         if item is not None
@@ -80,7 +82,9 @@ async def purge_profile_rows(
             )
         )
         await session.execute(
-            delete(AutomationTriggerCron).where(AutomationTriggerCron.automation_id.in_(automation_ids))
+            delete(AutomationTriggerCron).where(
+                AutomationTriggerCron.automation_id.in_(automation_ids)
+            )
         )
         await session.execute(
             delete(AutomationTriggerWebhook).where(
@@ -88,42 +92,64 @@ async def purge_profile_rows(
             )
         )
 
-    await session.execute(delete(PendingSecureRequest).where(PendingSecureRequest.profile_id == profile_id))
+    await session.execute(
+        delete(PendingSecureRequest).where(PendingSecureRequest.profile_id == profile_id)
+    )
     await session.execute(
         delete(ChatSessionTurnQueueItem).where(ChatSessionTurnQueueItem.profile_id == profile_id)
     )
     await session.execute(
         delete(ChatTurnIdempotencyClaim).where(ChatTurnIdempotencyClaim.profile_id == profile_id)
     )
-    await session.execute(delete(ChatTurnIdempotency).where(ChatTurnIdempotency.profile_id == profile_id))
-    await session.execute(delete(ConnectAccessToken).where(ConnectAccessToken.profile_id == profile_id))
+    await session.execute(
+        delete(ChatTurnIdempotency).where(ChatTurnIdempotency.profile_id == profile_id)
+    )
+    await session.execute(
+        delete(ConnectAccessToken).where(ConnectAccessToken.profile_id == profile_id)
+    )
 
     if run_ids:
         await session.execute(delete(RunlogEvent).where(RunlogEvent.run_id.in_(run_ids)))
 
-    await session.execute(delete(ChatSessionCompaction).where(ChatSessionCompaction.profile_id == profile_id))
+    await session.execute(
+        delete(ChatSessionCompaction).where(ChatSessionCompaction.profile_id == profile_id)
+    )
     await session.execute(delete(ChatTurn).where(ChatTurn.profile_id == profile_id))
     await session.execute(delete(Run).where(Run.profile_id == profile_id))
     await session.execute(delete(ChatSession).where(ChatSession.profile_id == profile_id))
 
-    await session.execute(delete(ToolCredentialBinding).where(ToolCredentialBinding.profile_id == profile_id))
+    await session.execute(
+        delete(ToolCredentialBinding).where(ToolCredentialBinding.profile_id == profile_id)
+    )
     if secret_ids:
         await session.execute(
             delete(Secret).where(
                 Secret.id.in_(secret_ids),
-                ~exists(select(ToolCredentialBinding.id).where(ToolCredentialBinding.secret_id == Secret.id)),
+                ~exists(
+                    select(ToolCredentialBinding.id).where(
+                        ToolCredentialBinding.secret_id == Secret.id
+                    )
+                ),
             )
         )
-    await session.execute(delete(CredentialProfile).where(CredentialProfile.profile_id == profile_id))
+    await session.execute(
+        delete(CredentialProfile).where(CredentialProfile.profile_id == profile_id)
+    )
 
-    await session.execute(delete(ConnectSessionToken).where(ConnectSessionToken.profile_id == profile_id))
-    await session.execute(delete(ConnectClaimToken).where(ConnectClaimToken.profile_id == profile_id))
+    await session.execute(
+        delete(ConnectSessionToken).where(ConnectSessionToken.profile_id == profile_id)
+    )
+    await session.execute(
+        delete(ConnectClaimToken).where(ConnectClaimToken.profile_id == profile_id)
+    )
     await session.execute(delete(Automation).where(Automation.profile_id == profile_id))
 
     await session.execute(delete(ChannelBinding).where(ChannelBinding.profile_id == profile_id))
     await session.execute(delete(ChannelEndpoint).where(ChannelEndpoint.profile_id == profile_id))
     await session.execute(delete(MemoryItem).where(MemoryItem.profile_id == profile_id))
-    await session.execute(delete(ProfileMemoryItem).where(ProfileMemoryItem.profile_id == profile_id))
+    await session.execute(
+        delete(ProfileMemoryItem).where(ProfileMemoryItem.profile_id == profile_id)
+    )
     await session.execute(delete(SubagentTask).where(SubagentTask.profile_id == profile_id))
     await session.execute(delete(ProfilePolicy).where(ProfilePolicy.profile_id == profile_id))
     await session.execute(delete(Profile).where(Profile.id == profile_id))
@@ -131,7 +157,9 @@ async def purge_profile_rows(
     return endpoint_ids
 
 
-def remove_profile_files(*, profile_root: Path, endpoint_service: ChannelEndpointService, endpoint_ids: tuple[str, ...]) -> None:
+def remove_profile_files(
+    *, profile_root: Path, endpoint_service: ChannelEndpointService, endpoint_ids: tuple[str, ...]
+) -> None:
     """Remove profile workspace tree and detached endpoint state after DB commit."""
 
     for endpoint_id in endpoint_ids:

@@ -129,8 +129,6 @@ def _macos_executable_literals() -> tuple[Path, ...]:
     return tuple(sorted((path for path in literals if path.exists()), key=str))
 
 
-
-
 def _sbpl_allow(operation: str, roots: tuple[Path, ...]) -> str:
     entries = " ".join(f'(subpath "{_escape_sbpl(str(path))}")' for path in roots)
     return f"(allow {operation} {entries})"

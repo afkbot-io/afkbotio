@@ -158,7 +158,10 @@ async def test_process_launcher_cancel_with_zero_timeout_stays_bounded(
 
     monkeypatch.setattr(
         "afkbot.services.subagents.launcher.os.killpg",
-        lambda pid, sig: signals.append((pid, sig)) or setattr(launcher._processes["task-0"], "_done", sig == signal.SIGKILL),
+        lambda pid, sig: (
+            signals.append((pid, sig))
+            or setattr(launcher._processes["task-0"], "_done", sig == signal.SIGKILL)
+        ),
     )
 
     launcher._processes["task-0"] = _FakeProc()  # noqa: SLF001

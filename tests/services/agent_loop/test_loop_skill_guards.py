@@ -63,7 +63,10 @@ async def test_explicit_skill_guard_still_surfaces_provider_error_after_transien
         )
 
         assert result.envelope.action == "finalize"
-        assert result.envelope.message == "LLM provider is temporarily unavailable. Please try again shortly."
+        assert (
+            result.envelope.message
+            == "LLM provider is temporarily unavailable. Please try again shortly."
+        )
         assert len(scripted.requests) == 3
 
     await engine.dispose()
@@ -153,14 +156,16 @@ async def test_explicit_sysadmin_skill_keeps_enforceable_metadata_without_forcin
     """Explicit executable skills should stay visible in metadata without hard finalization guards."""
 
     # Arrange
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_explicit_sysadmin_guard.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_explicit_sysadmin_guard.db"
+    )
     skill_dir = tmp_path / "afkbot/skills/sysadmin"
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"System administration via bash.exec.\"",
+                'description: "System administration via bash.exec."',
                 "tool_names:",
                 "  - bash.exec",
                 "preferred_tool_order:",
@@ -212,7 +217,7 @@ async def test_explicit_sysadmin_skill_allows_finalize_after_successful_bash_exe
         "\n".join(
             [
                 "---",
-                "description: \"System administration via bash.exec.\"",
+                'description: "System administration via bash.exec."',
                 "tool_names:",
                 "  - bash.exec",
                 "preferred_tool_order:",
@@ -272,7 +277,7 @@ async def test_plan_only_explicit_sysadmin_skill_is_not_enforced_without_visible
         "\n".join(
             [
                 "---",
-                "description: \"System administration via bash.exec.\"",
+                'description: "System administration via bash.exec."',
                 "tool_names:",
                 "  - bash.exec",
                 "preferred_tool_order:",
@@ -318,7 +323,9 @@ async def test_explicit_profile_skill_mention_is_reflected_in_context_same_turn(
 ) -> None:
     """Explicit mention of a profile skill should be visible in the same-turn context."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_profile_skill_explicit_context.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_profile_skill_explicit_context.db"
+    )
     profile_skill = tmp_path / "profiles/default/skills/proektdok"
     profile_skill.mkdir(parents=True, exist_ok=True)
     (profile_skill / "SKILL.md").write_text(
@@ -400,7 +407,9 @@ async def test_explicit_subagent_mention_is_reflected_in_context_same_turn(
 ) -> None:
     """Explicit mention of one subagent name should be reflected in runtime metadata."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_subagent_explicit_context.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_subagent_explicit_context.db"
+    )
     profile_subagent = tmp_path / "profiles/default/subagents"
     profile_subagent.mkdir(parents=True, exist_ok=True)
     (profile_subagent / "datafixer.md").write_text(
@@ -438,15 +447,24 @@ async def test_explicit_subagent_mention_is_reflected_in_context_same_turn(
 async def test_explicit_skill_request_blocks_subagent_substitution(tmp_path: Path) -> None:
     """When only skill is explicitly requested, subagent.run substitution must be blocked."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_subagent_substitution_guard.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_subagent_substitution_guard.db"
+    )
     profile_skill = tmp_path / "profiles/default/skills/proektdok"
     profile_skill.mkdir(parents=True, exist_ok=True)
-    (profile_skill / "SKILL.md").write_text("# proektdok\nGive concise product analysis.", encoding="utf-8")
+    (profile_skill / "SKILL.md").write_text(
+        "# proektdok\nGive concise product analysis.", encoding="utf-8"
+    )
 
     scripted = MockLLMProvider(
         [
             LLMResponse.tool_calls_response(
-                [ToolCallRequest(name="subagent.run", params={"prompt": "analyze", "subagent_name": "proektdok"})]
+                [
+                    ToolCallRequest(
+                        name="subagent.run",
+                        params={"prompt": "analyze", "subagent_name": "proektdok"},
+                    )
+                ]
             ),
             LLMResponse.final("done"),
         ]
@@ -474,7 +492,9 @@ async def test_explicit_skill_request_blocks_subagent_substitution(tmp_path: Pat
             .scalars()
             .all()
         )
-        tool_results = [json.loads(item.payload_json) for item in events if item.event_type == "tool.result"]
+        tool_results = [
+            json.loads(item.payload_json) for item in events if item.event_type == "tool.result"
+        ]
         assert tool_results
         assert tool_results[0]["name"] == "subagent.run"
         assert tool_results[0]["result"]["ok"] is False
@@ -486,7 +506,9 @@ async def test_explicit_skill_request_blocks_subagent_substitution(tmp_path: Pat
 async def test_security_secrets_mention_is_not_enforced_as_executable_skill(tmp_path: Path) -> None:
     """Mentioning non-executable synthetic skill must not force execution guard."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_security_secrets_mention.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_security_secrets_mention.db"
+    )
     scripted = MockLLMProvider([LLMResponse.final("done")])
 
     async with session_scope(factory) as session:
