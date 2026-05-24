@@ -242,6 +242,11 @@ def register(app: typer.Typer) -> None:
             "--lifecycle/--no-lifecycle",
             help="Generate startup/shutdown hook stubs for plugins that run with the platform.",
         ),
+        channel: bool = typer.Option(
+            False,
+            "--channel/--no-channel",
+            help="Generate a plugin channel adapter scaffold.",
+        ),
         force: bool = typer.Option(
             False,
             "--force",
@@ -263,6 +268,7 @@ def register(app: typer.Typer) -> None:
                 tools=tools,
                 apps=apps,
                 lifecycle=lifecycle,
+                channel=channel,
                 force=force,
             )
         except PluginServiceError as exc:
@@ -291,6 +297,11 @@ def register(app: typer.Typer) -> None:
             "--enable/--disable",
             help="Optionally override enabled state after update.",
         ),
+        force: bool = typer.Option(
+            False,
+            "--force",
+            help="Update even when configured channel endpoints may lose adapter support.",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Reinstall one plugin from its persisted source."""
@@ -299,6 +310,7 @@ def register(app: typer.Typer) -> None:
             item = get_plugin_service(get_settings()).update(
                 plugin_id=plugin_id,
                 enable=enable,
+                force=force,
             )
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
@@ -328,12 +340,17 @@ def register(app: typer.Typer) -> None:
     @plugin_app.command("disable")
     def disable_plugin(
         plugin_id: str = typer.Argument(..., help="Installed plugin id."),
+        force: bool = typer.Option(
+            False,
+            "--force",
+            help="Disable even when configured channel endpoints depend on this plugin.",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Disable one installed plugin."""
 
         try:
-            item = get_plugin_service(get_settings()).disable(plugin_id=plugin_id)
+            item = get_plugin_service(get_settings()).disable(plugin_id=plugin_id, force=force)
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
@@ -350,6 +367,16 @@ def register(app: typer.Typer) -> None:
             "--purge-files",
             help="Delete installed plugin files from the runtime root.",
         ),
+        force: bool = typer.Option(
+            False,
+            "--force",
+            help="Remove even when configured channel endpoints depend on this plugin.",
+        ),
+        delete_channel_endpoints: bool = typer.Option(
+            False,
+            "--delete-channel-endpoints",
+            help="Delete channel endpoints provided by this plugin before removal.",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Remove one plugin from the install registry."""
@@ -358,6 +385,8 @@ def register(app: typer.Typer) -> None:
             item = get_plugin_service(get_settings()).remove(
                 plugin_id=plugin_id,
                 purge_files=purge_files,
+                force=force,
+                delete_channel_endpoints=delete_channel_endpoints,
             )
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)

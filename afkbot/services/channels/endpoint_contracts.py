@@ -172,6 +172,22 @@ class ChannelEndpointConfig(BaseModel):
     access_policy: ChannelAccessPolicy = Field(default_factory=ChannelAccessPolicy)
     config: dict[str, object] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _inflate_common_config(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        config = payload.get("config")
+        if isinstance(config, Mapping):
+            cleaned_config = dict(config)
+            for key in ("tool_profile", "access_policy"):
+                if key not in payload and key in cleaned_config:
+                    payload[key] = cleaned_config[key]
+                cleaned_config.pop(key, None)
+            payload["config"] = cleaned_config
+        return payload
+
     @field_validator("endpoint_id", mode="before")
     @classmethod
     def _normalize_endpoint_id(cls, value: object) -> str:
@@ -597,7 +613,10 @@ def serialize_endpoint_storage_payload(
         return config.group_trigger_mode, config.storage_config()
     if isinstance(config, PartyFlowPollingEndpointConfig):
         return None, config.storage_config()
-    return config.group_trigger_mode, dict(config.config)
+    payload = dict(config.config)
+    payload["tool_profile"] = config.tool_profile
+    payload["access_policy"] = config.access_policy.model_dump(mode="python", exclude_none=True)
+    return config.group_trigger_mode, payload
 
 
 def deserialize_endpoint_config(payload: Mapping[str, object]) -> ChannelEndpointConfig:

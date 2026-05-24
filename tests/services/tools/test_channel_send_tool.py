@@ -21,6 +21,7 @@ from afkbot.services.channels.endpoint_contracts import (
     TelegramPollingEndpointConfig,
 )
 from afkbot.services.channels.endpoint_service import ChannelEndpointServiceError
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.plugins.channel_send.plugin import ChannelSendParams, ChannelSendTool
 from afkbot.settings import Settings
@@ -156,6 +157,7 @@ async def test_channel_send_tool_delivers_text_to_explicit_telegram_target(tmp_p
     assert delivery.calls[0]["credential_profile_key"] == "bot-main"
     assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
         "transport": "telegram",
+        "adapter_kind": "telegram_bot_polling",
         "account_id": "bot-main",
         "peer_id": "12345",
     }
@@ -201,6 +203,7 @@ async def test_channel_send_tool_defaults_to_active_channel_target(tmp_path: Pat
     assert delivery.calls[0]["credential_profile_key"] == "bot-main"
     assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
         "transport": "telegram",
+        "adapter_kind": "telegram_bot_polling",
         "account_id": "bot-main",
         "peer_id": "12345",
         "thread_id": "7",
@@ -295,9 +298,66 @@ async def test_channel_send_tool_delivers_text_to_partyflow_target(tmp_path: Pat
     assert delivery.calls[0]["credential_profile_key"] == "partyflow-main"
     assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
         "transport": "partyflow",
+        "adapter_kind": "partyflow_polling",
         "account_id": "partyflow-bot",
         "peer_id": "conv-1",
         "thread_id": "thread-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_channel_send_tool_delivers_text_to_plugin_channel_target(tmp_path: Path) -> None:
+    """channel.send should support plugin channel adapters through the shared policy path."""
+
+    async def _send_message(settings, target, message, credential_profile_key):
+        return {}
+
+    delivery = _FakeDeliveryService()
+    endpoint = ChannelEndpointConfig(
+        endpoint_id="avito-main",
+        transport="avito",
+        adapter_kind="avito_polling",
+        profile_id="default",
+        credential_profile_key="avito-main",
+        account_id="seller",
+        access_policy=ChannelAccessPolicy(outbound_allow_to=("buyer@example.com",)),
+    )
+    adapter = ChannelAdapterFactory(
+        transport="avito",
+        adapter_kind="avito_polling",
+        send_message=_send_message,
+        outbound_target_key=lambda target: target.address,
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_plugin.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+        channel_adapters={("avito", "avito_polling"): adapter},
+    )
+    ctx = ToolContext(profile_id="default", session_id="main", run_id=7)
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(
+            transport="avito",
+            endpoint_id="avito-main",
+            account_id="seller",
+            address="buyer@example.com",
+            text="hello avito",
+        ),
+    )
+
+    assert result.ok is True
+    assert delivery.calls[0]["text"] == "hello avito"
+    assert delivery.calls[0]["credential_profile_key"] == "avito-main"
+    assert delivery.calls[0]["target"].model_dump(exclude_none=True) == {
+        "transport": "avito",
+        "adapter_kind": "avito_polling",
+        "account_id": "seller",
+        "address": "buyer@example.com",
     }
 
 

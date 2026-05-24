@@ -24,6 +24,7 @@ class ChannelDeliveryTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     transport: str = Field(min_length=1)
+    adapter_kind: str | None = None
     binding_id: str | None = None
     account_id: str | None = None
     peer_id: str | None = None
@@ -71,6 +72,7 @@ class ChannelDeliveryTarget(BaseModel):
 
     @field_validator(
         "binding_id",
+        "adapter_kind",
         "account_id",
         "peer_id",
         "thread_id",
@@ -111,6 +113,7 @@ def build_delivery_target_runtime_metadata(
         return None
     payload = {
         "transport": target.transport,
+        "adapter_kind": target.adapter_kind,
         "binding_id": target.binding_id,
         "account_id": target.account_id,
         "peer_id": target.peer_id,

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
 
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
@@ -26,6 +26,13 @@ from afkbot.services.channels.telegram_polling import (
     TelegramPollingService,
     TelegramPollingServiceError,
 )
+from afkbot.services.channels.plugin_adapters import (
+    ChannelAdapterFactory,
+    ChannelAdapterKey,
+    ChannelRuntimeService,
+    channel_adapter_key,
+)
+from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import Settings
 
 
@@ -55,12 +62,6 @@ class ChannelRuntimeStartReport:
     failures: tuple[ChannelRuntimeStartFailure, ...] = ()
 
 
-class _ChannelRuntimeService(Protocol):
-    async def start(self) -> None: ...
-
-    async def stop(self) -> None: ...
-
-
 class ChannelRuntimeManager:
     """Load and run enabled channel adapters for one runtime root."""
 
@@ -69,16 +70,18 @@ class ChannelRuntimeManager:
         settings: Settings,
         *,
         endpoint_service: ChannelEndpointService | None = None,
+        channel_adapters: Mapping[ChannelAdapterKey, ChannelAdapterFactory] | None = None,
     ) -> None:
         self._settings = settings
         self._endpoint_service = endpoint_service or get_channel_endpoint_service(settings)
-        self._services: list[_ChannelRuntimeService] = []
+        self._channel_adapters = channel_adapters
+        self._services: list[ChannelRuntimeService] = []
 
     async def start(self, *, endpoint_ids: tuple[str, ...] = ()) -> tuple[str, ...]:
         """Start all enabled endpoints, or one explicit subset when ids are provided."""
 
         endpoints = await self._load_endpoints(endpoint_ids=endpoint_ids)
-        started: list[_ChannelRuntimeService] = []
+        started: list[ChannelRuntimeService] = []
         self._services = []
         try:
             for config in endpoints:
@@ -162,7 +165,7 @@ class ChannelRuntimeManager:
 
         return tuple(self._normalize_runtime_endpoint(config) for config in configs)
 
-    def _build_service(self, config: ChannelEndpointConfig) -> _ChannelRuntimeService:
+    def _build_service(self, config: ChannelEndpointConfig) -> ChannelRuntimeService:
         if config.transport == "telegram" and config.adapter_kind == "telegram_bot_polling":
             return TelegramPollingService(
                 self._settings,
@@ -187,12 +190,44 @@ class ChannelRuntimeManager:
                     endpoint_id=config.endpoint_id
                 ),
             )
+        plugin_service = self._build_plugin_service(config)
+        if plugin_service is not None:
+            return plugin_service
         raise ChannelRuntimeManagerError(
             error_code="channel_adapter_not_supported",
             reason=(
                 f"Unsupported channel adapter transport={config.transport} "
                 f"adapter_kind={config.adapter_kind}"
             ),
+        )
+
+    def _build_plugin_service(self, config: ChannelEndpointConfig) -> ChannelRuntimeService | None:
+        adapter = self._channel_adapter_for(config)
+        if adapter is None:
+            return None
+        if adapter.build_runtime is None:
+            raise ChannelRuntimeManagerError(
+                error_code="channel_adapter_runtime_not_supported",
+                reason=(
+                    f"Channel adapter transport={config.transport} "
+                    f"adapter_kind={config.adapter_kind} does not support runtime startup"
+                ),
+            )
+        config = adapter.validate_config_schema_payload(config)
+        if adapter.validate_endpoint_config is not None:
+            config = adapter.validate_endpoint_config(config)
+        return adapter.build_runtime(
+            self._settings,
+            config,
+            self._endpoint_service.state_dir(endpoint_id=config.endpoint_id),
+        )
+
+    def _channel_adapter_for(self, config: ChannelEndpointConfig) -> ChannelAdapterFactory | None:
+        adapters = self._channel_adapters
+        if adapters is None:
+            adapters = get_plugin_service(self._settings).channel_adapters()
+        return adapters.get(
+            channel_adapter_key(transport=config.transport, adapter_kind=config.adapter_kind)
         )
 
     @staticmethod
