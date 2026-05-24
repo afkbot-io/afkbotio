@@ -117,6 +117,8 @@ def channel_owned_tool_names_for_transport(transport: str) -> tuple[str, ...]:
         return PARTYFLOW_ACTIVE_CHANNEL_TOOL_NAMES
     if normalized in {"telegram", "telegram_user"}:
         return MESSAGING_ACTIVE_CHANNEL_TOOL_NAMES
+    if normalized:
+        return MESSAGING_ACTIVE_CHANNEL_TOOL_NAMES
     return ()
 
 

@@ -30,7 +30,9 @@ from afkbot.services.channels.endpoint_service import (
     ChannelEndpointServiceError,
     get_channel_endpoint_service,
 )
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
 from afkbot.services.channels.service import ChannelDeliveryService
+from afkbot.services.plugins import get_plugin_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.settings import Settings
@@ -66,7 +68,7 @@ class ChannelSendParams(ToolParameters):
         if (
             self.peer_id is None
             and self.chat_id is not None
-            and (transport is None or transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS)
+            and (transport is None or transport != "smtp")
         ):
             self.peer_id = self.chat_id
         return self
@@ -77,12 +79,13 @@ class ChannelSendTool(ToolBase):
 
     name = "channel.send"
     description = (
-        "Send a Telegram or PartyFlow channel message. Telegram supports optional Markdown/HTML parse_mode, "
-        "inline/reply keyboards in reply_markup, media attachments, or Bot API draft streaming. "
-        "PartyFlow supports plain text plus optional thread_id. Use transport=telegram for Bot API channels, "
-        "transport=telegram_user for Telethon userbot channels, and transport=partyflow for PartyFlow bot channels. "
-        "Targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id unless endpoint_id/binding_id supplies it. "
-        "Sender credentials always come from the selected endpoint; credential_profile_key is accepted only when it matches that endpoint."
+        "Send a message through a configured channel endpoint. Built-in transports are telegram, "
+        "telegram_user, and partyflow; enabled plugin channel adapters may add more transports. "
+        "Telegram supports optional Markdown/HTML parse_mode, inline/reply keyboards, media attachments, "
+        "or Bot API draft streaming. PartyFlow and plugin channel support depends on the selected adapter. "
+        "Targets need endpoint_id plus binding_id or peer_id/chat_id; telegram_user also needs account_id "
+        "unless endpoint_id/binding_id supplies it. Sender credentials always come from the selected endpoint; "
+        "credential_profile_key is accepted only when it matches that endpoint."
     )
     parameters_model = ChannelSendParams
 
@@ -93,11 +96,13 @@ class ChannelSendTool(ToolBase):
         delivery_service: ChannelDeliveryService | None = None,
         endpoint_service: ChannelEndpointService | None = None,
         binding_service: ChannelBindingService | None = None,
+        channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] | None = None,
     ) -> None:
         self._settings = settings
         self._delivery_service = delivery_service or ChannelDeliveryService(settings)
         self._endpoint_service = endpoint_service or get_channel_endpoint_service(settings)
         self._binding_service = binding_service or get_channel_binding_service(settings)
+        self._channel_adapters = channel_adapters
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         payload = (
@@ -120,13 +125,16 @@ class ChannelSendTool(ToolBase):
                 error_code="channel_send_transport_required",
                 reason=(
                     "channel.send requires transport outside an active channel turn. "
-                    "Pass transport=telegram, telegram_user, or partyflow."
+                    "Pass a built-in or plugin-registered channel transport."
                 ),
             )
-        if payload.transport not in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
+        if not self._is_channel_send_transport_supported(payload.transport):
             return ToolResult.error(
                 error_code="channel_send_transport_not_supported",
-                reason="channel.send supports only telegram, telegram_user, and partyflow transports.",
+                reason=(
+                    "channel.send supports built-in transports and plugin channel adapters "
+                    "that register outbound delivery."
+                ),
                 metadata={"transport": payload.transport},
             )
         try:
@@ -162,6 +170,7 @@ class ChannelSendTool(ToolBase):
             )
             if binding_error is not None:
                 return binding_error
+            target = target.model_copy(update={"adapter_kind": endpoint_or_error.adapter_kind})
             resolved_target_or_error = await self._resolve_target_for_policy(target=target)
             if isinstance(resolved_target_or_error, ToolResult):
                 return resolved_target_or_error
@@ -173,6 +182,7 @@ class ChannelSendTool(ToolBase):
                 return outbound_policy_error
             target = ChannelDeliveryTarget(
                 transport=resolved_target_or_error.transport,
+                adapter_kind=endpoint_or_error.adapter_kind,
                 binding_id=resolved_target_or_error.binding_id,
                 account_id=resolved_target_or_error.account_id or endpoint_or_error.account_id,
                 peer_id=resolved_target_or_error.peer_id,
@@ -219,6 +229,17 @@ class ChannelSendTool(ToolBase):
             )
         return ToolResult(ok=True, payload=_delivery_result_payload(result))
 
+    def _is_channel_send_transport_supported(self, transport: str) -> bool:
+        if transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
+            return True
+        adapters = self._channel_adapters
+        if adapters is None:
+            adapters = dict(get_plugin_service(self._settings).channel_adapters())
+        return any(
+            key[0] == transport and adapter.send_message is not None
+            for key, adapter in adapters.items()
+        )
+
     @staticmethod
     def _apply_active_channel_defaults(
         *,
@@ -255,21 +276,44 @@ class ChannelSendTool(ToolBase):
             return None
         if "*" in allow_to:
             return None
-        peer_id = (target.peer_id or "").strip()
-        if peer_id and peer_id in allow_to:
+        target_key = self._outbound_policy_target_key(endpoint=endpoint, target=target)
+        if target_key and target_key in allow_to:
             return None
         return ToolResult.error(
             error_code="channel_send_target_not_allowed",
             reason=(
                 "channel.send target is not allowed by the endpoint outbound allowlist. "
-                "Use an allowed peer_id/chat_id or update the channel access policy."
+                "Use an allowed target id or update the channel access policy."
             ),
             metadata={
                 "endpoint_id": endpoint.endpoint_id,
                 "transport": target.transport,
-                "peer_id": peer_id,
+                "target_key": target_key or "",
             },
         )
+
+    def _outbound_policy_target_key(
+        self,
+        *,
+        endpoint: ChannelEndpointConfig,
+        target: ResolvedDeliveryTarget,
+    ) -> str | None:
+        if endpoint.transport in _SUPPORTED_CHANNEL_SEND_TRANSPORTS:
+            return (target.peer_id or "").strip() or None
+        adapter = self._channel_adapter_for_endpoint(endpoint)
+        if adapter is not None and adapter.outbound_target_key is not None:
+            value = adapter.outbound_target_key(target)
+            return (value or "").strip() or None
+        return (target.peer_id or target.address or target.user_id or "").strip() or None
+
+    def _channel_adapter_for_endpoint(
+        self,
+        endpoint: ChannelEndpointConfig,
+    ) -> ChannelAdapterFactory | None:
+        adapters = self._channel_adapters
+        if adapters is None:
+            adapters = dict(get_plugin_service(self._settings).channel_adapters())
+        return adapters.get((endpoint.transport, endpoint.adapter_kind))
 
     async def _resolve_target_for_policy(
         self,
@@ -281,6 +325,7 @@ class ChannelSendTool(ToolBase):
                 settings=self._settings,
                 target=target,
                 binding_service=self._binding_service,
+                channel_adapters=self._channel_adapters,
             )
         except ChannelDeliveryServiceError as exc:
             return ToolResult.error(

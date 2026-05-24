@@ -8,6 +8,7 @@ from afkbot.services.channels.endpoint_contracts import (
     TelegramPollingEndpointConfig,
     TelethonUserEndpointConfig,
 )
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
 from afkbot.services.channels.runtime_manager import (
     ChannelRuntimeManager,
     ChannelRuntimeManagerError,
@@ -47,13 +48,23 @@ class _FakeEndpointService:
     def telethon_user_state_path(self, *, endpoint_id: str):  # pragma: no cover - not used here
         raise AssertionError(f"Unexpected state path request: {endpoint_id}")
 
+    def state_dir(self, *, endpoint_id: str):
+        return f"/tmp/channel-state/{endpoint_id}"
+
 
 class _FakeChannelService:
-    def __init__(self, *, should_fail: bool = False, error_kind: str = "telegram") -> None:
+    def __init__(
+        self,
+        *,
+        should_fail: bool = False,
+        error_kind: str = "telegram",
+        endpoint: ChannelEndpointConfig | None = None,
+    ) -> None:
         self.should_fail = should_fail
         self.error_kind = error_kind
         self.started = False
         self.stopped = False
+        self.endpoint = endpoint
 
     async def start(self) -> None:
         if self.should_fail:
@@ -131,6 +142,18 @@ def _legacy_partyflow_webhook_endpoint(
         account_id=endpoint_id,
         enabled=enabled,
         config={"ingress_mode": "webhook"},
+    )
+
+
+def _plugin_endpoint(endpoint_id: str, *, enabled: bool = True) -> ChannelEndpointConfig:
+    return ChannelEndpointConfig(
+        endpoint_id=endpoint_id,
+        transport="avito",
+        adapter_kind="avito_polling",
+        profile_id="default",
+        credential_profile_key="avito-main",
+        account_id="seller",
+        enabled=enabled,
     )
 
 
@@ -304,3 +327,64 @@ async def test_runtime_manager_best_effort_reports_legacy_partyflow_webhook_fail
     assert report.failures[0].endpoint_id == "legacy-partyflow"
     assert report.failures[0].error_code == "channel_adapter_not_supported"
     assert "adapter_kind=partyflow_webhook" in report.failures[0].reason
+
+
+async def test_runtime_manager_starts_plugin_channel_adapter(tmp_path) -> None:
+    """Manager should start plugin-provided channel adapters without core transport edits."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    endpoint_service = _FakeEndpointService((_plugin_endpoint("avito-main"),))
+    fake_service = _FakeChannelService()
+    adapter = ChannelAdapterFactory(
+        transport="avito",
+        adapter_kind="avito_polling",
+        build_runtime=lambda settings, endpoint, state_dir: fake_service,
+    )
+    manager = ChannelRuntimeManager(
+        settings,
+        endpoint_service=endpoint_service,  # type: ignore[arg-type]
+        channel_adapters={("avito", "avito_polling"): adapter},
+    )
+
+    started = await manager.start()
+
+    assert started == ("avito-main",)
+    assert fake_service.started is True
+
+
+async def test_runtime_manager_validates_plugin_endpoint_before_runtime_start(tmp_path) -> None:
+    """Plugin channel adapters should normalize endpoint config before runtime construction."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    endpoint_service = _FakeEndpointService((_plugin_endpoint("avito-main"),))
+    built_services: list[_FakeChannelService] = []
+
+    def _build_runtime(
+        settings: Settings,
+        endpoint: ChannelEndpointConfig,
+        state_dir: str,
+    ) -> _FakeChannelService:
+        del settings, state_dir
+        service = _FakeChannelService(endpoint=endpoint)
+        built_services.append(service)
+        return service
+
+    adapter = ChannelAdapterFactory(
+        transport="avito",
+        adapter_kind="avito_polling",
+        build_runtime=_build_runtime,
+        validate_endpoint_config=lambda endpoint: endpoint.model_copy(
+            update={"config": {"poll_interval_sec": 30}}
+        ),
+    )
+    manager = ChannelRuntimeManager(
+        settings,
+        endpoint_service=endpoint_service,  # type: ignore[arg-type]
+        channel_adapters={("avito", "avito_polling"): adapter},
+    )
+
+    started = await manager.start()
+
+    assert started == ("avito-main",)
+    assert built_services[0].endpoint is not None
+    assert built_services[0].endpoint.config == {"poll_interval_sec": 30}

@@ -21,6 +21,11 @@ from afkbot.services.plugins.contracts import (
     PluginStaticMount,
     PluginServiceError,
 )
+from afkbot.services.channels.plugin_adapters import (
+    RESERVED_CHANNEL_TRANSPORTS,
+    ChannelAdapterFactory,
+    channel_adapter_key,
+)
 
 if TYPE_CHECKING:
     from afkbot.services.apps.registry_core import AppRegistry
@@ -53,6 +58,7 @@ class PluginRuntimeRegistry:
         self._static_mounts: list[PluginStaticMount] = []
         self._skill_dirs: list[Path] = []
         self._tool_factories: dict[str, ToolFactory] = {}
+        self._channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] = {}
         self._app_registrars: list[AppRegistrar] = []
         self._startup_hooks: list[LifecycleHook] = []
         self._shutdown_hooks: list[LifecycleHook] = []
@@ -160,6 +166,50 @@ class PluginRuntimeRegistry:
             raise ValueError(f"Plugin tool factory is already registered: {normalized}")
         self._tool_factories[normalized] = factory
 
+    def register_channel_adapter(self, adapter: ChannelAdapterFactory) -> None:
+        """Expose one plugin-provided channel adapter."""
+
+        if not self._manifest.capabilities.channels:
+            raise PluginServiceError(
+                error_code="plugin_channel_capability_required",
+                reason=(
+                    "Plugin manifest must declare capabilities.channels=true before "
+                    "registering channel adapters."
+                ),
+            )
+        if adapter.build_runtime is not None and not self._manifest.permissions.data_dir_write:
+            raise PluginServiceError(
+                error_code="plugin_channel_permission_required",
+                reason=(
+                    "Plugin channel adapters that start runtime workers must declare "
+                    "permissions.data_dir_write=true."
+                ),
+            )
+        if (
+            adapter.build_runtime is not None or adapter.send_message is not None
+        ) and not self._manifest.permissions.outbound_http:
+            raise PluginServiceError(
+                error_code="plugin_channel_permission_required",
+                reason=(
+                    "Plugin channel adapters that start runtime workers or send messages "
+                    "must declare permissions.outbound_http=true."
+                ),
+            )
+        if adapter.transport in RESERVED_CHANNEL_TRANSPORTS:
+            raise PluginServiceError(
+                error_code="plugin_channel_transport_reserved",
+                reason=(
+                    f"Plugin channel adapter transport is reserved by AFKBOT core: {adapter.transport}"
+                ),
+            )
+        key = channel_adapter_key(transport=adapter.transport, adapter_kind=adapter.adapter_kind)
+        if key in self._channel_adapters:
+            raise ValueError(
+                "Plugin channel adapter is already registered: "
+                f"transport={key[0]} adapter_kind={key[1]}"
+            )
+        self._channel_adapters[key] = adapter
+
     def register_app_registrar(self, registrar: AppRegistrar) -> None:
         """Register one callback that mutates the app registry at merge time."""
 
@@ -184,6 +234,7 @@ class PluginRuntimeRegistry:
             static_mounts=tuple(self._static_mounts),
             skill_dirs=tuple(self._skill_dirs),
             tool_factories=dict(self._tool_factories),
+            channel_adapters=dict(self._channel_adapters),
             app_registrars=tuple(self._app_registrars),
             startup_hooks=tuple(self._startup_hooks),
             shutdown_hooks=tuple(self._shutdown_hooks),

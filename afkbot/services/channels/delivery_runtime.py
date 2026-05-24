@@ -11,6 +11,8 @@ from afkbot.services.channel_routing.service import (
     get_channel_binding_service,
 )
 from afkbot.services.channels.contracts import ChannelDeliveryTarget
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory, channel_adapter_key
+from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import Settings
 
 CHANNEL_RUNTIME_APP_TOOL_GRANTS: tuple[str, ...] = ("app.run",)
@@ -39,6 +41,7 @@ class ResolvedDeliveryTarget:
     """Fully validated outbound target ready for transport delivery."""
 
     transport: str
+    adapter_kind: str | None
     binding_id: str | None
     account_id: str | None
     peer_id: str | None
@@ -50,6 +53,7 @@ class ResolvedDeliveryTarget:
     def to_payload(self) -> dict[str, str]:
         payload = {
             "transport": self.transport,
+            "adapter_kind": self.adapter_kind,
             "binding_id": self.binding_id,
             "account_id": self.account_id,
             "peer_id": self.peer_id,
@@ -66,11 +70,16 @@ async def resolve_delivery_target(
     settings: Settings,
     target: ChannelDeliveryTarget,
     binding_service: ChannelBindingService | None = None,
+    channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] | None = None,
 ) -> ResolvedDeliveryTarget:
     """Resolve optional binding metadata and validate supported transports."""
 
     if target.binding_id is None:
-        return resolved_from_target(target)
+        return resolved_from_target(
+            settings=settings,
+            target=target,
+            channel_adapters=channel_adapters,
+        )
     service = binding_service or get_channel_binding_service(settings)
     try:
         binding = await service.get(binding_id=target.binding_id)
@@ -101,6 +110,7 @@ async def resolve_delivery_target(
     merged = ChannelDeliveryTarget(
         transport=binding.transport,
         binding_id=binding.binding_id,
+        adapter_kind=target.adapter_kind,
         account_id=target.account_id or binding.account_id,
         peer_id=target.peer_id or binding.peer_id,
         thread_id=target.thread_id or binding.thread_id,
@@ -108,10 +118,19 @@ async def resolve_delivery_target(
         address=target.address,
         subject=target.subject,
     )
-    return resolved_from_target(merged)
+    return resolved_from_target(
+        settings=settings,
+        target=merged,
+        channel_adapters=channel_adapters,
+    )
 
 
-def resolved_from_target(target: ChannelDeliveryTarget) -> ResolvedDeliveryTarget:
+def resolved_from_target(
+    target: ChannelDeliveryTarget,
+    *,
+    settings: Settings | None = None,
+    channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] | None = None,
+) -> ResolvedDeliveryTarget:
     """Validate one explicit delivery target and normalize its payload."""
 
     if target.transport == "telegram" and not target.peer_id:
@@ -139,13 +158,22 @@ def resolved_from_target(target: ChannelDeliveryTarget) -> ResolvedDeliveryTarge
             metadata=target.model_dump(exclude_none=True),
         )
     if target.transport not in {"telegram", "telegram_user", "smtp", "partyflow"}:
-        raise ChannelDeliveryServiceError(
-            error_code="channel_delivery_transport_not_supported",
-            reason=f"Unsupported delivery transport: {target.transport}",
-            metadata={"transport": target.transport},
+        adapter = _resolve_plugin_channel_adapter(
+            target=target,
+            settings=settings,
+            channel_adapters=channel_adapters,
         )
+        if adapter is None:
+            raise ChannelDeliveryServiceError(
+                error_code="channel_delivery_transport_not_supported",
+                reason=f"Unsupported delivery transport: {target.transport}",
+                metadata={"transport": target.transport},
+            )
+        if adapter.validate_target is not None:
+            target = adapter.validate_target(target)
     return ResolvedDeliveryTarget(
         transport=target.transport,
+        adapter_kind=target.adapter_kind,
         binding_id=target.binding_id,
         account_id=target.account_id,
         peer_id=target.peer_id,
@@ -154,6 +182,32 @@ def resolved_from_target(target: ChannelDeliveryTarget) -> ResolvedDeliveryTarge
         address=target.address,
         subject=target.subject,
     )
+
+
+def _resolve_plugin_channel_adapter(
+    *,
+    target: ChannelDeliveryTarget,
+    settings: Settings | None,
+    channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] | None,
+) -> ChannelAdapterFactory | None:
+    if target.adapter_kind:
+        adapters = channel_adapters
+        if adapters is None and settings is not None:
+            adapters = dict(get_plugin_service(settings).channel_adapters())
+        if adapters is None:
+            return None
+        return adapters.get(
+            channel_adapter_key(transport=target.transport, adapter_kind=target.adapter_kind)
+        )
+    adapters = channel_adapters
+    if adapters is None and settings is not None:
+        adapters = dict(get_plugin_service(settings).channel_adapters())
+    if adapters is None:
+        return None
+    matches = [adapter for key, adapter in adapters.items() if key[0] == target.transport]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def build_app_runtime_context(

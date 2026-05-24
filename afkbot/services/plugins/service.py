@@ -31,6 +31,15 @@ from afkbot.services.plugins.contracts import (
     PluginServiceError,
 )
 from afkbot.services.plugins.runtime_registry import PluginRuntimeRegistry
+from afkbot.services.channels.endpoint_contracts import ChannelEndpointConfig
+from afkbot.services.channels.endpoint_service import (
+    ChannelEndpointService,
+    run_channel_endpoint_service_sync,
+)
+from afkbot.services.channels.plugin_adapters import (
+    BUILTIN_CHANNEL_ADAPTER_KEYS,
+    ChannelAdapterFactory,
+)
 from afkbot.version import load_cli_version_info
 
 if TYPE_CHECKING:
@@ -165,10 +174,18 @@ class PluginService:
         self._write_registry(registry)
         return record
 
-    def update(self, *, plugin_id: str, enable: bool | None = None) -> InstalledPluginRecord:
+    def update(
+        self,
+        *,
+        plugin_id: str,
+        enable: bool | None = None,
+        force: bool = False,
+    ) -> InstalledPluginRecord:
         """Reinstall one plugin from its persisted source reference."""
 
         current = self.inspect(plugin_id=plugin_id)
+        if not force:
+            self._validate_channel_update_compatibility(record=current)
         next_enabled = current.enabled if enable is None else enable
         updated = self.install(
             source=current.source_ref,
@@ -186,15 +203,29 @@ class PluginService:
 
         return self._set_enabled(plugin_id=plugin_id, enabled=True)
 
-    def disable(self, *, plugin_id: str) -> InstalledPluginRecord:
+    def disable(self, *, plugin_id: str, force: bool = False) -> InstalledPluginRecord:
         """Disable one installed plugin."""
 
+        target = self.inspect(plugin_id=plugin_id)
+        if not force:
+            self._raise_if_channel_endpoints_exist(record=target, action="disable")
         return self._set_enabled(plugin_id=plugin_id, enabled=False)
 
-    def remove(self, *, plugin_id: str, purge_files: bool = False) -> InstalledPluginRecord:
+    def remove(
+        self,
+        *,
+        plugin_id: str,
+        purge_files: bool = False,
+        force: bool = False,
+        delete_channel_endpoints: bool = False,
+    ) -> InstalledPluginRecord:
         """Remove one plugin from the install registry and optionally delete files."""
 
         target = self.inspect(plugin_id=plugin_id)
+        if delete_channel_endpoints:
+            self._delete_channel_endpoints_for_record(record=target)
+        elif not force:
+            self._raise_if_channel_endpoints_exist(record=target, action="remove")
         registry = self._read_registry()
         registry.plugins = [item for item in registry.plugins if item.plugin_id != target.plugin_id]
         self._write_registry(registry)
@@ -209,6 +240,9 @@ class PluginService:
 
         loaded = []
         seen_tool_factories: dict[str, str] = {}
+        seen_channel_adapters: dict[tuple[str, str], str] = {
+            key: "built-in" for key in BUILTIN_CHANNEL_ADAPTER_KEYS
+        }
         seen_api_prefixes: dict[str, str] = {}
         seen_mounts: dict[str, str] = {}
         for record in self.list_installed():
@@ -238,6 +272,18 @@ class PluginService:
                         ),
                     )
                 seen_tool_factories[factory_id] = record.plugin_id
+            for adapter_key in runtime.channel_adapters:
+                owner = seen_channel_adapters.get(adapter_key)
+                if owner is not None:
+                    raise PluginServiceError(
+                        error_code="plugin_channel_adapter_collision",
+                        reason=(
+                            "Plugin channel adapter collision: "
+                            f"transport={adapter_key[0]} adapter_kind={adapter_key[1]} "
+                            f"is provided by {owner} and {record.plugin_id}"
+                        ),
+                    )
+                seen_channel_adapters[adapter_key] = record.plugin_id
             for mount in runtime.static_mounts:
                 owner = seen_mounts.get(mount.mount_path)
                 if owner is not None:
@@ -263,6 +309,17 @@ class PluginService:
 
         return self.load_runtime_snapshot().tool_factories
 
+    def channel_adapters(self) -> Mapping[tuple[str, str], ChannelAdapterFactory]:
+        """Return merged active plugin channel adapters."""
+
+        return self.load_runtime_snapshot().channel_adapters
+
+    def channel_endpoint_usages(self, *, plugin_id: str) -> tuple[ChannelEndpointConfig, ...]:
+        """Return persisted endpoints that depend on one plugin's channel adapters."""
+
+        record = self.inspect(plugin_id=plugin_id)
+        return self._channel_endpoint_usages_for_record(record=record)
+
     def skill_dirs(self) -> tuple[Path, ...]:
         """Return active plugin-provided skill roots."""
 
@@ -287,6 +344,113 @@ class PluginService:
         registry.plugins = next_items
         self._write_registry(registry)
         return updated
+
+    def _raise_if_channel_endpoints_exist(
+        self,
+        *,
+        record: InstalledPluginRecord,
+        action: str,
+    ) -> None:
+        endpoints = self._channel_endpoint_usages_for_record(record=record)
+        if not endpoints:
+            return
+        endpoint_ids = ", ".join(item.endpoint_id for item in endpoints)
+        raise PluginServiceError(
+            error_code="plugin_channel_endpoints_exist",
+            reason=(
+                f"Cannot {action} plugin {record.plugin_id}; channel endpoints still depend on it: "
+                f"{endpoint_ids}. Delete those endpoints first, or rerun with an explicit force option."
+            ),
+        )
+
+    def _delete_channel_endpoints_for_record(self, *, record: InstalledPluginRecord) -> None:
+        endpoints = self._channel_endpoint_usages_for_record(record=record)
+        if not endpoints:
+            return
+        endpoint_ids = tuple(item.endpoint_id for item in endpoints)
+        run_channel_endpoint_service_sync(
+            self._settings,
+            lambda service: _delete_channel_endpoints(service=service, endpoint_ids=endpoint_ids),
+        )
+
+    def _validate_channel_update_compatibility(self, *, record: InstalledPluginRecord) -> None:
+        endpoints = self._channel_endpoint_usages_for_record(record=record)
+        if not endpoints:
+            return
+        existing_keys = {(endpoint.transport, endpoint.adapter_kind) for endpoint in endpoints}
+        next_keys = set(self._channel_adapter_keys_for_source(source=record.source_ref))
+        missing = sorted(existing_keys - next_keys)
+        if not missing:
+            return
+        missing_text = ", ".join(f"{transport}/{adapter_kind}" for transport, adapter_kind in missing)
+        endpoint_ids = ", ".join(endpoint.endpoint_id for endpoint in endpoints)
+        raise PluginServiceError(
+            error_code="plugin_channel_update_incompatible",
+            reason=(
+                f"Cannot update plugin {record.plugin_id}; existing channel endpoints would lose "
+                f"adapter support: {missing_text}. Affected endpoints: {endpoint_ids}. "
+                "Use --force only after migrating or deleting those endpoints."
+            ),
+        )
+
+    def _channel_endpoint_usages_for_record(
+        self,
+        *,
+        record: InstalledPluginRecord,
+    ) -> tuple[ChannelEndpointConfig, ...]:
+        adapter_keys = set(self._channel_adapter_keys_for_record(record=record))
+        if not adapter_keys:
+            return ()
+        endpoints = run_channel_endpoint_service_sync(
+            self._settings,
+            lambda service: service.list(),
+        )
+        return tuple(
+            endpoint
+            for endpoint in endpoints
+            if (endpoint.transport, endpoint.adapter_kind) in adapter_keys
+        )
+
+    def _channel_adapter_keys_for_record(
+        self,
+        *,
+        record: InstalledPluginRecord,
+    ) -> tuple[tuple[str, str], ...]:
+        if not record.manifest.capabilities.channels:
+            return ()
+        try:
+            runtime = self._load_runtime_for_record(record)
+        except Exception as exc:
+            raise PluginServiceError(
+                error_code="plugin_channel_adapter_inspection_failed",
+                reason=(
+                    f"Cannot inspect channel adapters for plugin {record.plugin_id}. "
+                    "Use --force only if leaving existing channel endpoints orphaned is intentional."
+                ),
+            ) from exc
+        return tuple(runtime.channel_adapters)
+
+    def _channel_adapter_keys_for_source(self, *, source: str) -> tuple[tuple[str, str], ...]:
+        descriptor = self._resolve_source(source)
+        source_path, cleanup_root = self._stage_source(descriptor)
+        try:
+            manifest = self._load_manifest(source_path)
+            self._validate_manifest_compatibility(manifest)
+            record = InstalledPluginRecord(
+                plugin_id=manifest.plugin_id,
+                name=manifest.name,
+                version=manifest.version,
+                enabled=True,
+                source_kind=descriptor.kind,
+                source_ref=descriptor.source_ref,
+                install_path=str(source_path),
+                installed_at=datetime.now(UTC),
+                manifest=manifest,
+            )
+            return self._channel_adapter_keys_for_record(record=record)
+        finally:
+            if cleanup_root is not None:
+                shutil.rmtree(cleanup_root, ignore_errors=True)
 
     def _load_runtime_for_record(self, record: InstalledPluginRecord) -> LoadedPluginRuntime:
         install_root = self._resolve_install_path(record)
@@ -709,6 +873,15 @@ def _version_matches_spec(current_version: str, spec: str) -> bool:
         if operator == "<=" and cmp > 0:
             return False
     return True
+
+
+async def _delete_channel_endpoints(
+    *,
+    service: ChannelEndpointService,
+    endpoint_ids: tuple[str, ...],
+) -> None:
+    for endpoint_id in endpoint_ids:
+        await service.delete(endpoint_id=endpoint_id)
 
 
 def get_plugin_service(settings: Settings) -> PluginService:

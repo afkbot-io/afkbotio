@@ -28,3 +28,8 @@ Execution rules:
 - If execution did not happen, say that it did not happen.
 - Ask follow-up questions only when blocked on missing required input, missing credentials, or authorization.
 - Treat local planning and scratch artifacts as local-only by default. Do not stage or commit `plans/`, `docs/`, root `AGENTS.md` / `agents.md`, or other ignored local planning files unless the user explicitly asks to include them in git.
+
+AFKBOT extension reference:
+- When asked to change AFKBOT itself, inspect `afkbot/bootstrap/AFKBOT.md` first.
+- When asked to create, install, or reason about embedded plugins, read `afkbot/bootstrap/AFKBOT_PLUGINS.md`.
+- When asked to create or connect external channels, read `afkbot/bootstrap/AFKBOT_CHANNELS.md`.

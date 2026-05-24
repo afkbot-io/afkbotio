@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.1] - 2026-05-24
+
+### Added
+
+- Added OpenClaw-style plugin channel adapters so embedded plugins can register
+  managed channel runtimes, inbound dispatchers, outbound `channel.send`
+  delivery, setup metadata, and endpoint config schemas.
+- Added AFKBOT bootstrap documentation for agents that need to create, install,
+  test, disable, remove, or update self-authored channel integrations.
+
+### Changed
+
+- `afk channel plugin add` now validates plugin endpoint config schemas, applies
+  adapter defaults, and can collect primitive schema fields interactively.
+- Plugin scaffolds now generate a channel integration spec for provider-specific
+  implementation, review, security, and test planning.
+
+### Fixed
+
+- Plugin channel adapters can no longer reserve or intercept core transports,
+  and plugin disable/remove/update operations now guard existing channel
+  endpoints that depend on installed adapters.
+
 ## [1.9.0] - 2026-05-24
 
 ### Added

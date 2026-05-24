@@ -26,6 +26,7 @@ from afkbot.services.channels.sender_registry import (
     get_channel_sender_registry,
     reset_channel_sender_registries,
 )
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
 from afkbot.services.credentials import get_credentials_service
 from afkbot.services.channels.telethon_user import TelethonUserServiceError
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
@@ -173,6 +174,58 @@ async def test_channel_delivery_service_sends_explicit_telegram_target(tmp_path:
         "text": "hello",
         "chat_id": "42",
         "message_thread_id": 9001,
+    }
+
+
+async def test_channel_delivery_service_sends_plugin_channel_message(tmp_path: Path) -> None:
+    """Plugin channel adapters should use shared delivery resolution and payload shape."""
+
+    async def _send_message(settings, target, message, credential_profile_key):
+        _ = settings
+        return {
+            "provider_message_id": "avito-1",
+            "target": target.to_payload(),
+            "text": message.text,
+            "credential_profile_key": credential_profile_key,
+        }
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_plugin.db'}",
+    )
+    adapter = ChannelAdapterFactory(
+        transport="avito",
+        adapter_kind="avito_polling",
+        send_message=_send_message,
+    )
+    service = ChannelDeliveryService(
+        settings,
+        channel_adapters={("avito", "avito_polling"): adapter},
+    )
+
+    result = await service.deliver_text(
+        profile_id="default",
+        session_id="s-1",
+        run_id=11,
+        target=ChannelDeliveryTarget(
+            transport="avito",
+            adapter_kind="avito_polling",
+            peer_id="conversation-1",
+        ),
+        text="hello buyer",
+        credential_profile_key="avito-main",
+    )
+
+    assert result.transport == "avito"
+    assert result.payload == {
+        "provider_message_id": "avito-1",
+        "target": {
+            "transport": "avito",
+            "adapter_kind": "avito_polling",
+            "peer_id": "conversation-1",
+        },
+        "text": "hello buyer",
+        "credential_profile_key": "avito-main",
     }
 
 
@@ -434,6 +487,47 @@ async def test_channel_delivery_service_sends_explicit_smtp_target(tmp_path: Pat
         "subject": "Build result",
         "body": "hello over email",
     }
+
+
+async def test_channel_delivery_service_does_not_let_plugin_intercept_smtp(tmp_path: Path) -> None:
+    """Core SMTP delivery should not be shadowed by plugin adapters."""
+
+    async def _send_message(settings, target, message, credential_profile_key):
+        _ = settings, target, message, credential_profile_key
+        raise AssertionError("SMTP must not be delivered through plugin channel adapters")
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'delivery_smtp_plugin.db'}",
+    )
+    app_runtime = _FakeAppRuntime()
+    service = ChannelDeliveryService(
+        settings,
+        app_runtime=app_runtime,
+        channel_adapters={
+            ("smtp", "malicious"): ChannelAdapterFactory(
+                transport="smtp",
+                adapter_kind="malicious",
+                send_message=_send_message,
+            )
+        },
+    )
+
+    result = await service.deliver_text(
+        profile_id="default",
+        session_id="s-1",
+        run_id=12,
+        target=ChannelDeliveryTarget(
+            transport="smtp",
+            adapter_kind="malicious",
+            address="ops@example.com",
+            subject="Build result",
+        ),
+        text="hello over email",
+    )
+
+    assert result.transport == "smtp"
+    assert app_runtime.calls[0]["app"] == "smtp"
 
 
 async def test_channel_delivery_service_sends_explicit_partyflow_target(tmp_path: Path) -> None:

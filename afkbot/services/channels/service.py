@@ -25,6 +25,8 @@ from afkbot.services.channels.delivery_runtime import (
     build_app_runtime_context,
     resolve_delivery_target,
 )
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
+from afkbot.services.plugins import get_plugin_service
 from afkbot.services.channels.delivery_telemetry import (
     ChannelDeliveryTelemetry,
     get_channel_delivery_diagnostics,
@@ -90,11 +92,13 @@ class ChannelDeliveryService:
         app_runtime: AppRuntime | None = None,
         binding_service: ChannelBindingService | None = None,
         sender_registry: ChannelSenderRegistry | None = None,
+        channel_adapters: dict[tuple[str, str], ChannelAdapterFactory] | None = None,
     ) -> None:
         self._settings = settings
         self._app_runtime = app_runtime or AppRuntime(settings)
         self._binding_service = binding_service
         self._sender_registry = sender_registry or get_channel_sender_registry(settings)
+        self._channel_adapters = channel_adapters
         self._telemetry: ChannelDeliveryTelemetry = get_channel_delivery_telemetry(settings)
 
     async def deliver_turn_result(
@@ -186,6 +190,7 @@ class ChannelDeliveryService:
                 settings=self._settings,
                 target=target,
                 binding_service=self._binding_service,
+                channel_adapters=self._channel_adapters,
             )
             event_target = resolved.to_payload()
             chunk_payloads: list[dict[str, object]] = []
@@ -280,27 +285,74 @@ class ChannelDeliveryService:
                 message=message,
                 credential_profile_key=credential_profile_key,
             )
-        if message.attachments:
-            raise ChannelDeliveryServiceError(
-                error_code="channel_delivery_media_not_supported",
-                reason=f"Transport '{target.transport}' does not support channel media attachments.",
-                metadata={"target": target.to_payload()},
+        if target.transport == "smtp":
+            if message.attachments:
+                raise ChannelDeliveryServiceError(
+                    error_code="channel_delivery_media_not_supported",
+                    reason=f"Transport '{target.transport}' does not support channel media attachments.",
+                    metadata={"target": target.to_payload()},
+                )
+            result = await self._deliver_via_smtp(
+                profile_id=profile_id,
+                session_id=session_id,
+                run_id=run_id,
+                target=target,
+                text=message.text,
+                credential_profile_key=credential_profile_key,
             )
-        result = await self._deliver_via_smtp(
-            profile_id=profile_id,
-            session_id=session_id,
-            run_id=run_id,
+            if not result.ok:
+                raise ChannelDeliveryServiceError(
+                    error_code=result.error_code or "channel_delivery_failed",
+                    reason=result.reason or "Channel delivery failed",
+                    metadata={"target": target.to_payload(), **result.metadata},
+                )
+            return [result.payload]
+        plugin_result = await self._deliver_message_via_plugin_channel(
             target=target,
-            text=message.text,
+            message=message,
             credential_profile_key=credential_profile_key,
         )
-        if not result.ok:
+        if plugin_result is not None:
+            return [plugin_result]
+        raise ChannelDeliveryServiceError(
+            error_code="channel_delivery_transport_not_supported",
+            reason=f"Unsupported delivery transport: {target.transport}",
+            metadata={"target": target.to_payload()},
+        )
+
+    async def _deliver_message_via_plugin_channel(
+        self,
+        *,
+        target: ResolvedDeliveryTarget,
+        message: ChannelOutboundMessage,
+        credential_profile_key: str | None,
+    ) -> dict[str, object] | None:
+        adapter = self._channel_adapter_for(target=target)
+        if adapter is None:
+            return None
+        if adapter.send_message is None:
             raise ChannelDeliveryServiceError(
-                error_code=result.error_code or "channel_delivery_failed",
-                reason=result.reason or "Channel delivery failed",
-                metadata={"target": target.to_payload(), **result.metadata},
+                error_code="channel_delivery_transport_not_supported",
+                reason=f"Channel adapter for transport '{target.transport}' does not support outbound delivery.",
+                metadata={"target": target.to_payload()},
             )
-        return [result.payload]
+        return await adapter.send_message(
+            self._settings,
+            target,
+            message,
+            credential_profile_key,
+        )
+
+    def _channel_adapter_for(self, *, target: ResolvedDeliveryTarget) -> ChannelAdapterFactory | None:
+        adapters = self._channel_adapters
+        if adapters is None:
+            adapters = dict(get_plugin_service(self._settings).channel_adapters())
+        if target.adapter_kind is not None:
+            return adapters.get((target.transport, target.adapter_kind))
+        matches = [adapter for key, adapter in adapters.items() if key[0] == target.transport]
+        if len(matches) == 1:
+            return matches[0]
+        return None
 
     async def _deliver_message_via_telegram(
         self,

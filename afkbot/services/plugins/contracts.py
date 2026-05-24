@@ -7,15 +7,17 @@ from dataclasses import dataclass
 from datetime import datetime
 import inspect
 from pathlib import Path
-import re
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from afkbot.services.config_schema import JsonConfigField
 
 if TYPE_CHECKING:
     from fastapi import APIRouter
 
     from afkbot.services.apps.registry_core import AppRegistry
+    from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
     from afkbot.services.tools.base import ToolBase
     from afkbot.settings import Settings
 
@@ -39,6 +41,7 @@ class PluginCapabilities(BaseModel):
     skills: bool = False
     apps: bool = False
     lifecycle: bool = False
+    channels: bool = False
 
 
 class PluginPermissions(BaseModel):
@@ -52,93 +55,8 @@ class PluginPermissions(BaseModel):
     data_dir_write: bool = False
 
 
-class PluginConfigField(BaseModel):
+class PluginConfigField(JsonConfigField):
     """One validated config field contract declared by a plugin manifest."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["string", "integer", "number", "boolean"]
-    title: str = ""
-    description: str = ""
-    choices: tuple[str, ...] = ()
-    minimum: float | None = None
-    maximum: float | None = None
-    min_length: int | None = None
-    max_length: int | None = None
-    pattern: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_constraints(self) -> "PluginConfigField":
-        if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
-            raise ValueError("minimum must be less than or equal to maximum")
-        if (
-            self.min_length is not None
-            and self.max_length is not None
-            and self.min_length > self.max_length
-        ):
-            raise ValueError("min_length must be less than or equal to max_length")
-        if self.choices and self.type != "string":
-            raise ValueError("choices are supported only for string config fields")
-        if any(item is not None for item in (self.minimum, self.maximum)) and self.type not in {
-            "integer",
-            "number",
-        }:
-            raise ValueError("minimum/maximum are supported only for integer/number config fields")
-        if (
-            any(item is not None for item in (self.min_length, self.max_length, self.pattern))
-            and self.type != "string"
-        ):
-            raise ValueError("string constraints are supported only for string config fields")
-        if self.pattern is not None:
-            re.compile(self.pattern)
-        return self
-
-    def validate_value(self, *, key: str, value: object) -> object:
-        """Validate one runtime config value against this field contract."""
-
-        if self.type == "string":
-            if not isinstance(value, str):
-                raise ValueError(f"Config field '{key}' must be a string")
-            if self.choices and value not in self.choices:
-                raise ValueError(f"Config field '{key}' must be one of: {', '.join(self.choices)}")
-            if self.min_length is not None and len(value) < self.min_length:
-                raise ValueError(
-                    f"Config field '{key}' must be at least {self.min_length} characters"
-                )
-            if self.max_length is not None and len(value) > self.max_length:
-                raise ValueError(
-                    f"Config field '{key}' must be at most {self.max_length} characters"
-                )
-            if self.pattern is not None and re.fullmatch(self.pattern, value) is None:
-                raise ValueError(f"Config field '{key}' does not match the required pattern")
-            return value
-        if self.type == "boolean":
-            if not isinstance(value, bool):
-                raise ValueError(f"Config field '{key}' must be a boolean")
-            return value
-        if self.type == "integer":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f"Config field '{key}' must be an integer")
-            numeric_value = float(value)
-            if self.minimum is not None and numeric_value < self.minimum:
-                raise ValueError(
-                    f"Config field '{key}' must be greater than or equal to {self.minimum}"
-                )
-            if self.maximum is not None and numeric_value > self.maximum:
-                raise ValueError(
-                    f"Config field '{key}' must be less than or equal to {self.maximum}"
-                )
-            return value
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"Config field '{key}' must be a number")
-        numeric_value = float(value)
-        if self.minimum is not None and numeric_value < self.minimum:
-            raise ValueError(
-                f"Config field '{key}' must be greater than or equal to {self.minimum}"
-            )
-        if self.maximum is not None and numeric_value > self.maximum:
-            raise ValueError(f"Config field '{key}' must be less than or equal to {self.maximum}")
-        return value
 
 
 class PluginConfigSchema(BaseModel):
@@ -338,6 +256,7 @@ class LoadedPluginRuntime:
     static_mounts: tuple[PluginStaticMount, ...]
     skill_dirs: tuple[Path, ...]
     tool_factories: dict[str, ToolFactory]
+    channel_adapters: dict[tuple[str, str], ChannelAdapterFactory]
     app_registrars: tuple[AppRegistrar, ...]
     startup_hooks: tuple[LifecycleHook, ...]
     shutdown_hooks: tuple[LifecycleHook, ...]
@@ -390,6 +309,13 @@ class PluginRuntimeSnapshot:
         merged: dict[str, ToolFactory] = {}
         for plugin in self.plugins:
             merged.update(plugin.tool_factories)
+        return merged
+
+    @property
+    def channel_adapters(self) -> dict[tuple[str, str], ChannelAdapterFactory]:
+        merged: dict[tuple[str, str], ChannelAdapterFactory] = {}
+        for plugin in self.plugins:
+            merged.update(plugin.channel_adapters)
         return merged
 
     @property

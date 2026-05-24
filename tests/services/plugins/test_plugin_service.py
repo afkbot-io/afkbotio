@@ -10,9 +10,19 @@ import tarfile
 import threading
 import time
 
+import pytest
+
 from afkbot.services.apps.registry import get_app_registry
+from afkbot.services.channels.endpoint_contracts import ChannelEndpointConfig
+from afkbot.services.channels.endpoint_service import (
+    ChannelEndpointServiceError,
+    get_channel_endpoint_service,
+    run_channel_endpoint_service_sync,
+)
 from afkbot.services.plugins import PluginServiceError, get_plugin_service, scaffold_plugin
 from afkbot.services.plugins import service as plugin_service_module
+from afkbot.services.profile_runtime import ProfileRuntimeConfig
+from afkbot.services.profile_runtime.service import ProfileService
 from afkbot.services.skills.loader_service import SkillLoader
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings
@@ -138,6 +148,133 @@ def register(registry: PluginRuntimeRegistry) -> None:
     )
 
 
+def _write_channel_plugin(
+    root: Path,
+    *,
+    transport: str = "avito",
+    adapter_kind: str = "avito_polling",
+    channels: bool = True,
+    outbound_http: bool = True,
+    data_dir_write: bool = True,
+    build_runtime: bool = False,
+) -> None:
+    (root / ".afkbot-plugin").mkdir(parents=True, exist_ok=True)
+    (root / "python/afkbot_plugin_avito").mkdir(parents=True, exist_ok=True)
+    (root / ".afkbot-plugin/plugin.json").write_text(
+        json.dumps(
+            {
+                "plugin_id": "avito",
+                "name": "Avito Channel",
+                "version": "0.1.0",
+                "afkbot_version": "*",
+                "kind": "embedded",
+                "entrypoint": "afkbot_plugin_avito.plugin:register",
+                "default_config": {},
+                "config_schema": {"fields": {}},
+                "permissions": {
+                    "database": "none",
+                    "taskflow": "none",
+                    "outbound_http": outbound_http,
+                    "data_dir_write": data_dir_write,
+                },
+                "capabilities": {
+                    "channels": channels,
+                },
+                "mounts": {
+                    "api_prefix": None,
+                    "web_prefix": None,
+                },
+                "paths": {
+                    "python_root": "python",
+                    "web_root": None,
+                    "skills_root": None,
+                },
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "python/afkbot_plugin_avito/__init__.py").write_text("", encoding="utf-8")
+    (root / "python/afkbot_plugin_avito/plugin.py").write_text(
+        f"""
+from __future__ import annotations
+
+from afkbot.services.channels.plugin_adapters import ChannelAdapterFactory
+from afkbot.services.plugins.runtime_registry import PluginRuntimeRegistry
+
+
+async def _send_message(settings, target, message, credential_profile_key):
+    _ = settings, credential_profile_key
+    return {{"provider_message_id": "m-1", "target": target.to_payload(), "text": message.text}}
+
+
+def _target_key(target):
+    return target.peer_id or target.address
+
+
+class _Runtime:
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+
+def _build_runtime(settings, endpoint, state_dir):
+    _ = settings, endpoint, state_dir
+    return _Runtime()
+
+
+def register(registry: PluginRuntimeRegistry) -> None:
+    registry.register_channel_adapter(
+        ChannelAdapterFactory(
+            transport="{transport}",
+            adapter_kind="{adapter_kind}",
+            build_runtime={("_build_runtime" if build_runtime else "None")},
+            send_message=_send_message,
+            outbound_target_key=_target_key,
+        )
+    )
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+async def _create_channel_endpoint_for_plugin(settings: Settings) -> None:
+    profiles = ProfileService(settings)
+    endpoints = get_channel_endpoint_service(settings)
+    try:
+        await profiles.create(
+            profile_id="default",
+            name="Default",
+            runtime_config=ProfileRuntimeConfig(
+                llm_provider="openai",
+                llm_model="gpt-4o-mini",
+            ),
+            runtime_secrets=None,
+            policy_enabled=True,
+            policy_preset="medium",
+            policy_capabilities=("files",),
+            policy_network_allowlist=("*",),
+        )
+        await endpoints.create(
+            ChannelEndpointConfig(
+                endpoint_id="avito-main",
+                transport="avito",
+                adapter_kind="avito_polling",
+                profile_id="default",
+                credential_profile_key="avito-main",
+                account_id="seller-1",
+            )
+        )
+    finally:
+        await profiles.shutdown()
+        await endpoints.shutdown()
+
+
 def test_plugin_service_installs_and_loads_runtime(tmp_path: Path) -> None:
     source_root = tmp_path / "demo-plugin-src"
     _write_demo_plugin(source_root)
@@ -153,6 +290,176 @@ def test_plugin_service_installs_and_loads_runtime(tmp_path: Path) -> None:
     assert "demo_tool" in snapshot.tool_factories
     assert snapshot.skill_dirs
     assert snapshot.app_registrars
+
+
+def test_plugin_service_loads_channel_adapters(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root)
+    settings = Settings(root_dir=tmp_path)
+
+    get_plugin_service(settings).install(source=str(source_root))
+    snapshot = get_plugin_service(settings).load_runtime_snapshot()
+
+    assert ("avito", "avito_polling") in snapshot.channel_adapters
+    assert snapshot.channel_adapters[("avito", "avito_polling")].send_message is not None
+
+
+def test_plugin_service_requires_channel_capability_for_channel_adapter(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root, channels=False)
+    settings = Settings(root_dir=tmp_path)
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.load_runtime_snapshot()
+
+    assert error_info.value.error_code == "plugin_channel_capability_required"
+
+
+def test_plugin_service_requires_outbound_http_for_channel_io(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root, outbound_http=False)
+    settings = Settings(root_dir=tmp_path)
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.load_runtime_snapshot()
+
+    assert error_info.value.error_code == "plugin_channel_permission_required"
+
+
+def test_plugin_service_requires_data_dir_write_for_channel_runtime(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root, data_dir_write=False, build_runtime=True)
+    settings = Settings(root_dir=tmp_path)
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.load_runtime_snapshot()
+
+    assert error_info.value.error_code == "plugin_channel_permission_required"
+    assert "data_dir_write" in error_info.value.reason
+
+
+def test_plugin_service_rejects_reserved_builtin_channel_transport(tmp_path: Path) -> None:
+    source_root = tmp_path / "telegram-plugin-src"
+    _write_channel_plugin(
+        source_root,
+        transport="telegram",
+        adapter_kind="custom_polling",
+    )
+    settings = Settings(root_dir=tmp_path)
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+
+    try:
+        service.load_runtime_snapshot()
+    except PluginServiceError as exc:
+        assert exc.error_code == "plugin_channel_transport_reserved"
+        assert "telegram" in exc.reason
+    else:
+        raise AssertionError("Expected built-in channel transport rejection")
+
+
+def test_plugin_service_blocks_disable_when_channel_endpoints_depend_on_plugin(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root)
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'plugin_channels.db'}",
+    )
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+    asyncio.run(_create_channel_endpoint_for_plugin(settings))
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.disable(plugin_id="avito")
+
+    assert error_info.value.error_code == "plugin_channel_endpoints_exist"
+    assert "avito-main" in error_info.value.reason
+    disabled = service.disable(plugin_id="avito", force=True)
+    assert disabled.enabled is False
+
+
+def test_plugin_service_blocks_channel_plugin_disable_when_adapter_inspection_fails(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root)
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'plugin_broken_channel.db'}",
+    )
+    service = get_plugin_service(settings)
+    installed = service.install(source=str(source_root))
+    asyncio.run(_create_channel_endpoint_for_plugin(settings))
+    installed_root = settings.root_dir / installed.install_path
+    (installed_root / "python/afkbot_plugin_avito/plugin.py").write_text(
+        "raise RuntimeError('broken plugin import')\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.disable(plugin_id="avito")
+
+    assert error_info.value.error_code == "plugin_channel_adapter_inspection_failed"
+    disabled = service.disable(plugin_id="avito", force=True)
+    assert disabled.enabled is False
+
+
+def test_plugin_service_remove_can_delete_plugin_channel_endpoints(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root)
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'plugin_remove_channels.db'}",
+    )
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+    asyncio.run(_create_channel_endpoint_for_plugin(settings))
+
+    removed = service.remove(plugin_id="avito", delete_channel_endpoints=True)
+
+    assert removed.plugin_id == "avito"
+    with pytest.raises(PluginServiceError) as error_info:
+        service.inspect(plugin_id="avito")
+    assert error_info.value.error_code == "plugin_not_found"
+    with pytest.raises(ChannelEndpointServiceError) as endpoint_error:
+        run_channel_endpoint_service_sync(
+            settings,
+            lambda endpoint_service: endpoint_service.get(endpoint_id="avito-main"),
+        )
+    assert endpoint_error.value.error_code == "channel_endpoint_not_found"
+
+
+def test_plugin_service_blocks_update_that_drops_channel_adapter_key(tmp_path: Path) -> None:
+    source_root = tmp_path / "avito-plugin-src"
+    _write_channel_plugin(source_root)
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'plugin_update_channels.db'}",
+    )
+    service = get_plugin_service(settings)
+    service.install(source=str(source_root))
+    asyncio.run(_create_channel_endpoint_for_plugin(settings))
+    plugin_file = source_root / "python/afkbot_plugin_avito/plugin.py"
+    plugin_file.write_text(
+        plugin_file.read_text(encoding="utf-8").replace("avito_polling", "avito_v2_polling"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PluginServiceError) as error_info:
+        service.update(plugin_id="avito")
+
+    assert error_info.value.error_code == "plugin_channel_update_incompatible"
+    assert "avito/avito_polling" in error_info.value.reason
+    updated = service.update(plugin_id="avito", force=True)
+    assert updated.plugin_id == "avito"
 
 
 def test_plugin_service_reads_and_persists_plugin_config(tmp_path: Path) -> None:
@@ -402,6 +709,7 @@ def test_plugin_scaffold_creates_installable_embedded_plugin(tmp_path: Path) -> 
         api_router=True,
         skills=True,
         lifecycle=True,
+        channel=True,
     )
 
     assert result.manifest_path.exists()
@@ -409,7 +717,13 @@ def test_plugin_scaffold_creates_installable_embedded_plugin(tmp_path: Path) -> 
     assert (plugin_root / "python/afkbot_plugin_demo/router.py").exists()
     assert (plugin_root / "web/dist/index.html").exists()
     assert (plugin_root / "skills/demo/SKILL.md").exists()
+    assert (plugin_root / "python/afkbot_plugin_demo/channel.py").exists()
+    assert (plugin_root / "docs/CHANNEL_INTEGRATION_SPEC.md").exists()
     assert '"lifecycle": true' in result.manifest_path.read_text(encoding="utf-8")
+    assert '"channels": true' in result.manifest_path.read_text(encoding="utf-8")
+    assert "PluginChannelIngressDispatcher" in (
+        plugin_root / "docs/CHANNEL_INTEGRATION_SPEC.md"
+    ).read_text(encoding="utf-8")
 
     settings = Settings(root_dir=tmp_path / "runtime")
     installed = get_plugin_service(settings).install(source=str(plugin_root))
@@ -420,3 +734,32 @@ def test_plugin_scaffold_creates_installable_embedded_plugin(tmp_path: Path) -> 
     assert snapshot.routers
     assert snapshot.static_mounts
     assert snapshot.skill_dirs
+    assert ("demo", "demo_polling") in snapshot.channel_adapters
+
+
+def test_plugin_scaffold_uses_python_safe_package_for_hyphenated_plugin_id(
+    tmp_path: Path,
+) -> None:
+    plugin_root = tmp_path / "afkbot-plugin-demo-channel"
+    result = scaffold_plugin(
+        destination=plugin_root,
+        plugin_id="demo-channel",
+        name="Demo Channel",
+        api_router=True,
+        static_web=False,
+        channel=True,
+    )
+
+    assert result.entrypoint_path == plugin_root / "python/afkbot_plugin_demo_channel/plugin.py"
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["plugin_id"] == "demo-channel"
+    assert manifest["entrypoint"] == "afkbot_plugin_demo_channel.plugin:register"
+    assert (plugin_root / "python/afkbot_plugin_demo_channel/router.py").exists()
+    assert (plugin_root / "python/afkbot_plugin_demo_channel/channel.py").exists()
+
+    settings = Settings(root_dir=tmp_path / "runtime")
+    installed = get_plugin_service(settings).install(source=str(plugin_root))
+    snapshot = get_plugin_service(settings).load_runtime_snapshot()
+
+    assert installed.plugin_id == "demo-channel"
+    assert ("demo-channel", "demo-channel_polling") in snapshot.channel_adapters
