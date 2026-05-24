@@ -29,10 +29,12 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_int,
     resolve_channel_text,
 )
-from afkbot.cli.commands.channel_shared import split_channel_access_list
+from afkbot.cli.commands.channel_shared import (
+    collect_channel_access_policy_inputs,
+    normalize_channel_tool_profile,
+)
 from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg, resolve_prompt_language
 from afkbot.services.channels.endpoint_contracts import (
-    ChannelAccessPolicy,
     ChannelEndpointConfig,
     PartyFlowPollingEndpointConfig,
     TelegramPollingEndpointConfig,
@@ -375,6 +377,18 @@ def register(app: typer.Typer) -> None:
                 yes=yes,
                 lang=prompt_language,
             )
+            resolved_tool_profile = normalize_channel_tool_profile(tool_profile)
+            access_policy = collect_channel_access_policy_inputs(
+                interactive=False,
+                lang=prompt_language,
+                private_policy=private_policy,
+                allow_from=allow_from,
+                group_policy=group_policy,
+                groups=groups,
+                group_allow_from=group_allow_from,
+                outbound_allow_to=outbound_allow_to,
+                tool_profile=resolved_tool_profile,
+            )
             endpoint = ChannelEndpointConfig(
                 endpoint_id=channel_id,
                 transport=transport,
@@ -383,15 +397,8 @@ def register(app: typer.Typer) -> None:
                 credential_profile_key=credential_profile_key,
                 account_id=account_id or channel_id,
                 enabled=enabled,
-                tool_profile=tool_profile,
-                access_policy=ChannelAccessPolicy(
-                    private_policy=private_policy,
-                    allow_from=split_channel_access_list(allow_from),
-                    group_policy=group_policy,
-                    groups=split_channel_access_list(groups),
-                    group_allow_from=split_channel_access_list(group_allow_from),
-                    outbound_allow_to=split_channel_access_list(outbound_allow_to),
-                ),
+                tool_profile=resolved_tool_profile,
+                access_policy=access_policy,
                 config=config_payload,
             )
             endpoint = adapter.validate_config_schema_payload(endpoint)
