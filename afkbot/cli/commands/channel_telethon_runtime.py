@@ -47,7 +47,9 @@ def set_telethon_endpoint_enabled(*, channel_id: str, enabled: bool) -> None:
     """Enable or disable one Telethon endpoint and matching binding when present."""
 
     try:
-        updated = asyncio.run(_set_telethon_endpoint_enabled(channel_id=channel_id, enabled=enabled))
+        updated = asyncio.run(
+            _set_telethon_endpoint_enabled(channel_id=channel_id, enabled=enabled)
+        )
     except Exception as exc:
         raise_telethon_channel_error(exc)
     typer.echo(f"Telethon channel `{updated.endpoint_id}` enabled={updated.enabled}.")
@@ -65,17 +67,13 @@ async def _set_telethon_endpoint_enabled(
     service = get_channel_endpoint_service(settings)
     current = await load_telethon_endpoint(channel_id=channel_id)
     updated = TelethonUserEndpointConfig.model_validate(
-        (
-            await service.update(current.model_copy(update={"enabled": enabled}))
-        ).model_dump()
+        (await service.update(current.model_copy(update={"enabled": enabled}))).model_dump()
     )
     try:
         binding_service = get_channel_binding_service(settings)
         binding = await binding_service.get(binding_id=channel_id)
         await binding_service.put(
-            ChannelBindingRule(
-                **(binding.model_dump(mode="python") | {"enabled": enabled})
-            )
+            ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
         )
     except ChannelBindingServiceError:
         pass

@@ -5,7 +5,9 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-from afkbot.services.connect.access import validate_connect_access_token as _validate_connect_access_token
+from afkbot.services.connect.access import (
+    validate_connect_access_token as _validate_connect_access_token,
+)
 from afkbot.services.connect.contracts import (
     ConnectAccessTokenContext,
     ConnectClaimResult,

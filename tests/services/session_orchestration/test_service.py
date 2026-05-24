@@ -204,9 +204,7 @@ async def test_session_orchestrator_turn_lease_keeps_external_turns_queued(
             session_id="s-lease",
             source="chat",
         ) as lease:
-            first_task = asyncio.create_task(
-                lease.run_turn(message="first")
-            )
+            first_task = asyncio.create_task(lease.run_turn(message="first"))
             await asyncio.wait_for(first_started.wait(), timeout=1.0)
             outside_task = asyncio.create_task(
                 orchestrator.run_turn(
@@ -274,13 +272,9 @@ async def test_session_orchestrator_turn_lease_serializes_internal_concurrent_ca
             session_id="s-lease-internal",
             source="chat",
         ) as lease:
-            first_task = asyncio.create_task(
-                lease.run_turn(message="first")
-            )
+            first_task = asyncio.create_task(lease.run_turn(message="first"))
             await asyncio.wait_for(first_started.wait(), timeout=1.0)
-            second_task = asyncio.create_task(
-                lease.run_turn(message="second")
-            )
+            second_task = asyncio.create_task(lease.run_turn(message="second"))
             await asyncio.sleep(0.1)
             assert started == ["first"]
 
@@ -344,12 +338,16 @@ async def test_session_orchestrator_allows_parallel_turns_for_different_sessions
         await asyncio.wait_for(all_started.wait(), timeout=2.0)
         async with session_scope(factory) as session:
             running_rows = (
-                await session.execute(
-                    select(ChatSessionTurnQueueItem).where(
-                        ChatSessionTurnQueueItem.status == "running"
+                (
+                    await session.execute(
+                        select(ChatSessionTurnQueueItem).where(
+                            ChatSessionTurnQueueItem.status == "running"
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert {row.session_id for row in running_rows} == set(session_ids)
         release_all.set()
         results = await asyncio.gather(*tasks)

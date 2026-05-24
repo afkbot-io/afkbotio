@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import typer
 
-from afkbot.cli.presentation.inline_select import confirm_space, run_inline_multi_select, select_option_dialog
+from afkbot.cli.presentation.inline_select import (
+    confirm_space,
+    run_inline_multi_select,
+    select_option_dialog,
+)
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage, msg, multi_hint, single_hint
 from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.services.mcp_integration.operator_contracts import MCP_CONFIG_BOUNDARY_NOTE
@@ -48,7 +52,9 @@ def prompt_resolved_mcp_url(
         try:
             return resolve_mcp_url(candidate)
         except ValueError as exc:
-            typer.echo(msg(lang, en=f"Invalid MCP URL: {exc}", ru=f"Некорректный URL MCP-сервера: {exc}"))
+            typer.echo(
+                msg(lang, en=f"Invalid MCP URL: {exc}", ru=f"Некорректный URL MCP-сервера: {exc}")
+            )
             prompt_default = candidate
 
 
@@ -110,8 +116,20 @@ def prompt_mcp_capabilities(
         ),
         options=[
             ("tools", msg(lang, en="tools - callable actions", ru="tools - вызываемые действия")),
-            ("resources", msg(lang, en="resources - readable context items", ru="resources - читаемый контекст")),
-            ("prompts", msg(lang, en="prompts - reusable prompt templates", ru="prompts - шаблоны запросов")),
+            (
+                "resources",
+                msg(
+                    lang,
+                    en="resources - readable context items",
+                    ru="resources - читаемый контекст",
+                ),
+            ),
+            (
+                "prompts",
+                msg(
+                    lang, en="prompts - reusable prompt templates", ru="prompts - шаблоны запросов"
+                ),
+            ),
         ],
         default_values=defaults or ("tools",),
         hint_text=multi_hint(lang),

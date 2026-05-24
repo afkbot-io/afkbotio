@@ -29,7 +29,9 @@ from afkbot.settings import Settings
 
 
 @pytest.mark.asyncio
-async def test_submit_secure_field_rejects_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_submit_secure_field_rejects_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Secure submit should consume pending request and reject replay attempts."""
 
     settings = Settings(

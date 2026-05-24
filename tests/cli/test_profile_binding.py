@@ -44,7 +44,9 @@ def _add_profile(runner: CliRunner, profile_id: str, name: str) -> None:
     assert result.exit_code == 0
 
 
-def test_profile_binding_set_list_resolve_show_and_delete(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_profile_binding_set_list_resolve_show_and_delete(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Binding CLI should persist routing rules and resolve routing inputs."""
 
     _prepare_env(tmp_path, monkeypatch)

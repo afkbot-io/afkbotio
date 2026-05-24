@@ -51,7 +51,9 @@ def list_log_files(settings: Settings) -> list[Path]:
     root = logs_dir(settings)
     if not root.exists():
         return []
-    files = [path for path in root.rglob("*") if path.is_file() and path.name.startswith("errors.log")]
+    files = [
+        path for path in root.rglob("*") if path.is_file() and path.name.startswith("errors.log")
+    ]
     return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)
 
 

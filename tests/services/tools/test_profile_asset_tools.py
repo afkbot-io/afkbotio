@@ -75,7 +75,7 @@ async def test_skill_profile_tools_crud(tmp_path: Path, monkeypatch: MonkeyPatch
     get_result = await get_tool.execute(ctx, get_params)
     assert get_result.ok is True
     get_skill = cast(dict[str, Any], get_result.payload["skill"])
-    assert str(get_skill["content"]).startswith("---\nname: custom-note\ndescription: \"Use me.\"")
+    assert str(get_skill["content"]).startswith('---\nname: custom-note\ndescription: "Use me."')
     assert "Use me." in str(get_skill["content"])
 
     delete_tool = registry.get("skill.profile.delete")
@@ -128,7 +128,9 @@ async def test_skill_profile_list_includes_core_and_profile_by_default(
     )
     list_result = await list_tool.execute(ctx, list_params)
     assert list_result.ok is True
-    names = {str(item["name"]) for item in cast(list[dict[str, Any]], list_result.payload["skills"])}
+    names = {
+        str(item["name"]) for item in cast(list[dict[str, Any]], list_result.payload["skills"])
+    }
     assert "security-secrets" in names
     assert "custom-note" in names
 
@@ -172,7 +174,9 @@ async def test_skill_profile_list_scope_profile_filters_core(
     )
     list_result = await list_tool.execute(ctx, list_params)
     assert list_result.ok is True
-    names = {str(item["name"]) for item in cast(list[dict[str, Any]], list_result.payload["skills"])}
+    names = {
+        str(item["name"]) for item in cast(list[dict[str, Any]], list_result.payload["skills"])
+    }
     assert names == {"custom-note"}
     assert list_result.payload["scope"] == "profile"
     assert list_result.payload["core_skill_count"] == 1
@@ -192,7 +196,9 @@ async def test_skill_profile_list_scope_profile_reports_core_hint_when_empty(
 
     core_skill_dir = tmp_path / "afkbot/skills/telegram"
     core_skill_dir.mkdir(parents=True, exist_ok=True)
-    (core_skill_dir / "SKILL.md").write_text("# telegram\nBuilt-in telegram skill.", encoding="utf-8")
+    (core_skill_dir / "SKILL.md").write_text(
+        "# telegram\nBuilt-in telegram skill.", encoding="utf-8"
+    )
 
     list_tool = registry.get("skill.profile.list")
     assert list_tool is not None
@@ -629,7 +635,9 @@ async def test_skill_marketplace_tools_list_and_install(
             "installed_origin": "profile",
         }
     ]
-    assert "Marketplace skills in `skills.sh/openai/skills`:" in str(list_result.payload["display_text"])
+    assert "Marketplace skills in `skills.sh/openai/skills`:" in str(
+        list_result.payload["display_text"]
+    )
     assert "ranking: 16.4K total installs" in str(list_result.payload["display_text"])
     assert "`memory` | #2 | 362 installs | installed as `memory-local`" in str(
         list_result.payload["display_text"]
@@ -724,7 +732,10 @@ async def test_skill_marketplace_tools_default_source_alias(
     # Assert
     assert list_result.ok is True
     assert list_result.payload["resolved_source"] == "skills.sh/openai/skills"
-    assert cast(list[dict[str, Any]], list_result.payload["skills"])[0]["source"] == "skills.sh/openai/skills"
+    assert (
+        cast(list[dict[str, Any]], list_result.payload["skills"])[0]["source"]
+        == "skills.sh/openai/skills"
+    )
     assert cast(list[dict[str, Any]], list_result.payload["skills"])[0]["installed"] is True
     assert "Marketplace skills in `default`:" in str(list_result.payload["display_text"])
     assert "installed" in str(list_result.payload["display_text"])

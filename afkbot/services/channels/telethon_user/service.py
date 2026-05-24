@@ -83,7 +83,10 @@ from afkbot.services.channels.telethon_user.service_watcher import (
     watcher_flush_loop as _watcher_flush_loop_impl,
     watcher_refresh_loop as _watcher_refresh_loop_impl,
 )
-from afkbot.services.channels.telethon_user.watcher import TelethonWatchedDialog, TelethonWatchedEvent
+from afkbot.services.channels.telethon_user.watcher import (
+    TelethonWatchedDialog,
+    TelethonWatchedEvent,
+)
 from afkbot.settings import Settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,12 +133,16 @@ class TelethonUserService:
             settings,
             endpoint_id=self._endpoint.endpoint_id,
         )
-        self._channel_delivery_service = channel_delivery_service or ChannelDeliveryService(settings)
+        self._channel_delivery_service = channel_delivery_service or ChannelDeliveryService(
+            settings
+        )
         self._run_chat_turn = run_chat_turn_fn
         self._client_factory = client_factory
         self._client: TelethonClientLike | None = None
         self._identity: TelethonUserIdentity | None = None
-        self._queue: asyncio.Queue[_QueuedInboundEvent] = asyncio.Queue(maxsize=settings.runtime_queue_max_size)
+        self._queue: asyncio.Queue[_QueuedInboundEvent] = asyncio.Queue(
+            maxsize=settings.runtime_queue_max_size
+        )
         self._worker_task: asyncio.Task[None] | None = None
         self._runner_task: asyncio.Task[None] | None = None
         self._watcher_flush_task: asyncio.Task[None] | None = None

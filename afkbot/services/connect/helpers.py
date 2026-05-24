@@ -25,7 +25,9 @@ def normalize_base_url(value: str) -> str:
 
     raw = value.strip()
     if not raw:
-        raise ConnectServiceError(error_code="connect_base_url_invalid", reason="Base URL is empty.")
+        raise ConnectServiceError(
+            error_code="connect_base_url_invalid", reason="Base URL is empty."
+        )
     if "://" not in raw:
         raw = f"http://{raw}"
     parsed = urlparse(raw)

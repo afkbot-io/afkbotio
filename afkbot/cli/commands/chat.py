@@ -193,7 +193,9 @@ def register(app: typer.Typer) -> None:
                     ensure_layout=True,
                 )
                 resolved_plan_mode = (
-                    normalize_chat_planning_mode(plan or effective_profile_settings.chat_planning_mode)
+                    normalize_chat_planning_mode(
+                        plan or effective_profile_settings.chat_planning_mode
+                    )
                     or "off"
                 )
                 resolved_thinking_level = resolve_cli_thinking_level(
@@ -343,6 +345,7 @@ def _invoke_run_repl(
         return
     filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
     invoke(**filtered_kwargs)
+
 
 def _chat_default_llm_budget_updates(settings: Settings) -> dict[str, object]:
     """Cap inherited long-running defaults for foreground chat turns."""

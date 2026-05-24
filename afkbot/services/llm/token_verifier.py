@@ -207,7 +207,9 @@ def verify_provider_token(
         )
 
     if status_code in {200, 204, 429}:
-        return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=status_code)
+        return TokenVerificationResult(
+            ok=True, error_code=None, reason=None, status_code=status_code
+        )
     if status_code in {401, 403}:
         return TokenVerificationResult(
             ok=False,
@@ -366,7 +368,9 @@ def _verify_openai_codex_token(
             status_code=None,
         )
     if status_code in {200, 204}:
-        return TokenVerificationResult(ok=True, error_code=None, reason=None, status_code=status_code)
+        return TokenVerificationResult(
+            ok=True, error_code=None, reason=None, status_code=status_code
+        )
     if status_code == 429:
         return TokenVerificationResult(
             ok=False,
@@ -503,7 +507,9 @@ def _is_allowed_base_url(value: str) -> bool:
     return host in {"localhost", "127.0.0.1", "::1"}
 
 
-def token_expired_or_expiring_soon(*, token: str, now_epoch: int | None = None, skew_sec: int = 300) -> bool:
+def token_expired_or_expiring_soon(
+    *, token: str, now_epoch: int | None = None, skew_sec: int = 300
+) -> bool:
     """Return whether unsigned JWT `exp` is already stale or near expiry."""
 
     parts = token.split(".")

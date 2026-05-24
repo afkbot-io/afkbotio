@@ -138,7 +138,9 @@ async def post_auth_logout() -> JSONResponse:
 
 
 @router.get("/auth/login", response_model=None)
-async def get_auth_login_page(request: Request, next: str | None = None) -> HTMLResponse | RedirectResponse:
+async def get_auth_login_page(
+    request: Request, next: str | None = None
+) -> HTMLResponse | RedirectResponse:
     """Render the minimal built-in login page for protected plugin surfaces."""
 
     settings = get_settings()

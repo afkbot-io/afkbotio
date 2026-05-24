@@ -26,7 +26,7 @@ async def test_llm_filters_tools_to_routed_skill_surface(tmp_path: Path) -> None
         "\n".join(
             [
                 "---",
-                "description: \"Telegram integration via app.run.\"",
+                'description: "Telegram integration via app.run."',
                 "triggers:",
                 "  - телеграм",
                 "tool_names:",
@@ -96,7 +96,7 @@ async def test_llm_routes_explicit_slash_skill_invoke_to_skill_surface(tmp_path:
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "tool_names:",
                 "  - credentials.list",
                 "  - credentials.request",
@@ -150,7 +150,7 @@ async def test_llm_routes_explicit_dollar_skill_invoke_to_same_surface(tmp_path:
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "tool_names:",
                 "  - credentials.list",
                 "  - credentials.request",
@@ -199,14 +199,16 @@ async def test_llm_ignores_descriptive_platform_mentions_for_implicit_skill_rout
 ) -> None:
     """Descriptive platform text should not narrow tools through generic implicit trigger words."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_descriptive_platform_mentions.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_descriptive_platform_mentions.db"
+    )
     automation_skill = tmp_path / "afkbot/skills/automation"
     automation_skill.mkdir(parents=True, exist_ok=True)
     (automation_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Automation management.\"",
+                'description: "Automation management."',
                 "triggers:",
                 "  - webhook",
                 "tool_names:",
@@ -224,7 +226,7 @@ async def test_llm_ignores_descriptive_platform_mentions_for_implicit_skill_rout
         "\n".join(
             [
                 "---",
-                "description: \"Browser automation.\"",
+                'description: "Browser automation."',
                 "triggers:",
                 "  - browser",
                 "tool_names:",
@@ -242,7 +244,7 @@ async def test_llm_ignores_descriptive_platform_mentions_for_implicit_skill_rout
         "\n".join(
             [
                 "---",
-                "description: \"Telegram integration.\"",
+                'description: "Telegram integration."',
                 "triggers:",
                 "  - telegram",
                 "tool_names:",
@@ -294,7 +296,9 @@ async def test_llm_ignores_descriptive_platform_mentions_for_implicit_skill_rout
 async def test_llm_does_not_route_agent_cli_skill_for_docs_style_question(tmp_path: Path) -> None:
     """Docs-style questions about a CLI should not narrow the tool surface to a bash skill."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_agent_cli_docs_question.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_agent_cli_docs_question.db"
+    )
     codex_skill = tmp_path / "afkbot/skills/codex-cli"
     codex_skill.mkdir(parents=True, exist_ok=True)
     (codex_skill / "SKILL.md").write_text(
@@ -347,14 +351,16 @@ async def test_llm_does_not_route_agent_cli_skill_for_docs_style_question(tmp_pa
 async def test_llm_routes_explicit_skill_near_match_to_unique_surface(tmp_path: Path) -> None:
     """Minor near-miss explicit skill invokes should resolve to one unique skill."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_explicit_skill_near_match.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_explicit_skill_near_match.db"
+    )
     gh_skill = tmp_path / "profiles/default/skills/gh-address-comments"
     gh_skill.mkdir(parents=True, exist_ok=True)
     (gh_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Address GitHub PR review comments with gh CLI.\"",
+                'description: "Address GitHub PR review comments with gh CLI."',
                 "tool_names:",
                 "  - bash.exec",
                 "preferred_tool_order:",
@@ -396,14 +402,16 @@ async def test_llm_routes_explicit_skill_near_match_to_unique_surface(tmp_path: 
 async def test_llm_routes_marketplace_requests_to_skill_creator_surface(tmp_path: Path) -> None:
     """Marketplace skill requests should expose marketplace/profile skill tools."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_skill_marketplace_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_skill_marketplace_surface.db"
+    )
     skill_creator = tmp_path / "afkbot/skills/skill-creator"
     skill_creator.mkdir(parents=True, exist_ok=True)
     (skill_creator / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Manage profile skills and skill marketplace installs.\"",
+                'description: "Manage profile skills and skill marketplace installs."',
                 "triggers:",
                 "  - маркетплейс скиллов",
                 "  - маркет плейс скиллов",
@@ -460,7 +468,7 @@ async def test_llm_routes_package_requests_to_sysadmin_shell_surface(tmp_path: P
         "\n".join(
             [
                 "---",
-                "description: \"System administration via bash.exec for packages and services.\"",
+                'description: "System administration via bash.exec for packages and services."',
                 "triggers:",
                 "  - install nginx",
                 "  - apt update",
@@ -505,17 +513,21 @@ async def test_llm_routes_package_requests_to_sysadmin_shell_surface(tmp_path: P
     await engine.dispose()
 
 
-async def test_llm_routes_spaced_marketplace_requests_to_skill_creator_surface(tmp_path: Path) -> None:
+async def test_llm_routes_spaced_marketplace_requests_to_skill_creator_surface(
+    tmp_path: Path,
+) -> None:
     """Spaced Russian marketplace phrasing should still route to skill creator."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_spaced_marketplace_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_spaced_marketplace_surface.db"
+    )
     skill_creator = tmp_path / "afkbot/skills/skill-creator"
     skill_creator.mkdir(parents=True, exist_ok=True)
     (skill_creator / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Manage profile skills and marketplace installs.\"",
+                'description: "Manage profile skills and marketplace installs."',
                 "triggers:",
                 "  - маркет плейс скиллов",
                 "tool_names:",
@@ -563,7 +575,7 @@ async def test_llm_routes_imap_mail_requests_to_imap_surface(tmp_path: Path) -> 
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "triggers:",
                 "  - список писем с почты",
                 "  - через imap",
@@ -611,14 +623,16 @@ async def test_llm_routes_imap_mail_requests_to_imap_surface(tmp_path: Path) -> 
 async def test_llm_routes_imap_followup_phrase_to_imap_surface(tmp_path: Path) -> None:
     """Short follow-up phrasing like 'через imap' should still route to IMAP tools."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_imap_followup_skill_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_imap_followup_skill_surface.db"
+    )
     imap_skill = tmp_path / "afkbot/skills/imap"
     imap_skill.mkdir(parents=True, exist_ok=True)
     (imap_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "triggers:",
                 "  - через imap",
                 "tool_names:",
@@ -662,10 +676,14 @@ async def test_llm_routes_imap_followup_phrase_to_imap_surface(tmp_path: Path) -
     await engine.dispose()
 
 
-async def test_llm_routes_automation_plus_telegram_requests_to_combined_surface(tmp_path: Path) -> None:
+async def test_llm_routes_automation_plus_telegram_requests_to_combined_surface(
+    tmp_path: Path,
+) -> None:
     """Automation requests that mention Telegram should expose automation and Telegram tools."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_automation_telegram_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_automation_telegram_surface.db"
+    )
     automation_skill = tmp_path / "afkbot/skills/automation"
     automation_skill.mkdir(parents=True, exist_ok=True)
     (automation_skill / "SKILL.md").write_text(
@@ -745,7 +763,9 @@ async def test_llm_routes_automation_plus_telegram_requests_to_combined_surface(
 async def test_llm_keeps_automation_surface_for_confirmation_followup(tmp_path: Path) -> None:
     """Short confirmations should keep automation tools when the prior turn selected automation."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_automation_followup_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_automation_followup_surface.db"
+    )
     automation_skill = tmp_path / "afkbot/skills/automation"
     automation_skill.mkdir(parents=True, exist_ok=True)
     (automation_skill / "SKILL.md").write_text(
@@ -810,7 +830,7 @@ async def test_llm_keeps_skill_affinity_for_short_followup_turn(tmp_path: Path) 
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "tool_names:",
                 "  - credentials.list",
                 "  - credentials.request",
@@ -859,10 +879,14 @@ async def test_llm_keeps_skill_affinity_for_short_followup_turn(tmp_path: Path) 
     await engine.dispose()
 
 
-async def test_automation_runtime_keeps_broad_tool_surface_with_inferred_skills(tmp_path: Path) -> None:
+async def test_automation_runtime_keeps_broad_tool_surface_with_inferred_skills(
+    tmp_path: Path,
+) -> None:
     """Automation-triggered turns should keep broad tools while preferring selected automation skills."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_automation_runtime_broad_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_automation_runtime_broad_surface.db"
+    )
     automation_skill = tmp_path / "afkbot/skills/automation"
     automation_skill.mkdir(parents=True, exist_ok=True)
     (automation_skill / "SKILL.md").write_text(
@@ -915,17 +939,21 @@ async def test_automation_runtime_keeps_broad_tool_surface_with_inferred_skills(
     await engine.dispose()
 
 
-async def test_llm_fail_closes_when_explicit_skill_has_no_executable_surface(tmp_path: Path) -> None:
+async def test_llm_fail_closes_when_explicit_skill_has_no_executable_surface(
+    tmp_path: Path,
+) -> None:
     """Explicit advisory-only skill invoke must not reopen the full tool catalog."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_fail_closed_skill_tools.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_fail_closed_skill_tools.db"
+    )
     empty_skill = tmp_path / "afkbot/skills/empty-skill"
     empty_skill.mkdir(parents=True, exist_ok=True)
     (empty_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Matches a special phrase but exposes no tools.\"",
+                'description: "Matches a special phrase but exposes no tools."',
                 "triggers:",
                 "  - only-skill-mode",
                 "---",
@@ -965,14 +993,16 @@ async def test_llm_fail_closes_when_explicit_skill_has_no_executable_surface(tmp
 async def test_llm_taskflow_runtime_keeps_background_broad_tool_surface(tmp_path: Path) -> None:
     """Task Flow transport should keep the same broad background tool surface as automation."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_taskflow_runtime_broad_surface.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_taskflow_runtime_broad_surface.db"
+    )
     automation_skill = tmp_path / "afkbot/skills/automation"
     automation_skill.mkdir(parents=True, exist_ok=True)
     (automation_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Automation management.\"",
+                'description: "Automation management."',
                 "triggers:",
                 "  - telegram",
                 "tool_names:",
@@ -1017,14 +1047,16 @@ async def test_llm_taskflow_runtime_keeps_background_broad_tool_surface(tmp_path
 async def test_llm_fail_closes_when_explicit_skill_is_unavailable(tmp_path: Path) -> None:
     """Explicit unavailable skill invoke must not fall back to generic tools."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_fail_closed_unavailable_skill.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_fail_closed_unavailable_skill.db"
+    )
     doc_skill = tmp_path / "profiles/default/skills/doc"
     doc_skill.mkdir(parents=True, exist_ok=True)
     (doc_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Create and edit .docx documents.\"",
+                'description: "Create and edit .docx documents."',
                 "aliases:",
                 "  - docx",
                 "tool_names:",
@@ -1078,7 +1110,7 @@ async def test_llm_hides_app_run_when_skill_declares_it_without_allowed_app_mapp
         "\n".join(
             [
                 "---",
-                "description: \"References app.run but has no app mapping.\"",
+                'description: "References app.run but has no app mapping."',
                 "triggers:",
                 "  - strange-app-mode",
                 "tool_names:",
@@ -1122,14 +1154,16 @@ async def test_llm_hides_app_run_when_only_unavailable_skill_maps_to_app(
     """Unavailable selected skills must not contribute app routing to executable surface."""
 
     # Arrange
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_hide_unavailable_app_run.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_hide_unavailable_app_run.db"
+    )
     helper_skill = tmp_path / "afkbot/skills/helper-skill"
     helper_skill.mkdir(parents=True, exist_ok=True)
     (helper_skill / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
-                "description: \"Simple helper skill.\"",
+                'description: "Simple helper skill."',
                 "triggers:",
                 "  - helper-mode",
                 "tool_names:",
@@ -1147,7 +1181,7 @@ async def test_llm_hides_app_run_when_only_unavailable_skill_maps_to_app(
         "\n".join(
             [
                 "---",
-                "description: \"Mailbox search via IMAP.\"",
+                'description: "Mailbox search via IMAP."',
                 "tool_names:",
                 "  - app.run",
                 "requires_python_packages:",
@@ -1200,7 +1234,7 @@ async def test_llm_combines_file_ops_and_diffs_for_file_change_requests(tmp_path
         "\n".join(
             [
                 "---",
-                "description: \"Workspace file operations.\"",
+                'description: "Workspace file operations."',
                 "triggers:",
                 "  - создай файл",
                 "  - отредактируй файл",
@@ -1227,7 +1261,7 @@ async def test_llm_combines_file_ops_and_diffs_for_file_change_requests(tmp_path
         "\n".join(
             [
                 "---",
-                "description: \"Render diffs.\"",
+                'description: "Render diffs."',
                 "triggers:",
                 "  - diffs",
                 "tool_names:",
@@ -1276,7 +1310,7 @@ async def test_skill_trigger_matching_is_unicode_token_aware(tmp_path: Path) -> 
         "\n".join(
             [
                 "---",
-                "description: \"Telegram integration.\"",
+                'description: "Telegram integration."',
                 "triggers:",
                 "  - телеграм",
                 "tool_names:",
@@ -1357,7 +1391,9 @@ async def test_policy_safety_block_is_injected_into_llm_context(tmp_path: Path) 
 async def test_new_profile_skill_is_visible_without_new_session(tmp_path: Path) -> None:
     """Newly added profile skill should appear in context on next turn in same session."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_profile_skill_hot_reload.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_profile_skill_hot_reload.db"
+    )
     scripted = MockLLMProvider([LLMResponse.final("first"), LLMResponse.final("second")])
 
     async with session_scope(factory) as session:
@@ -1379,7 +1415,9 @@ async def test_new_profile_skill_is_visible_without_new_session(tmp_path: Path) 
 
         new_skill = tmp_path / "profiles/default/skills/proektdok"
         new_skill.mkdir(parents=True, exist_ok=True)
-        (new_skill / "SKILL.md").write_text("# proektdok\nUse productologist approach.", encoding="utf-8")
+        (new_skill / "SKILL.md").write_text(
+            "# proektdok\nUse productologist approach.", encoding="utf-8"
+        )
 
         second = await loop.run_turn(
             profile_id="default",

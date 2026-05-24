@@ -24,7 +24,11 @@ from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.policy import PolicyViolationError
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
-from afkbot.services.subagents.runner import SubagentExecutionError, SubagentExecutionResult, SubagentRunner
+from afkbot.services.subagents.runner import (
+    SubagentExecutionError,
+    SubagentExecutionResult,
+    SubagentRunner,
+)
 from afkbot.services.subagents.service import SubagentService
 from afkbot.services.tools.base import ToolContext
 from afkbot.settings import Settings
@@ -142,7 +146,9 @@ async def test_run_wait_result_completed(tmp_path: Path) -> None:
     """Subagent task should finish and return output via result endpoint."""
 
     _prepare_core_researcher(tmp_path)
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents1.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents1.db'}", root_dir=tmp_path
+    )
     service = SubagentService(
         settings=settings,
         runner=_PersistingRunner(settings),
@@ -205,7 +211,9 @@ async def test_wait_and_result_reap_finished_detached_process_handles(
 ) -> None:
     """Read paths should opportunistically reap finished detached worker handles."""
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-reap.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-reap.db'}", root_dir=tmp_path
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -231,7 +239,9 @@ async def test_wait_and_result_reap_finished_detached_process_handles(
 
     service = SubagentService(settings=settings)
     reaped: list[str] = []
-    monkeypatch.setattr(service._launcher, "reap", lambda *, task_id=None: reaped.append(str(task_id)))  # noqa: SLF001
+    monkeypatch.setattr(
+        service._launcher, "reap", lambda *, task_id=None: reaped.append(str(task_id))
+    )  # noqa: SLF001
 
     wait_response = await service.wait(
         task_id="task-reap",
@@ -262,7 +272,9 @@ async def test_run_normalizes_profile_subagent_name_before_lookup(tmp_path: Path
     profile_path = tmp_path / "profiles/default/subagents/analizator.md"
     profile_path.parent.mkdir(parents=True)
     profile_path.write_text("# analizator", encoding="utf-8")
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-normalized.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-normalized.db'}", root_dir=tmp_path
+    )
     service = SubagentService(
         settings=settings,
         runner=_PersistingRunner(settings),
@@ -294,7 +306,9 @@ async def test_run_missing_subagent_lists_available_runtime_names(tmp_path: Path
     profile_path = tmp_path / "profiles/default/subagents/poet-10-lines.md"
     profile_path.parent.mkdir(parents=True)
     profile_path.write_text("# poet-10-lines", encoding="utf-8")
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-missing.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents-missing.db'}", root_dir=tmp_path
+    )
     service = SubagentService(
         settings=settings,
         runner=_PersistingRunner(settings),
@@ -391,7 +405,9 @@ async def test_subagent_run_respects_profile_policy(tmp_path: Path) -> None:
     """Subagent runtime should be blocked when policy disables subagent iterations."""
 
     _prepare_core_researcher(tmp_path)
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents4.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents4.db'}", root_dir=tmp_path
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -447,7 +463,9 @@ async def test_subagent_run_fails_without_configured_llm(tmp_path: Path) -> None
 def test_custom_subagent_runner_requires_inline_launch_mode(tmp_path: Path) -> None:
     """Process launch mode should reject custom runner injection up front."""
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents6.db'}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'subagents6.db'}", root_dir=tmp_path
+    )
 
     with pytest.raises(ValueError, match="launch_mode='inline'"):
         SubagentService(settings=settings, runner=_PersistingRunner(settings))
@@ -758,7 +776,9 @@ async def test_subagent_runner_preserves_external_timeout_terminal_state(
                 error_code="subagent_timeout",
                 reason="Subagent timed out after 30 seconds",
             )
-        with pytest.raises(SubagentExecutionError, match="Subagent timed out after 30 seconds") as exc_info:
+        with pytest.raises(
+            SubagentExecutionError, match="Subagent timed out after 30 seconds"
+        ) as exc_info:
             await asyncio.wait_for(worker_task, timeout=2.0)
         assert exc_info.value.error_code == "subagent_timeout"
     finally:

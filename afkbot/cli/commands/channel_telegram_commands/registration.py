@@ -55,7 +55,9 @@ def register_telegram_command_tree(
             "--account-id",
             help="Logical account id used by bindings and routing telemetry. Defaults to the channel id.",
         ),
-        enabled: bool | None = typer.Option(None, "--enabled/--disabled", help="Enable or disable this endpoint."),
+        enabled: bool | None = typer.Option(
+            None, "--enabled/--disabled", help="Enable or disable this endpoint."
+        ),
         group_trigger_mode: str | None = typer.Option(
             None,
             "--group-trigger-mode",
@@ -159,7 +161,9 @@ def register_telegram_command_tree(
             "--prompt-overlay",
             help="Optional routing prompt overlay applied through the matching binding.",
         ),
-        priority: int = typer.Option(0, "--priority", help="Binding priority when --binding is enabled."),
+        priority: int = typer.Option(
+            0, "--priority", help="Binding priority when --binding is enabled."
+        ),
         yes: bool = typer.Option(
             False,
             "--yes",
@@ -345,7 +349,9 @@ def register_telegram_command_tree(
             "--prompt-overlay",
             help="Optional routing prompt overlay applied through the matching binding.",
         ),
-        priority: int | None = typer.Option(None, "--priority", help="Binding priority when --binding is enabled."),
+        priority: int | None = typer.Option(
+            None, "--priority", help="Binding priority when --binding is enabled."
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Update one Telegram polling endpoint without implicit upsert."""

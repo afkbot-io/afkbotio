@@ -20,9 +20,15 @@ from afkbot.services.app_catalog import AppCatalogResponse
 router = APIRouter(prefix="/v1/chat", tags=["chat"])
 
 router.add_api_route("/turn", post_chat_turn, methods=["POST"], response_model=TurnResult)
-router.add_api_route("/catalog", get_chat_catalog, methods=["GET"], response_model=AppCatalogResponse)
-router.add_api_route("/progress", get_chat_progress, methods=["GET"], response_model=ProgressPollResponse)
-router.add_api_route("/secure-field", post_secure_field, methods=["POST"], response_model=SecureFieldSubmitResponse)
+router.add_api_route(
+    "/catalog", get_chat_catalog, methods=["GET"], response_model=AppCatalogResponse
+)
+router.add_api_route(
+    "/progress", get_chat_progress, methods=["GET"], response_model=ProgressPollResponse
+)
+router.add_api_route(
+    "/secure-field", post_secure_field, methods=["POST"], response_model=SecureFieldSubmitResponse
+)
 router.add_api_route("/answer", post_question_answer, methods=["POST"], response_model=TurnResult)
 router.add_api_websocket_route("/progress/ws", ws_chat_progress)
 

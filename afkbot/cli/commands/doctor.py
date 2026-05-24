@@ -231,7 +231,10 @@ def _format_runtime_summary(settings: Settings) -> str:
     """Render one short runtime bind summary for operator-facing diagnostics."""
 
     runtime_config = read_runtime_config(settings)
-    runtime_host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
+    runtime_host = (
+        str(runtime_config.get("runtime_host", settings.runtime_host)).strip()
+        or settings.runtime_host
+    )
     runtime_port = resolve_default_runtime_port(
         settings=settings,
         host=runtime_host,
@@ -268,7 +271,10 @@ class _RuntimeDaemonReport:
 
 def _inspect_runtime_daemon(settings: Settings) -> _RuntimeDaemonReport:
     runtime_config = read_runtime_config(settings)
-    runtime_host = str(runtime_config.get("runtime_host", settings.runtime_host)).strip() or settings.runtime_host
+    runtime_host = (
+        str(runtime_config.get("runtime_host", settings.runtime_host)).strip()
+        or settings.runtime_host
+    )
     runtime_port = resolve_default_runtime_port(
         settings=settings,
         host=runtime_host,
@@ -278,7 +284,11 @@ def _inspect_runtime_daemon(settings: Settings) -> _RuntimeDaemonReport:
     stack_probe = probe_runtime_stack(host=runtime_host, runtime_port=runtime_port)
     ports_busy = not is_runtime_port_pair_available(host=runtime_host, runtime_port=runtime_port)
     conflict = ports_busy and not stack_probe.running
-    required = (setup_is_complete(settings) and service_status.installed) or stack_probe.running or conflict
+    required = (
+        (setup_is_complete(settings) and service_status.installed)
+        or stack_probe.running
+        or conflict
+    )
     return _RuntimeDaemonReport(
         ok=stack_probe.running,
         required=required,

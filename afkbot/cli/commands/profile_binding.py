@@ -29,19 +29,29 @@ def register_binding(profile_app: typer.Typer) -> None:
     @binding_app.command("set")
     def set_binding(
         binding_id: str = typer.Argument(..., help="Stable binding id."),
-        transport: str = typer.Option(..., "--transport", help="Transport name, for example telegram or api."),
+        transport: str = typer.Option(
+            ..., "--transport", help="Transport name, for example telegram or api."
+        ),
         profile_id: str = typer.Option(..., "--profile-id", help="Target runtime profile id."),
         session_policy: SessionPolicy = typer.Option(
             "main",
             "--session-policy",
             help="Session policy: main, per-chat, per-thread, per-user-in-group.",
         ),
-        priority: int = typer.Option(0, "--priority", help="Higher priority wins between equally specific rules."),
-        enabled: bool = typer.Option(True, "--enabled/--disabled", help="Enable or disable this binding."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Optional transport account/bot id."),
+        priority: int = typer.Option(
+            0, "--priority", help="Higher priority wins between equally specific rules."
+        ),
+        enabled: bool = typer.Option(
+            True, "--enabled/--disabled", help="Enable or disable this binding."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Optional transport account/bot id."
+        ),
         peer_id: str | None = typer.Option(None, "--peer-id", help="Optional chat/group/peer id."),
         thread_id: str | None = typer.Option(None, "--thread-id", help="Optional thread/topic id."),
-        user_id: str | None = typer.Option(None, "--user-id", help="Optional user id inside one peer."),
+        user_id: str | None = typer.Option(
+            None, "--user-id", help="Optional user id inside one peer."
+        ),
         prompt_overlay: str | None = typer.Option(
             None,
             "--prompt-overlay",
@@ -77,8 +87,12 @@ def register_binding(profile_app: typer.Typer) -> None:
 
     @binding_app.command("list")
     def list_bindings(
-        transport: str | None = typer.Option(None, "--transport", help="Optional transport filter."),
-        profile_id: str | None = typer.Option(None, "--profile-id", help="Optional profile filter."),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Optional transport filter."
+        ),
+        profile_id: str | None = typer.Option(
+            None, "--profile-id", help="Optional profile filter."
+        ),
     ) -> None:
         """List persisted channel binding rules."""
 
@@ -138,10 +152,14 @@ def register_binding(profile_app: typer.Typer) -> None:
     @binding_app.command("resolve")
     def resolve_binding(
         transport: str = typer.Option(..., "--transport", help="Transport name."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Optional transport account/bot id."),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Optional transport account/bot id."
+        ),
         peer_id: str | None = typer.Option(None, "--peer-id", help="Optional chat/group/peer id."),
         thread_id: str | None = typer.Option(None, "--thread-id", help="Optional thread/topic id."),
-        user_id: str | None = typer.Option(None, "--user-id", help="Optional user id inside one peer."),
+        user_id: str | None = typer.Option(
+            None, "--user-id", help="Optional user id inside one peer."
+        ),
         default_session_id: str = typer.Option(
             "main",
             "--default-session-id",

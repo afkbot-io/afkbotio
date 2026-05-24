@@ -34,7 +34,10 @@ from afkbot.settings import Settings
 _DISCOVERY_CACHE_LOCK = Lock()
 _SKILL_DISCOVERY_CACHE: dict[
     tuple[str, str],
-    tuple[tuple[tuple[str, tuple[int, int] | None, tuple[int, int] | None], ...], tuple[SkillInfo, ...]],
+    tuple[
+        tuple[tuple[str, tuple[int, int] | None, tuple[int, int] | None], ...],
+        tuple[SkillInfo, ...],
+    ],
 ] = {}
 _SKILL_TEXT_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 

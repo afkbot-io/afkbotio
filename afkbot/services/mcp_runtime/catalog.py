@@ -67,7 +67,9 @@ class MCPRuntimeCatalog:
         if not self._settings.mcp_runtime_enabled:
             return ()
         inspection = self._loader.inspect_profile(profile_id)
-        fingerprint = _build_fingerprint(profile_id=profile_id, files_checked=inspection.files_checked)
+        fingerprint = _build_fingerprint(
+            profile_id=profile_id, files_checked=inspection.files_checked
+        )
         cached = self._get_cached(profile_id=profile_id, fingerprint=fingerprint)
         if cached is not None:
             return cached
@@ -119,7 +121,9 @@ class MCPRuntimeCatalog:
         if not self._settings.mcp_runtime_enabled:
             return ()
         inspection = self._loader.inspect_profile(profile_id)
-        fingerprint = _build_fingerprint(profile_id=profile_id, files_checked=inspection.files_checked)
+        fingerprint = _build_fingerprint(
+            profile_id=profile_id, files_checked=inspection.files_checked
+        )
         cached = self._get_cached(profile_id=profile_id, fingerprint=fingerprint)
         return () if cached is None else cached
 
@@ -304,7 +308,9 @@ def _finalize_refresh_task(
         _LOGGER.warning("runtime MCP background refresh failed for %s: %s", cache_key[1], exc)
 
 
-def _run_async_in_thread(coro: Coroutine[Any, Any, tuple[MCPRuntimeToolDescriptor, ...]]) -> tuple[MCPRuntimeToolDescriptor, ...]:
+def _run_async_in_thread(
+    coro: Coroutine[Any, Any, tuple[MCPRuntimeToolDescriptor, ...]],
+) -> tuple[MCPRuntimeToolDescriptor, ...]:
     """Run async catalog discovery from sync-only runtime entrypoints."""
 
     future: Future[tuple[MCPRuntimeToolDescriptor, ...]] = Future()

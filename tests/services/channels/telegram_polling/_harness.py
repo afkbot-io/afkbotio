@@ -292,4 +292,6 @@ def load_state_payload(*, settings: Settings) -> dict[str, object]:
 def default_state_path(*, settings: Settings) -> Path:
     """Return the default polling state path for the seeded test endpoint."""
 
-    return get_channel_endpoint_service(settings).telegram_polling_state_path(endpoint_id="telegram-main")
+    return get_channel_endpoint_service(settings).telegram_polling_state_path(
+        endpoint_id="telegram-main"
+    )

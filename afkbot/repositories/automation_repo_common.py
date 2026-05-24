@@ -19,9 +19,7 @@ def base_automation_join() -> Select[
     """Build canonical automation + trigger outer join used by repository queries."""
 
     return cast(
-        Select[
-            tuple[Automation, AutomationTriggerCron | None, AutomationTriggerWebhook | None]
-        ],
+        Select[tuple[Automation, AutomationTriggerCron | None, AutomationTriggerWebhook | None]],
         select(Automation, AutomationTriggerCron, AutomationTriggerWebhook)
         .outerjoin(AutomationTriggerCron, AutomationTriggerCron.automation_id == Automation.id)
         .outerjoin(

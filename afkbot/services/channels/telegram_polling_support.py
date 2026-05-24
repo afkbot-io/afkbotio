@@ -104,8 +104,12 @@ def extract_inbound_message(
         return None
     thread_id_raw = message.get("message_thread_id")
     thread_id = str(thread_id_raw) if isinstance(thread_id_raw, int) else None
-    stripped_text = strip_bot_reference(text=trigger_text, identity=identity) if trigger_text else ""
-    normalized_text = _compose_inbound_text(text=stripped_text, attachment_summary=attachment_summary)
+    stripped_text = (
+        strip_bot_reference(text=trigger_text, identity=identity) if trigger_text else ""
+    )
+    normalized_text = _compose_inbound_text(
+        text=stripped_text, attachment_summary=attachment_summary
+    )
     if not normalized_text:
         return None
     return TelegramInboundMessage(
@@ -245,19 +249,27 @@ def _render_attachment_summary(
     attachments: tuple[TelegramInboundAttachment, ...] | None = None,
 ) -> str | None:
     parts: list[str] = []
-    attachment_items = attachments if attachments is not None else _extract_message_attachments(message)
+    attachment_items = (
+        attachments if attachments is not None else _extract_message_attachments(message)
+    )
     for attachment in attachment_items:
         parts.append(_describe_attachment(attachment))
     photo_payload = message.get("photo")
-    if isinstance(photo_payload, list) and photo_payload and not any(
-        item.kind == "photo" for item in attachment_items
+    if (
+        isinstance(photo_payload, list)
+        and photo_payload
+        and not any(item.kind == "photo" for item in attachment_items)
     ):
         parts.append("photo attached")
     sticker_payload = message.get("sticker")
-    if isinstance(sticker_payload, dict) and not any(item.kind == "sticker" for item in attachment_items):
+    if isinstance(sticker_payload, dict) and not any(
+        item.kind == "sticker" for item in attachment_items
+    ):
         parts.append(_describe_sticker_payload(sticker_payload))
     animation_payload = message.get("animation")
-    if isinstance(animation_payload, dict) and not any(item.kind == "animation" for item in attachment_items):
+    if isinstance(animation_payload, dict) and not any(
+        item.kind == "animation" for item in attachment_items
+    ):
         parts.append(_describe_media_payload("animation", animation_payload))
     for payload_key, label in (
         ("video", "video"),
@@ -266,10 +278,14 @@ def _render_attachment_summary(
         ("video_note", "video note"),
     ):
         payload = message.get(payload_key)
-        if isinstance(payload, dict) and not any(item.kind == payload_key for item in attachment_items):
+        if isinstance(payload, dict) and not any(
+            item.kind == payload_key for item in attachment_items
+        ):
             parts.append(_describe_media_payload(label, payload))
     document_payload = message.get("document")
-    if isinstance(document_payload, dict) and not any(item.kind == "document" for item in attachment_items):
+    if isinstance(document_payload, dict) and not any(
+        item.kind == "document" for item in attachment_items
+    ):
         parts.append(_describe_document_payload(document_payload))
     if not parts:
         return None
@@ -319,7 +335,9 @@ def _describe_media_payload(
     return fallback or f"{label} attached"
 
 
-def _extract_message_attachments(message: dict[str, object]) -> tuple[TelegramInboundAttachment, ...]:
+def _extract_message_attachments(
+    message: dict[str, object],
+) -> tuple[TelegramInboundAttachment, ...]:
     attachments: list[TelegramInboundAttachment] = []
     photo_payload = message.get("photo")
     if isinstance(photo_payload, list) and photo_payload:

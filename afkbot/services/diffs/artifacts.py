@@ -114,7 +114,9 @@ def cleanup_expired_diff_artifacts(*, settings: Settings, now: datetime | None =
     for candidate in root_dir.iterdir():
         if not candidate.is_dir():
             continue
-        if _artifact_is_expired(candidate=candidate, now=current, ttl_sec=settings.diffs_artifact_ttl_sec):
+        if _artifact_is_expired(
+            candidate=candidate, now=current, ttl_sec=settings.diffs_artifact_ttl_sec
+        ):
             shutil.rmtree(candidate, ignore_errors=True)
             removed += 1
     return removed

@@ -1,6 +1,9 @@
 """Credentials service exports."""
 
-from afkbot.services.credentials.contracts import CredentialBindingMetadata, CredentialProfileMetadata
+from afkbot.services.credentials.contracts import (
+    CredentialBindingMetadata,
+    CredentialProfileMetadata,
+)
 from afkbot.services.credentials.errors import CredentialsServiceError
 from afkbot.services.credentials.registry import (
     get_credentials_service,

@@ -92,9 +92,11 @@ def resolve_policy_setup_mode(
 
     if explicit_policy_overrides:
         return PolicySetupMode.CUSTOM.value
-    default = str(
-        defaults.get("AFKBOT_POLICY_SETUP_MODE", PolicySetupMode.RECOMMENDED.value)
-    ).strip().lower()
+    default = (
+        str(defaults.get("AFKBOT_POLICY_SETUP_MODE", PolicySetupMode.RECOMMENDED.value))
+        .strip()
+        .lower()
+    )
     if default not in {item.value for item in PolicySetupMode}:
         default = PolicySetupMode.RECOMMENDED.value
     if interactive:
@@ -231,11 +233,15 @@ def resolve_policy_network_mode(
     if not interactive:
         return default_mode
     allow_custom = default_mode == PolicyNetworkMode.CUSTOM.value
-    resolved = prompt_policy_network_mode(
-        default=default_mode,
-        lang=lang,
-        allow_custom=allow_custom,
-    ).strip().lower()
+    resolved = (
+        prompt_policy_network_mode(
+            default=default_mode,
+            lang=lang,
+            allow_custom=allow_custom,
+        )
+        .strip()
+        .lower()
+    )
     if resolved == "custom" and allow_custom:
         return PolicyNetworkMode.CUSTOM.value
     return resolved
@@ -277,11 +283,19 @@ def resolve_policy_file_access_mode(
     if value is not None:
         normalized = value.strip().lower()
     else:
-        normalized = str(
-            defaults.get("AFKBOT_POLICY_FILE_ACCESS_MODE", PolicyFileAccessMode.READ_WRITE.value)
-        ).strip().lower()
+        normalized = (
+            str(
+                defaults.get(
+                    "AFKBOT_POLICY_FILE_ACCESS_MODE", PolicyFileAccessMode.READ_WRITE.value
+                )
+            )
+            .strip()
+            .lower()
+        )
         if interactive:
-            normalized = prompt_policy_file_access_mode(default=normalized, lang=lang).strip().lower()
+            normalized = (
+                prompt_policy_file_access_mode(default=normalized, lang=lang).strip().lower()
+            )
     if normalized not in {item.value for item in PolicyFileAccessMode}:
         raise typer.BadParameter(
             msg(
@@ -318,11 +332,15 @@ def resolve_policy_workspace_scope_mode(
                 )
             ) from exc
     if interactive:
-        selected = prompt_policy_workspace_scope_mode(
-            default=default,
-            lang=lang,
-            allow_custom=allow_custom,
-        ).strip().lower()
+        selected = (
+            prompt_policy_workspace_scope_mode(
+                default=default,
+                lang=lang,
+                allow_custom=allow_custom,
+            )
+            .strip()
+            .lower()
+        )
         try:
             return normalize_workspace_scope_mode(selected)
         except ValueError as exc:

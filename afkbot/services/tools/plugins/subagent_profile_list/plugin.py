@@ -32,7 +32,9 @@ class SubagentProfileListTool(ToolBase):
         items = await service.list(profile_id=ctx.profile_id)
         return ToolResult(
             ok=True,
-            payload={"subagents": [item.model_dump(mode="json", exclude_none=True) for item in items]},
+            payload={
+                "subagents": [item.model_dump(mode="json", exclude_none=True) for item in items]
+            },
         )
 
 
@@ -40,4 +42,3 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create subagent.profile.list tool instance."""
 
     return SubagentProfileListTool(settings=settings)
-

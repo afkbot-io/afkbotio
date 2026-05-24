@@ -44,10 +44,15 @@ async def test_runtime_daemon_logs_webhook_worker_failure(
             assert status == 202
             assert payload == {"accepted": True}
             for _ in range(40):
-                if any("automation_runtime_webhook_task_failed" in rec.message for rec in caplog.records):
+                if any(
+                    "automation_runtime_webhook_task_failed" in rec.message
+                    for rec in caplog.records
+                ):
                     break
                 await asyncio.sleep(0.01)
-        assert any("automation_runtime_webhook_task_failed" in rec.message for rec in caplog.records)
+        assert any(
+            "automation_runtime_webhook_task_failed" in rec.message for rec in caplog.records
+        )
     finally:
         await daemon.stop()
 
@@ -69,7 +74,9 @@ async def test_runtime_daemon_logs_cron_failure(
     try:
         with caplog.at_level(logging.ERROR, logger="afkbot.services.automations.runtime_daemon"):
             for _ in range(80):
-                if any("automation_runtime_cron_tick_failed" in rec.message for rec in caplog.records):
+                if any(
+                    "automation_runtime_cron_tick_failed" in rec.message for rec in caplog.records
+                ):
                     break
                 await asyncio.sleep(0.01)
         assert any("automation_runtime_cron_tick_failed" in rec.message for rec in caplog.records)

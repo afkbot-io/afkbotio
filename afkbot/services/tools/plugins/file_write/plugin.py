@@ -46,7 +46,9 @@ class FileWriteTool(ToolBase):
         payload = prepared
 
         try:
-            base_dir = resolve_tool_workspace_base_dir(settings=self._settings, profile_id=ctx.profile_id)
+            base_dir = resolve_tool_workspace_base_dir(
+                settings=self._settings, profile_id=ctx.profile_id
+            )
             scope_roots = await resolve_tool_workspace_scope_roots(
                 settings=self._settings,
                 profile_id=ctx.profile_id,
@@ -76,7 +78,9 @@ class FileWriteTool(ToolBase):
             else:
                 previous_text, before_truncated, before_size_bytes = "", False, 0
             write_mode = "a" if payload.mode == "append" else "w"
-            await asyncio.to_thread(_write_text, path=path, mode=write_mode, content=payload.content)
+            await asyncio.to_thread(
+                _write_text, path=path, mode=write_mode, content=payload.content
+            )
             after_text, after_truncated, after_size_bytes = await asyncio.to_thread(
                 snapshot_path_text,
                 path=path,
@@ -110,7 +114,9 @@ class FileWriteTool(ToolBase):
         except (ValueError, UnicodeError) as exc:
             return ToolResult.error(error_code="file_write_invalid", reason=str(exc))
         except OSError as exc:
-            return ToolResult.error(error_code="file_write_failed", reason=f"{exc.__class__.__name__}: {exc}")
+            return ToolResult.error(
+                error_code="file_write_failed", reason=f"{exc.__class__.__name__}: {exc}"
+            )
 
 
 def create_tool(settings: Settings) -> ToolBase:

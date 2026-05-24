@@ -14,4 +14,3 @@ class IngressSelectors:
     peer_id: str | None = None
     thread_id: str | None = None
     user_id: str | None = None
-

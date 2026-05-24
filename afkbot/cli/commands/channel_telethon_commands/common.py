@@ -42,11 +42,7 @@ def split_csv_patterns(raw: str | None) -> tuple[str, ...]:
 
     if raw is None:
         return ()
-    return tuple(
-        part.strip()
-        for part in raw.split(",")
-        if part.strip()
-    )
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 __all__ = [

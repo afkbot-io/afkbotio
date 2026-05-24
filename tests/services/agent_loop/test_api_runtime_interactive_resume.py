@@ -219,7 +219,9 @@ async def test_resume_chat_interaction_text_answer_replays_as_user_message(monke
     assert captured["planned_tool_calls"] is None
 
 
-async def test_resume_chat_interaction_approval_prioritizes_resume_over_answer_text(monkeypatch) -> None:
+async def test_resume_chat_interaction_approval_prioritizes_resume_over_answer_text(
+    monkeypatch,
+) -> None:
     """Approved safety confirmations should replay the pending tool call even with answer text."""
 
     # Arrange
@@ -418,7 +420,9 @@ async def test_trusted_pending_resume_uses_internal_raw_patch_not_sanitized_runl
             return SimpleNamespace(deleted_turn_count=0, scanned_session_count=0)
 
     # Arrange
-    settings, engine, factory = await create_test_db(tmp_path, "api_runtime_trusted_resume_raw_patch.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "api_runtime_trusted_resume_raw_patch.db"
+    )
     monkeypatch.setattr(
         "afkbot.services.agent_loop.api_runtime.get_api_session_factory",
         lambda: factory,

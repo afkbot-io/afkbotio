@@ -71,7 +71,9 @@ class ProfileService:
         self._runtime_secrets = get_profile_runtime_secrets_service(settings)
         self._profile_files_lock = get_profile_files_lock(root_dir=settings.root_dir)
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 
@@ -95,7 +97,9 @@ class ProfileService:
 
         normalized_name = name.strip()
         if not normalized_name:
-            raise ProfileServiceError(error_code="profile_invalid_name", reason="Profile name is required")
+            raise ProfileServiceError(
+                error_code="profile_invalid_name", reason="Profile name is required"
+            )
 
         resolved_policy = self._resolve_policy(
             runtime_config=runtime_config,
@@ -107,7 +111,9 @@ class ProfileService:
             allowed_tools=resolved_policy.allowed_tools,
             file_access_mode=policy_file_access_mode,
         )
-        effective_allowed_directories = tuple(policy_allowed_directories or ()) or default_allowed_directories(
+        effective_allowed_directories = tuple(
+            policy_allowed_directories or ()
+        ) or default_allowed_directories(
             root_dir=self._settings.root_dir,
             profile_root=self._runtime_configs.profile_root(profile_id),
             profile_id=profile_id,
@@ -207,7 +213,9 @@ class ProfileService:
             allowed_tools=resolved_policy.allowed_tools,
             file_access_mode=policy_file_access_mode,
         )
-        effective_allowed_directories = tuple(policy_allowed_directories or ()) or default_allowed_directories(
+        effective_allowed_directories = tuple(
+            policy_allowed_directories or ()
+        ) or default_allowed_directories(
             root_dir=self._settings.root_dir,
             profile_root=self._runtime_configs.profile_root("default"),
             profile_id="default",
@@ -268,7 +276,9 @@ class ProfileService:
 
         normalized_name = name.strip()
         if not normalized_name:
-            raise ProfileServiceError(error_code="profile_invalid_name", reason="Profile name is required")
+            raise ProfileServiceError(
+                error_code="profile_invalid_name", reason="Profile name is required"
+            )
 
         resolved_policy = self._resolve_policy(
             runtime_config=runtime_config,
@@ -280,7 +290,9 @@ class ProfileService:
             allowed_tools=resolved_policy.allowed_tools,
             file_access_mode=policy_file_access_mode,
         )
-        effective_allowed_directories = tuple(policy_allowed_directories or ()) or default_allowed_directories(
+        effective_allowed_directories = tuple(
+            policy_allowed_directories or ()
+        ) or default_allowed_directories(
             root_dir=self._settings.root_dir,
             profile_root=self._runtime_configs.profile_root(profile_id),
             profile_id=profile_id,
@@ -413,7 +425,9 @@ class ProfileService:
             policy=policy,
         )
 
-    async def _load_policy_view(self, *, session: AsyncSession, profile_id: str) -> ProfilePolicyView:
+    async def _load_policy_view(
+        self, *, session: AsyncSession, profile_id: str
+    ) -> ProfilePolicyView:
         row = await ProfilePolicyRepository(session).get(profile_id)
         if row is None:
             return ProfilePolicyView()

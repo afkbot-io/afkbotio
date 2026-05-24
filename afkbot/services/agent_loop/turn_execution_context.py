@@ -92,7 +92,9 @@ def resolve_turn_execution_context(
         cli_approval_surface_enabled=(
             False if context_overrides is None else context_overrides.cli_approval_surface_enabled
         ),
-        approved_tool_names=None if context_overrides is None else context_overrides.approved_tool_names,
+        approved_tool_names=None
+        if context_overrides is None
+        else context_overrides.approved_tool_names,
         channel_owned_tool_names=(
             None if context_overrides is None else context_overrides.channel_owned_tool_names
         ),
@@ -111,7 +113,9 @@ def resolve_turn_execution_context(
                 effective_overrides_planning_mode == "plan_only"
                 and (context_overrides is None or context_overrides.persist_turn is None)
             )
-            else None if context_overrides is None else context_overrides.persist_turn
+            else None
+            if context_overrides is None
+            else context_overrides.persist_turn
         ),
     )
     return ResolvedTurnExecutionContext(

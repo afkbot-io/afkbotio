@@ -86,7 +86,9 @@ def register(app: typer.Typer) -> None:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
-            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            typer.echo(
+                json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True)
+            )
             return
         typer.echo(format_plugin_config(item, heading="Plugin config"))
 
@@ -102,7 +104,9 @@ def register(app: typer.Typer) -> None:
             payload = json.loads(config_json)
             if not isinstance(payload, dict):
                 raise ValueError("Plugin config payload must be a JSON object")
-            item = get_plugin_service(get_settings()).set_config(plugin_id=plugin_id, config=payload)
+            item = get_plugin_service(get_settings()).set_config(
+                plugin_id=plugin_id, config=payload
+            )
         except ValueError as exc:
             emit_command_error(
                 PluginServiceError(error_code="plugin_config_invalid", reason=str(exc)),
@@ -114,7 +118,9 @@ def register(app: typer.Typer) -> None:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
-            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            typer.echo(
+                json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True)
+            )
             return
         typer.echo(format_plugin_config(item, heading="Plugin config updated"))
 
@@ -131,7 +137,9 @@ def register(app: typer.Typer) -> None:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
-            typer.echo(json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True))
+            typer.echo(
+                json.dumps({"plugin_config": item.model_dump(mode="json")}, ensure_ascii=True)
+            )
             return
         typer.echo(format_plugin_config(item, heading="Plugin config reset"))
 

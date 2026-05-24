@@ -851,7 +851,9 @@ async def test_create_schema_backfills_graph_node_run_runtime_columns(
         async with engine.connect() as conn:
             columns = {
                 str(row[1])
-                for row in (await conn.execute(text("PRAGMA table_info('automation_node_run')"))).fetchall()
+                for row in (
+                    await conn.execute(text("PRAGMA table_info('automation_node_run')"))
+                ).fetchall()
             }
         assert "execution_index" in columns
         assert "effects_json" in columns

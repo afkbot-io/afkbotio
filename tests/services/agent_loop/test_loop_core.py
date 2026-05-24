@@ -39,7 +39,10 @@ async def test_run_turn_persists_entities_and_progress_events(tmp_path: Path) ->
         )
 
         assert result.envelope.action == "finalize"
-        assert result.envelope.message == "LLM provider is not configured. I could not execute this request."
+        assert (
+            result.envelope.message
+            == "LLM provider is not configured. I could not execute this request."
+        )
 
         runs = (await session.execute(select(Run))).scalars().all()
         turns = (await session.execute(select(ChatTurn))).scalars().all()
@@ -62,7 +65,10 @@ async def test_run_turn_persists_entities_and_progress_events(tmp_path: Path) ->
         ]
 
         assert turns[0].user_message == "token abcdefghijklmnopqrstuvwxyz"
-        assert turns[0].assistant_message == "LLM provider is not configured. I could not execute this request."
+        assert (
+            turns[0].assistant_message
+            == "LLM provider is not configured. I could not execute this request."
+        )
 
         payload = json.loads(events[-1].payload_json)
         assert payload["user_message"] == "token abcdefghijklmnopqrstuvwxyz"
@@ -231,10 +237,15 @@ async def test_run_turn_plan_payload_marks_session_job_parallel_strategy(tmp_pat
             .scalars()
             .all()
         )
-        plan_payload = json.loads([event for event in events if event.event_type == "turn.plan"][0].payload_json)
+        plan_payload = json.loads(
+            [event for event in events if event.event_type == "turn.plan"][0].payload_json
+        )
 
         assert plan_payload["planned_tool_names"] == ["session.job.run"]
-        assert plan_payload["parallel_strategy"]["execution_mode"] == PARALLEL_EXECUTION_MODE_SESSION_JOBS
+        assert (
+            plan_payload["parallel_strategy"]["execution_mode"]
+            == PARALLEL_EXECUTION_MODE_SESSION_JOBS
+        )
         assert plan_payload["parallel_strategy"]["session_job_count"] == 2
         assert plan_payload["parallel_strategy"]["session_job_kinds"] == ["bash"]
 

@@ -17,7 +17,9 @@ def test_verify_provider_token_success(monkeypatch) -> None:
         _ = request, proxy_url, timeout_sec
         return 200, '{"ok":true}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENROUTER,
         api_key="token",
@@ -36,7 +38,9 @@ def test_verify_provider_token_treats_rate_limit_as_valid(monkeypatch) -> None:
         _ = request, proxy_url, timeout_sec
         return 429, '{"error":{"message":"rate limit"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI,
         api_key="token",
@@ -55,7 +59,9 @@ def test_verify_provider_token_invalid_key(monkeypatch) -> None:
         _ = request, proxy_url, timeout_sec
         return 401, '{"error":{"message":"bad key"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI,
         api_key="token",
@@ -74,7 +80,9 @@ def test_verify_provider_token_invalid_moonshot_key_reports_provider_error(monke
         _ = request, proxy_url, timeout_sec
         return 401, '{"error":{"message":"bad key"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.MOONSHOT,
         api_key="token",
@@ -97,7 +105,9 @@ def test_verify_provider_token_invalid_moonshot_key_supports_russian_reason(monk
         _ = request, proxy_url, timeout_sec
         return 401, '{"error":{"message":"bad key"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.MOONSHOT,
         api_key="token",
@@ -120,7 +130,9 @@ def test_verify_provider_token_invalid_moonshot_cn_key_mentions_cn_provider(monk
         _ = request, proxy_url, timeout_sec
         return 401, '{"error":{"message":"bad key"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.MOONSHOT_CN,
         api_key="token",
@@ -167,7 +179,9 @@ def test_verify_provider_token_allows_http_localhost(monkeypatch) -> None:
         _ = request, proxy_url, timeout_sec
         return 200, '{"ok":true}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI,
         api_key="token",
@@ -186,7 +200,9 @@ def test_verify_provider_token_masks_secret_in_error_message(monkeypatch) -> Non
         _ = request, proxy_url, timeout_sec
         return 500, f'{{"message":"token {secret} failed"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.XAI,
         api_key=secret,
@@ -206,7 +222,9 @@ def test_verify_provider_token_reports_network_error(monkeypatch) -> None:
         _ = request, proxy_url, timeout_sec
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.QWEN,
         api_key="token",
@@ -231,7 +249,9 @@ def test_verify_provider_token_posts_probe_for_openai_codex(monkeypatch) -> None
         assert payload["stream"] is True
         return 200, '{"id":"resp_123"}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI_CODEX,
         api_key="oauth-token",
@@ -251,7 +271,9 @@ def test_verify_provider_token_reports_invalid_openai_codex_token(monkeypatch) -
         _ = request, proxy_url, timeout_sec
         return 401, '{"error":{"message":"unauthorized"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI_CODEX,
         api_key="oauth-token",
@@ -273,7 +295,9 @@ def test_verify_provider_token_does_not_treat_openai_codex_rate_limit_as_valid(m
         _ = request, proxy_url, timeout_sec
         return 429, '{"error":{"message":"rate limited"}}'
 
-    monkeypatch.setattr("afkbot.services.llm.token_verifier._execute_request", _fake_execute_request)
+    monkeypatch.setattr(
+        "afkbot.services.llm.token_verifier._execute_request", _fake_execute_request
+    )
     result = verify_provider_token(
         provider_id=LLMProviderId.OPENAI_CODEX,
         api_key="oauth-token",
@@ -315,7 +339,11 @@ def test_verify_provider_token_uses_github_copilot_exchange(monkeypatch) -> None
 def test_token_expired_or_expiring_soon_returns_true_for_expired_jwt() -> None:
     """JWT helper should treat stale access tokens as expired."""
 
-    payload = base64.urlsafe_b64encode(json.dumps({"exp": 95}).encode("utf-8")).decode("ascii").rstrip("=")
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"exp": 95}).encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
     token = f"header.{payload}.signature"
 
     assert token_expired_or_expiring_soon(token=token, now_epoch=100) is True

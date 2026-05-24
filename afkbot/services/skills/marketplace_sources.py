@@ -97,7 +97,10 @@ class MarketplaceSourceResolver:
         if base_path:
             normalized_base = self.normalize_repo_path(base_path)
             candidate_dirs.append(normalized_base)
-            if not normalized_base.endswith(f"/{requested_skill}") and normalized_base != requested_skill:
+            if (
+                not normalized_base.endswith(f"/{requested_skill}")
+                and normalized_base != requested_skill
+            ):
                 candidate_dirs.append(f"{normalized_base}/{requested_skill}")
         else:
             for prefix in self._default_skill_base_paths:
@@ -106,11 +109,15 @@ class MarketplaceSourceResolver:
                 else:
                     candidate_dirs.append(requested_skill)
 
-        dedup_dirs = tuple(dict.fromkeys(path.strip("/") for path in candidate_dirs if path.strip("/")))
+        dedup_dirs = tuple(
+            dict.fromkeys(path.strip("/") for path in candidate_dirs if path.strip("/"))
+        )
         urls: list[str] = []
         for current_ref in refs:
             for directory in dedup_dirs:
-                urls.append(self.build_raw_github_url(owner, repo, current_ref, f"{directory}/SKILL.md"))
+                urls.append(
+                    self.build_raw_github_url(owner, repo, current_ref, f"{directory}/SKILL.md")
+                )
         return tuple(urls)
 
     def extract_skill_names_from_tree(
@@ -142,7 +149,9 @@ class MarketplaceSourceResolver:
 
             skill_path = raw_path[: -len("/SKILL.md")]
             if normalized_base:
-                match = self.match_skill_under_base(skill_path=skill_path, base_path=normalized_base)
+                match = self.match_skill_under_base(
+                    skill_path=skill_path, base_path=normalized_base
+                )
                 if match is None:
                     continue
                 name, rel = match
@@ -263,7 +272,9 @@ class MarketplaceSourceResolver:
     def parse_path_segments(path: str) -> list[str]:
         """Split URL path into decoded, non-empty segments."""
 
-        return [segment for segment in (unquote(part).strip() for part in path.split("/")) if segment]
+        return [
+            segment for segment in (unquote(part).strip() for part in path.split("/")) if segment
+        ]
 
     @staticmethod
     def validate_repo_segment(value: str) -> str:

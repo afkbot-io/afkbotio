@@ -92,7 +92,10 @@ async def ws_chat_progress(
     try:
         while True:
             if time.monotonic() >= next_auth_check_at:
-                auth_context, active_scope_error = await revalidate_ws_active_scope_context_or_error(
+                (
+                    auth_context,
+                    active_scope_error,
+                ) = await revalidate_ws_active_scope_context_or_error(
                     authorization=authorization,
                     session_proof=session_proof,
                     profile_id=target.profile_id,

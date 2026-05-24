@@ -69,6 +69,7 @@ def match_webhook_path(path: str) -> WebhookIngressTarget | None:
         return None
     return WebhookIngressTarget(profile_id=profile_id, token=token)
 
+
 async def read_request(
     reader: asyncio.StreamReader,
     *,

@@ -202,7 +202,9 @@ def resolve_profile_provider_api_key(
         if explicit_minimax_region or existing_minimax_region:
             interactive_minimax_region = normalized_minimax_region
         if explicit_minimax_region:
-            preferred_base_url = minimax_portal_provider_base_url_for_region(normalized_minimax_region)
+            preferred_base_url = minimax_portal_provider_base_url_for_region(
+                normalized_minimax_region
+            )
     explicit_generic = (generic_api_key or "").strip()
     explicit_provider = (provider_api_key or "").strip()
     oauth_runtime_updates: dict[str, str] = {}
@@ -256,14 +258,18 @@ def resolve_profile_provider_api_key(
         if not is_oauth_provider:
             runtime_secrets_update["llm_api_key"] = effective_key
             runtime_secrets_update[provider_field] = effective_key
-        elif not _is_file_backed_provider_update(provider_id=provider_id, update=oauth_runtime_updates):
+        elif not _is_file_backed_provider_update(
+            provider_id=provider_id, update=oauth_runtime_updates
+        ):
             runtime_secrets_update.update(_manual_provider_secret_source_update(provider_id))
             runtime_secrets_update[provider_field] = effective_key
     if oauth_runtime_updates:
         runtime_secrets_update.update(oauth_runtime_updates)
     if provider_id == LLMProviderId.MINIMAX_PORTAL:
         if "minimax_portal_region" in oauth_runtime_updates:
-            runtime_secrets_update["minimax_portal_region"] = oauth_runtime_updates["minimax_portal_region"]
+            runtime_secrets_update["minimax_portal_region"] = oauth_runtime_updates[
+                "minimax_portal_region"
+            ]
         elif explicit_minimax_region and normalized_minimax_region is not None:
             runtime_secrets_update["minimax_portal_region"] = normalized_minimax_region
 
@@ -328,7 +334,9 @@ def _peek_file_backed_api_key(*, provider_id: LLMProviderId, defaults: Mapping[s
     return resolve_openai_codex_file_backed_api_key(source=source, path=path)
 
 
-def _peek_file_backed_source_requested(*, provider_id: LLMProviderId, defaults: Mapping[str, str]) -> bool:
+def _peek_file_backed_source_requested(
+    *, provider_id: LLMProviderId, defaults: Mapping[str, str]
+) -> bool:
     if provider_id != LLMProviderId.OPENAI_CODEX:
         return False
     source = (os.getenv("AFKBOT_OPENAI_CODEX_API_KEY_SOURCE") or "").strip() or defaults.get(
@@ -338,7 +346,9 @@ def _peek_file_backed_source_requested(*, provider_id: LLMProviderId, defaults: 
     return source.strip().lower() == TOKEN_SOURCE_FILE
 
 
-def _file_backed_source_requested(*, provider_id: LLMProviderId, values: Mapping[str, object]) -> bool:
+def _file_backed_source_requested(
+    *, provider_id: LLMProviderId, values: Mapping[str, object]
+) -> bool:
     if provider_id != LLMProviderId.OPENAI_CODEX:
         return False
     return str(values.get("openai_codex_api_key_source") or "").strip().lower() == TOKEN_SOURCE_FILE
@@ -350,7 +360,9 @@ def _manual_provider_secret_source_update(provider_id: LLMProviderId) -> dict[st
     return {}
 
 
-def _is_file_backed_provider_update(*, provider_id: LLMProviderId, update: Mapping[str, str]) -> bool:
+def _is_file_backed_provider_update(
+    *, provider_id: LLMProviderId, update: Mapping[str, str]
+) -> bool:
     if provider_id != LLMProviderId.OPENAI_CODEX:
         return False
     return update.get("openai_codex_api_key_source") == TOKEN_SOURCE_FILE
@@ -406,7 +418,9 @@ def _resolve_interactive_provider_credential_with_metadata(
     ):
         return _InteractiveProviderCredential(token=existing_key, runtime_secrets_update={})
 
-    if provider_id == LLMProviderId.MINIMAX_PORTAL and provider_supports_device_code_flow(provider_id):
+    if provider_id == LLMProviderId.MINIMAX_PORTAL and provider_supports_device_code_flow(
+        provider_id
+    ):
         resolved_region = minimax_region
         if resolved_region is None:
             resolved_region = _prompt_minimax_region(lang=lang)
@@ -437,7 +451,9 @@ def _resolve_interactive_provider_credential_with_metadata(
                 )
             except (httpx.HTTPError, OSError, ValueError) as exc:
                 raise typer.BadParameter(f"MiniMax OAuth login failed: {exc}") from exc
-    if provider_id == LLMProviderId.GITHUB_COPILOT and provider_supports_device_code_flow(provider_id):
+    if provider_id == LLMProviderId.GITHUB_COPILOT and provider_supports_device_code_flow(
+        provider_id
+    ):
         if prompt_confirm(
             question=msg(
                 lang,
@@ -483,7 +499,9 @@ def _resolve_interactive_provider_credential_with_metadata(
         ):
             return _InteractiveProviderCredential(
                 token=local_codex_token.token,
-                runtime_secrets_update=openai_codex_file_token_runtime_secrets(local_codex_token.path),
+                runtime_secrets_update=openai_codex_file_token_runtime_secrets(
+                    local_codex_token.path
+                ),
             )
         if prompt_confirm(
             question=msg(
@@ -502,7 +520,8 @@ def _resolve_interactive_provider_credential_with_metadata(
                     token=refreshed_codex_token,
                     runtime_secrets_update=(
                         openai_codex_file_token_runtime_secrets(refreshed_file.path)
-                        if refreshed_file is not None and refreshed_file.token == refreshed_codex_token
+                        if refreshed_file is not None
+                        and refreshed_file.token == refreshed_codex_token
                         else openai_codex_secret_token_runtime_secrets()
                     ),
                 )
@@ -752,9 +771,11 @@ def _run_minimax_portal_device_code_flow(
 
     code_verifier = secrets.token_urlsafe(64)
     code_verifier = (code_verifier + "A" * 43)[:96]
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode("utf-8")).digest()
-    ).decode("utf-8").rstrip("=")
+    code_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("utf-8")).digest())
+        .decode("utf-8")
+        .rstrip("=")
+    )
     state = secrets.token_urlsafe(16)
 
     response = httpx.post(

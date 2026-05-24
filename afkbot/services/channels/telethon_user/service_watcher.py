@@ -160,7 +160,9 @@ async def normalize_watched_event(
         chat_id=chat_id,
         chat_kind=dialog.chat_kind,
         chat_title=dialog.title,
-        sender_id=str(getattr(event, "sender_id")) if getattr(event, "sender_id", None) is not None else None,
+        sender_id=str(getattr(event, "sender_id"))
+        if getattr(event, "sender_id", None) is not None
+        else None,
         text=clip_watched_text(
             text=text,
             max_chars=service._endpoint.watcher.max_message_chars,
@@ -169,17 +171,25 @@ async def normalize_watched_event(
     )
 
 
-async def buffer_watched_event(service: TelethonUserService, *, event: TelethonWatchedEvent) -> None:
+async def buffer_watched_event(
+    service: TelethonUserService, *, event: TelethonWatchedEvent
+) -> None:
     """Append one watcher event when it is not already buffered or processed."""
 
     journal = get_channel_ingress_journal_service(service._settings)
     async with service._watcher_lock:
-        if event.event_key in service._watcher_buffer_keys or event.event_key in service._watcher_inflight_keys:
+        if (
+            event.event_key in service._watcher_buffer_keys
+            or event.event_key in service._watcher_inflight_keys
+        ):
             return
     if await journal.contains(endpoint_id=service._endpoint.endpoint_id, event_key=event.event_key):
         return
     async with service._watcher_lock:
-        if event.event_key in service._watcher_buffer_keys or event.event_key in service._watcher_inflight_keys:
+        if (
+            event.event_key in service._watcher_buffer_keys
+            or event.event_key in service._watcher_inflight_keys
+        ):
             return
         service._watcher_buffer.append(event)
         service._watcher_buffer_keys.add(event.event_key)

@@ -261,7 +261,9 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
             "--prompt-overlay",
             help="Optional routing prompt overlay applied through the matching binding.",
         ),
-        priority: int | None = typer.Option(None, "--priority", help="Binding priority when --binding is enabled."),
+        priority: int | None = typer.Option(
+            None, "--priority", help="Binding priority when --binding is enabled."
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
         """Update one Telethon endpoint without implicit upsert."""

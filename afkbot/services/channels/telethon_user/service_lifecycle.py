@@ -47,7 +47,9 @@ async def start_runtime(
     sender_registered = False
     lease_acquired = False
     try:
-        service._lease_owner_token = await get_channel_runtime_lease_registry(service._settings).acquire(
+        service._lease_owner_token = await get_channel_runtime_lease_registry(
+            service._settings
+        ).acquire(
             transport=service._endpoint.transport,
             account_id=service._endpoint.account_id,
         )

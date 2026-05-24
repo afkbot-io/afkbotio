@@ -90,8 +90,7 @@ async def _wait_for_claim_heartbeat(
             return
         await asyncio.sleep(0.01)
     raise AssertionError(
-        "Timed out waiting for idempotency heartbeat "
-        f"for {profile_id}/{session_id}/{client_msg_id}"
+        f"Timed out waiting for idempotency heartbeat for {profile_id}/{session_id}/{client_msg_id}"
     )
 
 
@@ -203,7 +202,9 @@ async def test_run_chat_turn_reuses_result_for_same_client_msg_id(
     settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency.db")
     await _prepare_api_runtime_db(factory=factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory
+    )
 
     calls = {"count": 0}
 
@@ -225,7 +226,9 @@ async def test_run_chat_turn_reuses_result_for_same_client_msg_id(
             message=f"ok-{message}-{calls['count']}",
         )
 
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result
+    )
 
     try:
         first = await run_chat_turn(
@@ -258,7 +261,9 @@ async def test_run_chat_turn_reclaims_stale_claim(
     settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency-stale.db")
     await _prepare_api_runtime_db(factory=factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory
+    )
     try:
         async with session_scope(factory) as db:
             db.add(
@@ -293,7 +298,9 @@ async def test_run_chat_turn_reclaims_stale_claim(
                 message="ok-stale",
             )
 
-        monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result)
+        monkeypatch.setattr(
+            "afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result
+        )
 
         result = await run_chat_turn(
             message="hello",
@@ -318,7 +325,9 @@ async def test_run_chat_turn_runs_again_for_different_client_msg_id(
     settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency-diff.db")
     await _prepare_api_runtime_db(factory=factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory
+    )
 
     calls = {"count": 0}
 
@@ -340,7 +349,9 @@ async def test_run_chat_turn_runs_again_for_different_client_msg_id(
             message=f"ok-{calls['count']}",
         )
 
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result
+    )
 
     try:
         first = await run_chat_turn(
@@ -369,10 +380,14 @@ async def test_run_chat_turn_parallel_same_key_executes_side_effects_once(
 ) -> None:
     """Parallel same-key requests should share one execution through the real orchestrator path."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency-parallel.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "api-runtime-idempotency-parallel.db"
+    )
     await _prepare_api_runtime_db(factory=factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory
+    )
 
     calls = {"count": 0}
     entered = asyncio.Event()
@@ -446,10 +461,14 @@ async def test_run_chat_turn_does_not_reclaim_live_claim_with_heartbeat(
 ) -> None:
     """Heartbeat should keep one long-running claim live and prevent duplicate execution."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "api-runtime-idempotency-heartbeat.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "api-runtime-idempotency-heartbeat.db"
+    )
     await _prepare_api_runtime_db(factory=factory)
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.get_api_session_factory", lambda: factory
+    )
     monkeypatch.setattr("afkbot.services.agent_loop.api_runtime._IDEMPOTENCY_HEARTBEAT_SEC", 0.01)
     monkeypatch.setattr(
         "afkbot.services.agent_loop.api_runtime.idempotency_claim_cutoff_support",
@@ -479,7 +498,9 @@ async def test_run_chat_turn_does_not_reclaim_live_claim_with_heartbeat(
             message=f"ok-{calls['count']}",
         )
 
-    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.run_once_result", _fake_run_once_result
+    )
 
     first_task = asyncio.create_task(
         run_chat_turn(
@@ -531,7 +552,9 @@ async def test_poll_chat_progress_uses_initialized_runtime_resources(
     try:
         monkeypatch.setattr(
             "afkbot.services.agent_loop.api_runtime.create_engine",
-            lambda _settings: (_ for _ in ()).throw(AssertionError("create_engine must not be called")),
+            lambda _settings: (_ for _ in ()).throw(
+                AssertionError("create_engine must not be called")
+            ),
         )
         response = await poll_chat_progress(
             profile_id="default",

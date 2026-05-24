@@ -18,7 +18,10 @@ from afkbot.services.subagents.orchestration import (
     build_subagent_session_orchestrator,
     resolve_subagent_loop_settings,
 )
-from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY, SubagentRuntimePolicy
+from afkbot.services.subagents.runtime_policy import (
+    DEFAULT_SUBAGENT_RUNTIME_POLICY,
+    SubagentRuntimePolicy,
+)
 
 _CANCEL_POLL_SEC = 0.2
 _CANCEL_GRACE_SEC = 5.0

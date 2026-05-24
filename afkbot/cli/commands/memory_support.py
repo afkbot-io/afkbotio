@@ -76,12 +76,16 @@ def filter_items(
     if memory_kinds:
         allowed_memory_kinds = set(memory_kinds)
         payload_items = [
-            item for item in payload_items if str(item.get("memory_kind") or "") in allowed_memory_kinds
+            item
+            for item in payload_items
+            if str(item.get("memory_kind") or "") in allowed_memory_kinds
         ]
     if source_kinds:
         allowed_source_kinds = set(source_kinds)
         payload_items = [
-            item for item in payload_items if str(item.get("source_kind") or "") in allowed_source_kinds
+            item
+            for item in payload_items
+            if str(item.get("source_kind") or "") in allowed_source_kinds
         ]
     return payload_items
 
@@ -97,17 +101,23 @@ def filter_memory_metadata(
     filtered = list(items)
     if memory_kinds:
         allowed_memory_kinds = set(memory_kinds)
-        filtered = [item for item in filtered if getattr(item, "memory_kind", None) in allowed_memory_kinds]
+        filtered = [
+            item for item in filtered if getattr(item, "memory_kind", None) in allowed_memory_kinds
+        ]
     if source_kinds:
         allowed_source_kinds = set(source_kinds)
-        filtered = [item for item in filtered if getattr(item, "source_kind", None) in allowed_source_kinds]
+        filtered = [
+            item for item in filtered if getattr(item, "source_kind", None) in allowed_source_kinds
+        ]
     return filtered
 
 
 def normalize_memory_kinds(values: list[str]) -> tuple[MemoryKind, ...]:
     """Validate and normalize CLI repeatable memory kinds."""
 
-    return cast(tuple[MemoryKind, ...], normalize_choice(values=values, allowed=get_args(MemoryKind)))
+    return cast(
+        tuple[MemoryKind, ...], normalize_choice(values=values, allowed=get_args(MemoryKind))
+    )
 
 
 def normalize_source_kinds(values: list[str]) -> tuple[MemorySourceKind, ...]:

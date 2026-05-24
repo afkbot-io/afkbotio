@@ -90,4 +90,3 @@ def _parse_scrypt_hash(encoded_hash: str) -> tuple[int, int, int, int, bytes, by
     if n < 2 or r < 1 or p < 1 or dklen < 16:
         return None
     return n, r, p, dklen, salt, expected
-

@@ -19,6 +19,7 @@ from afkbot.services.automations.graph.contracts import (
 )
 from afkbot.services.automations.graph.os_sandbox import CodeNodeLaunch
 from afkbot.services.automations.graph.os_sandbox import OSSandboxUnavailableError
+from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.subagents.contracts import (
     SubagentResultResponse,
     SubagentRunAccepted,
@@ -41,6 +42,22 @@ def _prepare_profile_subagent(root_dir: Path, *, profile_id: str, subagent_name:
     path = root_dir / "profiles" / profile_id / "subagents" / f"{subagent_name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"# {subagent_name}", encoding="utf-8")
+
+
+def _write_team_runtime_config(
+    *,
+    settings: Settings,
+    profile_id: str,
+    team_profile_ids: tuple[str, ...],
+) -> None:
+    get_profile_runtime_config_service(settings).write(
+        profile_id,
+        ProfileRuntimeConfig(
+            llm_provider=settings.llm_provider,
+            llm_model=settings.llm_model,
+            taskflow_team_profile_ids=team_profile_ids,
+        ),
+    )
 
 
 class _GraphPersistingRunner(SubagentRunner):
@@ -235,7 +252,9 @@ class _ExplodingSubagentService:
         _ = ctx, prompt, subagent_name, timeout_sec
         raise RuntimeError("subagent factory boom")
 
-    async def wait(self, *, task_id: str, timeout_sec: int | None, profile_id: str, session_id: str):
+    async def wait(
+        self, *, task_id: str, timeout_sec: int | None, profile_id: str, session_id: str
+    ):
         _ = task_id, timeout_sec, profile_id, session_id
         raise AssertionError("wait() must not be called after run() failure")
 
@@ -1303,6 +1322,11 @@ async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
     try:
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=service._settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         created = await service.create_webhook(
             profile_id="default",
@@ -1374,6 +1398,11 @@ async def test_graph_executor_task_create_node_supports_structured_ai_subagent_a
     try:
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
+        _write_team_runtime_config(
+            settings=service._settings,
+            profile_id="default",
+            team_profile_ids=("analyst",),
+        )
 
         created = await service.create_webhook(
             profile_id="default",
@@ -2493,7 +2522,9 @@ async def test_graph_executor_resume_with_ai_invokes_prompt_fallback_with_child_
         fallback_context = json.loads(message.split("graph_fallback_context=", 1)[1])
         assert fallback_context["graph_status"] == "failed"
         assert fallback_context["graph_error_code"] == "automation_graph_failed"
-        delegate = next(item for item in fallback_context["node_trace"] if item["node_key"] == "delegate")
+        delegate = next(
+            item for item in fallback_context["node_trace"] if item["node_key"] == "delegate"
+        )
         assert delegate["status"] == "failed"
         assert delegate["error_code"] == "subagent_failed"
         assert delegate["reason"] == "child boom"
@@ -2803,7 +2834,9 @@ async def test_graph_executor_resume_with_ai_redacts_effect_metadata_and_keeps_n
         message = fake_loop.calls[0]["message"]
         assert "sk-effect-secret-1234567890" not in message
         fallback_context = json.loads(message.split("graph_fallback_context=", 1)[1])
-        transform = next(item for item in fallback_context["node_trace"] if item["node_key"] == "transform")
+        transform = next(
+            item for item in fallback_context["node_trace"] if item["node_key"] == "transform"
+        )
         assert transform["output"] == {"default": {"normalized": "done"}}
         assert transform["effects"] == [
             {
@@ -2822,7 +2855,10 @@ async def test_graph_executor_resume_with_ai_redacts_effect_metadata_and_keeps_n
         assert transform_trace.effects[0].metadata["api_key"] == "[REDACTED]"
         assert trace.fallback is not None
         assert trace.fallback.status == "succeeded"
-        assert trace.fallback.execution_index == max(item.execution_index or 0 for item in trace.nodes) + 1
+        assert (
+            trace.fallback.execution_index
+            == max(item.execution_index or 0 for item in trace.nodes) + 1
+        )
     finally:
         await engine.dispose()
 
@@ -2917,7 +2953,9 @@ async def test_graph_executor_resume_with_ai_redacts_unsafe_action_outputs_in_fa
         message = fake_loop.calls[0]["message"]
         assert "very sensitive body" not in message
         fallback_context = json.loads(message.split("graph_fallback_context=", 1)[1])
-        call_app = next(item for item in fallback_context["node_trace"] if item["node_key"] == "call_app")
+        call_app = next(
+            item for item in fallback_context["node_trace"] if item["node_key"] == "call_app"
+        )
         assert call_app["output_redacted"] is True
         assert call_app["output"] == {
             "redacted": True,

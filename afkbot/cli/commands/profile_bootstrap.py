@@ -36,7 +36,9 @@ def register_bootstrap(profile_app: typer.Typer) -> None:
         settings = get_settings()
         try:
             items = asyncio.run(
-                get_profile_bootstrap_service(settings).list(profile_id=validate_profile_id(profile_id))
+                get_profile_bootstrap_service(settings).list(
+                    profile_id=validate_profile_id(profile_id)
+                )
             )
         except (InvalidProfileIdError, ProfileServiceError, ValueError) as exc:
             emit_profile_error(exc)

@@ -36,4 +36,6 @@ def test_cli_commands_do_not_import_db_or_repositories_directly() -> None:
 
 
 def _is_forbidden(module: str) -> bool:
-    return any(module == prefix or module.startswith(f"{prefix}.") for prefix in _FORBIDDEN_IMPORT_PREFIXES)
+    return any(
+        module == prefix or module.startswith(f"{prefix}.") for prefix in _FORBIDDEN_IMPORT_PREFIXES
+    )

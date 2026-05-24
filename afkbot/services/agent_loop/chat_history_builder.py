@@ -66,6 +66,8 @@ class ChatHistoryBuilder:
             min_turn_id_exclusive=0 if snapshot is None else snapshot.compacted_until_turn_id,
         ):
             history.append(LLMMessage(role="user", content=self._sanitize(row.user_message)))
-            history.append(LLMMessage(role="assistant", content=self._sanitize(row.assistant_message)))
+            history.append(
+                LLMMessage(role="assistant", content=self._sanitize(row.assistant_message))
+            )
         history.append(LLMMessage(role="user", content=user_message))
         return history

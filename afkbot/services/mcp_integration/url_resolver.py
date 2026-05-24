@@ -10,7 +10,21 @@ from pydantic import BaseModel, Field
 from afkbot.services.mcp_integration.contracts import MCPServerConfig
 from afkbot.services.mcp_integration.validator import validate_server_config
 
-_GENERIC_SEGMENTS = {"api", "app", "com", "dev", "http", "https", "io", "local", "mcp", "net", "org", "sse", "www"}
+_GENERIC_SEGMENTS = {
+    "api",
+    "app",
+    "com",
+    "dev",
+    "http",
+    "https",
+    "io",
+    "local",
+    "mcp",
+    "net",
+    "org",
+    "sse",
+    "www",
+}
 _VERSION_SEGMENT_RE = re.compile(r"^v\d+$", re.IGNORECASE)
 
 

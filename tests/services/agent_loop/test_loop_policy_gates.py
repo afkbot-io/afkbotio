@@ -14,7 +14,10 @@ from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+from afkbot.services.agent_loop.turn_context import (
+    TurnContextOverrides,
+    merge_turn_context_overrides,
+)
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointConfig
@@ -808,7 +811,9 @@ async def test_active_channel_context_survives_agent_loop_resolution(
             user_id="user-1",
         )
         overrides = merge_turn_context_overrides(
-            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            TurnContextOverrides(
+                runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}
+            ),
             active_overrides,
         )
 
@@ -923,7 +928,9 @@ async def test_llm_active_channel_history_execution_receives_trusted_context(
             user_id="user-1",
         )
         overrides = merge_turn_context_overrides(
-            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            TurnContextOverrides(
+                runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}
+            ),
             active_overrides,
         )
 
@@ -992,7 +999,9 @@ async def test_active_partyflow_history_execution_gets_channel_scoped_network_gr
             user_id="user-1",
         )
         overrides = merge_turn_context_overrides(
-            TurnContextOverrides(runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}),
+            TurnContextOverrides(
+                runtime_metadata={"policy_overlay": {"tool_profile": "chat_minimal"}}
+            ),
             active_overrides,
         )
 
@@ -1164,7 +1173,9 @@ async def test_loop_blocks_session_job_run_bash_when_profile_allows_only_subagen
     async with session_scope(factory) as session:
         policy = await _ensure_default_profile_policy(session)
         policy.policy_preset = "simple"
-        policy.allowed_tools_json = json.dumps(["session.job.run", "subagent.run"], ensure_ascii=True)
+        policy.allowed_tools_json = json.dumps(
+            ["session.job.run", "subagent.run"], ensure_ascii=True
+        )
         await session.flush()
 
         loop = AgentLoop(

@@ -48,7 +48,9 @@ def _add_profile(runner: CliRunner, profile_id: str, name: str) -> None:
     assert result.exit_code == 0
 
 
-def test_chat_cli_resolves_binding_target_before_turn(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_chat_cli_resolves_binding_target_before_turn(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Chat CLI should resolve effective profile/session from persisted bindings."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -182,7 +184,9 @@ def test_chat_cli_checks_update_notice_before_one_shot_turn(
     captured: dict[str, object] = {}
 
     monkeypatch.setattr("afkbot.cli.commands.chat.supports_interactive_tty", lambda: True)
-    monkeypatch.setattr("afkbot.cli.commands.chat.handle_chat_update_notice", lambda **_kwargs: False)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat.handle_chat_update_notice", lambda **_kwargs: False
+    )
     monkeypatch.setattr(
         "afkbot.cli.commands.chat.run_single_turn",
         lambda **kwargs: captured.update(kwargs),  # type: ignore[no-untyped-def]

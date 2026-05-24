@@ -177,7 +177,9 @@ def _parse_cron_fields(
         _parse_field(field=hour, minimum=0, maximum=23, label="hour"),
         _parse_field(field=day, minimum=1, maximum=31, label="day_of_month"),
         _parse_field(field=month, minimum=1, maximum=12, label="month"),
-        _parse_field(field=weekday, minimum=0, maximum=7, label="day_of_week", map_seven_to_zero=True),
+        _parse_field(
+            field=weekday, minimum=0, maximum=7, label="day_of_week", map_seven_to_zero=True
+        ),
     )
 
 

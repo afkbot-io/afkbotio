@@ -122,7 +122,9 @@ def prompt_profile_permission_scenario(
             ),
         )
     )
-    resolved_default = default if default in scenario_ids or default == "custom" else "taskflow_channel"
+    resolved_default = (
+        default if default in scenario_ids or default == "custom" else "taskflow_channel"
+    )
     return select_value_dialog(
         title=msg(lang, en="Setup: Profile scenario", ru="Настройка: Сценарий профиля"),
         text=msg(
@@ -185,16 +187,20 @@ def prompt_policy_preset(*, default: str, lang: PromptLanguage = PromptLanguage.
     if selected in POLICY_PRESET_CHOICES:
         return selected
     while True:
-        value = str(
-            typer.prompt(
-                msg(
-                    lang,
-                    en="Security level (simple/medium/strict)",
-                    ru="Уровень безопасности (simple/medium/strict)",
-                ),
-                default=selected_default,
+        value = (
+            str(
+                typer.prompt(
+                    msg(
+                        lang,
+                        en="Security level (simple/medium/strict)",
+                        ru="Уровень безопасности (simple/medium/strict)",
+                    ),
+                    default=selected_default,
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if value in POLICY_PRESET_CHOICES:
             return value
         typer.echo(
@@ -259,21 +265,39 @@ def prompt_policy_network_mode(
     """Prompt one network access mode for interactive security wizard."""
 
     options = [
-        ("unrestricted", msg(lang, en="unrestricted - any network host", ru="unrestricted - любой сетевой хост")),
+        (
+            "unrestricted",
+            msg(lang, en="unrestricted - any network host", ru="unrestricted - любой сетевой хост"),
+        ),
         (
             "recommended",
-            msg(lang, en="recommended - only known provider/service hosts", ru="recommended - только известные хосты провайдеров и сервисов"),
+            msg(
+                lang,
+                en="recommended - only known provider/service hosts",
+                ru="recommended - только известные хосты провайдеров и сервисов",
+            ),
         ),
     ]
     if allow_custom:
         options.append(
             (
                 "custom",
-                msg(lang, en="custom - keep current custom host list", ru="custom - оставить текущий список хостов"),
+                msg(
+                    lang,
+                    en="custom - keep current custom host list",
+                    ru="custom - оставить текущий список хостов",
+                ),
             )
         )
     options.append(
-        ("deny_all", msg(lang, en="deny_all - block network tools", ru="deny_all - запретить сетевые инструменты"))
+        (
+            "deny_all",
+            msg(
+                lang,
+                en="deny_all - block network tools",
+                ru="deny_all - запретить сетевые инструменты",
+            ),
+        )
     )
     return select_value_dialog(
         title=msg(lang, en="Setup: Network access", ru="Настройка: Доступ к сети"),
@@ -283,7 +307,9 @@ def prompt_policy_network_mode(
             ru="Выберите, к каким внешним хостам этот профиль может обращаться через сетевые инструменты.",
         ),
         options=options,
-        default=default if default in {"unrestricted", "recommended", "custom", "deny_all"} else "recommended",
+        default=default
+        if default in {"unrestricted", "recommended", "custom", "deny_all"}
+        else "recommended",
         lang=lang,
     )
 
@@ -304,10 +330,21 @@ def prompt_policy_file_access_mode(
         ),
         options=[
             ("none", msg(lang, en="none - no file tools", ru="none - без файловых инструментов")),
-            ("read_only", msg(lang, en="read_only - read and search files", ru="read_only - читать и искать файлы")),
+            (
+                "read_only",
+                msg(
+                    lang,
+                    en="read_only - read and search files",
+                    ru="read_only - читать и искать файлы",
+                ),
+            ),
             (
                 "read_write",
-                msg(lang, en="read_write - read, write, and edit files", ru="read_write - читать, создавать и менять файлы"),
+                msg(
+                    lang,
+                    en="read_write - read, write, and edit files",
+                    ru="read_write - читать, создавать и менять файлы",
+                ),
             ),
         ],
         default=default if default in {"none", "read_only", "read_write"} else "read_write",
@@ -326,15 +363,27 @@ def prompt_policy_workspace_scope_mode(
     options = [
         (
             "profile_only",
-            msg(lang, en="profile_only - profile files only", ru="profile_only - только файлы профиля"),
+            msg(
+                lang,
+                en="profile_only - profile files only",
+                ru="profile_only - только файлы профиля",
+            ),
         ),
         (
             "project_only",
-            msg(lang, en="project_only - current project only", ru="project_only - только текущий проект"),
+            msg(
+                lang,
+                en="project_only - current project only",
+                ru="project_only - только текущий проект",
+            ),
         ),
         (
             "profile_and_project",
-            msg(lang, en="profile_and_project - profile plus project", ru="profile_and_project - профиль плюс проект"),
+            msg(
+                lang,
+                en="profile_and_project - profile plus project",
+                ru="profile_and_project - профиль плюс проект",
+            ),
         ),
         (
             "full_system",
@@ -345,7 +394,11 @@ def prompt_policy_workspace_scope_mode(
         options.append(
             (
                 "custom",
-                msg(lang, en="custom - keep current custom paths", ru="custom - оставить текущие пути"),
+                msg(
+                    lang,
+                    en="custom - keep current custom paths",
+                    ru="custom - оставить текущие пути",
+                ),
             )
         )
     resolved_default = default if default in {item[0] for item in options} else "profile_only"

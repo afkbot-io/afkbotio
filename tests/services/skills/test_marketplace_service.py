@@ -17,7 +17,10 @@ from afkbot.services.skills.marketplace_popularity import (
     format_compact_count,
     parse_compact_count,
 )
-from afkbot.services.skills.marketplace_service import SkillMarketplaceError, SkillMarketplaceService
+from afkbot.services.skills.marketplace_service import (
+    SkillMarketplaceError,
+    SkillMarketplaceService,
+)
 from afkbot.settings import Settings
 
 
@@ -259,9 +262,15 @@ def test_marketplace_ranking_keeps_zero_installs_ahead_of_unknown() -> None:
 
     # Arrange
     items = [
-        SkillMarketplaceListItem(name="unknown", source="skills.sh/openai/skills", path="skills/unknown/SKILL.md"),
-        SkillMarketplaceListItem(name="zero", source="skills.sh/openai/skills", path="skills/zero/SKILL.md"),
-        SkillMarketplaceListItem(name="popular", source="skills.sh/openai/skills", path="skills/popular/SKILL.md"),
+        SkillMarketplaceListItem(
+            name="unknown", source="skills.sh/openai/skills", path="skills/unknown/SKILL.md"
+        ),
+        SkillMarketplaceListItem(
+            name="zero", source="skills.sh/openai/skills", path="skills/zero/SKILL.md"
+        ),
+        SkillMarketplaceListItem(
+            name="popular", source="skills.sh/openai/skills", path="skills/popular/SKILL.md"
+        ),
     ]
 
     # Act
@@ -308,7 +317,9 @@ def test_format_compact_count_normalizes_threshold_boundaries() -> None:
     assert upper_formatted == "1M"
 
 
-async def test_marketplace_list_preserves_source_stats_without_item_rankings(tmp_path: Path) -> None:
+async def test_marketplace_list_preserves_source_stats_without_item_rankings(
+    tmp_path: Path,
+) -> None:
     """Marketplace listing should keep source stats even when per-item install rows disappear."""
 
     # Arrange
@@ -348,7 +359,7 @@ async def test_marketplace_install_preserves_existing_manifest_overlay(tmp_path:
     manifest_path.write_text(
         "\n".join(
             [
-                'manifest_version = 1',
+                "manifest_version = 1",
                 'name = "doc"',
                 'description = "Executable doc workflow."',
                 'execution_mode = "executable"',
@@ -356,8 +367,8 @@ async def test_marketplace_install_preserves_existing_manifest_overlay(tmp_path:
                 "",
                 "[requires]",
                 'bins = ["python3"]',
-                'env = []',
-                'python_packages = []',
+                "env = []",
+                "python_packages = []",
                 "",
                 "[source]",
                 'kind = "marketplace"',
@@ -415,7 +426,7 @@ async def test_marketplace_install_repairs_invalid_manifest_overlay(tmp_path: Pa
     # Assert
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert record.manifest_path == "profiles/default/skills/pdf/AFKBOT.skill.toml"
-    assert 'manifest_version = 1' in manifest_text
+    assert "manifest_version = 1" in manifest_text
     assert record.execution_mode in {"advisory", "executable"}
 
 

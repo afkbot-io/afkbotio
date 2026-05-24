@@ -61,7 +61,9 @@ async def test_profile_service_creates_profile_with_config_and_policy(tmp_path: 
         assert profile.bootstrap_dir == "profiles/analyst/bootstrap"
         assert profile.skills_dir == "profiles/analyst/skills"
         assert profile.subagents_dir == "profiles/analyst/subagents"
-        assert profile.policy.allowed_directories == (str((tmp_path / "profiles/analyst").resolve()),)
+        assert profile.policy.allowed_directories == (
+            str((tmp_path / "profiles/analyst").resolve()),
+        )
         assert (tmp_path / "profiles/analyst/.system").is_dir()
         assert (tmp_path / "profiles/analyst/bootstrap").is_dir()
         assert (tmp_path / "profiles/analyst/skills").is_dir()
@@ -69,20 +71,22 @@ async def test_profile_service_creates_profile_with_config_and_policy(tmp_path: 
         assert (tmp_path / "profiles/analyst/bootstrap/AGENTS.md").read_text(encoding="utf-8") == (
             "No profile-specific role instructions. Follow the global bootstrap and the current user request.\n"
         )
-        assert (tmp_path / "profiles/analyst/bootstrap/IDENTITY.md").read_text(encoding="utf-8") == (
-            "No profile-specific identity instructions. Use the global identity defaults.\n"
-        )
+        assert (tmp_path / "profiles/analyst/bootstrap/IDENTITY.md").read_text(
+            encoding="utf-8"
+        ) == ("No profile-specific identity instructions. Use the global identity defaults.\n")
         assert (tmp_path / "profiles/analyst/bootstrap/TOOLS.md").read_text(encoding="utf-8") == (
             "No profile-specific tool instructions. Use the global tool defaults.\n"
         )
-        assert (tmp_path / "profiles/analyst/bootstrap/SECURITY.md").read_text(encoding="utf-8") == (
-            "No profile-specific security instructions. Use the global security defaults.\n"
-        )
+        assert (tmp_path / "profiles/analyst/bootstrap/SECURITY.md").read_text(
+            encoding="utf-8"
+        ) == ("No profile-specific security instructions. Use the global security defaults.\n")
     finally:
         await service.shutdown()
 
 
-def test_get_profile_service_does_not_cache_across_sync_event_loop_boundaries(tmp_path: Path) -> None:
+def test_get_profile_service_does_not_cache_across_sync_event_loop_boundaries(
+    tmp_path: Path,
+) -> None:
     """Sync callers should receive fresh services instead of reusing one async engine across loops."""
 
     asyncio.run(reset_profile_services_async())

@@ -51,7 +51,9 @@ async def create_schema(engine: AsyncEngine) -> None:
     load_all_models()
     settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
-        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
+        _requires_managed_runtime_schema_validation(
+            settings=settings, dialect_name=conn.dialect.name
+        )
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_upgrade_schema, settings=settings)
 
@@ -83,7 +85,9 @@ async def list_applied_migrations(engine: AsyncEngine) -> tuple[int, ...]:
 
     settings = _resolve_engine_settings(engine)
     async with engine.connect() as conn:
-        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
+        _requires_managed_runtime_schema_validation(
+            settings=settings, dialect_name=conn.dialect.name
+        )
     return ()
 
 
@@ -101,7 +105,9 @@ async def ensure_task_runtime_schema(engine: AsyncEngine) -> None:
     load_all_models()
     settings = _resolve_engine_settings(engine)
     async with engine.begin() as conn:
-        _requires_managed_runtime_schema_validation(settings=settings, dialect_name=conn.dialect.name)
+        _requires_managed_runtime_schema_validation(
+            settings=settings, dialect_name=conn.dialect.name
+        )
         await conn.run_sync(_upgrade_task_runtime_schema)
 
 
@@ -325,7 +331,9 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
             "ON task (profile_id, claim_owner_type, claim_owner_ref, status)"
         )
     )
-    claim_predicate = "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+    claim_predicate = (
+        "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+    )
     if duplicate_claim_scopes:
         excluded_claim_scopes = " AND ".join(
             "NOT (profile_id = "
@@ -351,25 +359,16 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
     """Ensure retention-friendly indexes exist for append-only runtime history."""
 
     if _table_columns(conn, "task"):
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_task_last_run_id "
-                "ON task (last_run_id)"
-            )
-        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_last_run_id ON task (last_run_id)"))
     if _table_columns(conn, "task_event"):
         conn.execute(
             text(
-                "CREATE INDEX IF NOT EXISTS ix_task_event_created_at "
-                "ON task_event (created_at, id)"
+                "CREATE INDEX IF NOT EXISTS ix_task_event_created_at ON task_event (created_at, id)"
             )
         )
     if _table_columns(conn, "task_run"):
         conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_task_run_finished_at "
-                "ON task_run (finished_at, id)"
-            )
+            text("CREATE INDEX IF NOT EXISTS ix_task_run_finished_at ON task_run (finished_at, id)")
         )
     if _table_columns(conn, "runlog_event"):
         conn.execute(
@@ -405,7 +404,9 @@ def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str,
     return tuple(scopes)
 
 
-def _list_duplicate_active_ai_claim_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
+def _list_duplicate_active_ai_claim_owner_scopes(
+    conn: Connection,
+) -> tuple[tuple[str, str, str], ...]:
     """Return active AI claim-owner scopes violating the one-active-task invariant."""
 
     columns = _table_columns(conn, "task")
@@ -526,9 +527,7 @@ def _ensure_webhook_token_columns(conn: Connection) -> None:
         )
     if "encrypted_webhook_token" not in columns:
         conn.execute(
-            text(
-                "ALTER TABLE automation_trigger_webhook ADD COLUMN encrypted_webhook_token TEXT"
-            )
+            text("ALTER TABLE automation_trigger_webhook ADD COLUMN encrypted_webhook_token TEXT")
         )
     if "webhook_token_key_version" not in columns:
         conn.execute(
@@ -622,9 +621,7 @@ def _backfill_webhook_token_hashes(conn: Connection) -> None:
             token_hash = _issue_unique_webhook_token_hash(existing_hashes=existing_hashes)
         existing_hashes.add(token_hash)
         keep_plaintext_token = bool(
-            token_ref
-            and stored_webhook_token_ref_hash(token_ref) is None
-            and not encrypted_text
+            token_ref and stored_webhook_token_ref_hash(token_ref) is None and not encrypted_text
         )
         next_token_ref = token_ref if keep_plaintext_token else stored_webhook_token_ref(token_hash)
         if token_ref == next_token_ref and str(stored_hash or "").strip() == token_hash:
@@ -787,9 +784,12 @@ def _prune_runtime_history_sync(  # type: ignore[no-untyped-def]
             .order_by(task_event_table.c.created_at.asc(), task_event_table.c.id.asc())
             .limit(batch_size)
         )
-        task_event_count = conn.execute(
-            delete(task_event_table).where(task_event_table.c.id.in_(task_event_ids))
-        ).rowcount or 0
+        task_event_count = (
+            conn.execute(
+                delete(task_event_table).where(task_event_table.c.id.in_(task_event_ids))
+            ).rowcount
+            or 0
+        )
 
     task_run_count = 0
     if task_run_before is not None:
@@ -798,19 +798,26 @@ def _prune_runtime_history_sync(  # type: ignore[no-untyped-def]
             .where(task_run_table.c.finished_at.is_not(None))
             .where(task_run_table.c.finished_at < task_run_before)
             .where(
-                ~exists(select(task_table.c.id).where(task_table.c.last_run_id == task_run_table.c.id))
+                ~exists(
+                    select(task_table.c.id).where(task_table.c.last_run_id == task_run_table.c.id)
+                )
             )
             .where(
                 ~exists(
-                    select(task_event_table.c.id).where(task_event_table.c.task_run_id == task_run_table.c.id)
+                    select(task_event_table.c.id).where(
+                        task_event_table.c.task_run_id == task_run_table.c.id
+                    )
                 )
             )
             .order_by(task_run_table.c.finished_at.asc(), task_run_table.c.id.asc())
             .limit(batch_size)
         )
-        task_run_count = conn.execute(
-            delete(task_run_table).where(task_run_table.c.id.in_(task_run_ids))
-        ).rowcount or 0
+        task_run_count = (
+            conn.execute(
+                delete(task_run_table).where(task_run_table.c.id.in_(task_run_ids))
+            ).rowcount
+            or 0
+        )
 
     runlog_event_count = 0
     if runlog_event_before is not None:
@@ -820,9 +827,12 @@ def _prune_runtime_history_sync(  # type: ignore[no-untyped-def]
             .order_by(runlog_event_table.c.created_at.asc(), runlog_event_table.c.id.asc())
             .limit(batch_size)
         )
-        runlog_event_count = conn.execute(
-            delete(runlog_event_table).where(runlog_event_table.c.id.in_(runlog_event_ids))
-        ).rowcount or 0
+        runlog_event_count = (
+            conn.execute(
+                delete(runlog_event_table).where(runlog_event_table.c.id.in_(runlog_event_ids))
+            ).rowcount
+            or 0
+        )
 
     return RuntimeHistoryPruneResult(
         task_event_count=task_event_count,

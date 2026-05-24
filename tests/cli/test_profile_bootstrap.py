@@ -24,7 +24,9 @@ def _prepare_env(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
-def test_profile_bootstrap_set_show_list_and_clear(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_profile_bootstrap_set_show_list_and_clear(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Bootstrap CLI should manage profile-local prompt override files."""
 
     _prepare_env(tmp_path, monkeypatch)

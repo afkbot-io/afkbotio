@@ -418,10 +418,13 @@ def test_mcp_cli_edit_uses_url_resolution_suggestions_for_optional_refs(
     )
     monkeypatch.setattr(
         "afkbot.cli.commands.mcp.prompt_optional_refs",
-        lambda *, label, suggestion, default_values, lang: captured_suggestions.append((label, suggestion))
-        or tuple(default_values),
+        lambda *, label, suggestion, default_values, lang: (
+            captured_suggestions.append((label, suggestion)) or tuple(default_values)
+        ),
     )
-    monkeypatch.setattr("afkbot.cli.commands.mcp.confirm_mcp_add", lambda *, preview_text, lang: False)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.mcp.confirm_mcp_add", lambda *, preview_text, lang: False
+    )
 
     # Act
     result = runner.invoke(
@@ -444,7 +447,9 @@ def test_mcp_cli_edit_uses_url_resolution_suggestions_for_optional_refs(
     ]
 
 
-def test_prompt_resolved_mcp_url_retries_until_valid(monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_prompt_resolved_mcp_url_retries_until_valid(
+    monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The interactive MCP URL prompt should re-prompt after one invalid attempt."""
 
     # Arrange
@@ -509,7 +514,9 @@ def test_mcp_wizard_preview_has_russian_copy() -> None:
     assert "- secret_refs: mcp_example_token" in preview
 
 
-def test_prompt_optional_refs_keeps_existing_defaults_on_empty_input(monkeypatch: MonkeyPatch) -> None:
+def test_prompt_optional_refs_keeps_existing_defaults_on_empty_input(
+    monkeypatch: MonkeyPatch,
+) -> None:
     """Interactive MCP ref prompts should preserve the current values on empty submit."""
 
     # Arrange
@@ -527,7 +534,6 @@ def test_prompt_optional_refs_keeps_existing_defaults_on_empty_input(monkeypatch
 
     # Assert
     assert refs == ("mcp_existing_token",)
-
 
 
 def test_mcp_cli_add_requires_url_in_json_mode_without_tty(
@@ -575,7 +581,6 @@ def test_mcp_cli_add_json_mode_never_opens_interactive_wizard(
     assert payload["error_code"] == "usage_error"
     assert payload["reason"] == "--url is required without an interactive TTY"
     assert prompt_calls == []
-
 
 
 def test_mcp_cli_remove_roundtrip(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

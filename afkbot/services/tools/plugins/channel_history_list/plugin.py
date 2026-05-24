@@ -142,7 +142,9 @@ class ChannelHistoryListTool(ToolBase):
                     "active_conversation_id": active_context.peer_id,
                 },
             )
-        thread_id = payload.thread_id or (None if active_context is None else active_context.thread_id)
+        thread_id = payload.thread_id or (
+            None if active_context is None else active_context.thread_id
+        )
         if (
             active_context is not None
             and active_context.thread_id is not None
@@ -158,9 +160,7 @@ class ChannelHistoryListTool(ToolBase):
             )
 
         try:
-            token = await get_credentials_service(
-                self._settings
-            ).resolve_plaintext_for_app_tool(
+            token = await get_credentials_service(self._settings).resolve_plaintext_for_app_tool(
                 profile_id=ctx.profile_id,
                 tool_name="app.run",
                 integration_name="partyflow",

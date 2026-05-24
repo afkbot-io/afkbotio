@@ -19,7 +19,5 @@ def build_channel_tool_profile_context_overrides(
     if normalized == "inherit":
         return None
     return TurnContextOverrides(
-        runtime_metadata=build_tool_profile_policy_overlay_metadata(
-            tool_profile=normalized
-        )
+        runtime_metadata=build_tool_profile_policy_overlay_metadata(tool_profile=normalized)
     )

@@ -69,7 +69,9 @@ def _build_telegram_command_runtime() -> TelegramCommandRuntime:
         delete_endpoint=lambda channel_id: _delete_endpoint(settings, channel_id),
         delete_binding=lambda channel_id: _delete_binding(settings, channel_id),
         load_profile=lambda profile_id: _load_profile(settings, profile_id),
-        state_path_for=lambda channel_id: telegram_polling_state_path_for(settings, endpoint_id=channel_id),
+        state_path_for=lambda channel_id: telegram_polling_state_path_for(
+            settings, endpoint_id=channel_id
+        ),
         set_endpoint_enabled=lambda channel_id, enabled: set_endpoint_enabled(
             channel_id=channel_id,
             enabled=enabled,
@@ -78,7 +80,9 @@ def _build_telegram_command_runtime() -> TelegramCommandRuntime:
             telegram_status_payload(channel_id=channel_id, probe=probe)
         ),
         render_status_payload=render_telegram_status_payload,
-        poll_once_payload=lambda channel_id: asyncio.run(telegram_poll_once_payload(channel_id=channel_id)),
+        poll_once_payload=lambda channel_id: asyncio.run(
+            telegram_poll_once_payload(channel_id=channel_id)
+        ),
         render_poll_once_payload=lambda channel_id, payload: render_poll_once_payload(
             channel_id=channel_id,
             payload=payload,

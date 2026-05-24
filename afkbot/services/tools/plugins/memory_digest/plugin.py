@@ -49,7 +49,9 @@ class MemoryDigestTool(ToolBase):
                 profile_id=ctx.profile_id,
                 scope=requested_scope,
                 visibility=(
-                    prepared.visibility if not requested_scope.is_profile_scope else "promoted_global"
+                    prepared.visibility
+                    if not requested_scope.is_profile_scope
+                    else "promoted_global"
                 ),
                 limit=prepared.limit,
             )
@@ -85,7 +87,9 @@ class MemoryDigestTool(ToolBase):
                     "global_count": digest.global_count,
                     "kind_counts": digest.kind_counts,
                     "digest_md": digest.digest_md,
-                    "items": [item.model_dump(mode="json") for item in [*local_items, *global_items]],
+                    "items": [
+                        item.model_dump(mode="json") for item in [*local_items, *global_items]
+                    ],
                 },
             )
         except MemoryServiceError as exc:

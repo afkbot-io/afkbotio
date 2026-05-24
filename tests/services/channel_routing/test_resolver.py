@@ -199,7 +199,9 @@ def test_resolve_session_id_falls_back_when_context_is_missing() -> None:
 
     assert resolve_session_id(policy="per-chat", routing_input=routing_input) == "api-session"
     assert resolve_session_id(policy="per-thread", routing_input=routing_input) == "api-session"
-    assert resolve_session_id(policy="per-user-in-group", routing_input=routing_input) == "api-session"
+    assert (
+        resolve_session_id(policy="per-user-in-group", routing_input=routing_input) == "api-session"
+    )
 
 
 def test_resolve_session_id_bounds_long_generated_values() -> None:

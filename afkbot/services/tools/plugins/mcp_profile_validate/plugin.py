@@ -30,7 +30,9 @@ class MCPProfileValidateTool(ToolBase):
         if isinstance(payload, ToolResult):
             return payload
         try:
-            report = await get_mcp_profile_service(self._settings).validate(profile_id=ctx.profile_id)
+            report = await get_mcp_profile_service(self._settings).validate(
+                profile_id=ctx.profile_id
+            )
             return ToolResult(ok=True, payload={"report": report.model_dump(mode="json")})
         except (MCPIntegrationError, ProfileServiceError, ValueError) as exc:
             return mcp_tool_error(exc)

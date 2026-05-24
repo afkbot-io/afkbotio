@@ -14,9 +14,7 @@ class TaskDependency(Base):
     """Directed dependency edge between two tasks."""
 
     __tablename__ = "task_dependency"
-    __table_args__ = (
-        Index("ix_task_dependency_depends_on", "depends_on_task_id"),
-    )
+    __table_args__ = (Index("ix_task_dependency_depends_on", "depends_on_task_id"),)
 
     task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), primary_key=True)
     depends_on_task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), primary_key=True)

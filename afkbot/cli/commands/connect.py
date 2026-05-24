@@ -107,7 +107,10 @@ def register(app: typer.Typer) -> None:
             if claim_pin is not None and generate_claim_pin_flag:
                 raise_usage_error("--claim-pin and --generate-claim-pin cannot be used together.")
             settings = get_settings()
-            default_base_url = settings.public_chat_api_url or f"http://{settings.runtime_host}:{settings.runtime_port + 1}"
+            default_base_url = (
+                settings.public_chat_api_url
+                or f"http://{settings.runtime_host}:{settings.runtime_port + 1}"
+            )
             base_url = normalize_base_url(host or default_base_url)
             resolved_claim_pin = normalize_claim_pin(claim_pin)
             if generate_claim_pin_flag:

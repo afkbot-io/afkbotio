@@ -176,7 +176,9 @@ async def test_web_search_returns_deterministic_errors(
     assert fail_result.error_code == "web_search_failed"
 
 
-async def test_web_fetch_extracts_readable_markdown(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+async def test_web_fetch_extracts_readable_markdown(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """web.fetch should fetch HTML and return readable markdown with truncation metadata."""
 
     settings = Settings(root_dir=tmp_path, runtime_max_body_bytes=200_000)
@@ -268,7 +270,9 @@ async def test_web_fetch_returns_deterministic_errors(
         default_timeout_sec=settings.tool_timeout_default_sec,
         max_timeout_sec=settings.tool_timeout_max_sec,
     )
-    fail_result = await tool.execute(ToolContext(profile_id="default", session_id="s", run_id=1), fail_params)
+    fail_result = await tool.execute(
+        ToolContext(profile_id="default", session_id="s", run_id=1), fail_params
+    )
     assert fail_result.ok is False
     assert fail_result.error_code == "web_fetch_failed"
 
@@ -295,7 +299,9 @@ async def test_web_fetch_rejects_localhost_target(tmp_path: Path) -> None:
     assert "must not target localhost" in str(result.reason or "")
 
 
-async def test_web_fetch_blocks_cross_host_redirect(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+async def test_web_fetch_blocks_cross_host_redirect(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """web.fetch should reject redirects that change destination host."""
 
     settings = Settings(root_dir=tmp_path)
@@ -605,7 +611,11 @@ async def test_browser_control_full_action_flow(tmp_path: Path, monkeypatch: Mon
     assert Path(tmp_path / "tmp" / "review.txt").exists()
     assert Path(tmp_path / "tmp" / "review.html").exists()
     assert Path(tmp_path / "tmp" / "review.json").exists()
-    assert (tmp_path / "tmp" / "review.html").read_text(encoding="utf-8").startswith("<html>\n  <body>")
+    assert (
+        (tmp_path / "tmp" / "review.html")
+        .read_text(encoding="utf-8")
+        .startswith("<html>\n  <body>")
+    )
     snapshot_json = json.loads((tmp_path / "tmp" / "review.json").read_text(encoding="utf-8"))
     assert snapshot_json["title"] == "Example title"
     assert snapshot_json["links"][0]["href"] == "https://example.com/docs"
@@ -941,7 +951,7 @@ async def test_browser_control_supports_semantic_targets_and_extended_actions(
     assert page.click_calls == [("role:button:name=Continue:exact=True", 15000)]
     assert page.keyboard.pressed == ["Enter"]
     assert page.select_calls == [
-        ("selector:[name=\"country\"]", {"label": "Germany", "timeout": 15000})
+        ('selector:[name="country"]', {"label": "Germany", "timeout": 15000})
     ]
     assert page.check_calls == [("label:Accept terms:exact=False", 15000)]
     assert page.wait_calls == [("role:button:name=Continue:exact=False", 12000, "visible")]
@@ -1023,7 +1033,9 @@ async def test_browser_control_persists_state_only_for_stateful_actions(
         _ = ctx
         return {"action": payload.action}
 
-    async def _fake_persist_session_state(*, root_dir: Path, profile_id: str, session_id: str) -> bool:
+    async def _fake_persist_session_state(
+        *, root_dir: Path, profile_id: str, session_id: str
+    ) -> bool:
         _ = root_dir, profile_id, session_id
         persisted_actions.append(current_action[0])
         return True
@@ -1143,7 +1155,9 @@ async def test_browser_control_lightpanda_missing_cdp_url_points_to_browser_inst
     ctx = ToolContext(profile_id="default", session_id="s-lightpanda", run_id=1)
 
     class _FakeChromium:
-        async def connect_over_cdp(self, cdp_url: str) -> object:  # pragma: no cover - should not be called
+        async def connect_over_cdp(
+            self, cdp_url: str
+        ) -> object:  # pragma: no cover - should not be called
             _ = cdp_url
             raise AssertionError("connect_over_cdp must not run when the CDP URL is missing")
 
@@ -1201,7 +1215,9 @@ async def test_browser_control_marks_target_closed_as_resettable_failure(
 
         async def goto(self, url: str, *, timeout: int, wait_until: str) -> None:
             _ = url, timeout, wait_until
-            raise RuntimeError("TargetClosedError: Page.goto: Target page, context or browser has been closed")
+            raise RuntimeError(
+                "TargetClosedError: Page.goto: Target page, context or browser has been closed"
+            )
 
         def is_closed(self) -> bool:
             return False
@@ -1257,12 +1273,15 @@ async def test_browser_control_marks_target_closed_as_resettable_failure(
     assert open_result.metadata["browser_error_class"] == "browser_target_closed"
     assert open_result.metadata["requires_session_reset"] is True
     manager = get_browser_session_manager()
-    assert await manager.get(
-        root_dir=tmp_path,
-        profile_id="default",
-        session_id="s-dead",
-        idle_ttl_sec=settings.browser_session_idle_ttl_sec,
-    ) is None
+    assert (
+        await manager.get(
+            root_dir=tmp_path,
+            profile_id="default",
+            session_id="s-dead",
+            idle_ttl_sec=settings.browser_session_idle_ttl_sec,
+        )
+        is None
+    )
 
 
 async def test_browser_control_reuses_existing_session_across_tool_instances(

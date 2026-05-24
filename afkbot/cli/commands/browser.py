@@ -98,7 +98,11 @@ def register(app: typer.Typer) -> None:
             settings = preview_runtime_config_updates(settings, **pending_updates)
 
         initial_status = get_browser_runtime_status(settings)
-        if not json_output and not yes and should_confirm_browser_install(force=force, status=initial_status):
+        if (
+            not json_output
+            and not yes
+            and should_confirm_browser_install(force=force, status=initial_status)
+        ):
             proceed = prompt_confirm(
                 question=browser_install_question(
                     force=force,
@@ -128,9 +132,7 @@ def register(app: typer.Typer) -> None:
             settings, _ = persist_runtime_config_updates(settings, **pending_updates)
 
         activity = (
-            nullcontext()
-            if json_output
-            else ActivityIndicator(label="Installing browser runtime")
+            nullcontext() if json_output else ActivityIndicator(label="Installing browser runtime")
         )
         with activity:
             result = install_browser_runtime(force=force, settings=settings)
@@ -250,11 +252,7 @@ def register(app: typer.Typer) -> None:
             typer.echo(json.dumps(payload, ensure_ascii=True))
             return
 
-        suffix = (
-            " (AFKBOT_BROWSER_HEADLESS env override is active)"
-            if env_override_active
-            else ""
-        )
+        suffix = " (AFKBOT_BROWSER_HEADLESS env override is active)" if env_override_active else ""
         typer.echo(f"browser headless: {headless_label(current_mode)}{suffix}")
 
     @browser_app.command("start")
@@ -270,7 +268,9 @@ def register(app: typer.Typer) -> None:
         settings = get_settings()
         result = start_managed_browser_runtime(settings)
         if json_output:
-            typer.echo(json.dumps(managed_runtime_payload(result, settings=settings), ensure_ascii=True))
+            typer.echo(
+                json.dumps(managed_runtime_payload(result, settings=settings), ensure_ascii=True)
+            )
         else:
             typer.echo(result.reason)
         if not result.ok:
@@ -289,7 +289,9 @@ def register(app: typer.Typer) -> None:
         settings = get_settings()
         result = stop_managed_browser_runtime(settings)
         if json_output:
-            typer.echo(json.dumps(managed_runtime_payload(result, settings=settings), ensure_ascii=True))
+            typer.echo(
+                json.dumps(managed_runtime_payload(result, settings=settings), ensure_ascii=True)
+            )
         else:
             typer.echo(result.reason)
         if not result.ok:
@@ -369,6 +371,8 @@ def register(app: typer.Typer) -> None:
             typer.echo(f"browser session closed: {profile}/{session}{suffix}")
             return
         if clear_state:
-            typer.echo(f"browser session was not open: {profile}/{session} (persisted state cleared if present)")
+            typer.echo(
+                f"browser session was not open: {profile}/{session} (persisted state cleared if present)"
+            )
             return
         typer.echo(f"browser session was not open: {profile}/{session}")

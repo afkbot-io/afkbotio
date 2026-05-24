@@ -1,4 +1,3 @@
-
 """Shared harness helpers for channel CLI tests."""
 
 from pathlib import Path
@@ -19,13 +18,17 @@ def _prepare_env(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'channels.db'}")
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
-    monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", "5lSxJmWfyATJQkFFUXMPaZTTHm62LvPNtvBI3AmyuKY=")
+    monkeypatch.setenv(
+        "AFKBOT_CREDENTIALS_MASTER_KEYS", "5lSxJmWfyATJQkFFUXMPaZTTHm62LvPNtvBI3AmyuKY="
+    )
     get_settings.cache_clear()
+
 
 def _new_profile_service(settings: object) -> ProfileService:
     service = ProfileService(settings)  # type: ignore[arg-type]
     _OWNED_PROFILE_SERVICES.append(service)
     return service
+
 
 async def _reset_owned_profile_services_async() -> None:
     while _OWNED_PROFILE_SERVICES:

@@ -88,7 +88,9 @@ def platform_is_bootstrapped(settings: Settings) -> bool:
 def manual_local_runtime_is_ready(settings: Settings) -> bool:
     """Return whether the current root already looks like a runnable source checkout."""
 
-    return (settings.root_dir / "pyproject.toml").exists() and (settings.root_dir / "afkbot").exists()
+    return (settings.root_dir / "pyproject.toml").exists() and (
+        settings.root_dir / "afkbot"
+    ).exists()
 
 
 def _runtime_config_is_bootstrapped(config: dict[str, Any]) -> bool:

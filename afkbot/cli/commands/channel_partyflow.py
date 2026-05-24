@@ -238,7 +238,12 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     SessionPolicy,
                     scenario.session_policy if scenario else "per-thread",
                 ),
-                binding_session_policy_allowed=("main", "per-chat", "per-thread", "per-user-in-group"),
+                binding_session_policy_allowed=(
+                    "main",
+                    "per-chat",
+                    "per-thread",
+                    "per-user-in-group",
+                ),
                 generated_channel_id=generated_channel_id,
             )
             resolved_trigger_mode = _resolve_trigger_mode(
@@ -291,7 +296,8 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                 access_policy=collect_channel_access_policy_inputs(
                     interactive=interactive,
                     lang=prompt_language,
-                    private_policy=private_policy or (scenario.private_policy if scenario else None),
+                    private_policy=private_policy
+                    or (scenario.private_policy if scenario else None),
                     allow_from=allow_from,
                     group_policy=group_policy or (scenario.group_policy if scenario else None),
                     groups=groups,
@@ -768,7 +774,9 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
     ) -> None:
         settings = get_settings()
         try:
-            payload = asyncio.run(_partyflow_poll_once_payload(settings=settings, channel_id=channel_id))
+            payload = asyncio.run(
+                _partyflow_poll_once_payload(settings=settings, channel_id=channel_id)
+            )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
@@ -786,13 +794,17 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
     ) -> None:
         settings = get_settings()
         try:
-            payload = asyncio.run(_partyflow_reset_cursor_payload(settings=settings, channel_id=channel_id))
+            payload = asyncio.run(
+                _partyflow_reset_cursor_payload(settings=settings, channel_id=channel_id)
+            )
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
             typer.echo(json.dumps(payload, ensure_ascii=True))
             return
-        typer.echo(f"PartyFlow polling cursor reset for `{channel_id}` removed={payload['removed']}.")
+        typer.echo(
+            f"PartyFlow polling cursor reset for `{channel_id}` removed={payload['removed']}."
+        )
 
     @partyflow_app.command("enable")
     def partyflow_enable(channel_id: str = typer.Argument(...)) -> None:
@@ -824,7 +836,9 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         except Exception as exc:
             _raise_partyflow_cli_error(exc)
         if json_output:
-            typer.echo(json.dumps({"ok": True, "binding_removed": binding_removed}, ensure_ascii=True))
+            typer.echo(
+                json.dumps({"ok": True, "binding_removed": binding_removed}, ensure_ascii=True)
+            )
             reload_install_managed_runtime_notice(settings)
             return
         typer.echo(f"PartyFlow channel `{channel_id}` deleted.")
@@ -870,7 +884,9 @@ def _resolve_trigger_keywords(
 ) -> tuple[str, ...]:
     if trigger_mode != "keywords":
         return ()
-    default_keywords = ", ".join(current_trigger_keywords) if current_trigger_mode == "keywords" else None
+    default_keywords = (
+        ", ".join(current_trigger_keywords) if current_trigger_mode == "keywords" else None
+    )
     raw_keywords = resolve_channel_text(
         value=None if interactive else trigger_keywords,
         interactive=interactive,
@@ -910,8 +926,7 @@ def _render_access_policy(endpoint: PartyFlowPollingEndpointConfig) -> None:
     typer.echo(f"- access.group_policy: {endpoint.access_policy.group_policy}")
     typer.echo("- access.groups: " + (", ".join(endpoint.access_policy.groups) or "-"))
     typer.echo(
-        "- access.group_allow_from: "
-        + (", ".join(endpoint.access_policy.group_allow_from) or "-")
+        "- access.group_allow_from: " + (", ".join(endpoint.access_policy.group_allow_from) or "-")
     )
     typer.echo(
         "- access.outbound_allow_to: "
@@ -919,7 +934,9 @@ def _render_access_policy(endpoint: PartyFlowPollingEndpointConfig) -> None:
     )
 
 
-def _load_partyflow_endpoint(*, settings: Settings, channel_id: str) -> PartyFlowPollingEndpointConfig:
+def _load_partyflow_endpoint(
+    *, settings: Settings, channel_id: str
+) -> PartyFlowPollingEndpointConfig:
     endpoint = run_channel_endpoint_service_sync(
         settings,
         lambda service: service.get(endpoint_id=channel_id),
@@ -1205,9 +1222,8 @@ async def _probe_partyflow_endpoint(
 def _render_partyflow_status_payload(payload: dict[str, object]) -> None:
     endpoints = payload.get("partyflow_polling")
     unsupported = payload.get("unsupported_partyflow")
-    if (
-        (not isinstance(endpoints, list) or not endpoints)
-        and (not isinstance(unsupported, list) or not unsupported)
+    if (not isinstance(endpoints, list) or not endpoints) and (
+        not isinstance(unsupported, list) or not unsupported
     ):
         typer.echo("No PartyFlow channels configured.")
         return

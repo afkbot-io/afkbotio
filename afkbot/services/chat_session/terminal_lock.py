@@ -72,7 +72,9 @@ class ChatSessionTerminalLock:
                 return
 
             lock_fd = self._acquire_process_lock(key=key)
-            self._active_by_key[key] = _ActiveSessionLock(fd=lock_fd, depth=1, owner_thread_id=get_ident())
+            self._active_by_key[key] = _ActiveSessionLock(
+                fd=lock_fd, depth=1, owner_thread_id=get_ident()
+            )
 
     def _release(self, *, key: tuple[str, str]) -> None:
         fd: int | None = None
@@ -106,7 +108,9 @@ class ChatSessionTerminalLock:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             os.close(fd)
-            raise ChatSessionTerminalLockedError(profile_id=profile_id, session_id=session_id) from exc
+            raise ChatSessionTerminalLockedError(
+                profile_id=profile_id, session_id=session_id
+            ) from exc
         except Exception:
             os.close(fd)
             raise

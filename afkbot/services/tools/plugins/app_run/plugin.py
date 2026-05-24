@@ -12,7 +12,11 @@ from afkbot.services.apps.params_validation import collect_validation_details
 from afkbot.services.apps.registry import AppRegistry, get_app_registry
 from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
-from afkbot.services.tools.params import ToolParameters, ToolParametersValidationError, build_tool_parameters
+from afkbot.services.tools.params import (
+    ToolParameters,
+    ToolParametersValidationError,
+    build_tool_parameters,
+)
 from afkbot.settings import Settings
 
 
@@ -121,7 +125,9 @@ def _build_app_run_envelope_error(exc: ValidationError) -> ToolParametersValidat
         )
         reason_parts.append(f"Invalid values: {formatted_invalid}.")
     reason_parts.append("Required top-level fields: app_name, action.")
-    reason_parts.append("Optional top-level fields: profile_name, params, profile_id, profile_key, timeout_sec.")
+    reason_parts.append(
+        "Optional top-level fields: profile_name, params, profile_id, profile_key, timeout_sec."
+    )
     reason_parts.append("Use top-level `params` for action arguments.")
     return ToolParametersValidationError(
         error_code="app_run_invalid",
@@ -129,10 +135,24 @@ def _build_app_run_envelope_error(exc: ValidationError) -> ToolParametersValidat
         metadata={
             "tool_name": "app.run",
             "required_fields": ["app_name", "action"],
-            "optional_fields": ["params", "profile_name", "profile_id", "profile_key", "timeout_sec"],
+            "optional_fields": [
+                "params",
+                "profile_name",
+                "profile_id",
+                "profile_key",
+                "timeout_sec",
+            ],
             "missing_fields": details.missing_params,
             "unexpected_fields": details.unexpected_params,
             "invalid_fields": details.invalid_params,
-            "allowed_fields": ["app_name", "action", "params", "profile_name", "profile_id", "profile_key", "timeout_sec"],
+            "allowed_fields": [
+                "app_name",
+                "action",
+                "params",
+                "profile_name",
+                "profile_id",
+                "profile_key",
+                "timeout_sec",
+            ],
         },
     )

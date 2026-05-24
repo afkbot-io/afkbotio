@@ -82,7 +82,9 @@ def merge_watcher_config(
         include_private=current.include_private if include_private is None else include_private,
         include_groups=current.include_groups if include_groups is None else include_groups,
         include_channels=current.include_channels if include_channels is None else include_channels,
-        batch_interval_sec=current.batch_interval_sec if batch_interval_sec is None else batch_interval_sec,
+        batch_interval_sec=current.batch_interval_sec
+        if batch_interval_sec is None
+        else batch_interval_sec,
         dialog_refresh_interval_sec=(
             current.dialog_refresh_interval_sec
             if dialog_refresh_interval_sec is None
@@ -90,17 +92,29 @@ def merge_watcher_config(
         ),
         max_batch_size=current.max_batch_size if max_batch_size is None else max_batch_size,
         max_buffer_size=current.max_buffer_size if max_buffer_size is None else max_buffer_size,
-        max_message_chars=current.max_message_chars if max_message_chars is None else max_message_chars,
-        blocked_chat_patterns=current.blocked_chat_patterns if blocked_chat_patterns is None else blocked_chat_patterns,
-        allowed_chat_patterns=current.allowed_chat_patterns if allowed_chat_patterns is None else allowed_chat_patterns,
+        max_message_chars=current.max_message_chars
+        if max_message_chars is None
+        else max_message_chars,
+        blocked_chat_patterns=current.blocked_chat_patterns
+        if blocked_chat_patterns is None
+        else blocked_chat_patterns,
+        allowed_chat_patterns=current.allowed_chat_patterns
+        if allowed_chat_patterns is None
+        else allowed_chat_patterns,
         delivery_transport=(
-            current_target.transport if delivery_transport is None and current_target is not None else delivery_transport
+            current_target.transport
+            if delivery_transport is None and current_target is not None
+            else delivery_transport
         ),
         delivery_account_id=(
-            current_target.account_id if delivery_account_id is None and current_target is not None else delivery_account_id
+            current_target.account_id
+            if delivery_account_id is None and current_target is not None
+            else delivery_account_id
         ),
         delivery_peer_id=(
-            current_target.peer_id if delivery_peer_id is None and current_target is not None else delivery_peer_id
+            current_target.peer_id
+            if delivery_peer_id is None and current_target is not None
+            else delivery_peer_id
         ),
         delivery_credential_profile_key=(
             current.delivery_credential_profile_key

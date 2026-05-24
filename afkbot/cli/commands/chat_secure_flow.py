@@ -48,6 +48,7 @@ SerializedTurnRunnerFactory = Callable[
     AbstractAsyncContextManager[SerializedSessionTurnRunner],
 ]
 
+
 async def run_turn_with_secure_resolution(
     *,
     message: str,
@@ -83,9 +84,7 @@ async def run_turn_with_secure_resolution(
     while True:
         session_override: TurnContextOverrides | None = None
         merged_approved_tools = set(
-            str(item).strip()
-            for item in (session_approved_tools or set())
-            if str(item).strip()
+            str(item).strip() for item in (session_approved_tools or set()) if str(item).strip()
         )
         if runtime_one_time_approved_tools:
             merged_approved_tools.update(runtime_one_time_approved_tools)
@@ -204,14 +203,18 @@ async def run_turn_with_secure_resolution(
                 )
             seen_question_signatures.add(question_signature)
             if is_tool_not_allowed_question(result.envelope):
-                choice = str(
-                    await _await_if_needed(
-                        tool_not_allowed_prompt_fn(
-                            envelope=result.envelope,
-                            question_text=_tool_not_allowed_question_text(result.envelope),
+                choice = (
+                    str(
+                        await _await_if_needed(
+                            tool_not_allowed_prompt_fn(
+                                envelope=result.envelope,
+                                question_text=_tool_not_allowed_question_text(result.envelope),
+                            )
                         )
                     )
-                ).strip().lower()
+                    .strip()
+                    .lower()
+                )
                 if choice == _TOOL_ACCESS_ONCE:
                     tool_name = _tool_not_allowed_tool_name(result.envelope)
                     if tool_name is None:
@@ -471,7 +474,6 @@ def _render_approval_prompt(envelope: ActionEnvelope) -> None:
     typer.echo(f"  {envelope.message}")
 
 
-
 async def _prompt_tool_not_allowed_choice(*, envelope: ActionEnvelope, **kwargs: object) -> str:
     _ = kwargs
     selected = await _prompt_inline_or_text_choice(
@@ -691,7 +693,10 @@ def _build_choice_prompt(
         body = "\n".join(f"{index}. {label}" for index, label in enumerate(values, start=1))
     else:
         body = ""
-    return "\n".join((title, text, body, "Enter option number, value, or blank for default:")).strip() + ": "
+    return (
+        "\n".join((title, text, body, "Enter option number, value, or blank for default:")).strip()
+        + ": "
+    )
 
 
 async def _await_if_needed(value: object) -> object:

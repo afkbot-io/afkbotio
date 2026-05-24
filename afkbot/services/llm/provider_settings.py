@@ -50,7 +50,9 @@ def resolve_api_key(*, settings: Settings, provider_id: LLMProviderId) -> str | 
         )
         if settings.openai_codex_api_key_source == TOKEN_SOURCE_FILE:
             return file_backed_key or None
-        return _normalized_optional_text(settings.openai_codex_api_key) or _normalized_optional_text(
+        return _normalized_optional_text(
+            settings.openai_codex_api_key
+        ) or _normalized_optional_text(
             settings.llm_api_key,
         )
     if provider_id == LLMProviderId.CLAUDE:
@@ -78,11 +80,15 @@ def resolve_api_key(*, settings: Settings, provider_id: LLMProviderId) -> str | 
             settings.llm_api_key,
         )
     if provider_id == LLMProviderId.MINIMAX_PORTAL:
-        return _normalized_optional_text(settings.minimax_portal_api_key) or _normalized_optional_text(
+        return _normalized_optional_text(
+            settings.minimax_portal_api_key
+        ) or _normalized_optional_text(
             settings.llm_api_key,
         )
     if provider_id == LLMProviderId.GITHUB_COPILOT:
-        return _normalized_optional_text(settings.github_copilot_api_key) or _normalized_optional_text(
+        return _normalized_optional_text(
+            settings.github_copilot_api_key
+        ) or _normalized_optional_text(
             settings.llm_api_key,
         )
     if provider_id == LLMProviderId.CUSTOM:
@@ -96,53 +102,101 @@ def resolve_base_url(*, settings: Settings, provider_id: LLMProviderId) -> str:
     """Resolve effective provider base URL with optional global override."""
 
     if provider_id == LLMProviderId.OPENROUTER:
-        return _normalized_optional_text(settings.openrouter_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.openrouter_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.OPENAI:
-        return _normalized_optional_text(settings.openai_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.openai_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.OPENAI_CODEX:
-        return _normalized_optional_text(settings.openai_codex_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.openai_codex_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.CLAUDE:
-        return _normalized_optional_text(settings.claude_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.claude_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.MOONSHOT:
-        return _normalized_optional_text(settings.moonshot_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.moonshot_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.MOONSHOT_CN:
-        return _normalized_optional_text(settings.moonshot_cn_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.moonshot_cn_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.DEEPSEEK:
-        return _normalized_optional_text(settings.deepseek_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.deepseek_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.XAI:
-        return _normalized_optional_text(settings.xai_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.xai_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.QWEN:
-        return _normalized_optional_text(settings.qwen_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.qwen_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.MINIMAX_PORTAL:
-        return _normalized_optional_text(settings.minimax_portal_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.minimax_portal_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.GITHUB_COPILOT:
-        return _normalized_optional_text(settings.github_copilot_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.github_copilot_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     if provider_id == LLMProviderId.CUSTOM:
-        return _normalized_optional_text(settings.custom_base_url) or _normalized_optional_text(
-            settings.llm_base_url,
-        ) or ""
+        return (
+            _normalized_optional_text(settings.custom_base_url)
+            or _normalized_optional_text(
+                settings.llm_base_url,
+            )
+            or ""
+        )
     return ""
 
 

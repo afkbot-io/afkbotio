@@ -11,7 +11,9 @@ from afkbot.services.channels.delivery_runtime import ResolvedDeliveryTarget
 from afkbot.settings import Settings
 
 ChannelSenderPayload = str | ChannelOutboundMessage
-ChannelSenderFn = Callable[[ResolvedDeliveryTarget, ChannelSenderPayload], Awaitable[dict[str, object]]]
+ChannelSenderFn = Callable[
+    [ResolvedDeliveryTarget, ChannelSenderPayload], Awaitable[dict[str, object]]
+]
 _REGISTRIES_BY_ROOT: dict[str, "ChannelSenderRegistry"] = {}
 
 

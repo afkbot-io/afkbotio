@@ -54,7 +54,13 @@ def build_channel_attachment_dir(
     """Return an in-scope workspace directory for downloaded channel attachments."""
 
     base_dir = resolve_tool_workspace_base_dir(settings=settings, profile_id=profile_id)
-    path = base_dir / "channel_attachments" / safe_filename(transport) / safe_filename(endpoint_id) / safe_filename(event_id)
+    path = (
+        base_dir
+        / "channel_attachments"
+        / safe_filename(transport)
+        / safe_filename(endpoint_id)
+        / safe_filename(event_id)
+    )
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -121,7 +127,9 @@ async def resolve_channel_outbound_media_path(
         )
     except WorkspacePathResolutionError as exc:
         if exc.code == "outside_scope":
-            raise ValueError(f"{label} path is outside allowed workspace scope: {normalized}") from None
+            raise ValueError(
+                f"{label} path is outside allowed workspace scope: {normalized}"
+            ) from None
         if exc.code == "missing_path":
             raise ValueError(f"{label} path does not exist: {normalized}") from None
         raise ValueError(exc.reason) from None

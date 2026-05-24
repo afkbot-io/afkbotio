@@ -66,14 +66,13 @@ def test_render_chat_workspace_transcript_keeps_tight_progress_groups_without_bl
 
     # Assert
     assert rendered == (
-        "you > run tests\n\n"
-        "[iter 1] thinking...\n"
-        "[#1] calling tool: bash.exec\n"
-        "cmd=pytest"
+        "you > run tests\n\n[iter 1] thinking...\n[#1] calling tool: bash.exec\ncmd=pytest"
     )
 
 
-def test_render_chat_workspace_transcript_text_preserves_single_blank_lines_between_paragraphs() -> None:
+def test_render_chat_workspace_transcript_text_preserves_single_blank_lines_between_paragraphs() -> (
+    None
+):
     """Assistant transcript text should keep one blank line between paragraphs."""
 
     # Arrange

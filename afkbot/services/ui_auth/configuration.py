@@ -133,4 +133,3 @@ def ui_auth_runtime_payload(settings: Settings) -> dict[str, Any]:
         "password_hash_present": state.password_hash_present,
         "cookie_key_present": state.cookie_key_present,
     }
-

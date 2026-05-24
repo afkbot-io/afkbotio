@@ -21,7 +21,13 @@ from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.tool_skill_resolver import ToolSkillResolver
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
-from afkbot.services.llm import BaseLLMProvider, LLMRequest, LLMResponse, MockLLMProvider, ToolCallRequest
+from afkbot.services.llm import (
+    BaseLLMProvider,
+    LLMRequest,
+    LLMResponse,
+    MockLLMProvider,
+    ToolCallRequest,
+)
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolParameters
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolCall, ToolResult
@@ -160,7 +166,9 @@ async def test_llm_can_finalize_directly_from_tool_display_text(tmp_path: Path) 
         parameters_model = ToolParameters
 
         async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-            return ToolResult(ok=True, payload={"display_text": "Marketplace skills in `default`:\n- `figma`"})
+            return ToolResult(
+                ok=True, payload={"display_text": "Marketplace skills in `default`:\n- `figma`"}
+            )
 
     scripted = MockLLMProvider(
         [
@@ -186,7 +194,9 @@ async def test_llm_can_finalize_directly_from_tool_display_text(tmp_path: Path) 
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-llm-display-text", message="hello")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-llm-display-text", message="hello"
+        )
 
         assert result.envelope.message == "Marketplace skills in `default`:\n- `figma`"
 
@@ -307,7 +317,9 @@ async def test_llm_overflow_retries_with_automatic_context_compaction(tmp_path: 
         event_types = [event.event_type for event in events]
         assert "llm.call.compaction_start" in event_types
         assert "llm.call.compaction_done" in event_types
-        compaction_done = next(event for event in events if event.event_type == "llm.call.compaction_done")
+        compaction_done = next(
+            event for event in events if event.event_type == "llm.call.compaction_done"
+        )
         payload = json.loads(compaction_done.payload_json)
         assert payload["summary_strategy"] == "hybrid_llm_v1"
         assert payload["history_messages_before"] > payload["history_messages_after"]
@@ -402,7 +414,9 @@ async def test_llm_request_timeout_returns_finalize_with_timeout_error(tmp_path:
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-llm-timeout", message="hello")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-llm-timeout", message="hello"
+        )
 
         assert result.envelope.action == "finalize"
         assert result.envelope.message == "LLM request timed out before planning could complete."
@@ -474,9 +488,15 @@ async def test_plan_only_turn_is_not_artificially_capped_to_two_iterations(tmp_p
     )
     provider = MockLLMProvider(
         [
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "1"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "2"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "3"})]),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "1"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "2"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "3"})]
+            ),
             LLMResponse.final("done after 3 tool calls"),
         ]
     )
@@ -644,7 +664,10 @@ async def test_llm_context_includes_parallel_tool_strategy_guidance(tmp_path: Pa
         assert provider.requests
         request = provider.requests[0]
         assert "# Parallel and Tool Strategy" in request.context
-        assert "emit all of those `file.*` tool calls in the same assistant response" in request.context
+        assert (
+            "emit all of those `file.*` tool calls in the same assistant response"
+            in request.context
+        )
         assert "prefer one `session.job.run` call" in request.context
         assert "Do not repeat equivalent inspection" in request.context
 
@@ -714,7 +737,9 @@ async def test_plan_only_turn_context_mentions_parallel_strategy_for_later_execu
 async def test_execution_planning_auto_injects_overlay_for_complex_tasks(tmp_path: Path) -> None:
     """Auto planning mode should inject internal execution-planning guidance for complex tasks."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_execution_planning_auto.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_execution_planning_auto.db"
+    )
     provider = MockLLMProvider([LLMResponse.final("done")])
 
     async with session_scope(factory) as session:
@@ -762,7 +787,9 @@ async def test_execution_planning_auto_injects_overlay_for_complex_tasks(tmp_pat
 async def test_execution_planning_override_off_disables_runtime_overlay(tmp_path: Path) -> None:
     """Per-turn execution planning override should disable internal planning even when profile mode is on."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_execution_planning_override_off.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_execution_planning_override_off.db"
+    )
     provider = MockLLMProvider([LLMResponse.final("done")])
 
     async with session_scope(factory) as session:
@@ -928,7 +955,9 @@ async def test_llm_runtime_budget_stops_long_multi_iteration_turns(tmp_path: Pat
 
         async def complete(self, request: object) -> LLMResponse:
             self.requests.append(request)
-            return LLMResponse.tool_calls_response([ToolCallRequest(name="debug.loopslow", params={})])
+            return LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.loopslow", params={})]
+            )
 
     provider = _LoopingProvider()
 
@@ -1015,7 +1044,13 @@ async def test_llm_history_uses_compacted_session_summary(tmp_path: Path) -> Non
     assert fifth_history[0].role == "system"
     assert fifth_history[0].content is not None
     assert "Compacted through turn 2." in fifth_history[0].content
-    assert [msg.role for msg in fifth_history[1:]] == ["user", "assistant", "user", "assistant", "user"]
+    assert [msg.role for msg in fifth_history[1:]] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+    ]
     assert fifth_history[1].content == "hello 3"
     assert fifth_history[2].content == "three"
     assert fifth_history[3].content == "hello 4"
@@ -1041,7 +1076,9 @@ async def test_llm_secret_output_is_allowed_by_default(tmp_path: Path) -> None:
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-llm-secret", message="hello")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-llm-secret", message="hello"
+        )
 
         assert result.envelope.action == "finalize"
         assert result.envelope.blocked_reason is None
@@ -1078,7 +1115,9 @@ async def test_llm_secret_output_is_blocked_when_chat_guard_enabled(tmp_path: Pa
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-llm-secret-guard", message="hello")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-llm-secret-guard", message="hello"
+        )
 
         assert result.envelope.action == "block"
         assert result.envelope.blocked_reason == "security_secret_output_blocked"
@@ -1116,9 +1155,15 @@ async def test_llm_loop_stops_on_max_iterations(tmp_path: Path) -> None:
 
     scripted = MockLLMProvider(
         [
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "1"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "2"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "3"})]),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "1"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "2"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "3"})]
+            ),
         ]
     )
 
@@ -1153,8 +1198,12 @@ async def test_llm_loop_honors_policy_max_iterations(tmp_path: Path) -> None:
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_policy_limit.db")
     scripted = MockLLMProvider(
         [
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "1"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="debug.echo", params={"message": "2"})]),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "1"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="debug.echo", params={"message": "2"})]
+            ),
         ]
     )
 
@@ -1173,7 +1222,9 @@ async def test_llm_loop_honors_policy_max_iterations(tmp_path: Path) -> None:
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-policy-limit", message="hello")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-policy-limit", message="hello"
+        )
 
         assert result.envelope.message == "finalized: max_iterations_reached (1)"
         events = (
@@ -1361,9 +1412,15 @@ async def test_llm_stops_repeating_missing_file_reads_without_write_access(tmp_p
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_missing_file_reads.db")
     scripted = MockLLMProvider(
         [
-            LLMResponse.tool_calls_response([ToolCallRequest(name="file.read", params={"path": "missing.txt"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="file.read", params={"path": "missing.txt"})]),
-            LLMResponse.tool_calls_response([ToolCallRequest(name="file.read", params={"path": "missing.txt"})]),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="file.read", params={"path": "missing.txt"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="file.read", params={"path": "missing.txt"})]
+            ),
+            LLMResponse.tool_calls_response(
+                [ToolCallRequest(name="file.read", params={"path": "missing.txt"})]
+            ),
         ]
     )
 
@@ -1383,7 +1440,9 @@ async def test_llm_stops_repeating_missing_file_reads_without_write_access(tmp_p
             tool_timeout_default_sec=settings.tool_timeout_default_sec,
             tool_timeout_max_sec=settings.tool_timeout_max_sec,
         )
-        result = await loop.run_turn(profile_id="default", session_id="s-missing-read", message="read missing")
+        result = await loop.run_turn(
+            profile_id="default", session_id="s-missing-read", message="read missing"
+        )
 
         assert (
             result.envelope.message
@@ -1458,7 +1517,9 @@ async def test_llm_cli_approval_surface_fails_closed_on_invalid_deny_policy_json
 ) -> None:
     """CLI approval surface should fail closed when deny rules are invalid."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_cli_approval_invalid_deny.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_cli_approval_invalid_deny.db"
+    )
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
@@ -1563,7 +1624,9 @@ async def test_llm_visible_tools_include_explicitly_approved_tool_without_bypass
     await engine.dispose()
 
 
-async def test_llm_suggests_credentials_request_after_empty_credentials_list(tmp_path: Path) -> None:
+async def test_llm_suggests_credentials_request_after_empty_credentials_list(
+    tmp_path: Path,
+) -> None:
     """Runtime should nudge secure credential collection after empty credentials.list results."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_credentials_followup.db")
@@ -1693,7 +1756,9 @@ async def test_llm_browser_target_closed_followup_prompts_reopen(tmp_path: Path)
 async def test_llm_browser_invalid_followup_prompts_supported_target_fields(tmp_path: Path) -> None:
     """Runtime should suggest supported semantic browser fields after invalid browser requests."""
 
-    settings, engine, factory = await create_test_db(tmp_path, "loop_llm_browser_invalid_followup.db")
+    settings, engine, factory = await create_test_db(
+        tmp_path, "loop_llm_browser_invalid_followup.db"
+    )
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")

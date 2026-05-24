@@ -80,7 +80,10 @@ class AppCatalogService:
         profile = await get_profile_service(self._settings).get(profile_id=profile_id)
         mentions = [
             *[self._map_skill(item) for item in await self._skills.list_skills(profile_id)],
-            *[self._map_subagent(item) for item in await self._subagents.list_subagents(profile_id)],
+            *[
+                self._map_subagent(item)
+                for item in await self._subagents.list_subagents(profile_id)
+            ],
         ]
         mentions.sort(key=_mention_sort_key)
         return AppCatalogResponse(

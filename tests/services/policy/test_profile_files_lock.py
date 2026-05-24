@@ -120,9 +120,7 @@ async def test_profile_files_lock_rejects_traversal_before_writing_outside_locks
             pass
 
     profiles_root = tmp_path / "profiles"
-    outside_locks = [
-        path for path in profiles_root.rglob("*.lock") if ".locks" not in path.parts
-    ]
+    outside_locks = [path for path in profiles_root.rglob("*.lock") if ".locks" not in path.parts]
 
     assert outside_locks == []
     assert not (profiles_root / "outside.lock").exists()

@@ -92,7 +92,9 @@ def render_progress_event(event: RenderEvent) -> str:
             assert_never(other)
 
 
-def render_progress_color(event: RenderEvent, *, progress_event: ProgressEvent | None = None) -> str:
+def render_progress_color(
+    event: RenderEvent, *, progress_event: ProgressEvent | None = None
+) -> str:
     """Return ANSI color escape for one progress status line."""
 
     if event.event_type == "llm.call.compaction_done":
@@ -146,9 +148,7 @@ def render_progress_detail_lines(event: ProgressEvent) -> tuple[str, ...]:
         if not isinstance(preview_lines, list):
             return ()
         lines = tuple(
-            sanitize_terminal_text(str(item).strip())
-            for item in preview_lines
-            if str(item).strip()
+            sanitize_terminal_text(str(item).strip()) for item in preview_lines if str(item).strip()
         )
         return tuple(line for line in lines if line)
 

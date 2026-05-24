@@ -71,13 +71,23 @@ class PluginConfigField(BaseModel):
     def _validate_constraints(self) -> "PluginConfigField":
         if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
             raise ValueError("minimum must be less than or equal to maximum")
-        if self.min_length is not None and self.max_length is not None and self.min_length > self.max_length:
+        if (
+            self.min_length is not None
+            and self.max_length is not None
+            and self.min_length > self.max_length
+        ):
             raise ValueError("min_length must be less than or equal to max_length")
         if self.choices and self.type != "string":
             raise ValueError("choices are supported only for string config fields")
-        if any(item is not None for item in (self.minimum, self.maximum)) and self.type not in {"integer", "number"}:
+        if any(item is not None for item in (self.minimum, self.maximum)) and self.type not in {
+            "integer",
+            "number",
+        }:
             raise ValueError("minimum/maximum are supported only for integer/number config fields")
-        if any(item is not None for item in (self.min_length, self.max_length, self.pattern)) and self.type != "string":
+        if (
+            any(item is not None for item in (self.min_length, self.max_length, self.pattern))
+            and self.type != "string"
+        ):
             raise ValueError("string constraints are supported only for string config fields")
         if self.pattern is not None:
             re.compile(self.pattern)
@@ -92,9 +102,13 @@ class PluginConfigField(BaseModel):
             if self.choices and value not in self.choices:
                 raise ValueError(f"Config field '{key}' must be one of: {', '.join(self.choices)}")
             if self.min_length is not None and len(value) < self.min_length:
-                raise ValueError(f"Config field '{key}' must be at least {self.min_length} characters")
+                raise ValueError(
+                    f"Config field '{key}' must be at least {self.min_length} characters"
+                )
             if self.max_length is not None and len(value) > self.max_length:
-                raise ValueError(f"Config field '{key}' must be at most {self.max_length} characters")
+                raise ValueError(
+                    f"Config field '{key}' must be at most {self.max_length} characters"
+                )
             if self.pattern is not None and re.fullmatch(self.pattern, value) is None:
                 raise ValueError(f"Config field '{key}' does not match the required pattern")
             return value
@@ -107,15 +121,21 @@ class PluginConfigField(BaseModel):
                 raise ValueError(f"Config field '{key}' must be an integer")
             numeric_value = float(value)
             if self.minimum is not None and numeric_value < self.minimum:
-                raise ValueError(f"Config field '{key}' must be greater than or equal to {self.minimum}")
+                raise ValueError(
+                    f"Config field '{key}' must be greater than or equal to {self.minimum}"
+                )
             if self.maximum is not None and numeric_value > self.maximum:
-                raise ValueError(f"Config field '{key}' must be less than or equal to {self.maximum}")
+                raise ValueError(
+                    f"Config field '{key}' must be less than or equal to {self.maximum}"
+                )
             return value
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"Config field '{key}' must be a number")
         numeric_value = float(value)
         if self.minimum is not None and numeric_value < self.minimum:
-            raise ValueError(f"Config field '{key}' must be greater than or equal to {self.minimum}")
+            raise ValueError(
+                f"Config field '{key}' must be greater than or equal to {self.minimum}"
+            )
         if self.maximum is not None and numeric_value > self.maximum:
             raise ValueError(f"Config field '{key}' must be less than or equal to {self.maximum}")
         return value

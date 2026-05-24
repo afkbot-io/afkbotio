@@ -32,7 +32,11 @@ class TaskCommentListTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskCommentListParams) else TaskCommentListParams.model_validate(params)
+        payload = (
+            params
+            if isinstance(params, TaskCommentListParams)
+            else TaskCommentListParams.model_validate(params)
+        )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
             payload=payload,
@@ -48,7 +52,9 @@ class TaskCommentListTool(ToolBase):
                 task_id=payload.task_id,
                 limit=payload.limit,
             )
-            return ToolResult(ok=True, payload={"task_comments": [item.model_dump(mode="json") for item in items]})
+            return ToolResult(
+                ok=True, payload={"task_comments": [item.model_dump(mode="json") for item in items]}
+            )
         except TaskFlowServiceError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
 

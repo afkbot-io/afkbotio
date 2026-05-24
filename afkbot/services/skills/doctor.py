@@ -73,7 +73,9 @@ class SkillDoctorService:
             path=self._to_relative(item.path),
             available=item.available,
             execution_mode=item.manifest.execution_mode,
-            manifest_path=None if item.manifest_path is None else self._to_relative(item.manifest_path),
+            manifest_path=None
+            if item.manifest_path is None
+            else self._to_relative(item.manifest_path),
             manifest_valid=item.manifest_valid,
             missing_requirements=item.missing_requirements,
             missing_suggested_requirements=item.missing_suggested_requirements,
@@ -174,6 +176,7 @@ _SYSTEM_PACKAGE_BY_BIN: dict[str, str] = {
     "soffice": "libreoffice",
     "pdftoppm": "poppler" if sys.platform == "darwin" else "poppler-utils",
 }
+
 
 def _custom_install_hints_for_bin(binary: str) -> tuple[str, ...]:
     """Return platform-aware custom install hints for known external agent CLIs."""

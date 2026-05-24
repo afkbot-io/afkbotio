@@ -239,7 +239,9 @@ async def test_telethon_user_service_batches_sequential_messages_when_ingress_ba
         await service.stop()
 
     assert len(captured) == 1
-    assert "Multiple recent messages arrived from the same conversation." in str(captured[0]["message"])
+    assert "Multiple recent messages arrived from the same conversation." in str(
+        captured[0]["message"]
+    )
     assert "first" in str(captured[0]["message"])
     assert "second" in str(captured[0]["message"])
     assert captured[0]["client_msg_id"] == "telethon-batch:tg-user:42:-:777:5:6:2"

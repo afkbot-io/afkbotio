@@ -32,8 +32,7 @@ def test_version_command_renders_package_and_git_checkout_metadata(monkeypatch) 
     # Assert
     assert result.exit_code == 0
     assert (
-        result.stdout.strip()
-        == "afk 1.2.3 (git abc1234, on codex/fix-chat-transcript-tail, dirty)"
+        result.stdout.strip() == "afk 1.2.3 (git abc1234, on codex/fix-chat-transcript-tail, dirty)"
     )
 
 

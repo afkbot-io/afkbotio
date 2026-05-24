@@ -105,7 +105,9 @@ def _plugin_config(*, plugin_id: str = "afkbotui") -> PluginConfigMetadata:
     )
 
 
-def test_plugin_install_uses_prompted_source_when_argument_is_omitted(tmp_path, monkeypatch) -> None:
+def test_plugin_install_uses_prompted_source_when_argument_is_omitted(
+    tmp_path, monkeypatch
+) -> None:
     """Plugin install should fall back to the interactive wizard source when no argument is provided."""
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
@@ -146,7 +148,9 @@ def test_plugin_install_uses_prompted_source_when_argument_is_omitted(tmp_path, 
     }
 
 
-def test_plugin_install_json_requires_source_when_argument_is_omitted(tmp_path, monkeypatch) -> None:
+def test_plugin_install_json_requires_source_when_argument_is_omitted(
+    tmp_path, monkeypatch
+) -> None:
     """Plugin install JSON mode should stay deterministic and require an explicit source."""
 
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
@@ -176,7 +180,9 @@ def test_plugin_install_requires_source_when_wizard_returns_empty(tmp_path, monk
     monkeypatch.setattr("afkbot.cli.commands.plugin.supports_interactive_tty", lambda: False)
     monkeypatch.setattr(
         "afkbot.cli.commands.plugin.prompt_plugin_install_source",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("wizard should not run without TTY")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("wizard should not run without TTY")
+        ),
     )
     runner = CliRunner()
 

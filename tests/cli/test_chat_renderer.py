@@ -31,7 +31,7 @@ def test_renderer_marks_structured_error_payload_as_error_block() -> None:
     """Structured provider error payload should render red ERROR block."""
 
     message = (
-        '[Error: request could not be processed] '
+        "[Error: request could not be processed] "
         '{"error":{"message":"bad","type":"BadRequestError","code":400}}'
     )
     rendered = render_chat_result(_result(message))

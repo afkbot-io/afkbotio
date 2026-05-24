@@ -249,7 +249,11 @@ async def test_user_facing_conversation_recall_blocks_other_routed_profile_sessi
     result = await recall_tool.execute(
         _user_facing_ctx(session_id="profile:default:chat:100"),
         recall_tool.parse_params(
-            {"profile_key": "default", "session_id": "profile:default:chat:200", "query": "invoice"},
+            {
+                "profile_key": "default",
+                "session_id": "profile:default:chat:200",
+                "query": "invoice",
+            },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         ),

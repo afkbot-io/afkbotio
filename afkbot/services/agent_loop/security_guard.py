@@ -22,7 +22,9 @@ _NATURAL_SECRET_RE = re.compile(
     r"(?:token|api[_\s-]?key|secret|password|пароль|токен|секрет)\s*"
     r"(?:is|equals|это|равен))\s+([^\n\r]+)"
 )
-_KNOWN_SECRET_RE = re.compile(r"\b(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|xox[baprs]-[A-Za-z0-9-]{10,})\b")
+_KNOWN_SECRET_RE = re.compile(
+    r"\b(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{10,}|xox[baprs]-[A-Za-z0-9-]{10,})\b"
+)
 _TELEGRAM_TOKEN_RE = re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{20,}\b")
 _SECRET_KEYWORD_RE = re.compile(
     r"(?i)\b(token|api[_\s-]?key|secret|password|пароль|токен|секрет|credential|credentials)\b"
@@ -145,8 +147,7 @@ class SecurityGuard:
             return value
         if isinstance(value, dict):
             return {
-                str(key): cls.redact_value(item, field_name=str(key))
-                for key, item in value.items()
+                str(key): cls.redact_value(item, field_name=str(key)) for key, item in value.items()
             }
         if isinstance(value, list):
             return [cls.redact_value(item) for item in value]

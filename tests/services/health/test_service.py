@@ -48,9 +48,7 @@ async def _prepare_settings(tmp_path: Path, *, with_master_key: bool) -> Setting
         root_dir=tmp_path,
         llm_api_key="test-llm-key",
         credentials_master_keys=(
-            Fernet.generate_key().decode("utf-8")
-            if with_master_key
-            else None
+            Fernet.generate_key().decode("utf-8") if with_master_key else None
         ),
     )
     engine = create_engine(settings)
@@ -219,7 +217,10 @@ async def test_integration_matrix_probe_reports_llm_probe_failure(
     # Assert
     assert by_name["llm"].status == "fail"
     assert by_name["llm"].error_code == "llm_provider_network_error"
-    assert by_name["llm"].reason == "LLM provider is temporarily unavailable. Please try again shortly."
+    assert (
+        by_name["llm"].reason
+        == "LLM provider is temporarily unavailable. Please try again shortly."
+    )
     assert report.ok is False
 
 
@@ -540,6 +541,7 @@ async def test_channel_health_diagnostics_report_telethon_status(
             credential_name="session_string",
             secret_value="session",
         )
+
         async def _fake_policy(**kwargs: object) -> bool:
             _ = kwargs
             return True

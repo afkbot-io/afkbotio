@@ -92,7 +92,9 @@ async def test_delete_profile_deactivates_bindings_for_runtime_resolution(
 
     key = Fernet.generate_key().decode("utf-8")
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
-    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_delete.db'}")
+    monkeypatch.setenv(
+        "AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_delete.db'}"
+    )
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
     await reset_credentials_services_async()
@@ -139,7 +141,9 @@ async def test_delete_profile_deactivates_bindings_for_runtime_resolution(
         except CredentialsServiceError as exc:
             assert exc.error_code == "credentials_missing"
         else:  # pragma: no cover - defensive
-            raise AssertionError("Expected deleted credential profile binding to become unreachable")
+            raise AssertionError(
+                "Expected deleted credential profile binding to become unreachable"
+            )
     finally:
         await engine.dispose()
 
@@ -152,7 +156,9 @@ async def test_deleted_explicit_profile_requires_reselection_when_other_profiles
 
     key = Fernet.generate_key().decode("utf-8")
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
-    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_reselect.db'}")
+    monkeypatch.setenv(
+        "AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_reselect.db'}"
+    )
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
     await reset_credentials_services_async()
@@ -219,7 +225,9 @@ def test_get_credentials_service_returns_fresh_service_outside_running_loop(
 
     key = Fernet.generate_key().decode("utf-8")
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
-    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_registry.db'}")
+    monkeypatch.setenv(
+        "AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'svc_credentials_registry.db'}"
+    )
     monkeypatch.setenv("AFKBOT_CREDENTIALS_MASTER_KEYS", key)
     get_settings.cache_clear()
     asyncio.run(reset_credentials_services_async())

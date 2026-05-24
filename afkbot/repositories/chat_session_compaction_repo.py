@@ -49,7 +49,9 @@ class ChatSessionCompactionRepository:
             "source_turn_count": source_turn_count,
             "strategy": strategy,
         }
-        statement = upsert_insert_for_session(self._session, ChatSessionCompaction).values(**payload)
+        statement = upsert_insert_for_session(self._session, ChatSessionCompaction).values(
+            **payload
+        )
         statement = statement.on_conflict_do_update(
             index_elements=[
                 ChatSessionCompaction.session_id,

@@ -168,7 +168,9 @@ def channel_health_ok(report: DoctorChannelsReport) -> bool:
     partyflow_ok = all(
         (
             not endpoint.enabled
-            or (endpoint.profile_valid and endpoint.profile_exists and endpoint.bot_token_configured)
+            or (
+                endpoint.profile_valid and endpoint.profile_exists and endpoint.bot_token_configured
+            )
         )
         for endpoint in report.partyflow_polling
     )

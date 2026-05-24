@@ -30,7 +30,9 @@ class ToolCredentialBinding(Base, TimestampMixin):
     credential_profile_key: Mapped[str] = mapped_column(
         String(64), nullable=False, default="default", server_default="default"
     )
-    tool_name: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    tool_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="", server_default=""
+    )
     credential_name: Mapped[str] = mapped_column(String(128))
     secret_id: Mapped[int] = mapped_column(ForeignKey("secret.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

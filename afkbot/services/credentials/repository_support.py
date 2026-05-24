@@ -77,10 +77,7 @@ async def resolve_unique_binding_for_alias(
                 "credential_profile_key": credential_profile_key,
                 "credential_name": credential_name,
                 "matching_tool_names": sorted(
-                    {
-                        str(item.tool_name).strip() or "<global>"
-                        for item in matches
-                    }
+                    {str(item.tool_name).strip() or "<global>" for item in matches}
                 ),
             },
         )

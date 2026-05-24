@@ -96,9 +96,7 @@ class RunRepository:
         if run_id is None:
             return False
         result = await self._session.execute(
-            update(Run)
-            .where(Run.id == run_id)
-            .values(cancel_requested=True)
+            update(Run).where(Run.id == run_id).values(cancel_requested=True)
         )
         return int(getattr(result, "rowcount", 0) or 0) > 0
 

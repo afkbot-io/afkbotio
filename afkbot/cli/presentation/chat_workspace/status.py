@@ -62,7 +62,7 @@ def help_text_for_chat_workspace(state: ChatReplSessionState) -> str:
 def activity_text_for_chat_workspace(state: ChatReplSessionState) -> str:
     """Render the latest activity summary block."""
 
-    return "Latest activity\n" f"- {_activity_status(state)}"
+    return f"Latest activity\n- {_activity_status(state)}"
 
 
 def _activity_status(state: ChatReplSessionState) -> str:

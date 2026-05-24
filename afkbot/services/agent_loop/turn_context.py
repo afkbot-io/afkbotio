@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from afkbot.services.agent_loop.planning_policy import ChatPlanningMode
-from afkbot.services.agent_loop.thinking import PlanningMode, ToolAccessMode, combine_prompt_overlays
+from afkbot.services.agent_loop.thinking import (
+    PlanningMode,
+    ToolAccessMode,
+    combine_prompt_overlays,
+)
 from afkbot.services.llm.reasoning import ThinkingLevel
 
 

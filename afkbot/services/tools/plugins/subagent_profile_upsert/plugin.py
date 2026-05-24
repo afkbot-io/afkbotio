@@ -22,7 +22,9 @@ class SubagentProfileUpsertTool(ToolBase):
     """Create or update one custom profile subagent markdown file."""
 
     name = "subagent.profile.upsert"
-    description = "Create or update one profile subagent markdown file (name is normalized to safe slug)."
+    description = (
+        "Create or update one profile subagent markdown file (name is normalized to safe slug)."
+    )
     parameters_model = SubagentProfileUpsertParams
     required_skill = "subagent-manager"
 
@@ -40,7 +42,9 @@ class SubagentProfileUpsertTool(ToolBase):
                 name=payload.name,
                 content=payload.markdown,
             )
-            return ToolResult(ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)}
+            )
         except ProfileFilesLockedError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
         except ValueError as exc:

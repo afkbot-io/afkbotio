@@ -45,5 +45,7 @@ def extract_server_payload_items(payload: object, *, source: Path) -> list[Mappi
 
 def _as_mapping(item: object, *, source: Path) -> Mapping[str, Any]:
     if not isinstance(item, Mapping):
-        raise MCPConfigValidationError(f"Expected object server config in {source}, got {type(item)!r}")
+        raise MCPConfigValidationError(
+            f"Expected object server config in {source}, got {type(item)!r}"
+        )
     return item

@@ -35,7 +35,9 @@ class SkillProfileDeleteTool(ToolBase):
         service = get_profile_skill_service(self._settings)
         try:
             item = await service.delete(profile_id=ctx.profile_id, name=payload.name)
-            return ToolResult(ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)}
+            )
         except FileNotFoundError as exc:
             return ToolResult.error(error_code="profile_skill_not_found", reason=str(exc))
         except ProfileFilesLockedError as exc:

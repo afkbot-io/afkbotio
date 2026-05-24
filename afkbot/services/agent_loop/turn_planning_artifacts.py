@@ -18,10 +18,7 @@ def planned_tools_final_message(
     """Build deterministic final text for bridge flow with preplanned tool calls."""
 
     if not tool_results:
-        return (
-            "No tool calls were executed. "
-            "The request was not completed."
-        )
+        return "No tool calls were executed. The request was not completed."
     blocked = first_execution_blocker(
         tool_calls=tool_calls,
         tool_results=tool_results,
@@ -36,10 +33,7 @@ def planned_tools_final_message(
     error_code = (first.error_code or "tool_failed").strip()
     reason = (first.reason or "").strip()
     details = f"{error_code}: {reason}" if reason else error_code
-    return (
-        "One or more requested operations failed. "
-        f"First error: {details}"
-    )
+    return f"One or more requested operations failed. First error: {details}"
 
 
 def turn_plan_payload(

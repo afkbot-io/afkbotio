@@ -140,7 +140,9 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         typer.echo(f"- credential_profile: {channel.credential_profile_key}")
         typer.echo(f"- account_id: {channel.account_id}")
         typer.echo(f"- merge_order: {render_merge_order_brief()}")
-        typer.echo(f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}")
+        typer.echo(
+            f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}"
+        )
         typer.echo(
             "- current_channel_overrides: "
             + (", ".join(inspection.mutation_state.current_override_fields) or "none")
@@ -155,10 +157,22 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         typer.echo("- access.allow_from: " + (", ".join(channel.access_policy.allow_from) or "-"))
         typer.echo(f"- access.group_policy: {channel.access_policy.group_policy}")
         typer.echo("- access.groups: " + (", ".join(channel.access_policy.groups) or "-"))
-        typer.echo("- access.group_allow_from: " + (", ".join(channel.access_policy.group_allow_from) or "-"))
-        typer.echo("- access.outbound_allow_to: " + (", ".join(channel.access_policy.outbound_allow_to) or "-"))
-        typer.echo("- reply.blocked_chat_patterns: " + (", ".join(channel.reply_blocked_chat_patterns) or "-"))
-        typer.echo("- reply.allowed_chat_patterns: " + (", ".join(channel.reply_allowed_chat_patterns) or "-"))
+        typer.echo(
+            "- access.group_allow_from: "
+            + (", ".join(channel.access_policy.group_allow_from) or "-")
+        )
+        typer.echo(
+            "- access.outbound_allow_to: "
+            + (", ".join(channel.access_policy.outbound_allow_to) or "-")
+        )
+        typer.echo(
+            "- reply.blocked_chat_patterns: "
+            + (", ".join(channel.reply_blocked_chat_patterns) or "-")
+        )
+        typer.echo(
+            "- reply.allowed_chat_patterns: "
+            + (", ".join(channel.reply_allowed_chat_patterns) or "-")
+        )
         typer.echo(f"- group_invocation_mode: {channel.group_invocation_mode}")
         typer.echo(f"- process_self_commands: {channel.process_self_commands}")
         typer.echo(f"- command_prefix: {channel.command_prefix}")
@@ -182,7 +196,9 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         typer.echo(f"- reply_humanization.enabled: {channel.reply_humanization.enabled}")
         typer.echo(f"- reply_humanization.min_delay_ms: {channel.reply_humanization.min_delay_ms}")
         typer.echo(f"- reply_humanization.max_delay_ms: {channel.reply_humanization.max_delay_ms}")
-        typer.echo(f"- reply_humanization.chars_per_second: {channel.reply_humanization.chars_per_second}")
+        typer.echo(
+            f"- reply_humanization.chars_per_second: {channel.reply_humanization.chars_per_second}"
+        )
         typer.echo(f"- mark_read_before_reply: {channel.mark_read_before_reply}")
         typer.echo(f"- watcher.enabled: {channel.watcher.enabled}")
         typer.echo(f"- watcher.unmuted_only: {channel.watcher.unmuted_only}")
@@ -190,12 +206,20 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         typer.echo(f"- watcher.include_groups: {channel.watcher.include_groups}")
         typer.echo(f"- watcher.include_channels: {channel.watcher.include_channels}")
         typer.echo(f"- watcher.batch_interval_sec: {channel.watcher.batch_interval_sec}")
-        typer.echo(f"- watcher.dialog_refresh_interval_sec: {channel.watcher.dialog_refresh_interval_sec}")
+        typer.echo(
+            f"- watcher.dialog_refresh_interval_sec: {channel.watcher.dialog_refresh_interval_sec}"
+        )
         typer.echo(f"- watcher.max_batch_size: {channel.watcher.max_batch_size}")
         typer.echo(f"- watcher.max_buffer_size: {channel.watcher.max_buffer_size}")
         typer.echo(f"- watcher.max_message_chars: {channel.watcher.max_message_chars}")
-        typer.echo("- watcher.blocked_chat_patterns: " + (", ".join(channel.watcher.blocked_chat_patterns) or "-"))
-        typer.echo("- watcher.allowed_chat_patterns: " + (", ".join(channel.watcher.allowed_chat_patterns) or "-"))
+        typer.echo(
+            "- watcher.blocked_chat_patterns: "
+            + (", ".join(channel.watcher.blocked_chat_patterns) or "-")
+        )
+        typer.echo(
+            "- watcher.allowed_chat_patterns: "
+            + (", ".join(channel.watcher.allowed_chat_patterns) or "-")
+        )
         typer.echo(
             "- watcher.delivery_target: "
             + json.dumps(
@@ -313,7 +337,9 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
         except Exception as exc:
             raise_legacy_telethon_channel_error(exc)
         if json_output:
-            typer.echo(json.dumps({"ok": True, "binding_removed": binding_removed}, ensure_ascii=True))
+            typer.echo(
+                json.dumps({"ok": True, "binding_removed": binding_removed}, ensure_ascii=True)
+            )
             reload_legacy_managed_runtime_notice(settings)
             return
         typer.echo(f"Telethon channel `{channel_id}` deleted.")

@@ -32,7 +32,9 @@ from afkbot.settings import Settings
 
 
 def _allow_health_auth(monkeypatch: MonkeyPatch) -> None:
-    async def _fake_auth(*, authorization: str | None, session_proof: str | None = None) -> ConnectAccessTokenContext:
+    async def _fake_auth(
+        *, authorization: str | None, session_proof: str | None = None
+    ) -> ConnectAccessTokenContext:
         assert authorization == "Bearer test-token"
         assert session_proof == "proof-1"
         return ConnectAccessTokenContext(
@@ -125,7 +127,9 @@ def test_health_routes_require_auth() -> None:
 def test_health_routes_require_diagnostics_scope(monkeypatch: MonkeyPatch) -> None:
     """Health diagnostics should reject ordinary chat-scoped tokens."""
 
-    async def _fake_auth(*, authorization: str | None, session_proof: str | None = None) -> ConnectAccessTokenContext:
+    async def _fake_auth(
+        *, authorization: str | None, session_proof: str | None = None
+    ) -> ConnectAccessTokenContext:
         assert authorization == "Bearer test-token"
         assert session_proof == "proof-1"
         return ConnectAccessTokenContext(

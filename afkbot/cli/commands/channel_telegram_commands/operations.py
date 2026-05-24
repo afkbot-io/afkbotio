@@ -87,24 +87,42 @@ def run_telegram_show(
     typer.echo(f"- credential_profile: {channel.credential_profile_key}")
     typer.echo(f"- account_id: {channel.account_id}")
     typer.echo(f"- merge_order: {render_merge_order_brief()}")
-    typer.echo(f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}")
-    typer.echo("- current_channel_overrides: " + (", ".join(inspection.mutation_state.current_override_fields) or "none"))
-    typer.echo("- profile_ceiling_tool_access: " + render_tool_access_brief(inspection.profile_ceiling.tool_access))
+    typer.echo(
+        f"- inherited_defaults_source: {inspection.mutation_state.inherited_defaults_source}"
+    )
+    typer.echo(
+        "- current_channel_overrides: "
+        + (", ".join(inspection.mutation_state.current_override_fields) or "none")
+    )
+    typer.echo(
+        "- profile_ceiling_tool_access: "
+        + render_tool_access_brief(inspection.profile_ceiling.tool_access)
+    )
     typer.echo(f"- group_trigger_mode: {channel.group_trigger_mode}")
     typer.echo(f"- tool_profile: {channel.tool_profile}")
     typer.echo(f"- access.private_policy: {channel.access_policy.private_policy}")
     typer.echo("- access.allow_from: " + (", ".join(channel.access_policy.allow_from) or "-"))
     typer.echo(f"- access.group_policy: {channel.access_policy.group_policy}")
     typer.echo("- access.groups: " + (", ".join(channel.access_policy.groups) or "-"))
-    typer.echo("- access.group_allow_from: " + (", ".join(channel.access_policy.group_allow_from) or "-"))
-    typer.echo("- access.outbound_allow_to: " + (", ".join(channel.access_policy.outbound_allow_to) or "-"))
+    typer.echo(
+        "- access.group_allow_from: " + (", ".join(channel.access_policy.group_allow_from) or "-")
+    )
+    typer.echo(
+        "- access.outbound_allow_to: " + (", ".join(channel.access_policy.outbound_allow_to) or "-")
+    )
     typer.echo(f"- ingress_batch.enabled: {channel.ingress_batch.enabled}")
     typer.echo(f"- ingress_batch.debounce_ms: {channel.ingress_batch.debounce_ms}")
     typer.echo(f"- ingress_batch.cooldown_sec: {channel.ingress_batch.cooldown_sec}")
     typer.echo(f"- ingress_batch.max_batch_size: {channel.ingress_batch.max_batch_size}")
     typer.echo(f"- ingress_batch.max_buffer_chars: {channel.ingress_batch.max_buffer_chars}")
-    typer.echo("- effective_memory_auto_search: " + render_memory_auto_search_brief(inspection.effective_permissions.memory_behavior))
-    typer.echo("- effective_memory_auto_save: " + render_memory_auto_save_brief(inspection.effective_permissions.memory_behavior))
+    typer.echo(
+        "- effective_memory_auto_search: "
+        + render_memory_auto_search_brief(inspection.effective_permissions.memory_behavior)
+    )
+    typer.echo(
+        "- effective_memory_auto_save: "
+        + render_memory_auto_save_brief(inspection.effective_permissions.memory_behavior)
+    )
     typer.echo(
         "- effective_memory_cross_chat_access: "
         + inspection.effective_permissions.memory_behavior.explicit_cross_chat_access
@@ -112,7 +130,9 @@ def run_telegram_show(
     typer.echo(f"- reply_humanization.enabled: {channel.reply_humanization.enabled}")
     typer.echo(f"- reply_humanization.min_delay_ms: {channel.reply_humanization.min_delay_ms}")
     typer.echo(f"- reply_humanization.max_delay_ms: {channel.reply_humanization.max_delay_ms}")
-    typer.echo(f"- reply_humanization.chars_per_second: {channel.reply_humanization.chars_per_second}")
+    typer.echo(
+        f"- reply_humanization.chars_per_second: {channel.reply_humanization.chars_per_second}"
+    )
     typer.echo(f"- enabled: {channel.enabled}")
     typer.echo(f"- state_path: {state_path}")
     typer.echo(f"- state_present: {state_path.exists()}")

@@ -265,6 +265,7 @@ async def test_authorize_telethon_endpoint_normalizes_phone_and_notifies_deliver
         "afkbot.services.channels.telethon_user.auth.upsert_telethon_secret",
         _fake_upsert_secret,
     )
+
     async def _fake_persist_identity_state(**kwargs: object) -> None:
         _ = kwargs
 

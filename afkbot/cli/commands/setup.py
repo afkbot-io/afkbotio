@@ -266,7 +266,9 @@ def register(app: typer.Typer) -> None:
                 setup_profile_inputs.provider_api_key if setup_profile_inputs is not None else None
             ),
             resolved_runtime_secrets_update=(
-                setup_profile_inputs.runtime_secrets_update if setup_profile_inputs is not None else None
+                setup_profile_inputs.runtime_secrets_update
+                if setup_profile_inputs is not None
+                else None
             ),
             llm_api_key_file=llm_api_key_file,
             llm_base_url=(

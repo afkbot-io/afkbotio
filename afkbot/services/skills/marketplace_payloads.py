@@ -9,7 +9,9 @@ from afkbot.services.skills.marketplace_contracts import (
 )
 
 
-def marketplace_install_record_to_payload(record: SkillMarketplaceInstallRecord) -> dict[str, object]:
+def marketplace_install_record_to_payload(
+    record: SkillMarketplaceInstallRecord,
+) -> dict[str, object]:
     """Serialize one marketplace install record for transport payloads."""
 
     return {
@@ -42,7 +44,9 @@ def marketplace_list_item_to_payload(item: SkillMarketplaceListItem) -> dict[str
     }
 
 
-def marketplace_source_stats_to_payload(source_stats: SkillMarketplaceSourceStats) -> dict[str, object]:
+def marketplace_source_stats_to_payload(
+    source_stats: SkillMarketplaceSourceStats,
+) -> dict[str, object]:
     """Serialize source-level marketplace stats for transport payloads."""
 
     return {

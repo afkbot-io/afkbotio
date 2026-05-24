@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
-from afkbot.repositories.channel_ingress_pending_event_repo import ChannelIngressPendingEventRepository
+from afkbot.repositories.channel_ingress_pending_event_repo import (
+    ChannelIngressPendingEventRepository,
+)
 from afkbot.services.channels.ingress_coalescer import ChannelIngressBatch, ChannelIngressEvent
 from afkbot.settings import Settings
 
@@ -25,7 +27,9 @@ class ChannelIngressPendingService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 

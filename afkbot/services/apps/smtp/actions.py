@@ -189,7 +189,9 @@ async def run_smtp_action(
             use_ssl=use_ssl,
             timeout_sec=ctx.timeout_sec,
         )
-        return ToolResult(ok=True, payload={"ok": True, "action": "send_email", "to_email": payload.to_email})
+        return ToolResult(
+            ok=True, payload={"ok": True, "action": "send_email", "to_email": payload.to_email}
+        )
     except CredentialsServiceError as exc:
         error_code, reason, metadata = credentials_error_result(exc=exc, context=call_context)
         return ToolResult.error(error_code=error_code, reason=reason, metadata=metadata)
@@ -215,6 +217,8 @@ async def run_smtp_action(
             error_code="app_run_failed",
             reason=f"{exc.__class__.__name__}: {exc}",
         )
+
+
 def _parse_port(raw_value: str, *, label: str) -> int:
     candidate = raw_value.strip()
     if not candidate:

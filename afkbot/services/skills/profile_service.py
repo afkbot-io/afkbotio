@@ -88,7 +88,9 @@ class ProfileSkillService:
                     missing_requirements=item.missing_requirements,
                     aliases=item.aliases,
                     manifest_path=(
-                        None if item.manifest_path is None else self._to_relative(item.manifest_path)
+                        None
+                        if item.manifest_path is None
+                        else self._to_relative(item.manifest_path)
                     ),
                     manifest_valid=item.manifest_valid,
                     manifest_errors=item.manifest_errors,
@@ -131,11 +133,7 @@ class ProfileSkillService:
                 path=self._to_relative(path),
                 content=content,
                 summary=_extract_summary(content),
-                manifest_path=(
-                    self._to_relative(manifest_path)
-                    if manifest_exists
-                    else None
-                ),
+                manifest_path=(self._to_relative(manifest_path) if manifest_exists else None),
                 manifest_valid=skill_info.manifest_valid,
                 manifest_errors=skill_info.manifest_errors,
                 available=skill_info.available,

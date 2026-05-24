@@ -274,9 +274,7 @@ def test_chat_cli_rejects_profile_mismatch_for_existing_raw_session(
 
     assert first.exit_code == 0
     assert second.exit_code == 2
-    assert (
-        "session 'shared' belongs to profile 'default', requested 'smoke'" in second.stderr
-    )
+    assert "session 'shared' belongs to profile 'default', requested 'smoke'" in second.stderr
 
 
 def test_chat_cli_reports_platform_without_terminal_lock(
@@ -306,7 +304,8 @@ def test_chat_cli_reports_platform_without_terminal_lock(
 
     assert result.exit_code == 2
     assert (
-        "Interactive terminal chat session locking is unavailable on this platform." in result.stderr
+        "Interactive terminal chat session locking is unavailable on this platform."
+        in result.stderr
     )
     assert (
         "Use --message for one-shot chat or run on a platform with fcntl support." in result.stderr
@@ -640,7 +639,15 @@ def test_chat_cli_repl_reuses_single_event_loop(tmp_path: Path, monkeypatch: Mon
         progress_sink=None,
         context_overrides=None,
     ):
-        _ = message, profile_id, session_id, settings, planned_tool_calls, progress_sink, context_overrides
+        _ = (
+            message,
+            profile_id,
+            session_id,
+            settings,
+            planned_tool_calls,
+            progress_sink,
+            context_overrides,
+        )
         seen_loop_ids.append(id(asyncio.get_running_loop()))
         return await run_once_result(message="hello", profile_id="default", session_id="s")
 
@@ -699,6 +706,7 @@ def test_chat_cli_plan_on_runs_plan_then_execution(
         )
 
     monkeypatch.setattr("afkbot.cli.commands.chat.run_once_result", _fake_run_once_result)
+
     @asynccontextmanager
     async def _fake_open_serialized_turn_runner(*, profile_id: str, session_id: str, **_: object):
         class _BoundRunner:

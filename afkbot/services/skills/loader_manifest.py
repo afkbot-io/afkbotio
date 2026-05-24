@@ -194,7 +194,7 @@ def render_manifest_toml(manifest: SkillManifest) -> str:
         f"name = {json.dumps(manifest.name, ensure_ascii=False)}",
         f"description = {json.dumps(manifest.description, ensure_ascii=False)}",
         f"execution_mode = {json.dumps(manifest.execution_mode)}",
-        f'always_on = {"true" if manifest.always_on else "false"}',
+        f"always_on = {'true' if manifest.always_on else 'false'}",
         f"aliases = {render_toml_list(manifest.aliases)}",
         f"triggers = {render_toml_list(manifest.triggers)}",
         f"tool_names = {render_toml_list(manifest.tool_names)}",

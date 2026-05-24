@@ -11,7 +11,9 @@ from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.chat_session.turn_flow import run_chat_turn_with_optional_planning
 
 
-async def test_run_chat_turn_with_optional_planning_keeps_default_execution_when_mode_missing() -> None:
+async def test_run_chat_turn_with_optional_planning_keeps_default_execution_when_mode_missing() -> (
+    None
+):
     """Turn orchestration should not invent planning overrides when callers omit them."""
 
     # Arrange
@@ -172,7 +174,9 @@ async def test_run_chat_turn_with_optional_planning_persists_explicit_plan_reque
     assert seen_overrides[0].persist_turn is True
 
 
-async def test_run_chat_turn_with_optional_planning_auto_executes_without_confirmation_callback() -> None:
+async def test_run_chat_turn_with_optional_planning_auto_executes_without_confirmation_callback() -> (
+    None
+):
     """Missing plan execution confirmation should continue straight to execution when not explicitly requested."""
 
     # Arrange
@@ -277,7 +281,9 @@ async def test_run_chat_turn_with_optional_planning_marks_cancelled_plan_executi
     assert seen_plan_phases == ["planned", "executing", "cancelled"]
 
 
-async def test_run_chat_turn_with_optional_planning_auto_mode_can_plan_then_execute_without_prompts() -> None:
+async def test_run_chat_turn_with_optional_planning_auto_mode_can_plan_then_execute_without_prompts() -> (
+    None
+):
     """Auto mode should still run a plan-only pass when the heuristic says to plan first."""
 
     # Arrange

@@ -193,7 +193,10 @@ class MCPToolsCallTool(ToolBase):
             arguments = raw_params.get("arguments")
             if not isinstance(arguments, dict):
                 raise ToolParametersValidationError(reason="arguments must be an object")
-            if any(str(key) not in _BASE_PARAM_NAMES | {"server", "tool_name", "arguments"} for key in raw_params):
+            if any(
+                str(key) not in _BASE_PARAM_NAMES | {"server", "tool_name", "arguments"}
+                for key in raw_params
+            ):
                 raise ToolParametersValidationError(
                     reason="Pass remote MCP arguments inside `arguments` or omit `arguments` and use flat fields, not both.",
                 )

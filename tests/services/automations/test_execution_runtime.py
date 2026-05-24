@@ -23,12 +23,15 @@ def test_build_session_runner_uses_profile_aware_factory() -> None:
         return expected
 
     session_factory_obj = object()
-    assert build_automation_session_runner(
-        runner_factory=factory,
-        session_factory=session_factory_obj,
-        profile_id="default",
-        settings=Settings(),
-    ) is expected
+    assert (
+        build_automation_session_runner(
+            runner_factory=factory,
+            session_factory=session_factory_obj,
+            profile_id="default",
+            settings=Settings(),
+        )
+        is expected
+    )
 
 
 def test_build_session_runner_rejects_unsupported_factory_signature() -> None:

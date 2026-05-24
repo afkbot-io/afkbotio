@@ -60,7 +60,9 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
         runtime_queue_max_size=1,
         runtime_worker_count=1,
     )
-    daemon = RuntimeDaemon(settings=settings, service=service, webhook_token_validator=token_validator)
+    daemon = RuntimeDaemon(
+        settings=settings, service=service, webhook_token_validator=token_validator
+    )
     await daemon.start()
     try:
         first_status, first_payload = await request_json(
@@ -209,7 +211,9 @@ async def test_runtime_daemon_shutdown_timeout_cancels_blocked_worker(tmp_path: 
         runtime_shutdown_timeout_sec=0.05,
         runtime_cron_interval_sec=3600.0,
     )
-    daemon = RuntimeDaemon(settings=settings, service=service, webhook_token_validator=token_validator)
+    daemon = RuntimeDaemon(
+        settings=settings, service=service, webhook_token_validator=token_validator
+    )
     await daemon.start()
     status, payload = await request_json(
         host=settings.runtime_host,

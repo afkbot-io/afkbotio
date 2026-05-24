@@ -236,7 +236,9 @@ def test_invoke_run_repl_transport_tolerates_older_runtime_signature() -> None:
             thinking_level=thinking_level,
         )
 
-    monkeypatch.setattr("afkbot.cli.commands.chat_session_runtime.run_repl_transport", _legacy_transport)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_session_runtime.run_repl_transport", _legacy_transport
+    )
 
     try:
         _invoke_run_repl_transport(

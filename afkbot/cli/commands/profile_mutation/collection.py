@@ -88,7 +88,9 @@ def collect_profile_mutation_inputs(
 ) -> CollectedProfileMutationInputs:
     """Resolve shared create/update inputs with one consistent merge order."""
 
-    base_runtime = resolve_current_runtime_config(current_details) if current_details is not None else None
+    base_runtime = (
+        resolve_current_runtime_config(current_details) if current_details is not None else None
+    )
     runtime_defaults = (
         build_runtime_defaults_from_details(current_details)
         if current_details is not None
@@ -199,8 +201,7 @@ def collect_profile_mutation_inputs(
     resolved_policy = resolve_profile_policy_inputs(
         interactive=interactive
         and not (
-            policy_setup_mode == PolicySetupMode.RECOMMENDED.value
-            and not explicit_policy_overrides
+            policy_setup_mode == PolicySetupMode.RECOMMENDED.value and not explicit_policy_overrides
         ),
         lang=lang,
         root_dir=settings.root_dir,

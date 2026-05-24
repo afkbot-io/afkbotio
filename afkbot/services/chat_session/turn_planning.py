@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from afkbot.services.agent_loop.thinking import combine_prompt_overlays
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides, merge_turn_context_overrides
+from afkbot.services.agent_loop.turn_context import (
+    TurnContextOverrides,
+    merge_turn_context_overrides,
+)
 from afkbot.services.llm.reasoning import ThinkingLevel
 
 

@@ -40,7 +40,9 @@ async def resolve_secret_placeholders(
     cache: dict[tuple[str, str, str], str] = {}
     env_key_map: dict[str, list[tuple[str, str, str]]] | None = None
     normalized_default_profile = (
-        None if default_profile_name is None or not default_profile_name.strip() else default_profile_name.strip()
+        None
+        if default_profile_name is None or not default_profile_name.strip()
+        else default_profile_name.strip()
     )
     normalized_allowed_apps = _normalize_allowed_app_names(allowed_app_names)
 
@@ -142,11 +144,20 @@ def redact_secret_values_in_payload(*, value: object, secret_values: Iterable[st
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact_secret_values_in_payload(value=item, secret_values=secret_values) for item in value]
+        return [
+            redact_secret_values_in_payload(value=item, secret_values=secret_values)
+            for item in value
+        ]
     if isinstance(value, tuple):
-        return [redact_secret_values_in_payload(value=item, secret_values=secret_values) for item in value]
+        return [
+            redact_secret_values_in_payload(value=item, secret_values=secret_values)
+            for item in value
+        ]
     if isinstance(value, set):
-        return [redact_secret_values_in_payload(value=item, secret_values=secret_values) for item in value]
+        return [
+            redact_secret_values_in_payload(value=item, secret_values=secret_values)
+            for item in value
+        ]
     return value
 
 
@@ -161,7 +172,9 @@ async def _resolve_plaintext_credential(
     cache: dict[tuple[str, str, str], str],
 ) -> str:
     normalized_app = app_name.strip() or "global"
-    normalized_profile = None if profile_name is None or not profile_name.strip() else profile_name.strip()
+    normalized_profile = (
+        None if profile_name is None or not profile_name.strip() else profile_name.strip()
+    )
     normalized_slug = credential_slug.strip()
     cache_key = (normalized_app, normalized_profile or "<auto>", normalized_slug)
     cached = cache.get(cache_key)

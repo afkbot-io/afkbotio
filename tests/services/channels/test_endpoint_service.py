@@ -44,23 +44,30 @@ async def test_channel_endpoint_delete_removes_ingress_journal_rows(tmp_path: Pa
                 account_id="tg-user",
             )
         )
-        assert await journal.record_processed(
-            endpoint_id="personal-user",
-            transport="telegram_user",
-            event_key="tg-user:42:5",
-        ) is True
+        assert (
+            await journal.record_processed(
+                endpoint_id="personal-user",
+                transport="telegram_user",
+                event_key="tg-user:42:5",
+            )
+            is True
+        )
 
         deleted = await endpoints.delete(endpoint_id="personal-user")
 
         assert deleted is True
-        assert await journal.contains(endpoint_id="personal-user", event_key="tg-user:42:5") is False
+        assert (
+            await journal.contains(endpoint_id="personal-user", event_key="tg-user:42:5") is False
+        )
     finally:
         await profiles.shutdown()
         await endpoints.shutdown()
         await journal.shutdown()
 
 
-def test_get_channel_endpoint_service_returns_fresh_service_outside_running_loop(tmp_path: Path) -> None:
+def test_get_channel_endpoint_service_returns_fresh_service_outside_running_loop(
+    tmp_path: Path,
+) -> None:
     """Sync CLI call-sites should not reuse one endpoint service across different loops."""
 
     settings = Settings(

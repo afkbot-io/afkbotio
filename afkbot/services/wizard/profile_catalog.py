@@ -131,7 +131,9 @@ def infer_profile_scenario_id(
 ) -> str:
     """Infer a scenario id from canonical persisted policy fields."""
 
-    normalized_capabilities = tuple(dict.fromkeys(item.strip().lower() for item in capabilities if item.strip()))
+    normalized_capabilities = tuple(
+        dict.fromkeys(item.strip().lower() for item in capabilities if item.strip())
+    )
     normalized_shell_commands = tuple(
         dict.fromkeys(item.strip().lower() for item in shell_allowed_commands if item.strip())
     )
@@ -147,8 +149,7 @@ def infer_profile_scenario_id(
             and shell_sandbox_mode == scenario.shell_sandbox_mode
             and normalized_shell_commands == scenario.default_shell_allowed_commands
             and (
-                normalized_network_mode is None
-                or normalized_network_mode == scenario.network_mode
+                normalized_network_mode is None or normalized_network_mode == scenario.network_mode
             )
             and (
                 not normalized_network_allowlist
@@ -171,35 +172,205 @@ def setup_profile_plan() -> WizardPlan:
         title_en="Setup/Profile Wizard",
         title_ru="Мастер setup/profile",
         questions=(
-            _question("security_ack", "provider", "confirm", "Setup: Security acknowledgment", "Настройка: Подтверждение безопасности"),
-            _question("ai_provider", "provider", "single", "Setup: AI provider", "Настройка: AI-провайдер"),
-            _question("chat_model", "provider", "single", "Setup: Chat model", "Настройка: Модель чата"),
-            _question("reasoning_effort", "provider", "single", "Setup: Reasoning effort", "Настройка: Глубина рассуждения"),
-            _question("custom_interface", "provider", "single", "Setup: Custom interface", "Настройка: Интерфейс своего API", shown_when="provider == custom"),
-            _question("provider_credentials", "provider", "secret", "Setup: Provider credentials", "Настройка: Учетные данные провайдера"),
+            _question(
+                "security_ack",
+                "provider",
+                "confirm",
+                "Setup: Security acknowledgment",
+                "Настройка: Подтверждение безопасности",
+            ),
+            _question(
+                "ai_provider", "provider", "single", "Setup: AI provider", "Настройка: AI-провайдер"
+            ),
+            _question(
+                "chat_model", "provider", "single", "Setup: Chat model", "Настройка: Модель чата"
+            ),
+            _question(
+                "reasoning_effort",
+                "provider",
+                "single",
+                "Setup: Reasoning effort",
+                "Настройка: Глубина рассуждения",
+            ),
+            _question(
+                "custom_interface",
+                "provider",
+                "single",
+                "Setup: Custom interface",
+                "Настройка: Интерфейс своего API",
+                shown_when="provider == custom",
+            ),
+            _question(
+                "provider_credentials",
+                "provider",
+                "secret",
+                "Setup: Provider credentials",
+                "Настройка: Учетные данные провайдера",
+            ),
             _question("proxy", "provider", "confirm", "Setup: Proxy", "Настройка: Прокси"),
-            _question("security_setup_mode", "security", "single", "Setup: Security setup", "Настройка: Безопасность"),
-            _question("setup_depth", "security", "single", "Setup: Security setup", "Настройка: Способ настройки"),
-            _question("work_contexts", "security", "multi", "Where will the bot work?", "Где будет работать бот?", shown_when="setup_depth == guided"),
-            _question("actions", "security", "multi", "What may the bot do?", "Что боту можно делать?", shown_when="setup_depth == guided"),
-            _question("isolation", "security", "single", "Isolation", "Изоляция", shown_when="setup_depth == guided"),
-            _question("confirmation", "security", "single", "Confirmations", "Подтверждения", shown_when="setup_depth == guided"),
-            _question("intent_network", "security", "single", "Network", "Сеть", shown_when="setup_depth == guided"),
-            _question("security_enforcement", "security", "confirm", "Setup: Security enforcement", "Настройка: Применение ограничений", shown_when="security_setup_mode == custom"),
-            _question("confirmation_mode", "security", "single", "Setup: Security level", "Настройка: Уровень безопасности", shown_when="setup_depth == expert"),
-            _question("profile_scenario", "security", "single", "Legacy profile scenario", "Legacy-сценарий профиля", shown_when="legacy_only"),
-            _question("capabilities", "security", "multi", "Low-level capabilities", "Низкоуровневые возможности", shown_when="setup_depth == expert"),
-            _question("file_access", "security", "single", "Low-level file access", "Низкоуровневый доступ к файлам", shown_when="setup_depth == expert"),
-            _question("workspace_scope", "security", "single", "Low-level workspace scope", "Низкоуровневая область файлов", shown_when="setup_depth == expert && files_enabled"),
-            _question("shell_sandbox", "security", "single", "Low-level terminal sandbox", "Низкоуровневая изоляция терминала", shown_when="setup_depth == expert && shell_enabled"),
-            _question("shell_allowed_commands", "security", "text", "Allowed terminal commands", "Разрешённые команды терминала", shown_when="setup_depth == expert && shell_enabled"),
-            _question("shell_sandbox_backend", "security", "confirm", "Setup: Shell sandbox backend", "Настройка: Shell sandbox backend", shown_when="restricted_shell_backend_missing"),
-            _question("network_access", "security", "single", "Setup: Network access", "Настройка: Доступ к сети", shown_when="policy_enabled"),
-            _question("update_prompts", "runtime", "confirm", "Setup: Update prompts", "Настройка: Подсказки об обновлениях"),
-            _question("runtime_host", "runtime", "text", "Runtime host", "Адрес локальной службы AFKBOT", advanced=True),
-            _question("runtime_port", "runtime", "integer", "Runtime port", "Порт локальной службы AFKBOT", advanced=True),
-            _question("nginx", "runtime", "confirm", "Setup: Nginx", "Настройка: Nginx", advanced=True),
-            _question("https", "runtime", "confirm", "Setup: HTTPS", "Настройка: HTTPS", advanced=True),
+            _question(
+                "security_setup_mode",
+                "security",
+                "single",
+                "Setup: Security setup",
+                "Настройка: Безопасность",
+            ),
+            _question(
+                "setup_depth",
+                "security",
+                "single",
+                "Setup: Security setup",
+                "Настройка: Способ настройки",
+            ),
+            _question(
+                "work_contexts",
+                "security",
+                "multi",
+                "Where will the bot work?",
+                "Где будет работать бот?",
+                shown_when="setup_depth == guided",
+            ),
+            _question(
+                "actions",
+                "security",
+                "multi",
+                "What may the bot do?",
+                "Что боту можно делать?",
+                shown_when="setup_depth == guided",
+            ),
+            _question(
+                "isolation",
+                "security",
+                "single",
+                "Isolation",
+                "Изоляция",
+                shown_when="setup_depth == guided",
+            ),
+            _question(
+                "confirmation",
+                "security",
+                "single",
+                "Confirmations",
+                "Подтверждения",
+                shown_when="setup_depth == guided",
+            ),
+            _question(
+                "intent_network",
+                "security",
+                "single",
+                "Network",
+                "Сеть",
+                shown_when="setup_depth == guided",
+            ),
+            _question(
+                "security_enforcement",
+                "security",
+                "confirm",
+                "Setup: Security enforcement",
+                "Настройка: Применение ограничений",
+                shown_when="security_setup_mode == custom",
+            ),
+            _question(
+                "confirmation_mode",
+                "security",
+                "single",
+                "Setup: Security level",
+                "Настройка: Уровень безопасности",
+                shown_when="setup_depth == expert",
+            ),
+            _question(
+                "profile_scenario",
+                "security",
+                "single",
+                "Legacy profile scenario",
+                "Legacy-сценарий профиля",
+                shown_when="legacy_only",
+            ),
+            _question(
+                "capabilities",
+                "security",
+                "multi",
+                "Low-level capabilities",
+                "Низкоуровневые возможности",
+                shown_when="setup_depth == expert",
+            ),
+            _question(
+                "file_access",
+                "security",
+                "single",
+                "Low-level file access",
+                "Низкоуровневый доступ к файлам",
+                shown_when="setup_depth == expert",
+            ),
+            _question(
+                "workspace_scope",
+                "security",
+                "single",
+                "Low-level workspace scope",
+                "Низкоуровневая область файлов",
+                shown_when="setup_depth == expert && files_enabled",
+            ),
+            _question(
+                "shell_sandbox",
+                "security",
+                "single",
+                "Low-level terminal sandbox",
+                "Низкоуровневая изоляция терминала",
+                shown_when="setup_depth == expert && shell_enabled",
+            ),
+            _question(
+                "shell_allowed_commands",
+                "security",
+                "text",
+                "Allowed terminal commands",
+                "Разрешённые команды терминала",
+                shown_when="setup_depth == expert && shell_enabled",
+            ),
+            _question(
+                "shell_sandbox_backend",
+                "security",
+                "confirm",
+                "Setup: Shell sandbox backend",
+                "Настройка: Shell sandbox backend",
+                shown_when="restricted_shell_backend_missing",
+            ),
+            _question(
+                "network_access",
+                "security",
+                "single",
+                "Setup: Network access",
+                "Настройка: Доступ к сети",
+                shown_when="policy_enabled",
+            ),
+            _question(
+                "update_prompts",
+                "runtime",
+                "confirm",
+                "Setup: Update prompts",
+                "Настройка: Подсказки об обновлениях",
+            ),
+            _question(
+                "runtime_host",
+                "runtime",
+                "text",
+                "Runtime host",
+                "Адрес локальной службы AFKBOT",
+                advanced=True,
+            ),
+            _question(
+                "runtime_port",
+                "runtime",
+                "integer",
+                "Runtime port",
+                "Порт локальной службы AFKBOT",
+                advanced=True,
+            ),
+            _question(
+                "nginx", "runtime", "confirm", "Setup: Nginx", "Настройка: Nginx", advanced=True
+            ),
+            _question(
+                "https", "runtime", "confirm", "Setup: HTTPS", "Настройка: HTTPS", advanced=True
+            ),
         ),
         branches=(
             _branch(

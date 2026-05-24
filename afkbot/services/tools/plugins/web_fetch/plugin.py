@@ -245,7 +245,9 @@ class WebFetchTool(ToolBase):
         timeout_sec: int,
         resolved_addresses: tuple[str, ...],
     ) -> _FetchedPage:
-        request = Request(url=url, method="GET", headers={str(key): str(value) for key, value in headers.items()})
+        request = Request(
+            url=url, method="GET", headers={str(key): str(value) for key, value in headers.items()}
+        )
         opener: OpenerDirector = build_pinned_opener(url=url, resolved_addresses=resolved_addresses)
         try:
             with opener.open(request, timeout=float(timeout_sec)) as response:

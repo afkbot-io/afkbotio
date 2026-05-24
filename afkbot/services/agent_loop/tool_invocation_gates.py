@@ -58,8 +58,7 @@ class ToolInvocationGuards:
             return ToolResult.error(
                 error_code="subagent_intent_mismatch",
                 reason=(
-                    "subagent.run is blocked: user explicitly requested a skill, "
-                    "not a subagent."
+                    "subagent.run is blocked: user explicitly requested a skill, not a subagent."
                 ),
             )
         if explicit_subagents and requested_subagent not in explicit_subagents:

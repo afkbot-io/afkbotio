@@ -94,7 +94,9 @@ def load_openai_codex_access_token_file(path: Path | str) -> str:
         token = _usable_token(str(tokens.get("access_token") or "").strip())
         if token:
             return token
-    return _usable_token(str(payload.get("access_token") or payload.get("OPENAI_API_KEY") or "").strip())
+    return _usable_token(
+        str(payload.get("access_token") or payload.get("OPENAI_API_KEY") or "").strip()
+    )
 
 
 def discover_local_openai_codex_access_token_file() -> FileBackedProviderToken | None:

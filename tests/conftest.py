@@ -10,7 +10,9 @@ from pathlib import Path
 from afkbot.services.channel_routing.service import reset_channel_binding_services_async
 from afkbot.services.channels.endpoint_service import reset_channel_endpoint_services_async
 from afkbot.services.channels.ingress_journal import reset_channel_ingress_journal_services_async
-from afkbot.services.channels.ingress_persistence import reset_channel_ingress_pending_services_async
+from afkbot.services.channels.ingress_persistence import (
+    reset_channel_ingress_pending_services_async,
+)
 from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.automations import reset_automations_services_async
 from afkbot.services.memory import reset_memory_services_async
@@ -29,6 +31,7 @@ def _default_test_db_url() -> str:
     runtime_dir = ROOT / "tmp" / "pytest-runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     return f"sqlite+aiosqlite:///{runtime_dir / 'afkbot-pytest.db'}"
+
 
 # Tests must not depend on runtime config from the developer's local install.
 os.environ.setdefault(

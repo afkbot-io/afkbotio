@@ -132,7 +132,9 @@ def parse_string_set(*, raw: str, field_name: str) -> set[str]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise PolicyViolationError(reason=f"Profile policy {field_name} is invalid JSON list") from exc
+        raise PolicyViolationError(
+            reason=f"Profile policy {field_name} is invalid JSON list"
+        ) from exc
     if not isinstance(data, list):
         raise PolicyViolationError(reason=f"Profile policy {field_name} is invalid JSON list")
     normalized: set[str] = set()
@@ -164,7 +166,9 @@ def host_matches(*, host: str, allowed: str) -> bool:
         return False
     if normalized_allowed == "*":
         return True
-    return normalized_host == normalized_allowed or normalized_host.endswith(f".{normalized_allowed}")
+    return normalized_host == normalized_allowed or normalized_host.endswith(
+        f".{normalized_allowed}"
+    )
 
 
 def extract_path_values(value: object, *, field_name: str | None = None) -> list[str]:
@@ -192,8 +196,10 @@ def is_path_field_name(field_name: str) -> bool:
 
     if field_name in PATH_PARAM_NAMES:
         return True
-    return field_name.endswith("_path") or field_name.endswith("_dir") or field_name.endswith(
-        "_directory"
+    return (
+        field_name.endswith("_path")
+        or field_name.endswith("_dir")
+        or field_name.endswith("_directory")
     )
 
 
@@ -252,7 +258,9 @@ def extract_hosts_from_shell_command(raw: str) -> list[str]:
     skip_next = False
     for token in tokens[command_index + 1 :]:
         if pending_ssh_option is not None:
-            hosts.extend(extract_hosts_from_ssh_option_value(option=pending_ssh_option, value=token))
+            hosts.extend(
+                extract_hosts_from_ssh_option_value(option=pending_ssh_option, value=token)
+            )
             pending_ssh_option = None
             continue
         if skip_next:
@@ -290,7 +298,11 @@ def extract_commands(value: object, *, field_name: str | None = None) -> list[st
         for item in value:
             list_result.extend(extract_commands(item, field_name=field_name))
         return list_result
-    if isinstance(value, str) and field_name is not None and field_name.lower() in SHELL_PARAM_NAMES:
+    if (
+        isinstance(value, str)
+        and field_name is not None
+        and field_name.lower() in SHELL_PARAM_NAMES
+    ):
         return extract_command_tokens(value)
     return []
 
@@ -300,12 +312,15 @@ def contains_command_substitution(value: object, *, field_name: str | None = Non
 
     if isinstance(value, dict):
         return any(
-            contains_command_substitution(item, field_name=str(key))
-            for key, item in value.items()
+            contains_command_substitution(item, field_name=str(key)) for key, item in value.items()
         )
     if isinstance(value, list):
         return any(contains_command_substitution(item, field_name=field_name) for item in value)
-    if isinstance(value, str) and field_name is not None and field_name.lower() in SHELL_PARAM_NAMES:
+    if (
+        isinstance(value, str)
+        and field_name is not None
+        and field_name.lower() in SHELL_PARAM_NAMES
+    ):
         return SHELL_COMMAND_SUBSTITUTION_RE.search(value) is not None
     return False
 

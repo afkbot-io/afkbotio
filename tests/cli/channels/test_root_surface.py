@@ -1,6 +1,5 @@
 """Root and help-surface tests for channel CLI commands."""
 
-
 import asyncio
 import json
 from pathlib import Path
@@ -61,7 +60,7 @@ def test_channel_root_show_includes_effective_memory_behavior(
                 account_id="personal-user",
                 tool_profile="messaging_safe",
             )
-        )
+        ),
     )
 
     result = runner.invoke(app, ["channel", "show", "personal-user", "--json"])
@@ -75,11 +74,18 @@ def test_channel_root_show_includes_effective_memory_behavior(
         "system_defaults",
     ]
     assert payload["mutation_state"]["inherited_defaults_source"] == "profile:default"
-    assert payload["mutation_state"]["narrowing_behavior"] == "channel overlay may narrow profile permissions only"
+    assert (
+        payload["mutation_state"]["narrowing_behavior"]
+        == "channel overlay may narrow profile permissions only"
+    )
     assert payload["profile_ceiling"]["tool_access"]["memory"] == "enabled"
     assert payload["effective_permissions"]["memory_behavior"]["auto_search_enabled"] is True
     assert payload["effective_permissions"]["memory_behavior"]["auto_save_scope_mode"] == "thread"
-    assert payload["effective_permissions"]["memory_behavior"]["explicit_cross_chat_access"] == "trusted_only"
+    assert (
+        payload["effective_permissions"]["memory_behavior"]["explicit_cross_chat_access"]
+        == "trusted_only"
+    )
+
 
 def test_channel_root_show_human_output_includes_profile_ceiling_and_merge_model(
     tmp_path: Path,
@@ -120,7 +126,7 @@ def test_channel_root_show_human_output_includes_profile_ceiling_and_merge_model
                 group_trigger_mode="mention_or_reply",
                 tool_profile="support_readonly",
             )
-        )
+        ),
     )
 
     result = runner.invoke(app, ["channel", "show", "support-bot"])
@@ -129,7 +135,11 @@ def test_channel_root_show_human_output_includes_profile_ceiling_and_merge_model
     assert "- merge_order: explicit > current > inherited > system" in result.stdout
     assert "- inherited_defaults_source: profile:default" in result.stdout
     assert "- current_channel_overrides: tool_profile" in result.stdout
-    assert "- profile_ceiling_tool_access: files=read_only, shell=disabled, memory=enabled, credentials=disabled, apps=disabled" in result.stdout
+    assert (
+        "- profile_ceiling_tool_access: files=read_only, shell=disabled, memory=enabled, credentials=disabled, apps=disabled"
+        in result.stdout
+    )
+
 
 def test_channel_telethon_show_includes_merge_model_and_profile_ceiling(
     tmp_path: Path,
@@ -170,7 +180,7 @@ def test_channel_telethon_show_includes_merge_model_and_profile_ceiling(
                 reply_mode="same_chat",
                 tool_profile="messaging_safe",
             )
-        )
+        ),
     )
 
     result = runner.invoke(app, ["channel", "telethon", "show", "personal-user"])
@@ -179,9 +189,15 @@ def test_channel_telethon_show_includes_merge_model_and_profile_ceiling(
     assert "- merge_order: explicit > current > inherited > system" in result.stdout
     assert "- inherited_defaults_source: profile:default" in result.stdout
     assert "- current_channel_overrides: reply_mode, tool_profile" in result.stdout
-    assert "- profile_ceiling_tool_access: files=read_only, shell=disabled, memory=enabled, credentials=disabled, apps=disabled" in result.stdout
+    assert (
+        "- profile_ceiling_tool_access: files=read_only, shell=disabled, memory=enabled, credentials=disabled, apps=disabled"
+        in result.stdout
+    )
 
-def test_channel_root_show_reports_missing_channel_cleanly(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_root_show_reports_missing_channel_cleanly(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Root channel show should emit a deterministic CLI error for missing endpoints."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -194,7 +210,10 @@ def test_channel_root_show_reports_missing_channel_cleanly(tmp_path: Path, monke
     assert "missing-channel" in combined
     assert "ERROR [" in combined
 
-def test_channel_root_show_includes_effective_permissions(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_root_show_includes_effective_permissions(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Root channel show should expose profile-derived effective permission summary and guardrails."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -229,7 +248,7 @@ def test_channel_root_show_includes_effective_permissions(tmp_path: Path, monkey
                 reply_mode="same_chat",
                 tool_profile="support_readonly",
             )
-        )
+        ),
     )
 
     result = runner.invoke(app, ["channel", "show", "personal-user", "--json"])
@@ -243,7 +262,9 @@ def test_channel_root_show_includes_effective_permissions(tmp_path: Path, monkey
     assert payload["effective_permissions"]["tool_access"]["shell"] == "disabled"
     assert payload["effective_permissions"]["tool_access"]["memory"] == "disabled"
     assert payload["effective_permissions"]["tool_access"]["files"] == "read_only"
-    assert payload["effective_permissions"]["tool_access"]["credentials"] == "blocked_in_user_channel"
+    assert (
+        payload["effective_permissions"]["tool_access"]["credentials"] == "blocked_in_user_channel"
+    )
     assert payload["channel_guardrails"]["user_facing_transport"] is True
     assert payload["channel_guardrails"]["channel_tool_profile"] == "support_readonly"
     assert "file.read" in payload["channel_guardrails"]["channel_tool_profile_allowlist"]
@@ -253,7 +274,10 @@ def test_channel_root_show_includes_effective_permissions(tmp_path: Path, monkey
     assert disable_result.exit_code == 0
     assert "enabled=False" in disable_result.stdout
 
-def test_channel_add_help_surfaces_telegram_and_telethon_options(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_add_help_surfaces_telegram_and_telethon_options(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """`add --help` should expose key operator-facing options for both channel families."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -286,7 +310,10 @@ def test_channel_add_help_surfaces_telegram_and_telethon_options(tmp_path: Path,
     assert "--no-binding" in telethon_output
     assert "existing one." in telethon_output
 
-def test_channel_family_help_lists_expected_commands(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_family_help_lists_expected_commands(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Top-level family help should pin the supported operator command surface."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -299,12 +326,36 @@ def test_channel_family_help_lists_expected_commands(tmp_path: Path, monkeypatch
 
     telegram_help = runner.invoke(app, ["channel", "telegram", "--help"])
     assert telegram_help.exit_code == 0
-    for command in ("add", "update", "list", "show", "enable", "disable", "delete", "status", "poll-once", "reset-offset"):
+    for command in (
+        "add",
+        "update",
+        "list",
+        "show",
+        "enable",
+        "disable",
+        "delete",
+        "status",
+        "poll-once",
+        "reset-offset",
+    ):
         assert command in telegram_help.stdout
 
     telethon_help = runner.invoke(app, ["channel", "telethon", "--help"])
     assert telethon_help.exit_code == 0
-    for command in ("add", "update", "list", "show", "dialogs", "enable", "disable", "delete", "status", "authorize", "logout", "reset-state"):
+    for command in (
+        "add",
+        "update",
+        "list",
+        "show",
+        "dialogs",
+        "enable",
+        "disable",
+        "delete",
+        "status",
+        "authorize",
+        "logout",
+        "reset-state",
+    ):
         assert command in telethon_help.stdout
 
     partyflow_help = runner.invoke(app, ["channel", "partyflow", "--help"])
@@ -323,7 +374,10 @@ def test_channel_family_help_lists_expected_commands(tmp_path: Path, monkeypatch
     ):
         assert command in partyflow_help.stdout
 
-def test_channel_help_surfaces_telegram_and_telethon_options(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+
+def test_channel_help_surfaces_telegram_and_telethon_options(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """CLI help should expose the full operator surface for both channel families."""
 
     _prepare_env(tmp_path, monkeypatch)

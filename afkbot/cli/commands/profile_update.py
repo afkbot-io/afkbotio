@@ -283,7 +283,9 @@ def register_update(profile_app: typer.Typer) -> None:
                 settings,
                 lambda service: service.get(profile_id=normalized_profile_id),
             )
-            existing_runtime_secrets = get_profile_runtime_secrets_service(settings).load(normalized_profile_id)
+            existing_runtime_secrets = get_profile_runtime_secrets_service(settings).load(
+                normalized_profile_id
+            )
             prompt_language = resolve_prompt_language(settings=settings, value=lang, ru=ru)
             mutation_inputs = collect_profile_mutation_inputs(
                 settings=settings,
@@ -363,7 +365,8 @@ def register_update(profile_app: typer.Typer) -> None:
                     policy_preset=mutation_inputs.resolved_policy.preset,
                     policy_capabilities=mutation_inputs.resolved_policy.capabilities,
                     policy_file_access_mode=mutation_inputs.resolved_policy.file_access_mode,
-                    policy_allowed_directories=mutation_inputs.resolved_policy.allowed_directories or None,
+                    policy_allowed_directories=mutation_inputs.resolved_policy.allowed_directories
+                    or None,
                     policy_shell_sandbox_mode=mutation_inputs.resolved_policy.shell_sandbox_mode,
                     policy_shell_allowed_commands=mutation_inputs.resolved_policy.shell_allowed_commands,
                     policy_network_allowlist=mutation_inputs.resolved_policy.network_allowlist,
@@ -377,7 +380,9 @@ def register_update(profile_app: typer.Typer) -> None:
                 ):
                     # merge() fails closed for source=file, but clearing first makes the
                     # persisted secret set immediately reflect the selected source mode.
-                    secrets_service.clear(normalized_profile_id, fields=("openai_codex_api_key", "llm_api_key"))
+                    secrets_service.clear(
+                        normalized_profile_id, fields=("openai_codex_api_key", "llm_api_key")
+                    )
                 secrets_service.merge(
                     normalized_profile_id,
                     mutation_inputs.runtime_secrets_update,
@@ -400,7 +405,9 @@ def register_update(profile_app: typer.Typer) -> None:
             )
             reload_install_managed_runtime_notice(settings)
             return
-        typer.echo(json.dumps({"profile": updated_profile.model_dump(mode="json")}, ensure_ascii=True))
+        typer.echo(
+            json.dumps({"profile": updated_profile.model_dump(mode="json")}, ensure_ascii=True)
+        )
         reload_install_managed_runtime_notice(settings)
 
 

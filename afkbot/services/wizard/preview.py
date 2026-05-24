@@ -26,8 +26,13 @@ def build_profile_preview(
             + (", ".join(allowed_directories) if allowed_directories else "профиля"),
             f"- Shell sandbox: {scenario.shell_sandbox_mode}",
             "- shell commands: "
-            + (", ".join(scenario.default_shell_allowed_commands) if scenario.default_shell_allowed_commands else "-"),
-            "- network: " + (", ".join(network_allowlist) if network_allowlist else scenario.network_mode),
+            + (
+                ", ".join(scenario.default_shell_allowed_commands)
+                if scenario.default_shell_allowed_commands
+                else "-"
+            ),
+            "- network: "
+            + (", ".join(network_allowlist) if network_allowlist else scenario.network_mode),
         ]
         if scenario.shell_sandbox_mode == "best_effort":
             lines.append("- warning: best_effort не является жёсткой изоляцией без backend")
@@ -43,8 +48,13 @@ def build_profile_preview(
         + (", ".join(allowed_directories) if allowed_directories else "profile workspace"),
         f"- Shell sandbox: {scenario.shell_sandbox_mode}",
         "- shell commands: "
-        + (", ".join(scenario.default_shell_allowed_commands) if scenario.default_shell_allowed_commands else "-"),
-        "- network: " + (", ".join(network_allowlist) if network_allowlist else scenario.network_mode),
+        + (
+            ", ".join(scenario.default_shell_allowed_commands)
+            if scenario.default_shell_allowed_commands
+            else "-"
+        ),
+        "- network: "
+        + (", ".join(network_allowlist) if network_allowlist else scenario.network_mode),
     ]
     if scenario.shell_sandbox_mode == "best_effort":
         lines.append("- warning: best_effort is not hard isolation without a backend")

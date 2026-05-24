@@ -31,7 +31,9 @@ def list_known_plugins() -> tuple[KnownPlugin, ...]:
     return _KNOWN_PLUGINS
 
 
-def list_uninstalled_known_plugins(*, installed_plugin_ids: set[str] | frozenset[str]) -> tuple[KnownPlugin, ...]:
+def list_uninstalled_known_plugins(
+    *, installed_plugin_ids: set[str] | frozenset[str]
+) -> tuple[KnownPlugin, ...]:
     """Return catalog entries that are not currently installed."""
 
     return tuple(item for item in _KNOWN_PLUGINS if item.plugin_id not in installed_plugin_ids)

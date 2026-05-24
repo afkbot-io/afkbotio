@@ -17,6 +17,7 @@ from afkbot.services.credentials.vault import (
     CredentialsVault,
     CredentialsVaultError,
 )
+
 TValue = TypeVar("TValue")
 
 

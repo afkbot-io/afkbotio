@@ -44,7 +44,9 @@ def register(app: typer.Typer) -> None:
             "--value-stdin",
             help="Read credential secret value from stdin.",
         ),
-        profile_name: str = typer.Option("default", "--profile-name", help="Credential profile name."),
+        profile_name: str = typer.Option(
+            "default", "--profile-name", help="Credential profile name."
+        ),
         profile: str = typer.Option("default", "--profile", help="Runtime profile id."),
         replace_existing: bool = typer.Option(
             False,
@@ -91,7 +93,9 @@ def register(app: typer.Typer) -> None:
             "--value-stdin",
             help="Read credential secret value from stdin.",
         ),
-        profile_name: str = typer.Option("default", "--profile-name", help="Credential profile name."),
+        profile_name: str = typer.Option(
+            "default", "--profile-name", help="Credential profile name."
+        ),
         profile: str = typer.Option("default", "--profile", help="Runtime profile id."),
         json_output: bool = typer.Option(
             False,
@@ -121,7 +125,9 @@ def register(app: typer.Typer) -> None:
     def delete(
         app_name: str = typer.Option(..., "--app", help="Integration app name."),
         credential_slug: str = typer.Option(..., "--slug", help="Credential key."),
-        profile_name: str = typer.Option("default", "--profile-name", help="Credential profile name."),
+        profile_name: str = typer.Option(
+            "default", "--profile-name", help="Credential profile name."
+        ),
         profile: str = typer.Option("default", "--profile", help="Runtime profile id."),
         json_output: bool = typer.Option(
             False,
@@ -149,7 +155,9 @@ def register(app: typer.Typer) -> None:
             "--profile-name",
             help="Optional credential profile filter.",
         ),
-        include_inactive: bool = typer.Option(False, "--include-inactive", help="Include inactive bindings."),
+        include_inactive: bool = typer.Option(
+            False, "--include-inactive", help="Include inactive bindings."
+        ),
         profile: str = typer.Option("default", "--profile", help="Runtime profile id."),
         json_output: bool = typer.Option(
             False,

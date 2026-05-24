@@ -101,6 +101,7 @@ class ChatPromptCompleter(Completer):
         token, _token_start = _token_before_cursor(text_before_cursor)
         return bool(token) and token.startswith(("//", "/", "$", "@"))
 
+
 def _token_before_cursor(text_before_cursor: str) -> tuple[str, int]:
     if not text_before_cursor:
         return "", 0

@@ -69,7 +69,9 @@ def test_stage_source_snapshot_copies_local_source_without_git_metadata(
     source_root = tmp_path / "source"
     (source_root / "afkbot").mkdir(parents=True, exist_ok=True)
     (source_root / ".git").mkdir(parents=True, exist_ok=True)
-    (source_root / "pyproject.toml").write_text("[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8")
+    (source_root / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
     (source_root / "afkbot" / "__init__.py").write_text("__all__ = ()\n", encoding="utf-8")
     monkeypatch.setenv(MANAGED_INSTALL_DIR_ENV, str(tmp_path / "install"))
     monkeypatch.setenv(MANAGED_RUNTIME_DIR_ENV, str(tmp_path / "runtime"))
@@ -328,7 +330,10 @@ def test_shell_installer_bootstrap_setup_receives_install_source_metadata_in_dry
     output = f"{result.stdout}\n{result.stderr}"
     assert result.returncode == 0
     assert "AFKBOT_INSTALL_SOURCE_MODE=archive" in output
-    assert "AFKBOT_INSTALL_SOURCE_SPEC=https://github.com/afkbot-io/afkbotio/archive/main.tar.gz" in output
+    assert (
+        "AFKBOT_INSTALL_SOURCE_SPEC=https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+        in output
+    )
     assert "setup --bootstrap-only --yes --lang ru" in output
     assert "Рекомендуемый следующий шаг: откройте новый терминал." in output
 
@@ -419,7 +424,9 @@ def test_shell_installer_dry_run_supports_explicit_russian_lang(tmp_path: Path) 
     assert "setup --bootstrap-only --yes --lang ru" in output
     assert "Установка AFKBOT завершена." in output
     assert "Затем выполните:" in output
-    assert "После `afk setup` AFKBOT подскажет выполнить `afk doctor`, а затем `afk chat`." in output
+    assert (
+        "После `afk setup` AFKBOT подскажет выполнить `afk doctor`, а затем `afk chat`." in output
+    )
 
 
 def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_path: Path) -> None:
@@ -433,7 +440,7 @@ def test_shell_installer_preserves_legacy_integration_when_uv_install_fails(tmp_
     user_bin_dir.mkdir(parents=True, exist_ok=True)
     legacy_profile = home_dir / ".zprofile"
     legacy_profile.write_text(
-        "# >>> AFKBOT PATH >>>\nexport PATH=\"/legacy/afk:$PATH\"\n# <<< AFKBOT PATH <<<\n",
+        '# >>> AFKBOT PATH >>>\nexport PATH="/legacy/afk:$PATH"\n# <<< AFKBOT PATH <<<\n',
         encoding="utf-8",
     )
     uv_log = tmp_path / "uv-install.log"
@@ -493,7 +500,7 @@ def test_shell_uninstaller_continues_legacy_cleanup_when_uv_tool_is_missing(tmp_
     user_bin_dir.mkdir(parents=True, exist_ok=True)
     legacy_profile = home_dir / ".zprofile"
     legacy_profile.write_text(
-        "# >>> AFKBOT PATH >>>\nexport PATH=\"/legacy/afk:$PATH\"\n# <<< AFKBOT PATH <<<\n",
+        '# >>> AFKBOT PATH >>>\nexport PATH="/legacy/afk:$PATH"\n# <<< AFKBOT PATH <<<\n',
         encoding="utf-8",
     )
     legacy_install_dir = _legacy_unix_install_dir(home_dir)

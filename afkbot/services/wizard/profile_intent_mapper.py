@@ -68,7 +68,9 @@ def map_profile_intent_to_policy(selection: ProfileIntentSelection) -> ProfileIn
     """Map product-level wizard choices into the existing policy model."""
 
     depth = selection.depth.strip().lower()
-    actions = tuple(dict.fromkeys(item.strip().lower() for item in selection.actions if item.strip()))
+    actions = tuple(
+        dict.fromkeys(item.strip().lower() for item in selection.actions if item.strip())
+    )
     action_set = set(actions)
     isolation = selection.isolation.strip().lower()
     if isolation not in {
@@ -172,7 +174,9 @@ def map_profile_intent_to_policy(selection: ProfileIntentSelection) -> ProfileIn
     if network_mode not in {"deny_all", "recommended", "custom", "unrestricted"}:
         network_mode = "recommended"
     if network_mode == "deny_all":
-        capabilities = [item for item in capabilities if item not in {"http", "web", "browser", "apps"}]
+        capabilities = [
+            item for item in capabilities if item not in {"http", "web", "browser", "apps"}
+        ]
 
     return ProfileIntentPolicy(
         enabled=True,
@@ -210,7 +214,9 @@ def profile_intent_metadata_payload(selection: ProfileIntentSelection | None) ->
     }
 
 
-def profile_intent_selection_from_defaults(defaults: dict[str, str]) -> ProfileIntentSelection | None:
+def profile_intent_selection_from_defaults(
+    defaults: dict[str, str],
+) -> ProfileIntentSelection | None:
     """Load stored V2 wizard metadata defaults when present and complete."""
 
     depth = str(defaults.get("AFKBOT_WIZARD_SETUP_DEPTH", "")).strip().lower()

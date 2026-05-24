@@ -34,9 +34,7 @@ class ChannelRuntimeLeaseRegistry:
             if key in self._leases:
                 raise ChannelRuntimeLeaseRegistryError(
                     error_code="channel_runtime_account_conflict",
-                    reason=(
-                        f"Runtime already active for transport={key[0]} account_id={key[1]}"
-                    ),
+                    reason=(f"Runtime already active for transport={key[0]} account_id={key[1]}"),
                 )
             owner_token = uuid.uuid4().hex
             self._leases[key] = owner_token

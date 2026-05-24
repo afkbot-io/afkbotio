@@ -303,7 +303,9 @@ class MemoryRepository:
             statement = statement.where(MemoryItem.memory_kind.in_(tuple(memory_kinds)))
         if source_kinds:
             statement = statement.where(MemoryItem.source_kind.in_(tuple(source_kinds)))
-        statement = statement.order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).limit(limit)
+        statement = statement.order_by(MemoryItem.updated_at.desc(), MemoryItem.id.desc()).limit(
+            limit
+        )
         result = await self._session.execute(statement)
         return list(result.scalars().all())
 

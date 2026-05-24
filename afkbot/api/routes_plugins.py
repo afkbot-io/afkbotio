@@ -30,7 +30,9 @@ async def list_plugins() -> dict[str, object]:
     payload = []
     for plugin in installed.values():
         config = service.get_config(plugin_id=plugin.plugin_id)
-        runtime_plugin = next((item for item in runtime.plugins if item.record.plugin_id == plugin.plugin_id), None)
+        runtime_plugin = next(
+            (item for item in runtime.plugins if item.record.plugin_id == plugin.plugin_id), None
+        )
         payload.append(
             {
                 "plugin": plugin.model_dump(mode="json"),
@@ -43,13 +45,27 @@ async def list_plugins() -> dict[str, object]:
                 },
                 "runtime": {
                     "active": runtime_plugin is not None,
-                    "router_count": len(runtime_plugin.routers) if runtime_plugin is not None else 0,
-                    "static_mount_count": len(runtime_plugin.static_mounts) if runtime_plugin is not None else 0,
-                    "skill_dir_count": len(runtime_plugin.skill_dirs) if runtime_plugin is not None else 0,
-                    "tool_factory_count": len(runtime_plugin.tool_factories) if runtime_plugin is not None else 0,
-                    "app_registrar_count": len(runtime_plugin.app_registrars) if runtime_plugin is not None else 0,
-                    "startup_hook_count": len(runtime_plugin.startup_hooks) if runtime_plugin is not None else 0,
-                    "shutdown_hook_count": len(runtime_plugin.shutdown_hooks) if runtime_plugin is not None else 0,
+                    "router_count": len(runtime_plugin.routers)
+                    if runtime_plugin is not None
+                    else 0,
+                    "static_mount_count": len(runtime_plugin.static_mounts)
+                    if runtime_plugin is not None
+                    else 0,
+                    "skill_dir_count": len(runtime_plugin.skill_dirs)
+                    if runtime_plugin is not None
+                    else 0,
+                    "tool_factory_count": len(runtime_plugin.tool_factories)
+                    if runtime_plugin is not None
+                    else 0,
+                    "app_registrar_count": len(runtime_plugin.app_registrars)
+                    if runtime_plugin is not None
+                    else 0,
+                    "startup_hook_count": len(runtime_plugin.startup_hooks)
+                    if runtime_plugin is not None
+                    else 0,
+                    "shutdown_hook_count": len(runtime_plugin.shutdown_hooks)
+                    if runtime_plugin is not None
+                    else 0,
                 },
             }
         )
@@ -72,7 +88,9 @@ async def get_plugin(plugin_id: str) -> dict[str, object]:
             detail={"error_code": exc.error_code, "reason": exc.reason},
         ) from exc
     runtime = service.load_runtime_snapshot()
-    runtime_plugin = next((item for item in runtime.plugins if item.record.plugin_id == plugin.plugin_id), None)
+    runtime_plugin = next(
+        (item for item in runtime.plugins if item.record.plugin_id == plugin.plugin_id), None
+    )
     return {
         "plugin": plugin.model_dump(mode="json"),
         "config": {
@@ -85,12 +103,22 @@ async def get_plugin(plugin_id: str) -> dict[str, object]:
         "runtime": {
             "active": runtime_plugin is not None,
             "router_count": len(runtime_plugin.routers) if runtime_plugin is not None else 0,
-            "static_mount_count": len(runtime_plugin.static_mounts) if runtime_plugin is not None else 0,
+            "static_mount_count": len(runtime_plugin.static_mounts)
+            if runtime_plugin is not None
+            else 0,
             "skill_dir_count": len(runtime_plugin.skill_dirs) if runtime_plugin is not None else 0,
-            "tool_factory_count": len(runtime_plugin.tool_factories) if runtime_plugin is not None else 0,
-            "app_registrar_count": len(runtime_plugin.app_registrars) if runtime_plugin is not None else 0,
-            "startup_hook_count": len(runtime_plugin.startup_hooks) if runtime_plugin is not None else 0,
-            "shutdown_hook_count": len(runtime_plugin.shutdown_hooks) if runtime_plugin is not None else 0,
+            "tool_factory_count": len(runtime_plugin.tool_factories)
+            if runtime_plugin is not None
+            else 0,
+            "app_registrar_count": len(runtime_plugin.app_registrars)
+            if runtime_plugin is not None
+            else 0,
+            "startup_hook_count": len(runtime_plugin.startup_hooks)
+            if runtime_plugin is not None
+            else 0,
+            "shutdown_hook_count": len(runtime_plugin.shutdown_hooks)
+            if runtime_plugin is not None
+            else 0,
         },
     }
 

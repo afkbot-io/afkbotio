@@ -41,7 +41,10 @@ from afkbot.services.automations.graph.executor import (
     build_default_node_adapter_registry,
 )
 from afkbot.services.automations.graph.node_registry import AutomationGraphNodeAdapterRegistry
-from afkbot.services.automations.message_factory import compose_cron_message, compose_webhook_message
+from afkbot.services.automations.message_factory import (
+    compose_cron_message,
+    compose_webhook_message,
+)
 from afkbot.services.automations.metadata import as_execution_mode
 from afkbot.services.automations.payloads import sanitize_payload, sanitize_payload_value
 from afkbot.services.automations.session_runner_factory import (
@@ -90,7 +93,9 @@ class AutomationGraphService:
             )
 
         async def _op(repo: AutomationGraphRepository) -> int:
-            automation = await repo.get_automation(profile_id=profile_id, automation_id=automation_id)
+            automation = await repo.get_automation(
+                profile_id=profile_id, automation_id=automation_id
+            )
             if automation is None or automation.status == "deleted":
                 raise AutomationsServiceError(
                     error_code="automation_not_found",
@@ -202,7 +207,9 @@ class AutomationGraphService:
         """List recent graph runs for one automation."""
 
         async def _op(repo: AutomationGraphRepository) -> list[AutomationGraphRunMetadata]:
-            automation = await repo.get_automation(profile_id=profile_id, automation_id=automation_id)
+            automation = await repo.get_automation(
+                profile_id=profile_id, automation_id=automation_id
+            )
             if automation is None or automation.status == "deleted":
                 raise AutomationsServiceError(
                     error_code="automation_not_found",
@@ -268,7 +275,9 @@ class AutomationGraphService:
         """Execute one active graph for the selected automation."""
 
         graph = await self._load_graph(profile_id=profile_id, automation_id=automation_id)
-        execution_settings = get_profile_runtime_config_service(self._settings).build_effective_settings(
+        execution_settings = get_profile_runtime_config_service(
+            self._settings
+        ).build_effective_settings(
             profile_id=profile_id,
             base_settings=self._settings,
             ensure_layout=True,
@@ -475,40 +484,38 @@ class AutomationGraphService:
         )
         trace = await self.get_trace(profile_id=graph.automation.profile_id, run_id=run_id)
         if trigger_type == "webhook":
-            base = compose_webhook_message(graph.automation.prompt, sanitize_payload(trigger_payload))
+            base = compose_webhook_message(
+                graph.automation.prompt, sanitize_payload(trigger_payload)
+            )
         else:
             base = compose_cron_message(graph.automation.prompt)
-        message = (
-            f"{base}\n\n"
-            "graph_fallback_context="
-            + json.dumps(
-                {
-                    "run_id": run_id,
-                    "graph_status": outcome.status,
-                    "graph_error_code": outcome.error_code,
-                    "graph_reason": outcome.reason,
-                    "unsafe_side_effects": outcome.unsafe_side_effects,
-                    "node_trace": [
-                        {
-                            "node_key": item.node_key,
-                            "execution_index": item.execution_index,
-                            "status": item.status,
-                            "selected_ports": item.selected_ports,
-                            "output": _fallback_node_output(item),
-                            "output_redacted": _fallback_node_output_redacted(item),
-                            "effects": [effect.model_dump(mode="python") for effect in item.effects],
-                            "error_code": item.error_code,
-                            "reason": item.reason,
-                            "child_task_id": item.child_task_id,
-                            "child_session_id": item.child_session_id,
-                            "child_run_id": item.child_run_id,
-                        }
-                        for item in trace.nodes
-                    ],
-                },
-                ensure_ascii=True,
-                sort_keys=True,
-            )
+        message = f"{base}\n\ngraph_fallback_context=" + json.dumps(
+            {
+                "run_id": run_id,
+                "graph_status": outcome.status,
+                "graph_error_code": outcome.error_code,
+                "graph_reason": outcome.reason,
+                "unsafe_side_effects": outcome.unsafe_side_effects,
+                "node_trace": [
+                    {
+                        "node_key": item.node_key,
+                        "execution_index": item.execution_index,
+                        "status": item.status,
+                        "selected_ports": item.selected_ports,
+                        "output": _fallback_node_output(item),
+                        "output_redacted": _fallback_node_output_redacted(item),
+                        "effects": [effect.model_dump(mode="python") for effect in item.effects],
+                        "error_code": item.error_code,
+                        "reason": item.reason,
+                        "child_task_id": item.child_task_id,
+                        "child_session_id": item.child_session_id,
+                        "child_run_id": item.child_run_id,
+                    }
+                    for item in trace.nodes
+                ],
+            },
+            ensure_ascii=True,
+            sort_keys=True,
         )
         result = await runner.run_turn(
             profile_id=graph.automation.profile_id,
@@ -522,7 +529,9 @@ class AutomationGraphService:
 
     async def _load_graph(self, *, profile_id: str, automation_id: int) -> LoadedGraph:
         async def _op(repo: AutomationGraphRepository) -> LoadedGraph:
-            automation = await repo.get_automation(profile_id=profile_id, automation_id=automation_id)
+            automation = await repo.get_automation(
+                profile_id=profile_id, automation_id=automation_id
+            )
             if automation is None or automation.status == "deleted":
                 raise AutomationsServiceError(
                     error_code="automation_not_found",
@@ -654,7 +663,10 @@ def _validate_spec(
             errors.extend(str(item) for item in validator(node.model_dump(mode="python")))
     return AutomationGraphValidationReport(valid=not errors, errors=errors)
 
-def _runtime_fallback_mode(value: str) -> Literal["fail_closed", "resume_with_ai", "resume_with_ai_if_safe"]:
+
+def _runtime_fallback_mode(
+    value: str,
+) -> Literal["fail_closed", "resume_with_ai", "resume_with_ai_if_safe"]:
     """Collapse any legacy fallback values onto the implemented runtime surface."""
 
     if value == "branch_error_only":
@@ -935,10 +947,12 @@ def _normalize_result(value: object) -> object:
 
 def _format_fallback_error(exc: Exception) -> str:
     if isinstance(exc, AutomationsServiceError):
-        return str(sanitize_payload_value(f"{exc.error_code}: {exc.reason}", field_name="reason"))[:2000]
+        return str(sanitize_payload_value(f"{exc.error_code}: {exc.reason}", field_name="reason"))[
+            :2000
+        ]
     message = str(exc).strip()
     if message:
-        return str(
-            sanitize_payload_value(f"{type(exc).__name__}: {message}", field_name="reason")
-        )[:2000]
+        return str(sanitize_payload_value(f"{type(exc).__name__}: {message}", field_name="reason"))[
+            :2000
+        ]
     return str(sanitize_payload_value(type(exc).__name__, field_name="reason"))[:2000]

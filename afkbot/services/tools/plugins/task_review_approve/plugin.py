@@ -36,7 +36,9 @@ class TaskReviewApproveTool(ToolBase):
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         payload = (
-            params if isinstance(params, TaskReviewApproveParams) else TaskReviewApproveParams.model_validate(params)
+            params
+            if isinstance(params, TaskReviewApproveParams)
+            else TaskReviewApproveParams.model_validate(params)
         )
         actor = resolve_task_tool_actor(ctx)
         explicit_actor_type = normalize_task_owner_type(payload.actor_type)

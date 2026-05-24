@@ -21,7 +21,9 @@ class SubagentProfileDeleteTool(ToolBase):
     """Delete one custom profile subagent markdown file."""
 
     name = "subagent.profile.delete"
-    description = "Delete one custom profile subagent markdown file (name is normalized to safe slug)."
+    description = (
+        "Delete one custom profile subagent markdown file (name is normalized to safe slug)."
+    )
     parameters_model = SubagentProfileDeleteParams
     required_skill = "subagent-manager"
 
@@ -35,7 +37,9 @@ class SubagentProfileDeleteTool(ToolBase):
         service = get_profile_subagent_service(self._settings)
         try:
             item = await service.delete(profile_id=ctx.profile_id, name=payload.name)
-            return ToolResult(ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"subagent": item.model_dump(mode="json", exclude_none=True)}
+            )
         except FileNotFoundError as exc:
             return ToolResult.error(error_code="profile_subagent_not_found", reason=str(exc))
         except ProfileFilesLockedError as exc:

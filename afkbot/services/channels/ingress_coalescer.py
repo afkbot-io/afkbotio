@@ -242,8 +242,8 @@ class ChannelIngressCoalescer:
             raise
         if self._config.cooldown_sec > 0:
             async with self._lock:
-                self._next_flush_at_by_key[batch.conversation_key] = (
-                    time.monotonic() + float(self._config.cooldown_sec)
+                self._next_flush_at_by_key[batch.conversation_key] = time.monotonic() + float(
+                    self._config.cooldown_sec
                 )
         if self._release_batch is not None:
             await self._release_batch(batch)
@@ -365,7 +365,9 @@ def render_channel_ingress_batch_message(batch: ChannelIngressBatch) -> str:
     return "\n".join(parts).strip()
 
 
-def build_ingress_batch_context_overrides(batch: ChannelIngressBatch) -> TurnContextOverrides | None:
+def build_ingress_batch_context_overrides(
+    batch: ChannelIngressBatch,
+) -> TurnContextOverrides | None:
     """Build runtime metadata/prompt overlay for one coalesced batch."""
 
     if len(batch.events) <= 1:

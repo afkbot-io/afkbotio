@@ -294,16 +294,16 @@ def collect_channel_add_base_inputs(
         prompt_ru="Создать привязку маршрутизации?",
         default=True,
         lang=lang,
-            detail_en=(
-                "Leave this on for normal setup. AFKBOT will connect inbound events to the selected profile "
-                "and create the conversation grouping rule automatically. Turn it off only if you manage "
-                "routing manually."
-            ),
-            detail_ru=(
-                "Для обычной настройки оставьте включённым. AFKBOT сам соединит входящие события с выбранным "
-                "профилем и создаст правило группировки диалогов. Отключайте только если будете настраивать "
-                "маршрутизацию вручную."
-            ),
+        detail_en=(
+            "Leave this on for normal setup. AFKBOT will connect inbound events to the selected profile "
+            "and create the conversation grouping rule automatically. Turn it off only if you manage "
+            "routing manually."
+        ),
+        detail_ru=(
+            "Для обычной настройки оставьте включённым. AFKBOT сам соединит входящие события с выбранным "
+            "профилем и создаст правило группировки диалогов. Отключайте только если будете настраивать "
+            "маршрутизацию вручную."
+        ),
     )
     resolved_session_policy: SessionPolicy = (
         normalize_session_policy(

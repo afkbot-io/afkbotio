@@ -20,7 +20,9 @@ from afkbot.services.channels.telethon_user.normalization import (
     TelethonUserIdentity,
 )
 from afkbot.services.channels.telethon_user.service import TelethonUserService
-from afkbot.services.channels.telethon_user.service_events import enrich_inbound_with_downloaded_media
+from afkbot.services.channels.telethon_user.service_events import (
+    enrich_inbound_with_downloaded_media,
+)
 from afkbot.settings import Settings
 from tests.services.channels.telethon_user._harness import (
     FakeDeliveryService,
@@ -59,7 +61,11 @@ async def test_telethon_user_service_translates_flood_wait_from_live_sender(
             SimpleNamespace(
                 peer_id="42",
                 thread_id=None,
-                to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+                to_payload=lambda: {
+                    "transport": "telegram_user",
+                    "account_id": "tg-user",
+                    "peer_id": "42",
+                },
             ),
             "hello",
         )
@@ -104,7 +110,11 @@ async def test_telethon_user_service_sends_rich_live_message(tmp_path: Path) -> 
         SimpleNamespace(
             peer_id="42",
             thread_id=None,
-            to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+            to_payload=lambda: {
+                "transport": "telegram_user",
+                "account_id": "tg-user",
+                "peer_id": "42",
+            },
         ),
         ChannelOutboundMessage(
             text="*hello*",
@@ -148,7 +158,11 @@ async def test_telethon_user_service_rejects_attachment_paths_outside_workspace(
             SimpleNamespace(
                 peer_id="42",
                 thread_id=None,
-                to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+                to_payload=lambda: {
+                    "transport": "telegram_user",
+                    "account_id": "tg-user",
+                    "peer_id": "42",
+                },
             ),
             ChannelOutboundMessage(
                 attachments=(ChannelOutboundAttachment(kind="document", source=str(outside_file)),),
@@ -194,7 +208,11 @@ async def test_telethon_user_service_splits_long_rich_text_after_file_send(tmp_p
         SimpleNamespace(
             peer_id="42",
             thread_id=None,
-            to_payload=lambda: {"transport": "telegram_user", "account_id": "tg-user", "peer_id": "42"},
+            to_payload=lambda: {
+                "transport": "telegram_user",
+                "account_id": "tg-user",
+                "peer_id": "42",
+            },
         ),
         ChannelOutboundMessage(
             text=("beta " * 900).strip(),

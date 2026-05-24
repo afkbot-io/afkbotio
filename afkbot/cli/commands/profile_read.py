@@ -92,7 +92,10 @@ def register_read(profile_app: typer.Typer) -> None:
         payload = {
             "profile": profile.model_dump(mode="json"),
             "mutation_state": mutation_state.model_dump(mode="json"),
-            "linked_channels": [build_linked_channel_summary(item).model_dump(mode="json") for item in linked_channels],
+            "linked_channels": [
+                build_linked_channel_summary(item).model_dump(mode="json")
+                for item in linked_channels
+            ],
             "linked_channel_inspections": [
                 item.model_dump(mode="json") for item in linked_channel_inspections
             ],
@@ -126,16 +129,12 @@ def register_read(profile_app: typer.Typer) -> None:
             + (
                 f"enabled={profile.policy.enabled}, "
                 f"preset={profile.policy.preset}, "
-                "capabilities="
-                + (",".join(profile.policy.capabilities) or "none")
+                "capabilities=" + (",".join(profile.policy.capabilities) or "none")
             )
         )
         typer.echo(f"- policy_enabled: {effective_permissions.policy_enabled}")
         typer.echo(f"- policy_preset: {effective_permissions.policy_preset}")
-        typer.echo(
-            "- capabilities: "
-            + (", ".join(effective_permissions.capability_ids) or "none")
-        )
+        typer.echo("- capabilities: " + (", ".join(effective_permissions.capability_ids) or "none"))
         typer.echo(f"- default_workspace_root: {effective_permissions.default_workspace_root}")
         typer.echo(f"- shell_default_cwd: {effective_permissions.shell_default_cwd}")
         typer.echo(f"- shell_sandbox_mode: {effective_permissions.shell_sandbox_mode}")
@@ -151,13 +150,14 @@ def register_read(profile_app: typer.Typer) -> None:
         typer.echo("- memory_auto_search: " + render_memory_auto_search_brief(memory_behavior))
         typer.echo("- memory_auto_save: " + render_memory_auto_save_brief(memory_behavior))
         typer.echo(
-            "- linked_channels: "
-            + ("none" if not linked_channels else str(len(linked_channels)))
+            "- linked_channels: " + ("none" if not linked_channels else str(len(linked_channels)))
         )
         for item in linked_channels:
             summary = build_linked_channel_summary(item)
             inspection = next(
-                entry for entry in linked_channel_inspections if entry.channel.endpoint_id == summary.endpoint_id
+                entry
+                for entry in linked_channel_inspections
+                if entry.channel.endpoint_id == summary.endpoint_id
             )
             typer.echo(
                 f"  - {summary.endpoint_id}: transport={summary.transport}, "

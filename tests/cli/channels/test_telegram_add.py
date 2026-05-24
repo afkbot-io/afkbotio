@@ -1,6 +1,5 @@
 """Telegram channel add-command tests."""
 
-
 import asyncio
 from pathlib import Path
 
@@ -16,7 +15,9 @@ from afkbot.settings import get_settings
 from tests.cli.channels._harness import _new_profile_service, _prepare_env
 
 
-def test_channel_telegram_add_accepts_group_trigger_mode(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_channel_telegram_add_accepts_group_trigger_mode(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Telegram channel add should persist group trigger mode, tool profile, and batching config."""
 
     _prepare_env(tmp_path, monkeypatch)
@@ -81,8 +82,14 @@ def test_channel_telegram_add_accepts_group_trigger_mode(tmp_path: Path, monkeyp
     ).stdout
     assert "- merge_order: explicit > current > inherited > system" in shown
     assert "- inherited_defaults_source: profile:default" in shown
-    assert "- current_channel_overrides: group_trigger_mode, ingress_batch, reply_humanization, tool_profile" in shown
-    assert "- profile_ceiling_tool_access: files=read_write, shell=disabled, memory=disabled, credentials=disabled, apps=disabled" in shown
+    assert (
+        "- current_channel_overrides: group_trigger_mode, ingress_batch, reply_humanization, tool_profile"
+        in shown
+    )
+    assert (
+        "- profile_ceiling_tool_access: files=read_write, shell=disabled, memory=disabled, credentials=disabled, apps=disabled"
+        in shown
+    )
     assert "- group_trigger_mode: all_messages" in shown
     assert "- tool_profile: support_readonly" in shown
     assert "- ingress_batch.enabled: True" in shown
@@ -176,6 +183,7 @@ def test_channel_telegram_add_creates_allowlist_bindings_from_access_flags(
         ("owner-bot:group:-100123:user:67890", "owner-bot", "-100123", "67890"),
     ]
 
+
 def test_channel_telegram_add_interactive_uses_profile_defaults(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -218,6 +226,7 @@ def test_channel_telegram_add_interactive_uses_profile_defaults(
     assert "- ingress_batch.enabled: False" in shown
     assert "- reply_humanization.enabled: False" in shown
 
+
 def test_channel_telegram_add_interactive_falls_back_to_chat_minimal_without_memory(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -254,6 +263,7 @@ def test_channel_telegram_add_interactive_falls_back_to_chat_minimal_without_mem
     assert result.exit_code == 0
     shown = runner.invoke(app, ["channel", "telegram", "show", "support-bot"]).stdout
     assert "- tool_profile: chat_minimal" in shown
+
 
 def test_channel_telegram_add_with_profile_flag_stays_interactive(
     tmp_path: Path,
@@ -293,6 +303,7 @@ def test_channel_telegram_add_with_profile_flag_stays_interactive(
     assert "- credential_profile: support-bot" in shown
     assert "- account_id: support-bot" in shown
 
+
 def test_channel_telegram_add_without_positional_id_prompts_for_channel_id(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -330,6 +341,7 @@ def test_channel_telegram_add_without_positional_id_prompts_for_channel_id(
     shown = runner.invoke(app, ["channel", "telegram", "show", "support-bot"]).stdout
     assert "- profile: default" in shown
     assert "- credential_profile: support-bot" in shown
+
 
 def test_channel_telegram_add_interactive_accepts_generated_channel_id(
     tmp_path: Path,
@@ -456,6 +468,7 @@ def test_channel_telegram_add_prefers_project_prompt_language_over_system_locale
 
     assert result.exit_code == 0
     assert "Настройка канала Telegram Bot API" in result.stdout
+
 
 def test_channel_telegram_add_rejects_ingress_values_below_contract_bounds(
     tmp_path: Path,

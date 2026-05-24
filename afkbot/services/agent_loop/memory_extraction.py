@@ -80,7 +80,9 @@ def extract_memory_candidates(
             memory_kind = _classify_memory_kind(cleaned_candidate)
             if memory_kind not in allowed_kind_set or memory_kind == "note":
                 continue
-            summary = _build_summary(text=cleaned_candidate, memory_kind=memory_kind, max_chars=max_chars)
+            summary = _build_summary(
+                text=cleaned_candidate, memory_kind=memory_kind, max_chars=max_chars
+            )
             if summary in seen_summaries:
                 continue
             seen_summaries.add(summary)
@@ -139,7 +141,9 @@ def _expand_candidate_fragments(user_message: str) -> tuple[str, ...]:
         return ()
     if _TEMPORARY_RE.search(normalized) is None:
         return (normalized,)
-    fragments = tuple(fragment.strip() for fragment in _CLAUSE_SPLIT_RE.split(normalized) if fragment.strip())
+    fragments = tuple(
+        fragment.strip() for fragment in _CLAUSE_SPLIT_RE.split(normalized) if fragment.strip()
+    )
     return fragments or (normalized,)
 
 

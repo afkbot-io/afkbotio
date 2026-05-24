@@ -38,7 +38,11 @@ class TaskBoardTool(ToolBase):
         self._settings = settings
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
-        payload = params if isinstance(params, TaskBoardParams) else TaskBoardParams.model_validate(params)
+        payload = (
+            params
+            if isinstance(params, TaskBoardParams)
+            else TaskBoardParams.model_validate(params)
+        )
         target_profile_id = resolve_task_target_profile(
             ctx=ctx,
             payload=payload,

@@ -51,12 +51,16 @@ class MemoryListTool(ToolBase):
             if prepared.memory_kinds:
                 allowed_memory_kinds = set(prepared.memory_kinds)
                 payload_items = [
-                    item for item in payload_items if str(item.get("memory_kind") or "") in allowed_memory_kinds
+                    item
+                    for item in payload_items
+                    if str(item.get("memory_kind") or "") in allowed_memory_kinds
                 ]
             if prepared.source_kinds:
                 allowed_source_kinds = set(prepared.source_kinds)
                 payload_items = [
-                    item for item in payload_items if str(item.get("source_kind") or "") in allowed_source_kinds
+                    item
+                    for item in payload_items
+                    if str(item.get("source_kind") or "") in allowed_source_kinds
                 ]
             return ToolResult(ok=True, payload={"items": payload_items})
         except MemoryServiceError as exc:

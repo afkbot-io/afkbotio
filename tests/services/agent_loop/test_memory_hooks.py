@@ -279,7 +279,10 @@ async def test_auto_memory_does_not_override_profile_core_memory_trusted_block(
 
         assert result.envelope.action == "finalize"
         assert llm.requests
-        assert "- preferred_response_style: Reply in Russian and keep answers brief." in llm.requests[0].context
+        assert (
+            "- preferred_response_style: Reply in Russian and keep answers brief."
+            in llm.requests[0].context
+        )
         assert "# Runtime Metadata (untrusted)" in llm.requests[0].context
         assert "Reply in English for this chat." in llm.requests[0].context
 

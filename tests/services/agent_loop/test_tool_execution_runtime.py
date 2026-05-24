@@ -231,7 +231,9 @@ class _SessionJobTool(ToolBase):
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         _ = ctx, params
-        raise AssertionError("execute should not run when nested turn-surface gates reject the call")
+        raise AssertionError(
+            "execute should not run when nested turn-surface gates reject the call"
+        )
 
 
 class _ParallelReadParams(ToolParameters):

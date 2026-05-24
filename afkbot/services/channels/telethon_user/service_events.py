@@ -280,7 +280,9 @@ async def resolve_reactive_chat_match_text(*, event: object) -> str:
     fallback_chat_id = getattr(event, "chat_id", None)
     if match_text not in {"unknown-chat", str(fallback_chat_id)}:
         return match_text
-    getter_names = ("get_chat", "get_sender") if bool(getattr(event, "is_private", False)) else ("get_chat",)
+    getter_names = (
+        ("get_chat", "get_sender") if bool(getattr(event, "is_private", False)) else ("get_chat",)
+    )
     for getter_name in getter_names:
         getter = getattr(event, getter_name, None)
         if not callable(getter):

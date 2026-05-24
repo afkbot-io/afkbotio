@@ -153,7 +153,9 @@ async def test_telegram_polling_batches_sequential_messages_when_ingress_batch_e
     # Assert
     assert processed == 2
     assert len(captured) == 1
-    assert "Multiple recent messages arrived from the same conversation." in str(captured[0]["message"])
+    assert "Multiple recent messages arrived from the same conversation." in str(
+        captured[0]["message"]
+    )
     assert "first" in str(captured[0]["message"])
     assert "second" in str(captured[0]["message"])
     assert captured[0]["client_msg_id"] == "telegram-batch:telegram-bot:42:-:777:41:42:2"

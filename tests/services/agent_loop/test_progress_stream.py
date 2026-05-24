@@ -39,7 +39,9 @@ async def test_progress_stream_cursor_monotonic_and_stage_mapping(tmp_path: Path
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,
@@ -109,7 +111,9 @@ async def test_progress_stream_hides_turn_plan_event_when_plan_mode_is_off(tmp_p
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,
@@ -145,7 +149,9 @@ async def test_progress_stream_does_not_dedupe_events(tmp_path: Path) -> None:
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,
@@ -244,7 +250,9 @@ async def test_progress_stream_maps_llm_call_events_to_thinking(tmp_path: Path) 
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,
@@ -325,7 +333,9 @@ async def test_progress_stream_attaches_tool_call_and_result_details(tmp_path: P
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,
@@ -370,7 +380,10 @@ async def test_progress_stream_attaches_tool_call_and_result_details(tmp_path: P
                 "result": {"ok": True, "payload": {"exit_code": 0, "stdout": "/repo"}},
             }
             assert events[1].call_id == "call_bash_1"
-            assert events[1].tool_result == {"ok": True, "payload": {"exit_code": 0, "stdout": "/repo"}}
+            assert events[1].tool_result == {
+                "ok": True,
+                "payload": {"exit_code": 0, "stdout": "/repo"},
+            }
     finally:
         await engine.dispose()
 
@@ -384,7 +397,9 @@ async def test_progress_stream_attaches_tool_progress_details(tmp_path: Path) ->
         async with session_scope(factory) as session:
             run_repo = RunRepository(session)
             runlog_repo = RunlogRepository(session)
-            run = await run_repo.create_run(session_id="s-1", profile_id="default", status="running")
+            run = await run_repo.create_run(
+                session_id="s-1", profile_id="default", status="running"
+            )
 
             await runlog_repo.create_event(
                 run_id=run.id,

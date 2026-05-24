@@ -16,7 +16,9 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.channel_endpoint_repo import ChannelEndpointRepository
 from afkbot.repositories.channel_ingress_event_repo import ChannelIngressEventRepository
-from afkbot.repositories.channel_ingress_pending_event_repo import ChannelIngressPendingEventRepository
+from afkbot.repositories.channel_ingress_pending_event_repo import (
+    ChannelIngressPendingEventRepository,
+)
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
@@ -44,7 +46,9 @@ class ChannelEndpointService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
 
@@ -84,7 +88,9 @@ class ChannelEndpointService:
         """Return one endpoint config by id."""
 
         async def _op(session: AsyncSession) -> ChannelEndpointConfig:
-            row = await ChannelEndpointRepository(session).get(validate_channel_endpoint_id(endpoint_id))
+            row = await ChannelEndpointRepository(session).get(
+                validate_channel_endpoint_id(endpoint_id)
+            )
             if row is None:
                 raise ChannelEndpointServiceError(
                     error_code="channel_endpoint_not_found",
@@ -121,8 +127,12 @@ class ChannelEndpointService:
         normalized_id = validate_channel_endpoint_id(endpoint_id)
 
         async def _op(session: AsyncSession) -> bool:
-            await ChannelIngressEventRepository(session).delete_by_endpoint(endpoint_id=normalized_id)
-            await ChannelIngressPendingEventRepository(session).delete_by_endpoint(endpoint_id=normalized_id)
+            await ChannelIngressEventRepository(session).delete_by_endpoint(
+                endpoint_id=normalized_id
+            )
+            await ChannelIngressPendingEventRepository(session).delete_by_endpoint(
+                endpoint_id=normalized_id
+            )
             deleted = await ChannelEndpointRepository(session).delete(normalized_id)
             if not deleted:
                 raise ChannelEndpointServiceError(
@@ -295,19 +305,27 @@ def channel_endpoint_state_dir(settings: Settings, *, endpoint_id: str) -> Path:
 def telegram_polling_state_path_for(settings: Settings, *, endpoint_id: str) -> Path:
     """Return Telegram polling state path without constructing a DB-backed service."""
 
-    return channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "telegram_polling_state.json"
+    return (
+        channel_endpoint_state_dir(settings, endpoint_id=endpoint_id)
+        / "telegram_polling_state.json"
+    )
 
 
 def partyflow_polling_state_path_for(settings: Settings, *, endpoint_id: str) -> Path:
     """Return PartyFlow polling state path without constructing a DB-backed service."""
 
-    return channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "partyflow_polling_state.json"
+    return (
+        channel_endpoint_state_dir(settings, endpoint_id=endpoint_id)
+        / "partyflow_polling_state.json"
+    )
 
 
 def telethon_user_state_path_for(settings: Settings, *, endpoint_id: str) -> Path:
     """Return Telethon user state path without constructing a DB-backed service."""
 
-    return channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "telethon_user_state.json"
+    return (
+        channel_endpoint_state_dir(settings, endpoint_id=endpoint_id) / "telethon_user_state.json"
+    )
 
 
 def reset_channel_endpoint_services() -> None:

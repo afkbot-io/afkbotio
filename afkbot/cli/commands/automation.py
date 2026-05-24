@@ -116,10 +116,7 @@ def register(app: typer.Typer) -> None:
         graph_fallback_mode: str = typer.Option(
             "resume_with_ai_if_safe",
             "--graph-fallback-mode",
-            help=(
-                "Graph fallback mode: fail_closed, "
-                "resume_with_ai, or resume_with_ai_if_safe."
-            ),
+            help=("Graph fallback mode: fail_closed, resume_with_ai, or resume_with_ai_if_safe."),
         ),
     ) -> None:
         """Create one automation under the selected profile."""

@@ -16,7 +16,10 @@ from afkbot.services.channel_routing.policy import (
     normalize_transport_name,
     requires_strict_binding_match,
 )
-from afkbot.services.channel_routing.service import ChannelBindingServiceError, get_channel_binding_service
+from afkbot.services.channel_routing.service import (
+    ChannelBindingServiceError,
+    get_channel_binding_service,
+)
 from afkbot.services.profile_id import validate_profile_id
 from afkbot.settings import Settings
 
@@ -71,7 +74,9 @@ async def resolve_runtime_target(
 ) -> RuntimeTarget:
     """Resolve effective runtime target with explicit values overridden by matching binding."""
 
-    fallback_profile_id = validate_profile_id((explicit_profile_id or "").strip() or default_profile_id)
+    fallback_profile_id = validate_profile_id(
+        (explicit_profile_id or "").strip() or default_profile_id
+    )
     fallback_session_id = (explicit_session_id or "").strip() or default_session_id
     routing_selectors = build_routing_selectors(
         selectors=selectors,

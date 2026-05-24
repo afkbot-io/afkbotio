@@ -1,6 +1,5 @@
 """Telethon channel add-command tests."""
 
-
 import asyncio
 from pathlib import Path
 
@@ -262,6 +261,7 @@ def test_channel_telethon_add_creates_allowlist_bindings_from_access_flags(
         ("owner-user:group:-100123:user:12345", "owner-user", "-100123", "12345"),
     ]
 
+
 def test_channel_telethon_add_warns_when_no_binding_keeps_existing_binding(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -317,6 +317,7 @@ def test_channel_telethon_add_warns_when_no_binding_keeps_existing_binding(
 
     assert updated.exit_code == 0
 
+
 def test_channel_telethon_add_interactive_uses_profile_defaults(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -360,6 +361,7 @@ def test_channel_telethon_add_interactive_uses_profile_defaults(
     assert "- ingress_batch.enabled: False" in shown
     assert "- reply_humanization.enabled: False" in shown
     assert "- watcher.enabled: False" in shown
+
 
 def test_channel_telethon_add_with_profile_flag_stays_interactive(
     tmp_path: Path,

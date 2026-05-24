@@ -121,7 +121,9 @@ class HttpRequestTool(ToolBase):
                     "body": resolved_body,
                 }
             )
-            response = await self._perform_request(payload=resolved_payload, headers=resolved_headers)
+            response = await self._perform_request(
+                payload=resolved_payload, headers=resolved_headers
+            )
             if resolved_values:
                 response["body"] = redact_secret_fragments(
                     source=str(response.get("body") or ""),
@@ -151,7 +153,9 @@ class HttpRequestTool(ToolBase):
         except ValueError as exc:
             return ToolResult.error(
                 error_code="http_request_invalid",
-                reason=self._sanitize_error_reason(reason=str(exc), resolved_values=resolved_values),
+                reason=self._sanitize_error_reason(
+                    reason=str(exc), resolved_values=resolved_values
+                ),
             )
         except TimeoutError:
             return ToolResult.error(
@@ -264,9 +268,7 @@ class HttpRequestTool(ToolBase):
             )
             response_body = response_raw.decode("utf-8", errors="replace")
             suffix = " [truncated]" if response_truncated else ""
-            raise RuntimeError(
-                f"HTTP {exc.code}: {response_body}{suffix}"
-            ) from exc
+            raise RuntimeError(f"HTTP {exc.code}: {response_body}{suffix}") from exc
         except URLError as exc:
             raise RuntimeError(str(exc.reason)) from exc
 
@@ -320,12 +322,15 @@ class HttpRequestTool(ToolBase):
     def _resolve_public_network_addresses(parsed_url: object) -> tuple[str, ...]:
         return _resolve_public_network_addresses_shared(
             parsed_url,
-            resolver=lambda host, port: HttpRequestTool._resolve_host_addresses(host=host, port=port),
+            resolver=lambda host, port: HttpRequestTool._resolve_host_addresses(
+                host=host, port=port
+            ),
         )
 
     @staticmethod
     def _resolve_host_addresses(*, host: str, port: int) -> tuple[str, ...]:
         return _resolve_host_addresses_shared(host, port)
+
 
 def create_tool(settings: Settings) -> ToolBase:
     """Create http.request tool instance."""

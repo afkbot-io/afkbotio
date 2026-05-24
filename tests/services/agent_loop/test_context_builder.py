@@ -23,7 +23,7 @@ async def test_context_builder_uses_bootstrap_files(tmp_path: Path) -> None:
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (bootstrap_dir / "IDENTITY.md").write_text("identity", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -50,7 +50,7 @@ async def test_context_builder_skips_missing_bootstrap_files(tmp_path: Path) -> 
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -75,7 +75,7 @@ async def test_context_builder_includes_untrusted_runtime_metadata(tmp_path: Pat
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -87,7 +87,9 @@ async def test_context_builder_includes_untrusted_runtime_metadata(tmp_path: Pat
     assert '{"source": "cli"}' in context
 
 
-async def test_context_builder_strips_internal_runtime_metadata_from_untrusted_block(tmp_path: Path) -> None:
+async def test_context_builder_strips_internal_runtime_metadata_from_untrusted_block(
+    tmp_path: Path,
+) -> None:
     """Internal runtime control keys should not be rendered for model-visible metadata."""
 
     bootstrap_dir = tmp_path / "afkbot/bootstrap"
@@ -122,7 +124,7 @@ async def test_context_builder_renders_trusted_runtime_notes_separately(tmp_path
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -184,7 +186,7 @@ async def test_context_builder_keeps_mandatory_security_from_core_when_profile_u
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (core_security_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Core secret handling.\"\n---\n# core security",
+        '---\nname: security-secrets\ndescription: "Core secret handling."\n---\n# core security',
         encoding="utf-8",
     )
     (profile_security_dir / "SKILL.md").write_text(
@@ -212,7 +214,7 @@ async def test_context_builder_includes_subagents_block(tmp_path: Path) -> None:
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
     (subagents_dir / "researcher.md").write_text("# Research helper", encoding="utf-8")
@@ -237,7 +239,7 @@ async def test_context_builder_filters_subagents_by_relevant_names(tmp_path: Pat
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
     (subagents_dir / "researcher.md").write_text("# Research helper", encoding="utf-8")
@@ -254,7 +256,9 @@ async def test_context_builder_filters_subagents_by_relevant_names(tmp_path: Pat
     assert "- researcher: Research helper" not in context
 
 
-async def test_context_builder_includes_explicit_skill_and_subagent_markdown(tmp_path: Path) -> None:
+async def test_context_builder_includes_explicit_skill_and_subagent_markdown(
+    tmp_path: Path,
+) -> None:
     """Explicitly requested skills/subagents should include full markdown instructions."""
 
     bootstrap_dir = tmp_path / "afkbot/bootstrap"
@@ -268,11 +272,11 @@ async def test_context_builder_includes_explicit_skill_and_subagent_markdown(tmp
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (core_security_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: proektdok\ndescription: \"Use product analysis workflow for docs and requirements.\"\n---\n# proektdok\nAlways start answer with PROEKTDOK_ACTIVE.",
+        '---\nname: proektdok\ndescription: "Use product analysis workflow for docs and requirements."\n---\n# proektdok\nAlways start answer with PROEKTDOK_ACTIVE.',
         encoding="utf-8",
     )
     (subagents_dir / "datafixer.md").write_text(
@@ -307,7 +311,7 @@ async def test_context_builder_includes_profile_bootstrap_overlay(tmp_path: Path
     (bootstrap_dir / "AGENTS.md").write_text("core agents", encoding="utf-8")
     (profile_bootstrap_dir / "AGENTS.md").write_text("profile agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -331,7 +335,7 @@ async def test_context_builder_includes_binding_prompt_overlay_block(tmp_path: P
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -360,7 +364,7 @@ async def test_context_builder_invalidates_cached_bootstrap_file_between_instanc
     bootstrap_file = bootstrap_dir / "AGENTS.md"
     bootstrap_file.write_text("initial bootstrap", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
 
@@ -392,7 +396,7 @@ async def test_context_builder_invalidates_cached_subagent_summary_between_insta
 
     (bootstrap_dir / "AGENTS.md").write_text("agents", encoding="utf-8")
     (skills_dir / "SKILL.md").write_text(
-        "---\nname: security-secrets\ndescription: \"Handle secrets securely.\"\n---\n# security",
+        '---\nname: security-secrets\ndescription: "Handle secrets securely."\n---\n# security',
         encoding="utf-8",
     )
     subagent_file = subagents_dir / "researcher.md"

@@ -145,7 +145,9 @@ def parse_minimax_portal_token_payload(
     access_token = str(payload.get("access_token") or "").strip()
     if not access_token:
         raise ValueError("MiniMax OAuth token payload is missing access_token.")
-    refresh_token = str(payload.get("refresh_token") or "").strip() or (default_refresh_token or "").strip()
+    refresh_token = (
+        str(payload.get("refresh_token") or "").strip() or (default_refresh_token or "").strip()
+    )
     if not refresh_token:
         raise ValueError("MiniMax OAuth token payload is missing refresh_token.")
     expires_at = normalize_minimax_portal_token_expiry(

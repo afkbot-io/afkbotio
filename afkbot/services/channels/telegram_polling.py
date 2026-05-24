@@ -66,7 +66,9 @@ class TelegramPollingService(TelegramPollingRuntimeMixin):
         self._settings = settings
         self._endpoint = TelegramPollingEndpointConfig.model_validate(endpoint.model_dump())
         self._app_runtime = app_runtime or AppRuntime(settings)
-        self._channel_delivery_service = channel_delivery_service or ChannelDeliveryService(settings)
+        self._channel_delivery_service = channel_delivery_service or ChannelDeliveryService(
+            settings
+        )
         self._run_chat_turn = run_chat_turn_fn
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()

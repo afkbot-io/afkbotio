@@ -53,7 +53,9 @@ def test_start_lightpanda_runtime_rejects_occupied_port(monkeypatch, tmp_path: P
 
     def _unexpected_popen(*args, **kwargs):  # type: ignore[no-untyped-def]
         _ = args, kwargs
-        raise AssertionError("subprocess.Popen must not be called when the port is already occupied")
+        raise AssertionError(
+            "subprocess.Popen must not be called when the port is already occupied"
+        )
 
     monkeypatch.setattr("afkbot.services.lightpanda_runtime.subprocess.Popen", _unexpected_popen)
 
@@ -129,7 +131,9 @@ def test_start_lightpanda_runtime_starts_managed_process(monkeypatch, tmp_path: 
         "9222",
     ]
     assert seen["env"]["LIGHTPANDA_DISABLE_TELEMETRY"] == "true"
-    assert (tmp_path / "tmp" / "lightpanda" / "lightpanda.pid").read_text(encoding="utf-8").strip() == "9876"
+    assert (tmp_path / "tmp" / "lightpanda" / "lightpanda.pid").read_text(
+        encoding="utf-8"
+    ).strip() == "9876"
 
 
 def test_stop_lightpanda_runtime_keeps_pid_file_when_stop_fails(

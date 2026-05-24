@@ -17,9 +17,7 @@ class ActivityIndicator:
 
     label: str
     color: str = "\033[94m"
-    enabled: bool = field(
-        default_factory=lambda: bool(sys.stdin.isatty() and sys.stdout.isatty())
-    )
+    enabled: bool = field(default_factory=lambda: bool(sys.stdin.isatty() and sys.stdout.isatty()))
     stream: TextIO = field(default_factory=lambda: sys.stdout)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)

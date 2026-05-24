@@ -29,7 +29,10 @@ from afkbot.cli.presentation.chat_turn_output import render_chat_turn_outcome
 from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.browser_sessions import BrowserSessionManager
-from afkbot.services.chat_session.activity_state import capture_chat_activity, starting_chat_activity
+from afkbot.services.chat_session.activity_state import (
+    capture_chat_activity,
+    starting_chat_activity,
+)
 from afkbot.services.chat_session.interrupts import run_turn_interruptibly
 from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState

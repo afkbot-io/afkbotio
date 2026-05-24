@@ -74,14 +74,18 @@ def test_action_choices_are_filtered_by_selected_work_contexts() -> None:
 
     channel_actions = {
         choice.id
-        for choice in profile_intent_action_choices_for_contexts(("channels",), include_expert=False)
+        for choice in profile_intent_action_choices_for_contexts(
+            ("channels",), include_expert=False
+        )
     }
     project_actions = {
         choice.id
         for choice in profile_intent_action_choices_for_contexts(("project",), include_expert=False)
     }
 
-    assert {"reply", "channel_history", "channel_send", "taskflow", "memory"}.issubset(channel_actions)
+    assert {"reply", "channel_history", "channel_send", "taskflow", "memory"}.issubset(
+        channel_actions
+    )
     assert "project_read" not in channel_actions
     assert "sandbox_write" not in channel_actions
     assert "shell_allowlist" not in channel_actions

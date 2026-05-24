@@ -6,7 +6,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage
-from afkbot.cli.commands.chat_update_notices import _should_prompt_for_update, handle_chat_update_notice
+from afkbot.cli.commands.chat_update_notices import (
+    _should_prompt_for_update,
+    handle_chat_update_notice,
+)
 from afkbot.services.update_runtime import UpdateAvailability, UpdateResult
 from afkbot.settings import get_settings
 from afkbot.version import load_cli_version_info
@@ -141,7 +144,9 @@ def test_handle_chat_update_notice_runs_update_and_stops_chat(tmp_path, monkeypa
     assert any("Restart `afk chat`" in item for item in echoed)
 
 
-def test_handle_chat_update_notice_localizes_success_summary_in_russian(tmp_path, monkeypatch) -> None:
+def test_handle_chat_update_notice_localizes_success_summary_in_russian(
+    tmp_path, monkeypatch
+) -> None:
     """Russian prompt language should localize the post-update success summary too."""
 
     settings = _prepare_settings(tmp_path, monkeypatch)
@@ -196,16 +201,22 @@ def test_should_prompt_for_update_respects_future_remind_deadline() -> None:
 
     future = datetime.now(tz=UTC) + timedelta(days=3)
 
-    assert _should_prompt_for_update(
-        runtime_config={
-            "update_notice_remind_until": future.isoformat(),
-        },
-    ) is False
-    assert _should_prompt_for_update(
-        runtime_config={
-            "update_notice_remind_until": (future - timedelta(days=10)).isoformat(),
-        },
-    ) is True
+    assert (
+        _should_prompt_for_update(
+            runtime_config={
+                "update_notice_remind_until": future.isoformat(),
+            },
+        )
+        is False
+    )
+    assert (
+        _should_prompt_for_update(
+            runtime_config={
+                "update_notice_remind_until": (future - timedelta(days=10)).isoformat(),
+            },
+        )
+        is True
+    )
 
 
 def test_should_prompt_for_update_ignores_legacy_target_only_state() -> None:
@@ -213,22 +224,30 @@ def test_should_prompt_for_update_ignores_legacy_target_only_state() -> None:
 
     future = datetime.now(tz=UTC) + timedelta(days=3)
 
-    assert _should_prompt_for_update(
-        runtime_config={
-            "update_notice_remind_target": _PACKAGE_TARGET_ID,
-            "update_notice_skip_target": _PACKAGE_TARGET_ID,
-            "update_notice_remind_until": future.isoformat(),
-        },
-    ) is False
-    assert _should_prompt_for_update(
-        runtime_config={
-            "update_notice_remind_target": _PACKAGE_TARGET_ID,
-            "update_notice_skip_target": _PACKAGE_TARGET_ID,
-        },
-    ) is True
+    assert (
+        _should_prompt_for_update(
+            runtime_config={
+                "update_notice_remind_target": _PACKAGE_TARGET_ID,
+                "update_notice_skip_target": _PACKAGE_TARGET_ID,
+                "update_notice_remind_until": future.isoformat(),
+            },
+        )
+        is False
+    )
+    assert (
+        _should_prompt_for_update(
+            runtime_config={
+                "update_notice_remind_target": _PACKAGE_TARGET_ID,
+                "update_notice_skip_target": _PACKAGE_TARGET_ID,
+            },
+        )
+        is True
+    )
 
 
-def test_handle_chat_update_notice_skips_prompt_when_notices_disabled(tmp_path, monkeypatch) -> None:
+def test_handle_chat_update_notice_skips_prompt_when_notices_disabled(
+    tmp_path, monkeypatch
+) -> None:
     """Disabled notices should bypass the startup prompt entirely."""
 
     settings = _prepare_settings(tmp_path, monkeypatch)
@@ -254,7 +273,9 @@ def test_handle_chat_update_notice_skips_prompt_when_notices_disabled(tmp_path, 
     assert prompted == []
 
 
-def test_handle_chat_update_notice_skips_inspection_during_active_snooze(tmp_path, monkeypatch) -> None:
+def test_handle_chat_update_notice_skips_inspection_during_active_snooze(
+    tmp_path, monkeypatch
+) -> None:
     """Active snooze should bypass update inspection until the deadline passes."""
 
     settings = _prepare_settings(tmp_path, monkeypatch)

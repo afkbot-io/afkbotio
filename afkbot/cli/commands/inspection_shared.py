@@ -100,9 +100,7 @@ def render_memory_auto_save_brief(memory_behavior: "MemoryBehaviorSummary") -> s
     return (
         "on("
         f"scope={memory_behavior.auto_save_scope_mode},"
-        "kinds="
-        + ",".join(memory_behavior.auto_save_kinds)
-        + ")"
+        "kinds=" + ",".join(memory_behavior.auto_save_kinds) + ")"
     )
 
 
@@ -127,9 +125,7 @@ def render_profile_memory_defaults_brief(memory_behavior: "MemoryBehaviorSummary
         else (
             "save("
             f"scope={memory_behavior.auto_save_scope_mode},"
-            "kinds="
-            + ",".join(memory_behavior.auto_save_kinds)
-            + ")"
+            "kinds=" + ",".join(memory_behavior.auto_save_kinds) + ")"
         )
     )
     return f"{search_part}; {save_part}"
@@ -318,9 +314,7 @@ def _build_permission_summary(
         file_access_mode=tool_access.files,
         network_access=_infer_network_access(policy=policy),
         network_allowlist=tuple(
-            _display_path(settings=settings, path=Path(item))
-            if item.startswith("/")
-            else item
+            _display_path(settings=settings, path=Path(item)) if item.startswith("/") else item
             for item in policy.network_allowlist
         ),
         memory_behavior=_build_memory_behavior_summary(
@@ -352,7 +346,9 @@ def _build_tool_access_summary(
         file_access = policy.file_access_mode
     else:
         file_access = "disabled"
-    credentials_access = _enabled_mode(enabled=(not policy.enabled) or ("credentials" in capability_set))
+    credentials_access = _enabled_mode(
+        enabled=(not policy.enabled) or ("credentials" in capability_set)
+    )
     if transport is not None and is_user_facing_transport(transport):
         credentials_access = "blocked_in_user_channel"
     summary = ToolAccessSummary(
@@ -405,12 +401,16 @@ def _apply_channel_tool_profile_to_tool_access(
         memory=_tool_family_access(summary.memory, allowed=allowed, prefixes=("memory.",)),
         credentials=summary.credentials,
         subagents=_tool_family_access(summary.subagents, allowed=allowed, prefixes=("subagent.",)),
-        automation=_tool_family_access(summary.automation, allowed=allowed, prefixes=("automation.",)),
+        automation=_tool_family_access(
+            summary.automation, allowed=allowed, prefixes=("automation.",)
+        ),
         http=_tool_family_access(summary.http, allowed=allowed, prefixes=("http.",)),
         web=_tool_family_access(summary.web, allowed=allowed, prefixes=("web.",)),
         browser=_tool_family_access(summary.browser, allowed=allowed, prefixes=("browser.",)),
         skills=_tool_family_access(summary.skills, allowed=allowed, prefixes=("skill.",)),
-        apps=_tool_family_access(summary.apps, allowed=allowed, exact_names=("app.run", "app.list", "channel.send")),
+        apps=_tool_family_access(
+            summary.apps, allowed=allowed, exact_names=("app.run", "app.list", "channel.send")
+        ),
         debug=_tool_family_access(summary.debug, allowed=allowed, prefixes=("debug.",)),
     )
 

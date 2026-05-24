@@ -188,12 +188,16 @@ async def resolve_requested_scope(
         or (None if binding_defaults is None else binding_defaults.user_id)
         or runtime_scope.user_id
     )
-    effective_scope_kind = scope_mode if scope_mode != "auto" else _infer_scope_kind(
-        thread_id=resolved_thread_id,
-        user_id=resolved_user_id,
-        transport=resolved_transport,
-        account_id=resolved_account_id,
-        peer_id=resolved_peer_id,
+    effective_scope_kind = (
+        scope_mode
+        if scope_mode != "auto"
+        else _infer_scope_kind(
+            thread_id=resolved_thread_id,
+            user_id=resolved_user_id,
+            transport=resolved_transport,
+            account_id=resolved_account_id,
+            peer_id=resolved_peer_id,
+        )
     )
     if binding_defaults is not None and effective_scope_kind == "profile":
         raise MemoryScopeResolutionError(
@@ -388,10 +392,13 @@ def _is_same_or_parent_local_scope(
     if requested_scope.scope_kind == "chat":
         return _same_chat_base(requested_scope=requested_scope, current_scope=current_scope)
     if requested_scope.scope_kind == "thread":
-        return _same_chat_base(
-            requested_scope=requested_scope,
-            current_scope=current_scope,
-        ) and requested_scope.thread_id == current_scope.thread_id
+        return (
+            _same_chat_base(
+                requested_scope=requested_scope,
+                current_scope=current_scope,
+            )
+            and requested_scope.thread_id == current_scope.thread_id
+        )
     return False
 
 
@@ -417,10 +424,22 @@ def _binding_selector_conflict(
     user_id: str | None,
 ) -> tuple[str, str, str] | None:
     pairs = (
-        ("transport", _normalize_optional_text(transport), _normalize_optional_text(binding.transport)),
-        ("account_id", _normalize_optional_text(account_id), _normalize_optional_text(binding.account_id)),
+        (
+            "transport",
+            _normalize_optional_text(transport),
+            _normalize_optional_text(binding.transport),
+        ),
+        (
+            "account_id",
+            _normalize_optional_text(account_id),
+            _normalize_optional_text(binding.account_id),
+        ),
         ("peer_id", _normalize_optional_text(peer_id), _normalize_optional_text(binding.peer_id)),
-        ("thread_id", _normalize_optional_text(thread_id), _normalize_optional_text(binding.thread_id)),
+        (
+            "thread_id",
+            _normalize_optional_text(thread_id),
+            _normalize_optional_text(binding.thread_id),
+        ),
         ("user_id", _normalize_optional_text(user_id), _normalize_optional_text(binding.user_id)),
     )
     for field_name, explicit_value, binding_value in pairs:

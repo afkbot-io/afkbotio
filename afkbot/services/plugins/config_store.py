@@ -10,7 +10,9 @@ from afkbot.services.atomic_writes import atomic_json_write
 from afkbot.services.plugins.contracts import PluginServiceError
 
 
-def read_plugin_config(*, path: Path, default_config: dict[str, object]) -> tuple[dict[str, object], str]:
+def read_plugin_config(
+    *, path: Path, default_config: dict[str, object]
+) -> tuple[dict[str, object], str]:
     """Read one plugin config JSON object or return its manifest defaults."""
 
     if not path.exists():

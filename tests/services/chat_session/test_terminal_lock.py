@@ -43,7 +43,9 @@ def test_chat_session_terminal_lock_rejects_concurrent_same_process_acquire(tmp_
         pass
 
 
-def test_chat_session_terminal_lock_reentrant_acquire_keeps_cross_process_lock(tmp_path: Path) -> None:
+def test_chat_session_terminal_lock_reentrant_acquire_keeps_cross_process_lock(
+    tmp_path: Path,
+) -> None:
     """Nested acquire in one process must keep cross-process exclusivity."""
 
     script = """

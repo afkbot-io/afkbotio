@@ -106,7 +106,9 @@ def _ensure_secure_ref_list(
 ) -> None:
     dotted = ".".join(path)
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        raise MCPConfigValidationError(f"{dotted} must be a list of {allowed_key} objects in {source}")
+        raise MCPConfigValidationError(
+            f"{dotted} must be a list of {allowed_key} objects in {source}"
+        )
 
     for index, item in enumerate(value):
         item_path = f"{dotted}[{index}]"

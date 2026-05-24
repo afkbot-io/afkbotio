@@ -194,14 +194,10 @@ class LLMIterationRuntime:
                 trusted_runtime_context=trusted_runtime_context,
                 allowed_tool_names=effective_allowed_tool_names,
                 approved_tool_names=(
-                    None
-                    if approved_tool_names is None
-                    else set(approved_tool_names)
+                    None if approved_tool_names is None else set(approved_tool_names)
                 ),
                 channel_owned_tool_names=(
-                    None
-                    if channel_owned_tool_names is None
-                    else set(channel_owned_tool_names)
+                    None if channel_owned_tool_names is None else set(channel_owned_tool_names)
                 ),
                 approval_required_tool_names=(
                     None
@@ -558,7 +554,9 @@ class LLMIterationRuntime:
         return self._truncate_text_for_history(str(value))
 
     @staticmethod
-    def _truncate_text_for_history(value: str, *, max_chars: int = _TOOL_HISTORY_MAX_STRING_CHARS) -> str:
+    def _truncate_text_for_history(
+        value: str, *, max_chars: int = _TOOL_HISTORY_MAX_STRING_CHARS
+    ) -> str:
         if len(value) <= max_chars:
             return value
         return value[: max_chars - 3].rstrip() + "..."

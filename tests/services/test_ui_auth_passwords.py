@@ -13,4 +13,3 @@ def test_ui_auth_password_hash_roundtrip() -> None:
     assert encoded.startswith("scrypt$")
     assert verify_ui_auth_password("correct-horse-battery", encoded) is True
     assert verify_ui_auth_password("wrong-password", encoded) is False
-

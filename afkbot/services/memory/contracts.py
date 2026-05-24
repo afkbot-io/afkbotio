@@ -64,9 +64,7 @@ class MemoryScopeDescriptor(BaseModel):
             if value is None
         ]
         if missing_chat_base:
-            raise ValueError(
-                f"{self.scope_kind} scope requires: {', '.join(missing_chat_base)}"
-            )
+            raise ValueError(f"{self.scope_kind} scope requires: {', '.join(missing_chat_base)}")
         if self.scope_kind == "thread" and self.thread_id is None:
             raise ValueError("thread scope requires: thread_id")
         if self.scope_kind == "user_in_chat" and self.user_id is None:
@@ -74,7 +72,9 @@ class MemoryScopeDescriptor(BaseModel):
         return self
 
     @classmethod
-    def profile_scope(cls, *, session_id: str | None = None, binding_id: str | None = None) -> MemoryScopeDescriptor:
+    def profile_scope(
+        cls, *, session_id: str | None = None, binding_id: str | None = None
+    ) -> MemoryScopeDescriptor:
         """Return the canonical profile-global scope descriptor."""
 
         return cls(scope_kind="profile", session_id=session_id, binding_id=binding_id)

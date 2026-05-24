@@ -73,6 +73,7 @@ from afkbot.services.task_flow.contracts import (
 from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.human_ref import resolve_local_human_ref
+from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
@@ -3859,9 +3860,7 @@ def _taskflow_allowed_ai_profile_ids(
 
     team_profile_ids = _taskflow_team_profile_ids(settings=settings, profile_id=profile_id)
     if team_profile_ids is None:
-        if settings is not None and bool(settings.taskflow_strict_team_profile_ids):
-            return (profile_id,)
-        return ()
+        return (profile_id,)
     allowed: list[str] = [profile_id]
     seen: set[str] = {profile_id}
     for item in team_profile_ids:
@@ -3879,6 +3878,9 @@ def _taskflow_team_profile_ids(
 
     if settings is None:
         return None
+    explicit_team_profile_ids = get_taskflow_team_config_service(settings).load(profile_id)
+    if explicit_team_profile_ids is not None:
+        return explicit_team_profile_ids
     config = get_profile_runtime_config_service(settings).load(profile_id)
     if config is None:
         return None

@@ -48,9 +48,7 @@ def resolve_public_network_addresses(
         except ValueError as exc:
             raise ValueError(f"Resolved host is not a valid IP address: {address}") from exc
         if not ip.is_global:
-            raise ValueError(
-                "URL host resolves to a non-public network address, request is denied"
-            )
+            raise ValueError("URL host resolves to a non-public network address, request is denied")
     return addresses
 
 

@@ -11,7 +11,10 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.channel_endpoint import ChannelEndpoint
 from afkbot.models.profile import Profile
 from afkbot.models.profile_policy import ProfilePolicy
+from afkbot.models.task import Task
+from afkbot.models.task_flow import TaskFlow
 from afkbot.services.profile_runtime.runtime_secrets import get_profile_runtime_secrets_service
+from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.services.upgrade import UpgradeService
 from afkbot.settings import Settings
 
@@ -51,11 +54,15 @@ async def test_upgrade_service_migrates_default_profile_policy_scope(tmp_path: P
     async with session_scope(session_factory) as session:
         row = await session.get(ProfilePolicy, "default")
         assert row is not None
-        assert json.loads(row.allowed_directories_json) == [str((tmp_path / "profiles/default").resolve())]
+        assert json.loads(row.allowed_directories_json) == [
+            str((tmp_path / "profiles/default").resolve())
+        ]
     await engine.dispose()
 
 
-async def test_upgrade_service_migrates_legacy_non_default_profile_policy_scope(tmp_path: Path) -> None:
+async def test_upgrade_service_migrates_legacy_non_default_profile_policy_scope(
+    tmp_path: Path,
+) -> None:
     """Upgrade runner should also migrate legacy project-root scope for named profiles."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
@@ -90,7 +97,9 @@ async def test_upgrade_service_migrates_legacy_non_default_profile_policy_scope(
     async with session_scope(session_factory) as session:
         row = await session.get(ProfilePolicy, "ops")
         assert row is not None
-        assert json.loads(row.allowed_directories_json) == [str((tmp_path / "profiles/ops").resolve())]
+        assert json.loads(row.allowed_directories_json) == [
+            str((tmp_path / "profiles/ops").resolve())
+        ]
     await engine.dispose()
 
 
@@ -113,7 +122,9 @@ async def test_upgrade_service_recomputes_profile_policy_runtime_surface_for_new
                 policy_capabilities_json=json.dumps(["shell", "subagents"], ensure_ascii=True),
                 allowed_tools_json=json.dumps(["bash.exec", "subagent.run"], ensure_ascii=True),
                 denied_tools_json="[]",
-                allowed_directories_json=json.dumps([str((tmp_path / "profiles/default").resolve())], ensure_ascii=True),
+                allowed_directories_json=json.dumps(
+                    [str((tmp_path / "profiles/default").resolve())], ensure_ascii=True
+                ),
                 shell_allowed_commands_json="[]",
                 shell_denied_commands_json="[]",
                 network_allowlist_json="[]",
@@ -159,7 +170,9 @@ async def test_upgrade_service_enforces_required_shell_sandbox_for_legacy_restri
                 policy_capabilities_json=json.dumps(["shell"], ensure_ascii=True),
                 allowed_tools_json=json.dumps(["bash.exec"], ensure_ascii=True),
                 denied_tools_json="[]",
-                allowed_directories_json=json.dumps([str(profile_root.resolve())], ensure_ascii=True),
+                allowed_directories_json=json.dumps(
+                    [str(profile_root.resolve())], ensure_ascii=True
+                ),
                 shell_sandbox_mode="disabled",
                 shell_allowed_commands_json="[]",
                 shell_denied_commands_json="[]",
@@ -300,6 +313,61 @@ async def test_upgrade_service_canonicalizes_channel_endpoint_rows(tmp_path: Pat
         assert row.credential_profile_key == "tg-user"
         assert row.account_id == "personal-user"
         assert json.loads(row.config_json)["reply_allowed_chat_patterns"] == ["andrey"]
+    await engine.dispose()
+
+
+async def test_upgrade_service_materializes_taskflow_team_rosters_from_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    """Upgrade runner should preserve pre-strict cross-profile Task Flow assignments."""
+
+    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    engine = create_engine(settings)
+    await create_schema(engine)
+    session_factory = create_session_factory(engine)
+    async with session_scope(session_factory) as session:
+        session.add(Profile(id="default", name="Default", is_default=True, status="active"))
+        session.add(Profile(id="analyst", name="Analyst", is_default=False, status="active"))
+        session.add(Profile(id="qa", name="QA", is_default=False, status="active"))
+        await session.flush()
+        session.add(
+            TaskFlow(
+                id="flow_legacy",
+                profile_id="default",
+                title="Legacy flow",
+                description="Existing flow routes work to another profile.",
+                status="active",
+                created_by_type="human",
+                created_by_ref="cli",
+                default_owner_type="ai_profile",
+                default_owner_ref="analyst",
+            )
+        )
+        await session.flush()
+        session.add(
+            Task(
+                id="task_legacy",
+                profile_id="default",
+                flow_id="flow_legacy",
+                title="Legacy task",
+                description="Existing task is owned by a teammate subagent.",
+                status="todo",
+                owner_type="ai_subagent",
+                owner_ref="qa:reviewer",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+        )
+
+    service = UpgradeService(settings)
+    try:
+        report = await service.apply()
+    finally:
+        await service.shutdown()
+
+    step = next(item for item in report.steps if item.name == "taskflow_team_rosters")
+    assert step.changed is True
+    assert get_taskflow_team_config_service(settings).load("default") == ("analyst", "qa")
     await engine.dispose()
 
 

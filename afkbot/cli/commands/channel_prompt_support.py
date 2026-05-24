@@ -87,18 +87,22 @@ def resolve_channel_choice(
     if value is not None:
         resolved = value.strip().lower()
     elif interactive:
-        resolved = _select_channel_option(
-            title=msg(lang, en=prompt_en, ru=prompt_ru),
-            text=msg(
-                lang,
-                en=detail_en or f"Select {prompt_en.lower()}.",
-                ru=detail_ru or f"Выберите значение для «{prompt_ru}».",
-            ),
-            allowed=allowed,
-            default=default,
-            lang=lang,
-            label_overrides=label_overrides,
-        ).strip().lower()
+        resolved = (
+            _select_channel_option(
+                title=msg(lang, en=prompt_en, ru=prompt_ru),
+                text=msg(
+                    lang,
+                    en=detail_en or f"Select {prompt_en.lower()}.",
+                    ru=detail_ru or f"Выберите значение для «{prompt_ru}».",
+                ),
+                allowed=allowed,
+                default=default,
+                lang=lang,
+                label_overrides=label_overrides,
+            )
+            .strip()
+            .lower()
+        )
     else:
         resolved = default.strip().lower()
     if resolved not in allowed:
@@ -109,7 +113,7 @@ def resolve_channel_choice(
                 en=f"{prompt_en} must be one of: {allowed_text}",
                 ru=f"{prompt_ru} должен быть одним из: {allowed_text}",
             )
-    )
+        )
     return resolved
 
 

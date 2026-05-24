@@ -30,4 +30,3 @@ def resolve_tool_profile_policy_overlay_value(
     if not isinstance(raw_policy_overlay, Mapping):
         return None
     return raw_policy_overlay.get(POLICY_OVERLAY_TOOL_PROFILE_KEY)
-

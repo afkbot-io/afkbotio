@@ -182,7 +182,9 @@ def explicit_skill_execution_maps(
         if skill.manifest.execution_mode not in {"executable", "dispatch"}:
             continue
         routed_tool_names = [
-            tool_name for tool_name in skill.manifest.tool_names if tool_name in available_tool_names
+            tool_name
+            for tool_name in skill.manifest.tool_names
+            if tool_name in available_tool_names
         ]
         if (
             skill.manifest.app_names
@@ -247,7 +249,9 @@ def explicit_skill_runtime_guidance(
         return ""
 
     selected = {
-        item.name: item for item in context_assets.skills if item.name in skill_route.selected_skill_names
+        item.name: item
+        for item in context_assets.skills
+        if item.name in skill_route.selected_skill_names
     }
     if not selected:
         return ""
@@ -302,7 +306,9 @@ def explicit_skill_unavailable_message(
     ):
         return None
     selected = {
-        item.name: item for item in context_assets.skills if item.name in skill_route.selected_skill_names
+        item.name: item
+        for item in context_assets.skills
+        if item.name in skill_route.selected_skill_names
     }
     if not selected:
         return None
@@ -322,22 +328,34 @@ def explicit_skill_unavailable_message(
                 f"Отсутствуют требования: {missing}."
             )
             if install_hints:
-                text += " Установи зависимости: " + "; ".join(f"`{hint}`" for hint in install_hints) + "."
+                text += (
+                    " Установи зависимости: "
+                    + "; ".join(f"`{hint}`" for hint in install_hints)
+                    + "."
+                )
             if repair_commands:
-                text += " Для диагностики или починки используй: " + "; ".join(
-                    f"`{cmd}`" for cmd in repair_commands
-                ) + "."
+                text += (
+                    " Для диагностики или починки используй: "
+                    + "; ".join(f"`{cmd}`" for cmd in repair_commands)
+                    + "."
+                )
         else:
             text = (
                 f"The selected skill `{name}` is currently unavailable. "
                 f"Missing requirements: {missing}."
             )
             if install_hints:
-                text += " Install dependencies with " + "; ".join(f"`{hint}`" for hint in install_hints) + "."
+                text += (
+                    " Install dependencies with "
+                    + "; ".join(f"`{hint}`" for hint in install_hints)
+                    + "."
+                )
             if repair_commands:
-                text += " Diagnose or repair with " + "; ".join(
-                    f"`{cmd}`" for cmd in repair_commands
-                ) + "."
+                text += (
+                    " Diagnose or repair with "
+                    + "; ".join(f"`{cmd}`" for cmd in repair_commands)
+                    + "."
+                )
         parts.append(text)
     return "\n\n".join(parts) or None
 
@@ -363,7 +381,7 @@ def planned_tools_final_message(
     error_code = (first.error_code or "tool_failed").strip()
     reason = (first.reason or "").strip()
     details = f"{error_code}: {reason}" if reason else error_code
-    return "One or more requested operations failed. " f"First error: {details}"
+    return f"One or more requested operations failed. First error: {details}"
 
 
 def turn_plan_payload(

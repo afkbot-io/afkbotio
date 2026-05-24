@@ -60,19 +60,17 @@ async def test_graph_read_models_expose_nodes_edges_and_trace(tmp_path) -> None:
         assert graph.automation_id == created.id
         assert graph.execution_mode == "graph"
         assert [node.key for node in graph.nodes] == ["trigger", "finish"]
-        assert [(edge.source_key, edge.target_key) for edge in graph.edges] == [("trigger", "finish")]
+        assert [(edge.source_key, edge.target_key) for edge in graph.edges] == [
+            ("trigger", "finish")
+        ]
 
         run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
         trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
         assert trace.run.id == run.id
         assert trace.run.status == "succeeded"
-        assert trace.run.final_output == {
-            "default": {"event_id": "evt-trace", "kind": "demo"}
-        }
+        assert trace.run.final_output == {"default": {"event_id": "evt-trace", "kind": "demo"}}
         assert trace.nodes[0].input == {}
-        assert trace.nodes[1].output == {
-            "default": {"event_id": "evt-trace", "kind": "demo"}
-        }
+        assert trace.nodes[1].output == {"default": {"event_id": "evt-trace", "kind": "demo"}}
     finally:
         await engine.dispose()
 
@@ -130,7 +128,9 @@ async def test_graph_trace_orders_nodes_by_execution_not_insert_order(tmp_path) 
         await engine.dispose()
 
 
-async def test_graph_validate_returns_structured_report_for_invalid_persisted_node_kind(tmp_path) -> None:
+async def test_graph_validate_returns_structured_report_for_invalid_persisted_node_kind(
+    tmp_path,
+) -> None:
     """Persisted-bad node rows should stay inspectable through graph-validate."""
 
     engine, factory, service = await prepare_service(tmp_path)
@@ -172,7 +172,9 @@ async def test_graph_validate_returns_structured_report_for_invalid_persisted_no
         await engine.dispose()
 
 
-async def test_graph_show_raises_domain_error_for_invalid_persisted_execution_mode(tmp_path) -> None:
+async def test_graph_show_raises_domain_error_for_invalid_persisted_execution_mode(
+    tmp_path,
+) -> None:
     """Read models should raise stable domain errors for invalid persisted automation enums."""
 
     engine, factory, service = await prepare_service(tmp_path)

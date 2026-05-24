@@ -214,10 +214,7 @@ def test_build_chat_workspace_progress_entries_shows_llm_done_errors() -> None:
     assert len(entries) == 2
     assert entries[0].text == "model responded"
     assert entries[0].accent == "thinking"
-    assert (
-        entries[1].text == "llm=done elapsed=1.2s kind=final "
-        "error=llm_provider_network_error"
-    )
+    assert entries[1].text == "llm=done elapsed=1.2s kind=final error=llm_provider_network_error"
     assert entries[1].accent == "detail"
 
 

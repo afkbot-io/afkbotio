@@ -20,7 +20,9 @@ _FILE_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 _PATH_SIGNAL_RE = re.compile(r"\b(?:output|tmp|temp|artifacts?)/", re.IGNORECASE)
-_EDIT_VERB_RE = re.compile(r"\b(?:edit|update|modify|replace|редакт|замен|обнов)\w*\b", re.IGNORECASE)
+_EDIT_VERB_RE = re.compile(
+    r"\b(?:edit|update|modify|replace|редакт|замен|обнов)\w*\b", re.IGNORECASE
+)
 _COMMAND_FIRST_TOKEN_RE = re.compile(r"^\s*([a-zA-Z0-9_.-]+)\b")
 _IGNORED_COMMANDS = frozenset(
     {
@@ -121,7 +123,11 @@ def _infer_tool_names(*, content: str, lowered: str) -> tuple[str, ...]:
 def _infer_preferred_tool_order(*, tool_names: tuple[str, ...], lowered: str) -> tuple[str, ...]:
     if not tool_names:
         return ()
-    if ".docx" in lowered or ".pdf" in lowered or _BINARY_DOCUMENT_HINT_RE.search(lowered) is not None:
+    if (
+        ".docx" in lowered
+        or ".pdf" in lowered
+        or _BINARY_DOCUMENT_HINT_RE.search(lowered) is not None
+    ):
         preferred_order = (
             "bash.exec",
             "file.read",
@@ -151,12 +157,7 @@ def _infer_python_packages(content: str) -> tuple[str, ...]:
     for match in _PIP_INSTALL_RE.finditer(content):
         for token in match.group(1).split():
             candidate = token.strip()
-            if (
-                not candidate
-                or candidate.startswith("-")
-                or "/" in candidate
-                or candidate in seen
-            ):
+            if not candidate or candidate.startswith("-") or "/" in candidate or candidate in seen:
                 continue
             seen.add(candidate)
             packages.append(candidate)

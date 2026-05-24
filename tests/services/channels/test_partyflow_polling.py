@@ -475,7 +475,9 @@ async def test_partyflow_polling_retries_failed_pending_batch_until_success(
             ingress_batch=ChannelIngressBatchConfig(enabled=True, debounce_ms=100),
         ),
         state_path=state_path,
-        app_runtime=_FakePartyFlowRuntime(events=[_message_event(event_id="evt-1", text="retry me")]),  # type: ignore[arg-type]
+        app_runtime=_FakePartyFlowRuntime(
+            events=[_message_event(event_id="evt-1", text="retry me")]
+        ),  # type: ignore[arg-type]
         channel_delivery_service=_FakeDeliveryService(),  # type: ignore[arg-type]
         run_chat_turn_fn=fake_run_chat_turn,
     )
@@ -525,7 +527,9 @@ async def test_partyflow_polling_stop_cancels_rescheduled_pending_retry(
             ingress_batch=ChannelIngressBatchConfig(enabled=True, debounce_ms=100),
         ),
         state_path=state_path,
-        app_runtime=_FakePartyFlowRuntime(events=[_message_event(event_id="evt-1", text="retry me")]),  # type: ignore[arg-type]
+        app_runtime=_FakePartyFlowRuntime(
+            events=[_message_event(event_id="evt-1", text="retry me")]
+        ),  # type: ignore[arg-type]
         channel_delivery_service=_FakeDeliveryService(),  # type: ignore[arg-type]
         run_chat_turn_fn=fake_run_chat_turn,
     )

@@ -41,7 +41,9 @@ class SkillProfileGetTool(ToolBase):
                 name=payload.name,
                 scope=payload.scope,
             )
-            return ToolResult(ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)})
+            return ToolResult(
+                ok=True, payload={"skill": item.model_dump(mode="json", exclude_none=True)}
+            )
         except FileNotFoundError as exc:
             return ToolResult.error(error_code="profile_skill_not_found", reason=str(exc))
         except ValueError as exc:

@@ -43,7 +43,9 @@ class ChannelBindingService:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._engine: AsyncEngine = create_engine(settings)
-        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self._engine)
+        self._session_factory: async_sessionmaker[AsyncSession] = create_session_factory(
+            self._engine
+        )
         self._schema_ready = False
         self._schema_lock = asyncio.Lock()
         self._telemetry_enabled = settings.channel_routing_telemetry_enabled
@@ -111,7 +113,9 @@ class ChannelBindingService:
         """Resolve one inbound routing input against persisted binding rules."""
 
         async def _op(session: AsyncSession) -> ChannelRoutingDecision | None:
-            rows = await ChannelBindingRepository(session).list_all(transport=routing_input.transport)
+            rows = await ChannelBindingRepository(session).list_all(
+                transport=routing_input.transport
+            )
             rules = [self._to_rule(row) for row in rows]
             return resolve_channel_binding(bindings=rules, routing_input=routing_input)
 

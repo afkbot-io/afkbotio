@@ -65,7 +65,9 @@ class ProfileRuntimeSecretsService:
     def key_path(self, profile_id: str) -> Path:
         """Return absolute key file path for one profile-local secrets store."""
 
-        return self._safe_profile_root(profile_id) / ".system" / _PROFILE_RUNTIME_SECRETS_KEY_FILENAME
+        return (
+            self._safe_profile_root(profile_id) / ".system" / _PROFILE_RUNTIME_SECRETS_KEY_FILENAME
+        )
 
     def load(self, profile_id: str) -> dict[str, str]:
         """Load decrypted profile-local runtime secrets."""
@@ -97,7 +99,9 @@ class ProfileRuntimeSecretsService:
         if not normalized:
             self.remove(profile_id)
             return None
-        from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
+        from afkbot.services.profile_runtime.runtime_config import (
+            get_profile_runtime_config_service,
+        )
 
         get_profile_runtime_config_service(self._settings).ensure_layout(profile_id)
         key = self._resolve_key(profile_id=profile_id, create_if_missing=True)
@@ -132,9 +136,7 @@ class ProfileRuntimeSecretsService:
             self.remove(profile_id)
             return {}
         normalized_fields = {
-            field.strip()
-            for field in fields
-            if field.strip() in _PROFILE_RUNTIME_SECRET_FIELDS
+            field.strip() for field in fields if field.strip() in _PROFILE_RUNTIME_SECRET_FIELDS
         }
         if not normalized_fields:
             return self.load(profile_id)
@@ -206,7 +208,10 @@ class ProfileRuntimeSecretsService:
             stripped = value.strip()
             if not stripped:
                 continue
-            if key.endswith("_api_key_source") and stripped not in {TOKEN_SOURCE_SECRET, TOKEN_SOURCE_FILE}:
+            if key.endswith("_api_key_source") and stripped not in {
+                TOKEN_SOURCE_SECRET,
+                TOKEN_SOURCE_FILE,
+            }:
                 continue
             normalized[key] = stripped
         return normalized
@@ -231,7 +236,6 @@ class ProfileRuntimeSecretsService:
         if not isinstance(payload, dict):
             return {}
         return payload
-
 
 
 def provider_secret_field(provider_id: str) -> str:

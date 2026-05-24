@@ -121,7 +121,9 @@ def test_chat_turn_route_resolves_binding_after_auth_and_before_runtime(
     }
 
 
-def test_chat_turn_route_rejects_binding_resolution_without_transport(monkeypatch: MonkeyPatch) -> None:
+def test_chat_turn_route_rejects_binding_resolution_without_transport(
+    monkeypatch: MonkeyPatch,
+) -> None:
     """Binding-aware API chat request should reject missing transport metadata."""
 
     async def _fake_validate(

@@ -135,7 +135,8 @@ async def _resume_profile_selection(
         message=f"profile_resume:{resumed_call.name}",
         profile_id=profile_id,
         session_id=session_id,
-        client_msg_id=client_msg_id or f"answer:{envelope.question_id or 'profile'}:{selected_profile}",
+        client_msg_id=client_msg_id
+        or f"answer:{envelope.question_id or 'profile'}:{selected_profile}",
         planned_tool_calls=[resumed_call],
         context_overrides=context_overrides,
     )

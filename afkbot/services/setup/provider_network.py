@@ -144,7 +144,9 @@ def _normalize_proxy_url(
     host = shorthand[0].strip()
     port = shorthand[1].strip()
     if not host:
-        raise typer.BadParameter(msg(lang, en="Proxy host cannot be empty", ru="Хост прокси не может быть пустым"))
+        raise typer.BadParameter(
+            msg(lang, en="Proxy host cannot be empty", ru="Хост прокси не может быть пустым")
+        )
     if not port.isdigit() or not (1 <= int(port) <= 65535):
         raise typer.BadParameter(
             msg(
@@ -428,6 +430,8 @@ def resolve_certbot_contact_email(
             )
         )
     return email
+
+
 def _normalize_public_host(*, raw: str, lang: PromptLanguage) -> str:
     """Normalize public endpoint host/domain input."""
 

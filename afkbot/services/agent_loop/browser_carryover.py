@@ -67,11 +67,11 @@ class BrowserCarryoverService:
                 [
                     live_summary,
                     f"- Most recent browser failure before the current live page: `{normalize_snapshot_text(events[0].metadata.get('browser_error_class')) or 'browser_action_failed'}`.",
-                    *((
+                    *(
                         [f"- Failure reason: {normalize_snapshot_text(events[0].reason)}"]
                         if normalize_snapshot_text(events[0].reason)
                         else []
-                    )),
+                    ),
                 ]
             )
         if not events:
@@ -91,7 +91,10 @@ class BrowserCarryoverService:
             lines.extend(page_lines)
 
         if not latest.ok:
-            error_class = normalize_snapshot_text(latest.metadata.get("browser_error_class")) or "browser_action_failed"
+            error_class = (
+                normalize_snapshot_text(latest.metadata.get("browser_error_class"))
+                or "browser_action_failed"
+            )
             reason = normalize_snapshot_text(latest.reason)
             lines.append(f"- Most recent browser failure: `{error_class}`.")
             if reason:
@@ -124,9 +127,7 @@ class BrowserCarryoverService:
         )
         summary = self._build_live_summary(snapshot=snapshot)
         handle.live_carryover_summary = summary
-        handle.live_carryover_page_url = (
-            normalize_snapshot_text(snapshot.get("url")) or current_url
-        )
+        handle.live_carryover_page_url = normalize_snapshot_text(snapshot.get("url")) or current_url
         handle.live_carryover_updated_monotonic = time.monotonic()
         return summary
 
@@ -288,7 +289,9 @@ class BrowserCarryoverService:
             lines.append(
                 "- Key links: "
                 + "; ".join(
-                    f"{item['text']} -> {item['href']}" if item["text"] and item["href"] else item["text"] or item["href"]
+                    f"{item['text']} -> {item['href']}"
+                    if item["text"] and item["href"]
+                    else item["text"] or item["href"]
                     for item in links
                 )
             )

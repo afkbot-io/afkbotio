@@ -293,17 +293,20 @@ def _build_macos_profile(*, sandbox_roots: tuple[Path, ...]) -> str:
     read_roots = _macos_read_roots(sandbox_roots=sandbox_roots)
     write_roots = " ".join(f'(subpath "{_escape_sbpl(str(root))}")' for root in sandbox_roots)
     read_entries = " ".join(f'(subpath "{_escape_sbpl(str(root))}")' for root in read_roots)
-    return "\n".join(
-        (
-            "(version 1)",
-            "(deny default)",
-            '(import "system.sb")',
-            "(allow process-exec)",
-            f"(allow file-read* {read_entries})",
-            f"(allow file-write* {write_roots} (subpath \"/tmp\"))",
-            "(deny network*)",
+    return (
+        "\n".join(
+            (
+                "(version 1)",
+                "(deny default)",
+                '(import "system.sb")',
+                "(allow process-exec)",
+                f"(allow file-read* {read_entries})",
+                f'(allow file-write* {write_roots} (subpath "/tmp"))',
+                "(deny network*)",
+            )
         )
-    ) + "\n"
+        + "\n"
+    )
 
 
 def _macos_read_roots(*, sandbox_roots: tuple[Path, ...]) -> tuple[Path, ...]:

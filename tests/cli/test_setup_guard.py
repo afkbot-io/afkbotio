@@ -30,8 +30,14 @@ def _isolate_doctor_runtime(monkeypatch: MonkeyPatch) -> None:
             {
                 "running": False,
                 "conflict": False,
-                "runtime": type("Endpoint", (), {"ok": False, "url": f"http://{host}:{runtime_port}/healthz"})(),
-                "api": type("Endpoint", (), {"ok": False, "url": f"http://{host}:{runtime_port + 1}/healthz"})(),
+                "runtime": type(
+                    "Endpoint", (), {"ok": False, "url": f"http://{host}:{runtime_port}/healthz"}
+                )(),
+                "api": type(
+                    "Endpoint",
+                    (),
+                    {"ok": False, "url": f"http://{host}:{runtime_port + 1}/healthz"},
+                )(),
             },
         )(),
     )
@@ -89,7 +95,9 @@ def test_cli_allows_browser_commands_before_setup(tmp_path: Path, monkeypatch: M
     assert payload["reason"] == "ready"
 
 
-def test_cli_allows_bootstrap_commands_before_setup(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_cli_allows_bootstrap_commands_before_setup(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Bootstrap prompt management should stay available before setup marker exists."""
 
     # Arrange

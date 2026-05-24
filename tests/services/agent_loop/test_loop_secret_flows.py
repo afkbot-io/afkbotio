@@ -152,7 +152,9 @@ async def test_run_turn_blocks_secret_input_when_chat_guard_enabled(tmp_path: Pa
     await engine.dispose()
 
 
-async def test_run_turn_blocks_secret_input_with_redacted_prefix_when_enabled(tmp_path: Path) -> None:
+async def test_run_turn_blocks_secret_input_with_redacted_prefix_when_enabled(
+    tmp_path: Path,
+) -> None:
     """Guard must block secret input even if message already contains [REDACTED]."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_secret_block_redacted.db")

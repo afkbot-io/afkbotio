@@ -289,9 +289,7 @@ def test_policy_engine_recurses_into_session_job_run_commands(tmp_path: Path) ->
             policy=policy,
             tool_name="session.job.run",
             params={
-                "jobs": [
-                    {"kind": "bash", "cmd": "echo ok && rm -rf /tmp", "cwd": str(allow_dir)}
-                ]
+                "jobs": [{"kind": "bash", "cmd": "echo ok && rm -rf /tmp", "cwd": str(allow_dir)}]
             },
         )
     with pytest.raises(
@@ -337,9 +335,7 @@ def test_policy_engine_requires_subagent_capability_for_session_job_run_subagent
             policy=policy,
             tool_name="session.job.run",
             params={
-                "jobs": [
-                    {"kind": "subagent", "prompt": "inspect", "subagent_name": "researcher"}
-                ]
+                "jobs": [{"kind": "subagent", "prompt": "inspect", "subagent_name": "researcher"}]
             },
         )
 

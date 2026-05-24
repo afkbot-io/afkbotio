@@ -67,7 +67,9 @@ class CredentialsRuntimeMixin:
 
         async def _op(repo: CredentialsRepository) -> str:
             await ensure_profile_exists(repo, profile_id=profile_id)
-            _, secret = await CredentialRuntimeResolver(repo).resolve_secret_plain_binding_for_app_tool(
+            _, secret = await CredentialRuntimeResolver(
+                repo
+            ).resolve_secret_plain_binding_for_app_tool(
                 profile_id=profile_id,
                 normalized_integration=normalized_integration,
                 normalized_tool_name=normalized_tool_name,
@@ -104,7 +106,9 @@ class CredentialsRuntimeMixin:
 
         async def _op(repo: CredentialsRepository) -> CredentialBindingMetadata:
             await ensure_profile_exists(repo, profile_id=profile_id)
-            binding, secret = await CredentialRuntimeResolver(repo).resolve_secret_plain_binding_for_app_tool(
+            binding, secret = await CredentialRuntimeResolver(
+                repo
+            ).resolve_secret_plain_binding_for_app_tool(
                 profile_id=profile_id,
                 normalized_integration=normalized_integration,
                 normalized_tool_name=normalized_tool_name,

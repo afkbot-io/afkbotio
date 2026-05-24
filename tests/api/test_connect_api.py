@@ -105,7 +105,11 @@ def test_connect_refresh_route_delegates_to_service(monkeypatch: MonkeyPatch) ->
     with TestClient(app) as client:
         response = client.post(
             "/v1/connect/refresh",
-            json={"refresh_token": "ref-1", "session_proof": "proof-1", "session_id": "desktop-session-2"},
+            json={
+                "refresh_token": "ref-1",
+                "session_proof": "proof-1",
+                "session_id": "desktop-session-2",
+            },
         )
 
     assert response.status_code == 200
@@ -129,7 +133,9 @@ def test_connect_revoke_route_delegates_to_service(monkeypatch: MonkeyPatch) -> 
     monkeypatch.setattr("afkbot.api.routes_connect.revoke_connect_session", _fake_revoke)
     app = create_app()
     with TestClient(app) as client:
-        response = client.post("/v1/connect/revoke", json={"refresh_token": "ref-1", "session_proof": "proof-1"})
+        response = client.post(
+            "/v1/connect/revoke", json={"refresh_token": "ref-1", "session_proof": "proof-1"}
+        )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
@@ -180,7 +186,9 @@ def test_connect_refresh_route_maps_issue_error_to_500(monkeypatch: MonkeyPatch)
     monkeypatch.setattr("afkbot.api.routes_connect.refresh_connect_access_token", _fake_refresh)
     app = create_app()
     with TestClient(app) as client:
-        response = client.post("/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"})
+        response = client.post(
+            "/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"}
+        )
 
     assert response.status_code == 500
     assert response.json() == {
@@ -213,7 +221,9 @@ def test_connect_refresh_route_maps_session_profile_mismatch_to_conflict(
     monkeypatch.setattr("afkbot.api.routes_connect.refresh_connect_access_token", _fake_refresh)
     app = create_app()
     with TestClient(app) as client:
-        response = client.post("/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"})
+        response = client.post(
+            "/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"}
+        )
 
     assert response.status_code == 409
     assert response.json() == {
@@ -270,7 +280,9 @@ def test_connect_refresh_route_maps_rate_limit_to_429(monkeypatch: MonkeyPatch) 
     monkeypatch.setattr("afkbot.api.routes_connect.enforce_connect_rate_limit", _fake_limit)
     app = create_app()
     with TestClient(app) as client:
-        response = client.post("/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"})
+        response = client.post(
+            "/v1/connect/refresh", json={"refresh_token": "ref-1", "session_proof": "proof-1"}
+        )
 
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "7"

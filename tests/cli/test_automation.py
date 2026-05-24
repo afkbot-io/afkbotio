@@ -589,7 +589,10 @@ def test_automation_cli_graph_apply_rejects_invalid_task_and_action_specs(
     error_payload = json.loads(apply_result.stdout)
     assert error_payload["ok"] is False
     assert error_payload["error_code"] == "invalid_graph_spec"
-    assert "task.create node `create_task` requires config.title or config.title_path" in error_payload["reason"]
+    assert (
+        "task.create node `create_task` requires config.title or config.title_path"
+        in error_payload["reason"]
+    )
     assert "action app.run node `call_app` requires config.action" in error_payload["reason"]
 
 
@@ -666,7 +669,10 @@ def test_automation_cli_graph_apply_rejects_task_session_binding_overrides(
     error_payload = json.loads(apply_result.stdout)
     assert error_payload["ok"] is False
     assert error_payload["error_code"] == "invalid_graph_spec"
-    assert "task.create node `create_task` does not support config.session_id" in error_payload["reason"]
+    assert (
+        "task.create node `create_task` does not support config.session_id"
+        in error_payload["reason"]
+    )
 
 
 def test_automation_cli_graph_apply_rejects_blocked_tool_run_specs(
@@ -738,7 +744,10 @@ def test_automation_cli_graph_apply_rejects_blocked_tool_run_specs(
     error_payload = json.loads(apply_result.stdout)
     assert error_payload["ok"] is False
     assert error_payload["error_code"] == "invalid_graph_spec"
-    assert "action tool.run node `call_tool` supports only curated automation data-plane tools" in error_payload["reason"]
+    assert (
+        "action tool.run node `call_tool` supports only curated automation data-plane tools"
+        in error_payload["reason"]
+    )
     assert "subagent.profile.get" in error_payload["reason"]
 
 
@@ -804,7 +813,10 @@ def test_automation_cli_graph_apply_rejects_tool_run_app_run(
     error_payload = json.loads(apply_result.stdout)
     assert error_payload["ok"] is False
     assert error_payload["error_code"] == "invalid_graph_spec"
-    assert "does not allow tool `app.run`; use dedicated node_type `app.run` instead" in error_payload["reason"]
+    assert (
+        "does not allow tool `app.run`; use dedicated node_type `app.run` instead"
+        in error_payload["reason"]
+    )
 
 
 def test_automation_cli_rejects_unimplemented_branch_error_only_mode(

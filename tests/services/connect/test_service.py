@@ -184,7 +184,9 @@ async def test_connect_claim_rejects_expired_token(
     try:
         async with session_scope(factory) as db:
             await db.execute(
-                update(ConnectClaimToken).values(expires_at=datetime.now(tz=UTC) - timedelta(seconds=1))
+                update(ConnectClaimToken).values(
+                    expires_at=datetime.now(tz=UTC) - timedelta(seconds=1)
+                )
             )
     finally:
         await engine.dispose()

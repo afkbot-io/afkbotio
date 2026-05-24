@@ -97,7 +97,9 @@ def render_diff_bundle(
     )
 
 
-def _estimate_changed_line_counts(*, before_lines: list[str], after_lines: list[str]) -> tuple[int, int]:
+def _estimate_changed_line_counts(
+    *, before_lines: list[str], after_lines: list[str]
+) -> tuple[int, int]:
     """Estimate added and removed lines when unified output was not requested."""
 
     added_lines = 0

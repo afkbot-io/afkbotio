@@ -188,6 +188,18 @@ ownership model as the detached runtime: normal work is assigned by task owner,
 review work is assigned by reviewer when present, and active claimed/running work
 stays visible to the persisted claim owner.
 
+For AI-team operation, the profile AI executor acts as the Team Orchestrator for
+that profile backlog. The orchestrator owns decomposition, project documents,
+dependencies, assignments, review routing, and final flow readiness checks.
+Packaged starter subagents such as `backend-engineer`, `frontend-engineer`,
+`qa-engineer`, `reviewer`, `docs-writer`, and `devops` act as focused employees
+that claim only their assigned Task Flow work and leave durable handoff notes.
+By default a profile backlog only accepts AI profile ownership for its own
+orchestrator. Add teammate profile ids through the Task Flow team roster config
+when this orchestrator is allowed to delegate work to other AI profiles. Upgrade
+checks materialize rosters from existing cross-profile Task Flow rows before the
+strict roster enforcement takes effect.
+
 ### Create an automation
 
 Automations run prompts on a schedule or from a webhook. They are executed by the

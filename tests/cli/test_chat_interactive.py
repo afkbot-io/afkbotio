@@ -28,7 +28,9 @@ class _PromptStub:
         raise AssertionError("prompt should not be used in progress rendering tests")
 
 
-def _make_chat_ux(*, spinner_enabled: bool, tool_panel_frame_interval_sec: float = 0.12) -> InteractiveChatUX:
+def _make_chat_ux(
+    *, spinner_enabled: bool, tool_panel_frame_interval_sec: float = 0.12
+) -> InteractiveChatUX:
     return InteractiveChatUX(
         _prompt=cast(PromptSession[str], _PromptStub()),
         _spinner_enabled=spinner_enabled,
@@ -115,7 +117,9 @@ def test_interactive_chat_keeps_one_live_tool_panel_with_latest_ten_lines(monkey
 
     # Assert
     assert ux._active_tool_status_line == "[iter 1] [#1] ● tool running: bash.exec"
-    assert ux._active_tool_detail_lines == tuple(f"stdout | line-{index:02d}" for index in range(3, 13))
+    assert ux._active_tool_detail_lines == tuple(
+        f"stdout | line-{index:02d}" for index in range(3, 13)
+    )
     assert "\033[2K" in output_after_first_progress
     assert stream.getvalue() == output_after_first_progress
     ux.stop_progress()

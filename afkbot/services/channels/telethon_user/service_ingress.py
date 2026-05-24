@@ -34,7 +34,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from afkbot.services.channel_routing.runtime_target import RuntimeTarget
-    from afkbot.services.channels.telethon_user.service import TelethonUserService, _QueuedInboundEvent
+    from afkbot.services.channels.telethon_user.service import (
+        TelethonUserService,
+        _QueuedInboundEvent,
+    )
 
 
 async def worker_loop(service: TelethonUserService) -> None:
@@ -219,13 +222,17 @@ async def handle_ingress_batch_error(
     )
 
 
-async def persist_pending_ingress_event(service: TelethonUserService, event: ChannelIngressEvent) -> bool:
+async def persist_pending_ingress_event(
+    service: TelethonUserService, event: ChannelIngressEvent
+) -> bool:
     """Persist one ingress event to pending storage."""
 
     return await get_channel_ingress_pending_service(service._settings).record_pending(event=event)
 
 
-async def release_pending_ingress_batch(service: TelethonUserService, batch: ChannelIngressBatch) -> None:
+async def release_pending_ingress_batch(
+    service: TelethonUserService, batch: ChannelIngressBatch
+) -> None:
     """Release one persisted ingress batch from pending storage."""
 
     await get_channel_ingress_pending_service(service._settings).release_batch(batch=batch)
@@ -267,7 +274,9 @@ async def spill_overflow_event(service: TelethonUserService, item: _QueuedInboun
     )
 
 
-async def schedule_pending_ingress_retry(service: TelethonUserService, *, retry_after_sec: int) -> None:
+async def schedule_pending_ingress_retry(
+    service: TelethonUserService, *, retry_after_sec: int
+) -> None:
     """Schedule a deferred flush for persisted pending ingress events."""
 
     delay_sec = max(1, int(retry_after_sec))
@@ -335,7 +344,9 @@ async def retry_pending_ingress_after_deadline(
                     service._ingress_retry_deadline = None
 
 
-def to_ingress_event(service: TelethonUserService, item: _QueuedInboundEvent) -> ChannelIngressEvent:
+def to_ingress_event(
+    service: TelethonUserService, item: _QueuedInboundEvent
+) -> ChannelIngressEvent:
     """Translate one queued item into a normalized ingress event."""
 
     observed_at = getattr(item, "observed_at", None)
@@ -528,7 +539,13 @@ def _build_telethon_buttons(reply_markup: dict[str, object] | None) -> object | 
                 continue
             rendered_row = []
             for button in row:
-                text = button if isinstance(button, str) else button.get("text") if isinstance(button, dict) else None
+                text = (
+                    button
+                    if isinstance(button, str)
+                    else button.get("text")
+                    if isinstance(button, dict)
+                    else None
+                )
                 if isinstance(text, str) and text.strip():
                     rendered_row.append(Button.text(text.strip()))
             if rendered_row:
@@ -552,10 +569,14 @@ def _build_telethon_inline_button(button_factory: Any, payload: object) -> objec
         return cast(object, button_factory.url(label, url.strip()))
     switch_current = payload.get("switch_inline_query_current_chat")
     if isinstance(switch_current, str):
-        return cast(object, button_factory.switch_inline(label, query=switch_current, same_peer=True))
+        return cast(
+            object, button_factory.switch_inline(label, query=switch_current, same_peer=True)
+        )
     switch_query = payload.get("switch_inline_query")
     if isinstance(switch_query, str):
-        return cast(object, button_factory.switch_inline(label, query=switch_query, same_peer=False))
+        return cast(
+            object, button_factory.switch_inline(label, query=switch_query, same_peer=False)
+        )
     return cast(object, button_factory.inline(label, data=label.encode("utf-8")))
 
 

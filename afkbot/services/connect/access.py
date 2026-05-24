@@ -63,10 +63,7 @@ async def validate_connect_access_token(
                 error_code="connect_access_token_invalid",
                 reason="Access token refresh session is missing.",
             )
-        if (
-            refresh_row.profile_id != row.profile_id
-            or refresh_row.base_url != row.base_url
-        ):
+        if refresh_row.profile_id != row.profile_id or refresh_row.base_url != row.base_url:
             raise ConnectServiceError(
                 error_code="connect_access_token_invalid",
                 reason="Access token scope does not match refresh session.",

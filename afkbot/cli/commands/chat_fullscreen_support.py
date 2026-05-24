@@ -59,7 +59,8 @@ def build_workspace_turn_options(
     present_plan: PlanPresentationFn,
     confirm_space_fn: Callable[..., bool | Coroutine[Any, Any, bool]] | None = None,
     tool_not_allowed_prompt_fn: Callable[..., str | Coroutine[Any, Any, str]] | None = None,
-    credential_profile_prompt_fn: Callable[..., str | None | Coroutine[Any, Any, str | None]] | None = None,
+    credential_profile_prompt_fn: Callable[..., str | None | Coroutine[Any, Any, str | None]]
+    | None = None,
 ) -> ChatTurnInteractiveOptions:
     """Attach only the workspace callbacks that differ from the default REPL wiring."""
 
@@ -74,15 +75,9 @@ def build_workspace_turn_options(
         interactive_confirm=turn_options.interactive_confirm,
         prompt_to_plan_first=turn_options.prompt_to_plan_first,
         confirm_plan_execution=turn_options.confirm_plan_execution,
-        present_plan=(
-            present_plan
-            if state.planning_mode == "on"
-            else turn_options.present_plan
-        ),
+        present_plan=(present_plan if state.planning_mode == "on" else turn_options.present_plan),
         confirm_space_fn=(
-            confirm_space_fn
-            if confirm_space_fn is not None
-            else turn_options.confirm_space_fn
+            confirm_space_fn if confirm_space_fn is not None else turn_options.confirm_space_fn
         ),
         tool_not_allowed_prompt_fn=(
             tool_not_allowed_prompt_fn

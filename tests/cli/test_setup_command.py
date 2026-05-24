@@ -296,7 +296,9 @@ def test_setup_cli_bootstrap_only_persists_installer_source_metadata(
     assert payload["ok"] is True
     config = read_runtime_config(get_settings())
     assert config["install_source_mode"] == "archive"
-    assert config["install_source_spec"] == "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+    assert (
+        config["install_source_spec"] == "https://github.com/afkbot-io/afkbotio/archive/main.tar.gz"
+    )
 
 
 def test_setup_cli_bootstrap_only_persists_resolved_installer_target(

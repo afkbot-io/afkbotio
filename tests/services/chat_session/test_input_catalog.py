@@ -25,7 +25,9 @@ class _ServerRecord:
 
 
 class _FakeSkillService:
-    async def list(self, *, profile_id: str, scope: str, include_unavailable: bool) -> list[_NamedRecord]:
+    async def list(
+        self, *, profile_id: str, scope: str, include_unavailable: bool
+    ) -> list[_NamedRecord]:
         _ = profile_id, scope, include_unavailable
         return [
             _NamedRecord(name="security-secrets", available=True),
@@ -34,7 +36,9 @@ class _FakeSkillService:
 
 
 class _BrokenSkillService:
-    async def list(self, *, profile_id: str, scope: str, include_unavailable: bool) -> list[_NamedRecord]:
+    async def list(
+        self, *, profile_id: str, scope: str, include_unavailable: bool
+    ) -> list[_NamedRecord]:
         _ = profile_id, scope, include_unavailable
         raise RuntimeError("skills offline")
 
@@ -83,9 +87,7 @@ class _FakeRuntimeMCPCatalog:
 
     def list_cached_tools(self, *, profile_id: str) -> tuple[object, ...]:
         _ = profile_id
-        return (
-            type("_Descriptor", (), {"runtime_name": "mcp.alpha.search"})(),
-        )
+        return (type("_Descriptor", (), {"runtime_name": "mcp.alpha.search"})(),)
 
     def schedule_refresh(self, *, profile_id: str, timeout_sec: int | None = None) -> None:
         _ = timeout_sec

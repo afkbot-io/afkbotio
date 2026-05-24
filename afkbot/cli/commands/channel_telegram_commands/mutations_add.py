@@ -119,7 +119,8 @@ def run_telegram_add(
             credential_profile_key=credential_profile_key,
             account_id=account_id,
             enabled=enabled,
-            tool_profile=tool_profile or (channel_scenario.tool_profile if channel_scenario else None),
+            tool_profile=tool_profile
+            or (channel_scenario.tool_profile if channel_scenario else None),
             create_binding=create_binding,
             session_policy=session_policy,
             binding_session_policy_default=binding_session_policy_default,
@@ -128,7 +129,8 @@ def run_telegram_add(
         )
         resolved_group_trigger_mode = normalize_telegram_group_trigger_mode(
             resolve_channel_choice(
-                value=group_trigger_mode or (channel_scenario.trigger_mode if channel_scenario else None),
+                value=group_trigger_mode
+                or (channel_scenario.trigger_mode if channel_scenario else None),
                 interactive=interactive,
                 prompt_en="Telegram group trigger mode",
                 prompt_ru="Режим триггера для Telegram групп",
@@ -148,9 +150,11 @@ def run_telegram_add(
         access_policy = collect_channel_access_policy_inputs(
             interactive=interactive,
             lang=prompt_language,
-            private_policy=private_policy or (channel_scenario.private_policy if channel_scenario else None),
+            private_policy=private_policy
+            or (channel_scenario.private_policy if channel_scenario else None),
             allow_from=allow_from,
-            group_policy=group_policy or (channel_scenario.group_policy if channel_scenario else None),
+            group_policy=group_policy
+            or (channel_scenario.group_policy if channel_scenario else None),
             groups=groups,
             group_allow_from=group_allow_from,
             outbound_allow_to=outbound_allow_to,

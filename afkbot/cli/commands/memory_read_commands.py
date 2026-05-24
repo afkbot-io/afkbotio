@@ -47,21 +47,37 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             "--binding-id",
             help="Resolve a concrete chat scope from one persisted channel binding id.",
         ),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
         visibility: MemoryVisibility | None = typer.Option(
             None,
             "--visibility",
             help="Optional visibility filter: local or promoted_global.",
         ),
-        memory_kind: list[str] = typer.Option([], "--memory-kind", help="Repeatable semantic kind filter."),
-        source_kind: list[str] = typer.Option([], "--source-kind", help="Repeatable source-kind filter."),
+        memory_kind: list[str] = typer.Option(
+            [], "--memory-kind", help="Repeatable semantic kind filter."
+        ),
+        source_kind: list[str] = typer.Option(
+            [], "--source-kind", help="Repeatable source-kind filter."
+        ),
         limit: int = typer.Option(50, "--limit", min=1, help="Maximum items to list."),
-        json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+        json_output: bool = typer.Option(
+            False, "--json", help="Emit machine-readable JSON output."
+        ),
     ) -> None:
         """List memory items filtered by profile and optional scope."""
 
@@ -95,7 +111,12 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                 memory_kinds=normalize_memory_kinds(memory_kind),
                 source_kinds=normalize_source_kinds(source_kind),
             )
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
 
@@ -117,7 +138,9 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
 
     @memory_app.command("profiles")
     def list_memory_profiles(
-        json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+        json_output: bool = typer.Option(
+            False, "--json", help="Emit machine-readable JSON output."
+        ),
     ) -> None:
         """List profile ids that currently own persisted memory rows."""
 
@@ -144,13 +167,25 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Target scope: auto, profile, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
     ) -> None:
         """Show one memory item by logical key and scope."""
 
@@ -178,7 +213,12 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                     scope=resolved_scope,
                 ),
             )
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -201,13 +241,25 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Target scope: auto, profile, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
         include_global: bool = typer.Option(
             False,
             "--include-global",
@@ -219,10 +271,16 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             min=1,
             help="Maximum promoted_global fallback hits when --include-global is enabled.",
         ),
-        memory_kind: list[str] = typer.Option([], "--memory-kind", help="Repeatable semantic kind filter."),
-        source_kind: list[str] = typer.Option([], "--source-kind", help="Repeatable source-kind filter."),
+        memory_kind: list[str] = typer.Option(
+            [], "--memory-kind", help="Repeatable semantic kind filter."
+        ),
+        source_kind: list[str] = typer.Option(
+            [], "--source-kind", help="Repeatable source-kind filter."
+        ),
         limit: int = typer.Option(5, "--limit", min=1, help="Maximum local hits to return."),
-        json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+        json_output: bool = typer.Option(
+            False, "--json", help="Emit machine-readable JSON output."
+        ),
     ) -> None:
         """Search scoped memory items by semantic similarity."""
 
@@ -259,7 +317,12 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                 ),
             )
             payload_items = serialize_memory_items(items)
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
 
@@ -287,13 +350,25 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             "--scope",
             help="Target scope: auto, profile, chat, thread, or user_in_chat.",
         ),
-        binding_id: str | None = typer.Option(None, "--binding-id", help="Resolve scope from one binding id."),
-        transport: str | None = typer.Option(None, "--transport", help="Explicit transport selector."),
-        account_id: str | None = typer.Option(None, "--account-id", help="Explicit account selector."),
-        peer_id: str | None = typer.Option(None, "--peer-id", help="Explicit chat/dialog selector."),
-        thread_id: str | None = typer.Option(None, "--thread-id", help="Explicit topic/thread selector."),
+        binding_id: str | None = typer.Option(
+            None, "--binding-id", help="Resolve scope from one binding id."
+        ),
+        transport: str | None = typer.Option(
+            None, "--transport", help="Explicit transport selector."
+        ),
+        account_id: str | None = typer.Option(
+            None, "--account-id", help="Explicit account selector."
+        ),
+        peer_id: str | None = typer.Option(
+            None, "--peer-id", help="Explicit chat/dialog selector."
+        ),
+        thread_id: str | None = typer.Option(
+            None, "--thread-id", help="Explicit topic/thread selector."
+        ),
         user_id: str | None = typer.Option(None, "--user-id", help="Explicit sender selector."),
-        session_id: str | None = typer.Option(None, "--session-id", help="Optional logical session id."),
+        session_id: str | None = typer.Option(
+            None, "--session-id", help="Optional logical session id."
+        ),
         include_global: bool = typer.Option(
             False,
             "--include-global",
@@ -305,10 +380,16 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             min=1,
             help="Maximum promoted_global fallback items when --include-global is enabled.",
         ),
-        memory_kind: list[str] = typer.Option([], "--memory-kind", help="Repeatable semantic kind filter."),
-        source_kind: list[str] = typer.Option([], "--source-kind", help="Repeatable source-kind filter."),
+        memory_kind: list[str] = typer.Option(
+            [], "--memory-kind", help="Repeatable semantic kind filter."
+        ),
+        source_kind: list[str] = typer.Option(
+            [], "--source-kind", help="Repeatable source-kind filter."
+        ),
         limit: int = typer.Option(20, "--limit", min=1, help="Maximum local items to include."),
-        json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+        json_output: bool = typer.Option(
+            False, "--json", help="Emit machine-readable JSON output."
+        ),
     ) -> None:
         """Render a deterministic digest of one scoped memory view."""
 
@@ -330,6 +411,7 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
             )
             memory_kinds = normalize_memory_kinds(memory_kind)
             source_kinds = normalize_source_kinds(source_kind)
+
             async def _load_digest_items(
                 service: MemoryService,
             ) -> tuple[list[MemoryItemMetadata], list[MemoryItemMetadata]]:
@@ -365,7 +447,12 @@ def register_memory_read_commands(memory_app: typer.Typer) -> None:
                 local_items=local_items,
                 global_items=global_items,
             )
-        except (InvalidProfileIdError, MemoryScopeResolutionError, MemoryServiceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            MemoryScopeResolutionError,
+            MemoryServiceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="memory_error")
             raise typer.Exit(code=1) from None
 

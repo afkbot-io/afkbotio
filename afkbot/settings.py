@@ -284,7 +284,6 @@ class Settings(BaseSettings):
     taskflow_runtime_profile_id: str | None = None
     taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = False
-    taskflow_strict_team_profile_ids: bool = False
     taskflow_blocked_revisit_initial_sec: int = 7200
     taskflow_blocked_revisit_max_sec: int = 86400
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND

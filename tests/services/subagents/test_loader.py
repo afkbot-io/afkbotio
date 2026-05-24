@@ -48,6 +48,34 @@ async def test_loader_uses_default_researcher(tmp_path: Path) -> None:
     assert info.name == "researcher"
 
 
+async def test_loader_exposes_core_ai_team_templates() -> None:
+    """Packaged core subagents should provide production AI-team starter roles."""
+
+    reset_subagent_loader_caches()
+    repo_root = Path(__file__).resolve().parents[3]
+    loader = SubagentLoader(Settings(root_dir=repo_root))
+
+    items = await loader.list_subagents("default")
+    names = {item.name for item in items}
+
+    assert {
+        "architect",
+        "backend-engineer",
+        "devops",
+        "docs-writer",
+        "frontend-engineer",
+        "qa-engineer",
+        "reviewer",
+    }.issubset(names)
+    assert "orchestrator" not in names
+
+    backend_prompt = await loader.load_subagent_markdown("backend-engineer", "default")
+    assert "task.context.get" in backend_prompt
+    assert "task.doc.put" in backend_prompt
+    assert "task.comment.add" in backend_prompt
+    assert "handoff" in backend_prompt.lower()
+
+
 async def test_loader_rejects_invalid_profile_id(tmp_path: Path) -> None:
     """Traversal-like profile ids must be rejected."""
 

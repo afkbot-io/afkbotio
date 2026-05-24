@@ -115,7 +115,9 @@ async def capture_browser_page_snapshot(
         "links": normalize_snapshot_link_list(normalized.get("links"), limit=12),
         "forms": normalize_snapshot_form_list(normalized.get("forms"), limit=4),
         "images": normalize_snapshot_image_list(normalized.get("images"), limit=8),
-        "interactives": normalize_snapshot_interactive_list(normalized.get("interactives"), limit=20),
+        "interactives": normalize_snapshot_interactive_list(
+            normalized.get("interactives"), limit=20
+        ),
     }
 
 

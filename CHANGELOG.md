@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.9.0] - 2026-05-24
+
+### Added
+
+- Added Task Flow AI-team prompt guidance with the profile AI as the single
+  orchestrator, plus packaged starter subagents for architecture, backend,
+  frontend, QA, review, docs, and DevOps workflows.
+- Added strict default Task Flow team ownership so a profile backlog only accepts
+  its own AI orchestrator unless teammate profile ids are configured.
+- Added dedicated Task Flow team roster storage and an upgrade step that
+  materializes existing cross-profile Task Flow participants into explicit
+  rosters before strict enforcement.
+- Release metadata and lockfile package metadata are aligned to `1.9.0`.
 
 ## [1.8.14] - 2026-05-21
 

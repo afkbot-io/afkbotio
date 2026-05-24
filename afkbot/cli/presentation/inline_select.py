@@ -487,10 +487,11 @@ def select_multi_option_dialog(
 
 _MULTI_HINT_TEXT: Final[str] = "↑/↓ move, Space toggle, A all/none, Enter confirm, Esc cancel"
 
-_TEXT_PROMPT_HINT: Final[str] = "Enter option number or value. Blank confirms the default. Type q to cancel."
+_TEXT_PROMPT_HINT: Final[str] = (
+    "Enter option number or value. Blank confirms the default. Type q to cancel."
+)
 _TEXT_MULTI_PROMPT_HINT: Final[str] = (
-    "Enter comma-separated option numbers or values. Blank keeps defaults. "
-    "Type all, none, or q."
+    "Enter comma-separated option numbers or values. Blank keeps defaults. Type all, none, or q."
 )
 
 

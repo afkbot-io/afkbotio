@@ -314,7 +314,9 @@ def install_browser_runtime(
             return BrowserRuntimeInstallResult(
                 ok=False,
                 error_code="browser_package_install_failed",
-                reason=_command_failure_reason(package_result, fallback="Failed to install Playwright package"),
+                reason=_command_failure_reason(
+                    package_result, fallback="Failed to install Playwright package"
+                ),
                 package_installed=False,
                 browser_installed=False,
                 backend=backend,
@@ -505,7 +507,14 @@ def _browser_install_commands() -> list[list[str]]:
     base = [sys.executable, "-m", "playwright", "install", _PLAYWRIGHT_BROWSER_NAME]
     if not _is_linux():
         return [base]
-    with_deps = [sys.executable, "-m", "playwright", "install", "--with-deps", _PLAYWRIGHT_BROWSER_NAME]
+    with_deps = [
+        sys.executable,
+        "-m",
+        "playwright",
+        "install",
+        "--with-deps",
+        _PLAYWRIGHT_BROWSER_NAME,
+    ]
     return [with_deps, base]
 
 

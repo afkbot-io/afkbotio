@@ -172,7 +172,9 @@ class LLMToolFollowupPolicy:
             app_name = str(tool_call.params.get("app_name") or "").strip().lower()
             if not app_name:
                 continue
-            app_definition = self._tool_skill_resolver.app_registry(profile_id=profile_id).get(app_name)
+            app_definition = self._tool_skill_resolver.app_registry(profile_id=profile_id).get(
+                app_name
+            )
             if app_definition is None:
                 continue
             missing_slugs = self._missing_required_credentials(

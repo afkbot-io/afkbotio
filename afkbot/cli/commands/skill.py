@@ -10,7 +10,10 @@ from typing import Literal
 
 import typer
 
-from afkbot.cli.commands.runtime_assets_common import emit_structured_error, resolve_inline_or_file_text
+from afkbot.cli.commands.runtime_assets_common import (
+    emit_structured_error,
+    resolve_inline_or_file_text,
+)
 from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.profile_runtime.service import ProfileServiceError, run_profile_service_sync
 from afkbot.services.skills import get_skill_doctor_service
@@ -41,7 +44,9 @@ def register(app: typer.Typer) -> None:
     @skill_app.command("list")
     def list_skills(
         profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        scope: SkillScope = typer.Option("all", "--scope", help="Visible scope: all, profile, core."),
+        scope: SkillScope = typer.Option(
+            "all", "--scope", help="Visible scope: all, profile, core."
+        ),
         include_unavailable: bool = typer.Option(
             False,
             "--include-unavailable",
@@ -61,7 +66,13 @@ def register(app: typer.Typer) -> None:
                     include_unavailable=include_unavailable,
                 )
             )
-        except (InvalidProfileIdError, ProfileServiceError, SkillMarketplaceError, FileNotFoundError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            ProfileServiceError,
+            SkillMarketplaceError,
+            FileNotFoundError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="skill_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -75,7 +86,9 @@ def register(app: typer.Typer) -> None:
     def show_skill(
         name: str = typer.Argument(..., help="Skill name."),
         profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        scope: SkillScope = typer.Option("all", "--scope", help="Visible scope: all, profile, core."),
+        scope: SkillScope = typer.Option(
+            "all", "--scope", help="Visible scope: all, profile, core."
+        ),
     ) -> None:
         """Show one skill markdown and metadata."""
 
@@ -276,7 +289,12 @@ def register(app: typer.Typer) -> None:
                     profile_id=normalized_profile_id,
                 )
             )
-        except (InvalidProfileIdError, ProfileServiceError, SkillMarketplaceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            ProfileServiceError,
+            SkillMarketplaceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="skill_marketplace_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -286,10 +304,7 @@ def register(app: typer.Typer) -> None:
                     "resolved_source": listing.source,
                     "profile": normalized_profile_id,
                     "source_stats": marketplace_source_stats_to_payload(listing.source_stats),
-                    "skills": [
-                        marketplace_list_item_to_payload(item)
-                        for item in listing.items
-                    ],
+                    "skills": [marketplace_list_item_to_payload(item) for item in listing.items],
                 },
                 ensure_ascii=True,
             )
@@ -297,7 +312,9 @@ def register(app: typer.Typer) -> None:
 
     @marketplace_app.command("search")
     def search_marketplace(
-        query: str = typer.Argument(..., help="Free-text query to match skill names and summaries."),
+        query: str = typer.Argument(
+            ..., help="Free-text query to match skill names and summaries."
+        ),
         source: str = typer.Option(
             "default",
             "--source",
@@ -324,7 +341,12 @@ def register(app: typer.Typer) -> None:
                     profile_id=normalized_profile_id,
                 )
             )
-        except (InvalidProfileIdError, ProfileServiceError, SkillMarketplaceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            ProfileServiceError,
+            SkillMarketplaceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="skill_marketplace_error")
             raise typer.Exit(code=1) from None
         typer.echo(
@@ -335,10 +357,7 @@ def register(app: typer.Typer) -> None:
                     "query": query,
                     "profile": normalized_profile_id,
                     "source_stats": marketplace_source_stats_to_payload(listing.source_stats),
-                    "skills": [
-                        marketplace_list_item_to_payload(item)
-                        for item in listing.items
-                    ],
+                    "skills": [marketplace_list_item_to_payload(item) for item in listing.items],
                 },
                 ensure_ascii=True,
             )
@@ -351,7 +370,9 @@ def register(app: typer.Typer) -> None:
             help="Marketplace source spec or URL. Use `default` for the curated default source.",
         ),
         profile_id: str = typer.Option("default", "--profile", help="Runtime profile id."),
-        skill: str | None = typer.Option(None, "--skill", help="Specific skill name for repo sources."),
+        skill: str | None = typer.Option(
+            None, "--skill", help="Specific skill name for repo sources."
+        ),
         target_name: str | None = typer.Option(
             None,
             "--target-name",
@@ -378,7 +399,12 @@ def register(app: typer.Typer) -> None:
                     overwrite=overwrite,
                 )
             )
-        except (InvalidProfileIdError, ProfileServiceError, SkillMarketplaceError, ValueError) as exc:
+        except (
+            InvalidProfileIdError,
+            ProfileServiceError,
+            SkillMarketplaceError,
+            ValueError,
+        ) as exc:
             emit_structured_error(exc, default_error_code="skill_marketplace_error")
             raise typer.Exit(code=1) from None
         typer.echo(

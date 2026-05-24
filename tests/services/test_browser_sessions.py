@@ -142,12 +142,15 @@ async def test_browser_session_manager_closes_idle_sessions(tmp_path: Path) -> N
     assert handle.page.closed is True
     assert handle.browser.closed is True
     assert handle.playwright.stopped is True
-    assert await manager.get(
-        root_dir=tmp_path,
-        profile_id="default",
-        session_id="s-idle",
-        idle_ttl_sec=600,
-    ) is None
+    assert (
+        await manager.get(
+            root_dir=tmp_path,
+            profile_id="default",
+            session_id="s-idle",
+            idle_ttl_sec=600,
+        )
+        is None
+    )
 
 
 async def test_browser_session_manager_recreates_closed_page_handle(tmp_path: Path) -> None:
@@ -225,7 +228,9 @@ async def test_browser_session_manager_prunes_session_lock_after_close(tmp_path:
     assert key not in manager._session_locks
 
 
-async def test_browser_session_manager_prunes_miss_lock_without_persisted_state(tmp_path: Path) -> None:
+async def test_browser_session_manager_prunes_miss_lock_without_persisted_state(
+    tmp_path: Path,
+) -> None:
     """Miss-path lookups should not keep per-session locks alive without a live handle or state file."""
 
     manager = get_browser_session_manager()
@@ -251,7 +256,9 @@ async def test_browser_session_manager_prunes_miss_lock_without_persisted_state(
     assert key not in manager._session_locks
 
 
-async def test_browser_session_manager_prunes_lock_after_persisted_only_cleanup(tmp_path: Path) -> None:
+async def test_browser_session_manager_prunes_lock_after_persisted_only_cleanup(
+    tmp_path: Path,
+) -> None:
     """Persisted-state-only cleanup should delete the file and release the per-session lock."""
 
     manager = get_browser_session_manager()
@@ -277,7 +284,9 @@ async def test_browser_session_manager_prunes_lock_after_persisted_only_cleanup(
     assert key not in manager._session_locks
 
 
-async def test_browser_session_manager_get_without_touch_keeps_idle_timestamp(tmp_path: Path) -> None:
+async def test_browser_session_manager_get_without_touch_keeps_idle_timestamp(
+    tmp_path: Path,
+) -> None:
     """Read-only lookups should not extend browser session lifetime."""
 
     manager = get_browser_session_manager()
@@ -311,7 +320,9 @@ async def test_browser_session_manager_get_without_touch_keeps_idle_timestamp(tm
     await manager.close_all_for_root(root_dir=tmp_path)
 
 
-async def test_browser_session_manager_touch_invalidates_live_carryover_cache(tmp_path: Path) -> None:
+async def test_browser_session_manager_touch_invalidates_live_carryover_cache(
+    tmp_path: Path,
+) -> None:
     """Interactive browser access should invalidate cached live carryover state."""
 
     manager = get_browser_session_manager()
@@ -349,7 +360,9 @@ async def test_browser_session_manager_touch_invalidates_live_carryover_cache(tm
     await manager.close_all_for_root(root_dir=tmp_path)
 
 
-async def test_browser_session_manager_enforces_idle_ttl_without_global_sweep(tmp_path: Path) -> None:
+async def test_browser_session_manager_enforces_idle_ttl_without_global_sweep(
+    tmp_path: Path,
+) -> None:
     """Local get/open checks should expire stale sessions even when throttled cleanup skips sweeping."""
 
     manager = get_browser_session_manager()

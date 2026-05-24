@@ -24,9 +24,7 @@ def normalize_mcp_schema(raw_schema: object) -> dict[str, object]:
 
     if not isinstance(raw_schema, dict):
         return {"type": "object", "properties": {}, "additionalProperties": True}
-    normalized = {
-        str(key): _to_jsonable(value) for key, value in raw_schema.items()
-    }
+    normalized = {str(key): _to_jsonable(value) for key, value in raw_schema.items()}
     if normalized.get("type") != "object":
         normalized["type"] = "object"
     properties = normalized.get("properties")

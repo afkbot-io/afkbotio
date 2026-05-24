@@ -34,8 +34,7 @@ def first_execution_blocker(
             return ExecutionBlocker(
                 error_code=error_code,
                 message=(
-                    "The requested operation is blocked by the current profile policy."
-                    f"{details}"
+                    f"The requested operation is blocked by the current profile policy.{details}"
                 ),
             )
         if error_code == "tool_blocked_in_user_channel":

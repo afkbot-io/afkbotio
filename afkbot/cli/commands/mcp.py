@@ -120,9 +120,13 @@ def register(app: typer.Typer) -> None:
             if server is None:
                 resolved_server = prompt_mcp_server(default=resolved_server, lang=prompt_language)
             if transport is None:
-                resolved_transport = prompt_mcp_transport(default=resolved_transport, lang=prompt_language)
+                resolved_transport = prompt_mcp_transport(
+                    default=resolved_transport, lang=prompt_language
+                )
             if capability is None:
-                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities, lang=prompt_language)
+                resolved_capabilities = prompt_mcp_capabilities(
+                    defaults=resolved_capabilities, lang=prompt_language
+                )
             if env_ref is None:
                 resolved_env_refs = prompt_optional_refs(
                     label=msg(prompt_language, en="Environment refs", ru="Ссылки на environment"),
@@ -237,9 +241,7 @@ def register(app: typer.Typer) -> None:
                     f"No enabled MCP servers configured for profile `{profile_id}`. "
                     "Use `afk mcp list --show-disabled` to include disabled entries."
                 )
-            typer.echo(
-                f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}"
-            )
+            typer.echo(f"- boundary: {MCP_CONFIG_BOUNDARY_NOTE}")
             return
         for item in items:
             typer.echo(
@@ -485,9 +487,13 @@ def register(app: typer.Typer) -> None:
 
         if interactive and not yes:
             if transport is None:
-                resolved_transport = prompt_mcp_transport(default=resolved_transport, lang=prompt_language)
+                resolved_transport = prompt_mcp_transport(
+                    default=resolved_transport, lang=prompt_language
+                )
             if capability is None:
-                resolved_capabilities = prompt_mcp_capabilities(defaults=resolved_capabilities, lang=prompt_language)
+                resolved_capabilities = prompt_mcp_capabilities(
+                    defaults=resolved_capabilities, lang=prompt_language
+                )
             if env_ref is None:
                 resolved_env_refs = prompt_optional_refs(
                     label=msg(prompt_language, en="Environment refs", ru="Ссылки на environment"),

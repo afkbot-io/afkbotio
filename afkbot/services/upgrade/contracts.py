@@ -20,4 +20,3 @@ class UpgradeApplyReport:
 
     changed: bool
     steps: tuple[UpgradeStepReport, ...]
-

@@ -119,7 +119,9 @@ def _partyflow_endpoint(
     )
 
 
-def _legacy_partyflow_webhook_endpoint(endpoint_id: str, *, enabled: bool = True) -> ChannelEndpointConfig:
+def _legacy_partyflow_webhook_endpoint(
+    endpoint_id: str, *, enabled: bool = True
+) -> ChannelEndpointConfig:
     return ChannelEndpointConfig(
         endpoint_id=endpoint_id,
         transport="partyflow",

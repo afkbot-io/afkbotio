@@ -129,7 +129,9 @@ class TurnExecutionRuntime:
             if self._chat_secret_guard_enabled
             else None
         )
-        user_message = self._sanitize(user_guard.redacted_text) if user_guard is not None else raw_user_message
+        user_message = (
+            self._sanitize(user_guard.redacted_text) if user_guard is not None else raw_user_message
+        )
         normalized_planned_tool_calls = planned_tool_calls if planned_tool_calls else None
 
         try:
@@ -241,7 +243,9 @@ class TurnExecutionRuntime:
                     explicit_subagent_mentions=explicit_subagent_mentions,
                     available_tools=available_tools,
                     planned_tool_calls=normalized_planned_tool_calls,
-                    planning_mode="off" if effective_overrides is None else effective_overrides.planning_mode,
+                    planning_mode="off"
+                    if effective_overrides is None
+                    else effective_overrides.planning_mode,
                     chat_planning_mode=execution_planning_mode,
                     execution_planning_enabled=execution_planning_enabled,
                     thinking_level=thinking_config.thinking_level,
@@ -295,7 +299,9 @@ class TurnExecutionRuntime:
                     explicit_subagent_requests=explicit_subagent_mentions,
                     allow_confirmation_markers=True,
                     runtime_metadata=(
-                        None if effective_overrides is None else effective_overrides.runtime_metadata
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.runtime_metadata
                     ),
                     trusted_runtime_context=(
                         None
@@ -374,7 +380,9 @@ class TurnExecutionRuntime:
                     explicit_subagent_requests=explicit_subagent_mentions,
                     emit_planning_progress=public_planning_enabled,
                     runtime_metadata=(
-                        None if effective_overrides is None else effective_overrides.runtime_metadata
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.runtime_metadata
                     ),
                     trusted_runtime_context=(
                         None
@@ -382,7 +390,9 @@ class TurnExecutionRuntime:
                         else effective_overrides.trusted_runtime_context
                     ),
                     approved_tool_names=(
-                        None if effective_overrides is None else effective_overrides.approved_tool_names
+                        None
+                        if effective_overrides is None
+                        else effective_overrides.approved_tool_names
                     ),
                     channel_owned_tool_names=(
                         None
@@ -407,8 +417,7 @@ class TurnExecutionRuntime:
                     )
             else:
                 assistant_message = (
-                    "LLM provider is not configured. "
-                    "I could not execute this request."
+                    "LLM provider is not configured. I could not execute this request."
                 )
                 final_spec_patch = {"error_code": "llm_provider_not_configured"}
 

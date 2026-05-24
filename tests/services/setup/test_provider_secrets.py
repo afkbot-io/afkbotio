@@ -89,10 +89,14 @@ def test_openai_codex_interactive_prefers_detected_local_token_file(
         "afkbot.services.setup.provider_secrets.discover_local_openai_codex_access_token_file",
         lambda: FileBackedProviderToken(token="detected", path=auth_path),
     )
-    monkeypatch.setattr("afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets._prompt_hidden_credential_input",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("manual prompt should not be called")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("manual prompt should not be called")
+        ),
     )
 
     result = resolve_profile_provider_api_key(
@@ -119,19 +123,25 @@ def test_openai_codex_interactive_runs_codex_login_when_requested(
     """Interactive OpenAI Codex setup should store the refreshed Codex auth file reference."""
 
     auth_path = tmp_path / "auth.json"
-    discovered = iter([None, FileBackedProviderToken(token="fresh-from-codex-login", path=auth_path)])
+    discovered = iter(
+        [None, FileBackedProviderToken(token="fresh-from-codex-login", path=auth_path)]
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets.discover_local_openai_codex_access_token_file",
         lambda: next(discovered),
     )
-    monkeypatch.setattr("afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets._run_codex_login_and_load_token",
         lambda **kwargs: "fresh-from-codex-login",
     )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets._prompt_hidden_credential_input",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("manual prompt should not be called")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("manual prompt should not be called")
+        ),
     )
 
     result = resolve_profile_provider_api_key(
@@ -150,14 +160,18 @@ def test_openai_codex_interactive_runs_codex_login_when_requested(
     assert str(auth_path) not in capsys.readouterr().out
 
 
-def test_openai_codex_interactive_falls_back_to_manual_input_when_login_unavailable(monkeypatch) -> None:
+def test_openai_codex_interactive_falls_back_to_manual_input_when_login_unavailable(
+    monkeypatch,
+) -> None:
     """Interactive OpenAI Codex setup should fallback to hidden token prompt when login fails."""
 
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets.discover_local_openai_codex_access_token_file",
         lambda: None,
     )
-    monkeypatch.setattr("afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets._run_codex_login_and_load_token",
         lambda **kwargs: "",
@@ -202,7 +216,9 @@ def test_openai_codex_key_file_uses_file_backed_runtime_metadata(tmp_path: Path)
     }
 
 
-def test_openai_codex_current_file_source_does_not_fall_back_to_stale_secret(tmp_path: Path) -> None:
+def test_openai_codex_current_file_source_does_not_fall_back_to_stale_secret(
+    tmp_path: Path,
+) -> None:
     """Codex source=file should not reuse copied secrets when the file is unavailable."""
 
     result = resolve_profile_provider_api_key(
@@ -227,8 +243,12 @@ def test_openai_codex_current_file_source_does_not_fall_back_to_stale_secret(tmp
 def test_minimax_interactive_returns_oauth_metadata(monkeypatch) -> None:
     """MiniMax interactive OAuth flow should return refresh and expiry metadata."""
 
-    monkeypatch.setattr("afkbot.services.setup.provider_secrets._prompt_minimax_region", lambda **_: "cn")
-    monkeypatch.setattr("afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "afkbot.services.setup.provider_secrets._prompt_minimax_region", lambda **_: "cn"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.provider_secrets.prompt_confirm", lambda **kwargs: True
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.provider_secrets._run_minimax_portal_device_code_flow",
         lambda **kwargs: _MiniMaxPortalDeviceAuthResult(

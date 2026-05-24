@@ -12,7 +12,10 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.atomic_writes import atomic_text_write
 from afkbot.services.policy import get_profile_files_lock
 from afkbot.services.profile_id import validate_profile_id
-from afkbot.services.profile_runtime.contracts import ProfileBootstrapFileView, ProfileBootstrapRecord
+from afkbot.services.profile_runtime.contracts import (
+    ProfileBootstrapFileView,
+    ProfileBootstrapRecord,
+)
 from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_config_service
 from afkbot.services.profile_runtime.service import ProfileServiceError
 from afkbot.settings import Settings
@@ -66,7 +69,9 @@ class ProfileBootstrapService:
 
         return await self.write(profile_id=profile_id, file_name=name, content=content)
 
-    async def write(self, *, profile_id: str, file_name: str, content: str) -> ProfileBootstrapRecord:
+    async def write(
+        self, *, profile_id: str, file_name: str, content: str
+    ) -> ProfileBootstrapRecord:
         """Create or replace one profile bootstrap file."""
 
         normalized_profile_id = validate_profile_id(profile_id)
@@ -173,7 +178,6 @@ class ProfileBootstrapService:
             if parent == current:
                 return
             current = parent
-
 
 
 def get_profile_bootstrap_service(settings: Settings) -> ProfileBootstrapService:

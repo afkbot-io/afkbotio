@@ -24,7 +24,9 @@ def test_resolve_policy_setup_mode_uses_persisted_default_in_interactive(
         assert lang == PromptLanguage.EN
         return default
 
-    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_setup_mode", _fake_prompt)
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_setup_mode", _fake_prompt
+    )
 
     resolved = resolve_policy_setup_mode(
         interactive=True,
@@ -57,7 +59,9 @@ def test_resolve_policy_capabilities_uses_persisted_defaults_in_interactive(
         assert exclude_values == ("debug",)
         return default_values or ()
 
-    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_capabilities", _fake_prompt)
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_capabilities", _fake_prompt
+    )
 
     resolved = resolve_policy_capabilities(
         value=(),
@@ -83,7 +87,9 @@ def test_resolve_profile_policy_inputs_skips_follow_up_prompts_when_policy_disab
 
     monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_capabilities", _fail)
     monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_file_access_mode", _fail)
-    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_workspace_scope_mode", _fail)
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_workspace_scope_mode", _fail
+    )
     monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_network_mode", _fail)
 
     resolved = resolve_profile_policy_inputs(
@@ -205,9 +211,15 @@ def test_resolve_profile_policy_inputs_uses_interactive_scenario_defaults(
 
     monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_capabilities", _fail)
     monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_file_access_mode", _fail)
-    monkeypatch.setattr("afkbot.services.setup.policy_inputs.prompt_policy_workspace_scope_mode", _fail)
-    monkeypatch.setattr("afkbot.services.setup.profile_resolution.prompt_policy_shell_sandbox_mode", _fail)
-    monkeypatch.setattr("afkbot.services.setup.profile_resolution.prompt_policy_shell_allowed_commands", _fail)
+    monkeypatch.setattr(
+        "afkbot.services.setup.policy_inputs.prompt_policy_workspace_scope_mode", _fail
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_policy_shell_sandbox_mode", _fail
+    )
+    monkeypatch.setattr(
+        "afkbot.services.setup.profile_resolution.prompt_policy_shell_allowed_commands", _fail
+    )
     monkeypatch.setattr(
         "afkbot.services.setup.profile_resolution._offer_shell_sandbox_backend_install_if_needed",
         lambda **_kwargs: None,

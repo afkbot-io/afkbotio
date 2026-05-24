@@ -156,14 +156,18 @@ def register_secrets(profile_app: typer.Typer) -> None:
                 if llm_api_key:
                     requested_fields.append("llm_api_key")
                 if provider_api_key:
-                    requested_fields.append(provider_secret_field(profile.effective_runtime.llm_provider))
+                    requested_fields.append(
+                        provider_secret_field(profile.effective_runtime.llm_provider)
+                    )
                     requested_fields.extend(
                         provider_oauth_metadata_fields(profile.effective_runtime.llm_provider)
                     )
                 if brave_api_key:
                     requested_fields.append("brave_api_key")
                 if not requested_fields:
-                    raise_usage_error("Use --all, --llm-api-key, --provider-api-key, or --brave-api-key.")
+                    raise_usage_error(
+                        "Use --all, --llm-api-key, --provider-api-key, or --brave-api-key."
+                    )
                 fields_to_clear = tuple(dict.fromkeys(requested_fields))
             service = get_profile_runtime_secrets_service(settings)
             service.clear(normalized_profile_id, fields=fields_to_clear)

@@ -98,7 +98,9 @@ async def test_telethon_user_service_watcher_collects_channel_posts_and_sends_di
     assert captured[0]["session_id"] == "telegram_user_watch:telethon-main"
     assert captured[0]["context_overrides"].runtime_metadata["transport"] == "telegram_user"
     assert captured[0]["context_overrides"].runtime_metadata["account_id"] == "tg-user"
-    assert captured[0]["context_overrides"].runtime_metadata["peer_id"] == watcher_memory_peer_id("telethon-main")
+    assert captured[0]["context_overrides"].runtime_metadata["peer_id"] == watcher_memory_peer_id(
+        "telethon-main"
+    )
     assert captured[0]["context_overrides"].runtime_metadata["channel_binding"] == {
         "binding_id": "telethon-main",
         "session_policy": "per-chat",
@@ -183,7 +185,9 @@ async def test_telethon_user_service_watcher_falls_back_to_endpoint_profile_with
     assert len(captured) == 1
     assert captured[0]["profile_id"] == "default"
     assert captured[0]["session_id"] == "telegram_user_watch:telethon-main"
-    assert captured[0]["context_overrides"].runtime_metadata["peer_id"] == watcher_memory_peer_id("telethon-main")
+    assert captured[0]["context_overrides"].runtime_metadata["peer_id"] == watcher_memory_peer_id(
+        "telethon-main"
+    )
     assert "channel_binding" not in captured[0]["context_overrides"].runtime_metadata
     assert fake_client.sent_messages == [{"entity": "me", "text": "fallback digest"}]
 

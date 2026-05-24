@@ -169,7 +169,9 @@ def register(app: typer.Typer) -> None:
         )
 
     @auth_app.command("status")
-    def status(json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON.")) -> None:
+    def status(
+        json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    ) -> None:
         """Show the current UI auth policy and secret presence."""
 
         payload = ui_auth_runtime_payload(get_settings())
@@ -187,8 +189,7 @@ def register(app: typer.Typer) -> None:
                     f"login_rate_limit_window_sec: {payload['login_rate_limit_window_sec']}",
                     f"login_rate_limit_max_attempts: {payload['login_rate_limit_max_attempts']}",
                     f"lockout_sec: {payload['lockout_sec']}",
-                    "protected_plugin_ids: "
-                    + (", ".join(payload["protected_plugin_ids"]) or "-"),
+                    "protected_plugin_ids: " + (", ".join(payload["protected_plugin_ids"]) or "-"),
                     f"trust_proxy_headers: {'yes' if payload['trust_proxy_headers'] else 'no'}",
                     f"password_hash_present: {'yes' if payload['password_hash_present'] else 'no'}",
                     f"cookie_key_present: {'yes' if payload['cookie_key_present'] else 'no'}",
@@ -225,7 +226,9 @@ def register(app: typer.Typer) -> None:
         typer.echo("restart required: run `afk service restart` if the daemon is already running")
 
     @auth_app.command("disable")
-    def disable(yes: bool = typer.Option(False, "--yes", help="Disable without confirmation.")) -> None:
+    def disable(
+        yes: bool = typer.Option(False, "--yes", help="Disable without confirmation."),
+    ) -> None:
         """Disable UI auth and remove stored operator credentials."""
 
         settings = get_settings()
@@ -267,7 +270,12 @@ def _run_setup(
     resolved_username = (
         str(username).strip()
         if username is not None
-        else _prompt_text(prompt="Username", default=str(current_payload["username"] or ""), required=True, yes=yes)
+        else _prompt_text(
+            prompt="Username",
+            default=str(current_payload["username"] or ""),
+            required=True,
+            yes=yes,
+        )
     )
 
     resolved_password_hash = str(settings.ui_auth_password_hash or "")
