@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema
 from afkbot.db.engine import create_engine
-from afkbot.db.session import create_session_factory, session_scope
+from afkbot.db.session import create_session_factory, session_write_scope
 from afkbot.models.task import Task
 from afkbot.models.task_attachment import TaskAttachment
 from afkbot.models.task_dependency import TaskDependency
@@ -3059,7 +3059,7 @@ class TaskFlowService:
         self,
         op: Callable[[TaskFlowRepository], Awaitable[TValue]],
     ) -> TValue:
-        async with session_scope(self._session_factory) as session:
+        async with session_write_scope(self._session_factory) as session:
             repo = TaskFlowRepository(session)
             return await op(repo)
 

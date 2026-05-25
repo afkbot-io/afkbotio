@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from afkbot.models.chat_turn import ChatTurn
 from afkbot.services.agent_loop.compaction_summary import (
     CompactionSummaryRuntime,
 )
 from afkbot.services.llm.contracts import LLMProvider
+from afkbot.services.session_transcripts import ChatTurnRecord
 
 _TURN_SEPARATOR = "\n"
 _TRUNCATION_NOTICE = "[Earlier compacted turns pruned for brevity]"
@@ -55,7 +55,7 @@ class SessionCompactionSummarizer:
         self,
         *,
         existing_summary: str | None,
-        new_turns: Sequence[ChatTurn],
+        new_turns: Sequence[ChatTurnRecord],
     ) -> SessionCompactionBuild:
         """Append new compacted turns to summary and rewrite it when budget is tight."""
 
@@ -108,7 +108,7 @@ class SessionCompactionSummarizer:
         compacted = _TURN_SEPARATOR.join([_TRUNCATION_NOTICE, *kept])
         return compacted[-self._max_chars :].lstrip()
 
-    def _render_turn_block(self, turn: ChatTurn) -> str:
+    def _render_turn_block(self, turn: ChatTurnRecord) -> str:
         user = self._normalize_excerpt(turn.user_message, limit=self._USER_CHARS)
         assistant = self._normalize_excerpt(turn.assistant_message, limit=self._ASSISTANT_CHARS)
         return f"- [T{turn.id}] User: {user}\n  Assistant: {assistant}"

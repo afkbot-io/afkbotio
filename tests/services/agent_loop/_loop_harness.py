@@ -44,6 +44,9 @@ class SleepLLMProvider(BaseLLMProvider):
 async def create_test_db(
     tmp_path: Path,
     db_name: str,
+    *,
+    db_pool_size: int | None = None,
+    db_max_overflow: int | None = None,
 ) -> tuple[Settings, AsyncEngine, async_sessionmaker[AsyncSession]]:
     """Create isolated SQLite runtime with minimal bootstrap and synthetic skill files."""
 
@@ -56,7 +59,18 @@ async def create_test_db(
         (bootstrap_dir / file_name).write_text(file_name, encoding="utf-8")
     (skills_dir / "SKILL.md").write_text("# security-secrets", encoding="utf-8")
 
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}", root_dir=tmp_path)
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        **{
+            key: value
+            for key, value in {
+                "db_pool_size": db_pool_size,
+                "db_max_overflow": db_max_overflow,
+            }.items()
+            if value is not None
+        },
+    )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from afkbot.db.sqlite_resilience import is_sqlite_lock_error, run_with_sqlite_lock_retry
 from afkbot.models.chat_turn import ChatTurn
 from afkbot.models.run import Run
+from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 
 
 class RunRepository:
@@ -16,6 +17,11 @@ class RunRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def commit_pending(self) -> None:
+        """Commit pending run-adjacent writes before long non-DB awaits."""
+
+        await self._session.commit()
 
     async def create_run(self, session_id: str, profile_id: str, status: str = "completed") -> Run:
         """Create a run record."""
@@ -34,15 +40,12 @@ class RunRepository:
     ) -> ChatTurn:
         """Create a chat turn record."""
 
-        turn = ChatTurn(
+        return await ChatTurnRepository(self._session).create(
             session_id=session_id,
             profile_id=profile_id,
             user_message=user_message,
             assistant_message=assistant_message,
         )
-        self._session.add(turn)
-        await self._session.flush()
-        return turn
 
     async def update_status(self, run_id: int, status: str) -> None:
         """Update run status by primary key with bounded SQLite lock retries.

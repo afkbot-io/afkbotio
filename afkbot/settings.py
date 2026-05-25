@@ -346,6 +346,8 @@ class Settings(BaseSettings):
     )
     memory_auto_save_max_chars: int = 1000
     memory_recall_enabled: bool = False
+    session_event_store_backend: Literal["database", "jsonl", "dual"] = "database"
+    session_transcript_store_backend: Literal["database", "jsonl", "dual"] = "database"
     session_compaction_enabled: bool = False
     session_compaction_trigger_turns: int = 12
     session_compaction_keep_recent_turns: int = 6

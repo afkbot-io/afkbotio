@@ -13,8 +13,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from afkbot.db.runtime import (
+    dispose_session_resources,
+    resolve_session_resources,
+)
 from afkbot.db.session import session_scope
 from afkbot.db.sqlite_resilience import is_sqlite_lock_error, run_with_sqlite_lock_retry
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
@@ -23,6 +27,7 @@ from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.progress_stream import ProgressCursor, ProgressEvent, ProgressStream
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.session_events import build_runlog_event_store
 from afkbot.services.session_orchestration.contracts import SessionTurnSource
 from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
@@ -34,12 +39,6 @@ _SESSION_QUEUE_HEARTBEAT_SEC = 15.0
 _SESSION_QUEUE_HEARTBEAT_RETRY_SEC = 1.0
 _SESSION_QUEUE_STALE_SWEEP_SEC = 5.0
 _SESSION_QUEUE_WAIT_TIMEOUT_SEC = 86_400.0
-
-
-@dataclass(frozen=True, slots=True)
-class _SessionResources:
-    session_factory: async_sessionmaker[AsyncSession]
-    owned_engine: AsyncEngine | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +134,7 @@ class SessionOrchestrator:
     async def cancel_active_turn(self, *, profile_id: str, session_id: str) -> bool:
         """Request cancellation for the latest running turn in storage."""
 
-        resources = await _resolve_session_resources(
+        resources = await resolve_session_resources(
             shared_session_factory=self._session_factory,
             settings=self._settings,
         )
@@ -146,7 +145,7 @@ class SessionOrchestrator:
                     session_id=session_id,
                 )
         finally:
-            await _dispose_owned_engine(resources)
+            await dispose_session_resources(resources)
 
     @asynccontextmanager
     async def open_turn_lease(
@@ -159,7 +158,7 @@ class SessionOrchestrator:
     ) -> AsyncIterator[SessionTurnLease]:
         """Acquire one exclusive session slot that can run multiple turns sequentially."""
 
-        resources = await _resolve_session_resources(
+        resources = await resolve_session_resources(
             shared_session_factory=self._session_factory,
             settings=self._settings,
         )
@@ -208,7 +207,7 @@ class SessionOrchestrator:
                     owner_token=owner_token,
                 )
         finally:
-            await _dispose_owned_engine(resources)
+            await dispose_session_resources(resources)
 
     async def _enqueue_turn_marker(
         self,
@@ -516,7 +515,13 @@ class SessionOrchestrator:
         if cursor.run_id is not None:
             return cursor
         async with session_scope(session_factory) as poll_session:
-            stream = ProgressStream(poll_session)
+            stream = ProgressStream(
+                poll_session,
+                runlog_events=build_runlog_event_store(
+                    session=poll_session,
+                    settings=self._settings,
+                ),
+            )
             latest_run_id = await stream.resolve_latest_run_id(
                 profile_id=profile_id,
                 session_id=session_id,
@@ -544,6 +549,10 @@ class SessionOrchestrator:
             stream = ProgressStream(
                 poll_session,
                 batch_size=self._settings.cli_progress_batch_size,
+                runlog_events=build_runlog_event_store(
+                    session=poll_session,
+                    settings=self._settings,
+                ),
             )
             events, next_cursor = await stream.poll(
                 profile_id=profile_id,
@@ -570,31 +579,6 @@ class SessionOrchestrator:
             settings=self._settings,
             profile_id=profile_id,
         )
-
-
-async def _resolve_session_resources(
-    *,
-    shared_session_factory: async_sessionmaker[AsyncSession] | None,
-    settings: Settings,
-) -> _SessionResources:
-    if shared_session_factory is not None:
-        return _SessionResources(session_factory=shared_session_factory)
-
-    from afkbot.db.bootstrap import create_schema
-    from afkbot.db.engine import create_engine
-    from afkbot.db.session import create_session_factory
-
-    owned_engine = create_engine(settings)
-    await create_schema(owned_engine)
-    return _SessionResources(
-        session_factory=create_session_factory(owned_engine),
-        owned_engine=owned_engine,
-    )
-
-
-async def _dispose_owned_engine(resources: _SessionResources) -> None:
-    if resources.owned_engine is not None:
-        await resources.owned_engine.dispose()
 
 
 def session_turn_queue_stale_cutoff(

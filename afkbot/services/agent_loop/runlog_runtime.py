@@ -9,7 +9,7 @@ from collections.abc import Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.repositories.run_repo import RunRepository
-from afkbot.repositories.runlog_repo import RunlogRepository
+from afkbot.services.session_events import RunlogEventStore
 
 _CANCEL_CHECK_MIN_INTERVAL_SEC = 0.05
 _PROGRESS_STAGE_ALIASES = {
@@ -32,13 +32,13 @@ class RunlogRuntime:
         *,
         session: AsyncSession,
         run_repo: RunRepository,
-        runlog_repo: RunlogRepository,
+        runlog_events: RunlogEventStore,
         sanitize_value: Callable[[object], object],
         to_payload_dict: Callable[[object], dict[str, object]],
     ) -> None:
         self._session = session
         self._run_repo = run_repo
-        self._runlog_repo = runlog_repo
+        self._runlog_events = runlog_events
         self._sanitize_value = sanitize_value
         self._to_payload_dict = to_payload_dict
         self._last_progress_key_by_run: dict[int, tuple[str, int]] = {}
@@ -76,13 +76,14 @@ class RunlogRuntime:
     ) -> None:
         """Write one sanitized runlog row and commit it eagerly for polling readers."""
 
-        await self._runlog_repo.create_event(
+        await self._runlog_events.create_event(
             run_id=run_id,
             session_id=session_id,
             event_type=event_type,
             payload=self._to_payload_dict(self._sanitize_value(payload)),
         )
-        await self._session.commit()
+        if self._session.in_transaction():
+            await self._session.commit()
         if event_type in {"turn.finalize", "turn.cancel"}:
             self._last_progress_key_by_run.pop(run_id, None)
             self._last_cancel_check_at_by_run.pop(run_id, None)

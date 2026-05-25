@@ -11,8 +11,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
-from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.subagent_task_repo import SubagentTaskRepository
+from afkbot.services.session_events import build_runlog_event_store
 from afkbot.settings import Settings
 from afkbot.services.subagents.orchestration import (
     build_subagent_session_orchestrator,
@@ -204,13 +204,13 @@ class SubagentRunner:
             ),
         )
 
-    @staticmethod
-    async def _raise_if_child_run_failed(*, session: AsyncSession, run_id: int) -> None:
+    async def _raise_if_child_run_failed(self, *, session: AsyncSession, run_id: int) -> None:
         """Raise deterministic error when child run finished through known LLM failure paths."""
 
         # Read-only inspection of child run events keeps fail-fast localized to subagent runtime.
         # We intentionally avoid changing the global TurnResult contract here.
-        events = await RunlogRepository(session).list_run_events_since(
+        runlog_events = build_runlog_event_store(session=session, settings=self._settings)
+        events = await runlog_events.list_run_events_since(
             run_id=run_id,
             after_event_id=0,
             limit=256,

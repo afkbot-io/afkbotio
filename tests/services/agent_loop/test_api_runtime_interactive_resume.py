@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.repositories.pending_resume_envelope_repo import PendingResumeEnvelopeRepository
 from afkbot.repositories.pending_secure_request_repo import PendingSecureRequestRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -22,6 +23,7 @@ from afkbot.services.agent_loop.loop_sanitizer import sanitize_value
 from afkbot.services.agent_loop.pending_envelopes import PROFILE_SELECTION_QUESTION_KIND
 from afkbot.services.agent_loop.safety_policy import CONFIRM_ACK_PARAM, CONFIRM_QID_PARAM
 from afkbot.services.agent_loop.turn_finalizer import TurnFinalizer
+from afkbot.services.session_transcripts import DatabaseChatTranscriptStore
 from afkbot.services.tools.base import ToolCall
 from tests.services.agent_loop._loop_harness import create_test_db
 
@@ -458,6 +460,7 @@ async def test_trusted_pending_resume_uses_internal_raw_patch_not_sanitized_runl
             memory_runtime=_NoopMemoryRuntime(),
             session_compaction=_NoopSessionCompaction(),
             session_retention=_NoopSessionRetention(),
+            transcript_store=DatabaseChatTranscriptStore(ChatTurnRepository(session)),
             log_event=_log_event,
             sanitize_value=sanitize_value,
             secure_request_ttl_sec=300,

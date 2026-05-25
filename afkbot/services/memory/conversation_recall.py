@@ -16,6 +16,11 @@ from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.repositories.support import profile_exists
 from afkbot.services.channel_routing.policy import is_user_facing_transport
 from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
+from afkbot.services.session_transcripts import (
+    ChatTranscriptStore,
+    DatabaseChatTranscriptStore,
+    build_chat_transcript_store,
+)
 from afkbot.settings import Settings
 
 TValue = TypeVar("TValue")
@@ -73,9 +78,11 @@ class ConversationRecallService:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         engine: AsyncEngine | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._engine = engine
+        self._settings = settings
 
     async def search(
         self,
@@ -93,7 +100,7 @@ class ConversationRecallService:
         async def _op(
             session: AsyncSession,
             compactions: ChatSessionCompactionRepository,
-            turns: ChatTurnRepository,
+            turns: ChatTranscriptStore,
             chat_sessions: ChatSessionRepository,
         ) -> list[ConversationRecallHit]:
             if await profile_exists(session, profile_id=profile_id) is None:
@@ -209,7 +216,7 @@ class ConversationRecallService:
             [
                 AsyncSession,
                 ChatSessionCompactionRepository,
-                ChatTurnRepository,
+                ChatTranscriptStore,
                 ChatSessionRepository,
             ],
             Awaitable[TValue],
@@ -217,7 +224,11 @@ class ConversationRecallService:
     ) -> TValue:
         async with session_scope(self._session_factory) as session:
             compactions = ChatSessionCompactionRepository(session)
-            turns = ChatTurnRepository(session)
+            turns: ChatTranscriptStore
+            if self._settings is None:
+                turns = DatabaseChatTranscriptStore(ChatTurnRepository(session))
+            else:
+                turns = build_chat_transcript_store(session=session, settings=self._settings)
             chat_sessions = ChatSessionRepository(session)
             return await op(session, compactions, turns, chat_sessions)
 
@@ -327,7 +338,7 @@ class ConversationRecallService:
         async def _op(
             session: AsyncSession,
             _compactions: ChatSessionCompactionRepository,
-            _turns: ChatTurnRepository,
+            _turns: ChatTranscriptStore,
             chat_sessions: ChatSessionRepository,
         ) -> str | None:
             row = await chat_sessions.get(session_id)
@@ -486,7 +497,7 @@ def get_conversation_recall_service(settings: Settings) -> ConversationRecallSer
         return service
     engine = create_engine(settings)
     factory = create_session_factory(engine)
-    service = ConversationRecallService(factory, engine=engine)
+    service = ConversationRecallService(factory, engine=engine, settings=settings)
     _SERVICES_BY_ROOT[key] = service
     return service
 

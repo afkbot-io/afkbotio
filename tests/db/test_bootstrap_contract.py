@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import asyncio
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 import warnings
@@ -25,11 +27,17 @@ from afkbot.db.postgres_contract import (
     build_database_per_bot_contract,
     render_database_per_bot_bootstrap_plan,
 )
+from afkbot.db.runtime import DatabaseRuntime, resolve_session_resources
 from afkbot.services.managed_database_guard import (
     ManagedDatabaseGuardError,
     validate_managed_database_runtime,
 )
-from afkbot.db.session import create_session_factory, session_scope
+from afkbot.db.session import (
+    SerializedSQLiteSession,
+    create_session_factory,
+    session_scope,
+    sqlite_write_gate_for_engine,
+)
 from afkbot.db.upsert import upsert_insert_for_dialect
 from afkbot.models.chat_session_compaction import ChatSessionCompaction
 from afkbot.models.runlog_event import RunlogEvent
@@ -236,6 +244,155 @@ async def test_create_schema_and_ping(tmp_path: Path) -> None:
     await engine.dispose()
 
 
+async def test_create_engine_supports_in_memory_sqlite(tmp_path: Path) -> None:
+    """Pool sizing options should not break SQLite StaticPool URLs."""
+
+    settings = Settings(db_url="sqlite+aiosqlite:///:memory:", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    try:
+        await create_schema(engine)
+        assert await ping(engine) is True
+    finally:
+        await engine.dispose()
+
+
+async def test_sqlite_writes_are_serialized_across_factories(tmp_path: Path) -> None:
+    """SQLite writes for one database file should not execute concurrently."""
+
+    db_path = tmp_path / "serialized-scopes.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    first_engine = create_engine(settings)
+    second_engine = create_engine(settings)
+    second_factory = create_session_factory(second_engine)
+    lock_path = db_path.with_suffix(f"{db_path.suffix}.afkbot.lock")
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    entered: list[str] = []
+
+    async def _hold_first_write_gate() -> None:
+        async with sqlite_write_gate_for_engine(first_engine):
+            entered.append("first")
+            first_entered.set()
+            await release_first.wait()
+
+    async def _run_second_write() -> None:
+        await first_entered.wait()
+        async with session_scope(second_factory) as session:
+            await session.execute(text("CREATE TABLE IF NOT EXISTS gate_probe (id INTEGER)"))
+            entered.append("second")
+
+    first_task = asyncio.create_task(_hold_first_write_gate())
+    second_task = asyncio.create_task(_run_second_write())
+    try:
+        await asyncio.wait_for(first_entered.wait(), timeout=1.0)
+        assert lock_path.exists()
+        await asyncio.sleep(0.05)
+        assert entered == ["first"]
+
+        release_first.set()
+        await asyncio.wait_for(asyncio.gather(first_task, second_task), timeout=1.0)
+        assert entered == ["first", "second"]
+    finally:
+        release_first.set()
+        for task in (first_task, second_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(first_task, second_task, return_exceptions=True)
+        await first_engine.dispose()
+        await second_engine.dispose()
+
+
+async def test_sqlite_write_gate_is_reentrant_only_within_current_task(tmp_path: Path) -> None:
+    """Child asyncio tasks must not inherit a parent's SQLite write lease."""
+
+    db_path = tmp_path / "task-local-gate.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+    child_started = asyncio.Event()
+    child_done = asyncio.Event()
+    child_task: asyncio.Task[None] | None = None
+
+    async def _child_write() -> None:
+        child_started.set()
+        async with session_scope(session_factory) as session:
+            await session.execute(text("CREATE TABLE IF NOT EXISTS task_gate_probe (id INTEGER)"))
+            await session.execute(text("INSERT INTO task_gate_probe (id) VALUES (1)"))
+        child_done.set()
+
+    try:
+        async with sqlite_write_gate_for_engine(engine):
+            async with sqlite_write_gate_for_engine(engine):
+                pass
+
+            child_task = asyncio.create_task(_child_write())
+            await asyncio.wait_for(child_started.wait(), timeout=1.0)
+            await asyncio.sleep(0.05)
+            assert not child_done.is_set()
+
+        await asyncio.wait_for(child_done.wait(), timeout=1.0)
+        await child_task
+    finally:
+        if child_task is not None and not child_task.done():
+            child_task.cancel()
+            await asyncio.gather(child_task, return_exceptions=True)
+        await engine.dispose()
+
+
+async def test_create_session_factory_uses_serialized_sqlite_session(tmp_path: Path) -> None:
+    """All factory-created SQLite sessions should carry the write gate."""
+
+    db_path = tmp_path / "serialized-session-class.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+    session_factory = create_session_factory(engine)
+
+    try:
+        async with session_factory() as session:
+            assert isinstance(session, SerializedSQLiteSession)
+    finally:
+        await engine.dispose()
+
+
+async def test_sqlite_wal_activation_uses_shared_file_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Connection-time WAL writes should share the same SQLite file lock."""
+
+    db_path = tmp_path / "wal-lock.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    lock_path = db_path.with_suffix(f"{db_path.suffix}.afkbot.lock")
+    events: list[tuple[str, Path | None]] = []
+
+    @contextmanager
+    def _record_file_lock(path: Path | None, *, blocking: bool = True):
+        events.append((f"lock:{blocking}", path))
+        try:
+            yield True
+        finally:
+            events.append((f"unlock:{blocking}", path))
+
+    def _record_wal_attempt(_cursor: object) -> None:
+        events.append(("wal", None))
+        return None
+
+    monkeypatch.setattr(db_engine_module, "sqlite_file_lock_sync", _record_file_lock)
+    monkeypatch.setattr(db_engine_module, "_try_enable_sqlite_wal", _record_wal_attempt)
+    engine = create_engine(settings)
+
+    try:
+        assert await ping(engine) is True
+        assert events == [
+            ("lock:False", lock_path),
+            ("wal", None),
+            ("unlock:False", lock_path),
+        ]
+    finally:
+        await engine.dispose()
+
+
 async def test_create_engine_registers_explicit_sqlite_datetime_adapters(tmp_path: Path) -> None:
     """SQLite engine setup should replace Python's deprecated default datetime adapter."""
 
@@ -324,6 +481,84 @@ async def test_create_schema_is_idempotent_without_migration_side_state(tmp_path
     assert versions == ()
     assert "schema_migration" not in table_names
     await engine.dispose()
+
+
+async def test_create_schema_adds_session_store_tables_to_existing_runtime_db(
+    tmp_path: Path,
+) -> None:
+    """Old runtime DBs should gain JSONL outbox tables without losing existing rows."""
+
+    db_path = tmp_path / "legacy-runtime.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    try:
+        await create_schema(engine)
+        async with session_scope(create_session_factory(engine)) as session:
+            await ProfileRepository(session).get_or_create_default("default")
+            await ChatSessionRepository(session).create(
+                session_id="s-existing",
+                profile_id="default",
+            )
+            run = await RunRepository(session).create_run(
+                session_id="s-existing",
+                profile_id="default",
+            )
+
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE session_store_outbox"))
+            await conn.execute(text("DROP TABLE session_store_sequence"))
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            table_rows = (
+                await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            ).all()
+            run_count = (
+                await conn.execute(text("SELECT COUNT(*) FROM run WHERE id = :id"), {"id": run.id})
+            ).scalar_one()
+
+        table_names = {str(name) for (name,) in table_rows}
+        assert {"session_store_outbox", "session_store_sequence"} <= table_names
+        assert int(run_count) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_database_runtime_adds_session_store_tables_to_existing_runtime_db(
+    tmp_path: Path,
+) -> None:
+    """Shared runtime schema initialization should also upgrade old DB files."""
+
+    db_path = tmp_path / "legacy-runtime-shared.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    setup_engine = create_engine(settings)
+    try:
+        await create_schema(setup_engine)
+        async with setup_engine.begin() as conn:
+            await conn.execute(text("DROP TABLE session_store_outbox"))
+            await conn.execute(text("DROP TABLE session_store_sequence"))
+    finally:
+        await setup_engine.dispose()
+
+    runtime = DatabaseRuntime.create(settings)
+    try:
+        await runtime.ensure_schema()
+        resources = await resolve_session_resources(
+            shared_session_factory=runtime.session_factory,
+            settings=settings,
+        )
+        async with session_scope(resources.session_factory) as session:
+            await ProfileRepository(session).get_or_create_default("default")
+        async with runtime.engine.connect() as conn:
+            table_rows = (
+                await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            ).all()
+        table_names = {str(name) for (name,) in table_rows}
+        assert {"session_store_outbox", "session_store_sequence"} <= table_names
+    finally:
+        await runtime.dispose()
 
 
 async def test_create_schema_materializes_memory_indexes(tmp_path: Path) -> None:

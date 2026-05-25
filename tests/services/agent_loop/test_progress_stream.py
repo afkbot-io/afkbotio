@@ -14,6 +14,11 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.services.agent_loop import ProgressCursor, ProgressStream
+from afkbot.services.session_events import (
+    DatabaseRunlogEventStore,
+    DualRunlogEventStore,
+    JsonlRunlogEventStore,
+)
 from afkbot.settings import Settings
 
 
@@ -99,6 +104,165 @@ async def test_progress_stream_cursor_monotonic_and_stage_mapping(tmp_path: Path
             )
             assert third_batch == []
             assert third_cursor == second_cursor
+    finally:
+        await engine.dispose()
+
+
+async def test_progress_stream_reads_jsonl_runlog_store(tmp_path: Path) -> None:
+    """Progress polling should work when runlog events are outside SQLite."""
+
+    engine, factory = await _prepare(tmp_path, "progress_stream_jsonl.db")
+    try:
+        async with session_scope(factory) as session:
+            run = await RunRepository(session).create_run(
+                session_id="s-1",
+                profile_id="default",
+                status="running",
+            )
+            await session.commit()
+            store = JsonlRunlogEventStore(root_dir=tmp_path)
+            await store.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "tool_call", "iteration": 2},
+            )
+
+            stream = ProgressStream(session, batch_size=10, runlog_events=store)
+            events, cursor = await stream.poll(
+                profile_id="default",
+                session_id="s-1",
+                cursor=ProgressCursor(),
+            )
+
+        assert [event.stage for event in events] == ["tool_call"]
+        assert events[0].iteration == 2
+        assert cursor.run_id == run.id
+        assert cursor.last_event_id == events[0].event_id
+    finally:
+        await engine.dispose()
+
+
+async def test_progress_stream_cursor_survives_dual_to_jsonl_runlog_cutover(
+    tmp_path: Path,
+) -> None:
+    """Dual runlog mirrors should preserve DB event ids for JSONL progress cursors."""
+
+    engine, factory = await _prepare(tmp_path, "progress_stream_jsonl_cutover.db")
+    try:
+        async with session_scope(factory) as session:
+            run_repo = RunRepository(session)
+            runlog_repo = RunlogRepository(session)
+            await runlog_repo.create_event(
+                run_id=(await run_repo.create_run(
+                    session_id="s-1",
+                    profile_id="default",
+                    status="completed",
+                )).id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "thinking", "iteration": 99},
+            )
+            run = await run_repo.create_run(
+                session_id="s-1",
+                profile_id="default",
+                status="running",
+            )
+            dual_store = DualRunlogEventStore(
+                primary=DatabaseRunlogEventStore(runlog_repo),
+                mirror=JsonlRunlogEventStore(root_dir=tmp_path, session=session),
+            )
+            first = await dual_store.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "thinking", "iteration": 1},
+            )
+            second = await dual_store.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "tool_call", "iteration": 2},
+            )
+            assert first.id > 1
+
+        async with session_scope(factory) as session:
+            jsonl_store = JsonlRunlogEventStore(root_dir=tmp_path, session=session)
+            third = await jsonl_store.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "done", "iteration": 3},
+            )
+
+        async with session_scope(factory) as session:
+            jsonl_store = JsonlRunlogEventStore(root_dir=tmp_path, session=session)
+            stream = ProgressStream(session, batch_size=10, runlog_events=jsonl_store)
+            events, cursor = await stream.poll(
+                profile_id="default",
+                session_id="s-1",
+                cursor=ProgressCursor(run_id=run.id, last_event_id=first.id),
+            )
+
+        assert third.id == second.id + 1
+        assert [event.event_id for event in events] == [second.id, third.id]
+        assert [event.stage for event in events] == ["tool_call", "done"]
+        assert cursor.last_event_id == second.id + 1
+    finally:
+        await engine.dispose()
+
+
+async def test_progress_stream_backfills_existing_database_runlog_for_jsonl_cutover(
+    tmp_path: Path,
+) -> None:
+    """JSONL runlog reads should materialize DB-only events during direct cutover."""
+
+    engine, factory = await _prepare(tmp_path, "progress_stream_db_to_jsonl_cutover.db")
+    try:
+        async with session_scope(factory) as session:
+            run_repo = RunRepository(session)
+            runlog_repo = RunlogRepository(session)
+            run = await run_repo.create_run(
+                session_id="s-1",
+                profile_id="default",
+                status="running",
+            )
+            first = await runlog_repo.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "thinking", "iteration": 1},
+            )
+            second = await runlog_repo.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "tool_call", "iteration": 2},
+            )
+
+        async with session_scope(factory) as session:
+            jsonl_store = JsonlRunlogEventStore(root_dir=tmp_path, session=session)
+            third = await jsonl_store.create_event(
+                run_id=run.id,
+                session_id="s-1",
+                event_type="turn.progress",
+                payload={"stage": "done", "iteration": 3},
+            )
+
+        async with session_scope(factory) as session:
+            jsonl_store = JsonlRunlogEventStore(root_dir=tmp_path, session=session)
+            stream = ProgressStream(session, batch_size=10, runlog_events=jsonl_store)
+            events, cursor = await stream.poll(
+                profile_id="default",
+                session_id="s-1",
+                cursor=ProgressCursor(run_id=run.id, last_event_id=first.id),
+            )
+
+        assert second.id > first.id
+        assert third.id > second.id
+        assert [event.event_id for event in events] == [second.id, third.id]
+        assert [event.stage for event in events] == ["tool_call", "done"]
+        assert cursor.last_event_id == third.id
     finally:
         await engine.dispose()
 

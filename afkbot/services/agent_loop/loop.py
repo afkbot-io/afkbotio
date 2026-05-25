@@ -12,7 +12,6 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.pending_secure_request_repo import PendingSecureRequestRepository
 from afkbot.repositories.pending_resume_envelope_repo import PendingResumeEnvelopeRepository
 from afkbot.repositories.run_repo import RunRepository
-from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.services.agent_loop.action_contracts import TurnResult
 from afkbot.services.agent_loop.browser_carryover import BrowserCarryoverService
 from afkbot.services.agent_loop.chat_history_builder import ChatHistoryBuilder
@@ -70,6 +69,8 @@ from afkbot.services.llm_timeout_policy import (
     DEFAULT_LLM_WALL_CLOCK_BUDGET_SEC,
 )
 from afkbot.services.policy import PolicyEngine
+from afkbot.services.session_events import build_runlog_event_store
+from afkbot.services.session_transcripts import build_chat_transcript_store
 from afkbot.services.tools.base import ToolCall
 from afkbot.services.tools.registry import ToolRegistry
 
@@ -154,7 +155,14 @@ class AgentLoop:
         self._pending_resume_repo = PendingResumeEnvelopeRepository(session)
         self._pending_secure_repo = PendingSecureRequestRepository(session)
         self._run_repo = RunRepository(session)
-        self._runlog_repo = RunlogRepository(session)
+        self._runlog_events = build_runlog_event_store(
+            session=session,
+            settings=context_builder.settings,
+        )
+        self._transcript_store = build_chat_transcript_store(
+            session=session,
+            settings=context_builder.settings,
+        )
         self._security_guard = SecurityGuard()
         self._skill_router = SkillRouter()
         self._skill_affinity = SessionSkillAffinityService()
@@ -167,7 +175,7 @@ class AgentLoop:
         self._runlog = RunlogRuntime(
             session=session,
             run_repo=self._run_repo,
-            runlog_repo=self._runlog_repo,
+            runlog_events=self._runlog_events,
             sanitize_value=self._sanitize_value,
             to_payload_dict=self._to_payload_dict,
         )
@@ -179,7 +187,7 @@ class AgentLoop:
         )
         self._browser_carryover = BrowserCarryoverService(
             settings=context_builder.settings,
-            runlog_repo=self._runlog_repo,
+            runlog_events=self._runlog_events,
         )
         self._runtime_facts = TrustedRuntimeFactsService(
             settings=context_builder.settings,
@@ -218,16 +226,19 @@ class AgentLoop:
             history_turns=llm_history_turns,
             max_chars=session_compaction_max_chars,
             llm_provider=llm_provider,
+            transcript_store=self._transcript_store,
         )
         self._chat_history = ChatHistoryBuilder(
             session=session,
             history_turns=llm_history_turns,
             sanitize=self._sanitize,
             session_compaction=self._session_compaction,
+            transcript_store=self._transcript_store,
         )
         self._session_retention = SessionRetentionService(
             session=session,
             prune_raw_turns=session_compaction_prune_raw_turns,
+            transcript_store=self._transcript_store,
         )
         self._llm_runtime = (
             LLMRequestRuntime(
@@ -309,6 +320,7 @@ class AgentLoop:
             memory_runtime=self._memory_runtime,
             session_compaction=self._session_compaction,
             session_retention=self._session_retention,
+            transcript_store=self._transcript_store,
             log_event=self._runlog.log_event,
             sanitize_value=self._sanitize_value,
             secure_request_ttl_sec=self._secure_request_ttl_sec,

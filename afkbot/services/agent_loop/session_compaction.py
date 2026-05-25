@@ -10,6 +10,7 @@ from afkbot.repositories.chat_session_compaction_repo import ChatSessionCompacti
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.services.agent_loop.session_compaction_summarizer import SessionCompactionSummarizer
 from afkbot.services.llm.contracts import LLMProvider
+from afkbot.services.session_transcripts import ChatTranscriptStore, DatabaseChatTranscriptStore
 
 _COMPACTION_STRATEGY = "deterministic_v1"
 
@@ -47,6 +48,7 @@ class SessionCompactionService:
         history_turns: int,
         max_chars: int,
         llm_provider: LLMProvider | None = None,
+        transcript_store: ChatTranscriptStore | None = None,
     ) -> None:
         self._enabled = enabled
         self._trigger_turns = max(1, trigger_turns)
@@ -56,7 +58,7 @@ class SessionCompactionService:
             llm_provider=llm_provider,
         )
         self._compactions = ChatSessionCompactionRepository(session)
-        self._turns = ChatTurnRepository(session)
+        self._turns = transcript_store or DatabaseChatTranscriptStore(ChatTurnRepository(session))
 
     async def load_snapshot(
         self,

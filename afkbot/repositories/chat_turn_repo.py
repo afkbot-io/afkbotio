@@ -17,10 +17,40 @@ class ChatTurnRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def create(
+        self,
+        *,
+        session_id: str,
+        profile_id: str,
+        user_message: str,
+        assistant_message: str,
+    ) -> ChatTurn:
+        """Create one chat turn row."""
+
+        turn = ChatTurn(
+            session_id=session_id,
+            profile_id=profile_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+        )
+        self._session.add(turn)
+        await self._session.flush()
+        return turn
+
     async def count(self, *, profile_id: str, session_id: str) -> int:
         """Return total number of turns for one session."""
 
         statement = select(func.count(ChatTurn.id)).where(
+            ChatTurn.profile_id == profile_id,
+            ChatTurn.session_id == session_id,
+        )
+        value = (await self._session.execute(statement)).scalar_one()
+        return int(value or 0)
+
+    async def max_turn_id(self, *, profile_id: str, session_id: str) -> int:
+        """Return the current maximum turn id for one session."""
+
+        statement = select(func.max(ChatTurn.id)).where(
             ChatTurn.profile_id == profile_id,
             ChatTurn.session_id == session_id,
         )

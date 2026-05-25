@@ -15,6 +15,7 @@ from afkbot.services.agent_loop.memory_runtime import MemoryRuntime
 from afkbot.services.agent_loop.session_compaction import SessionCompactionService
 from afkbot.services.agent_loop.session_retention import SessionRetentionService
 from afkbot.services.agent_loop.state_machine import StateMachine
+from afkbot.services.session_transcripts import ChatTranscriptStore
 
 AsyncLogEvent = Callable[..., Awaitable[None]]
 SanitizeValue = Callable[[object], object]
@@ -32,6 +33,7 @@ class TurnFinalizer:
         memory_runtime: MemoryRuntime,
         session_compaction: SessionCompactionService,
         session_retention: SessionRetentionService,
+        transcript_store: ChatTranscriptStore,
         log_event: AsyncLogEvent,
         sanitize_value: SanitizeValue,
         secure_request_ttl_sec: int,
@@ -42,6 +44,7 @@ class TurnFinalizer:
         self._memory_runtime = memory_runtime
         self._session_compaction = session_compaction
         self._session_retention = session_retention
+        self._transcript_store = transcript_store
         self._log_event = log_event
         self._sanitize_value = sanitize_value
         self._secure_request_ttl_sec = max(60, int(secure_request_ttl_sec))
@@ -62,12 +65,13 @@ class TurnFinalizer:
 
         await self._run_repo.update_status(run_id, "completed")
         if persist_turn:
-            await self._run_repo.create_chat_turn(
+            await self._transcript_store.create_turn(
                 session_id=session_id,
                 profile_id=profile_id,
                 user_message=user_message,
                 assistant_message=blocked_message,
             )
+            await self._run_repo.commit_pending()
             await self._refresh_session_compaction(
                 run_id=run_id,
                 session_id=session_id,
@@ -141,12 +145,13 @@ class TurnFinalizer:
 
         await self._run_repo.update_status(run_id, "completed")
         if persist_turn:
-            await self._run_repo.create_chat_turn(
+            await self._transcript_store.create_turn(
                 session_id=session_id,
                 profile_id=profile_id,
                 user_message=user_message,
                 assistant_message=envelope.message,
             )
+            await self._run_repo.commit_pending()
             await self._refresh_session_compaction(
                 run_id=run_id,
                 session_id=session_id,
@@ -205,12 +210,13 @@ class TurnFinalizer:
             )
         await self._run_repo.update_status(run_id, "completed")
         if persist_turn:
-            await self._run_repo.create_chat_turn(
+            await self._transcript_store.create_turn(
                 session_id=session_id,
                 profile_id=profile_id,
                 user_message=user_message,
                 assistant_message=assistant_message,
             )
+            await self._run_repo.commit_pending()
             await self._refresh_session_compaction(
                 run_id=run_id,
                 session_id=session_id,

@@ -18,6 +18,7 @@ from afkbot.services.memory.conversation_recall import (
     ConversationRecallService,
     ConversationRecallServiceError,
 )
+from afkbot.services.session_transcripts import JsonlChatTranscriptStore
 from afkbot.settings import Settings
 
 
@@ -225,6 +226,28 @@ async def _prepare(tmp_path: Path) -> tuple[AsyncEngine, ConversationRecallServi
     return engine, ConversationRecallService(factory)
 
 
+async def _prepare_jsonl(tmp_path: Path) -> tuple[AsyncEngine, ConversationRecallService]:
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'conversation_recall_jsonl.db'}",
+        session_transcript_store_backend="jsonl",
+    )
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+        await ChatSessionRepository(session).create("chat:jsonl", "default", title="JSONL")
+    transcript_store = JsonlChatTranscriptStore(root_dir=tmp_path)
+    await transcript_store.create_turn(
+        profile_id="default",
+        session_id="chat:jsonl",
+        user_message="Where is the invoice evidence?",
+        assistant_message="The invoice evidence is stored in the JSONL transcript.",
+    )
+    return engine, ConversationRecallService(factory, settings=settings)
+
+
 async def test_conversation_recall_service_blocks_foreign_session_without_trusted_transport(
     tmp_path: Path,
 ) -> None:
@@ -240,6 +263,24 @@ async def test_conversation_recall_service_blocks_foreign_session_without_truste
                 limit=5,
             )
         assert exc_info.value.error_code == "memory_cross_scope_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_conversation_recall_service_reads_jsonl_transcript_backend(
+    tmp_path: Path,
+) -> None:
+    engine, service = await _prepare_jsonl(tmp_path)
+    try:
+        items = await service.search(
+            profile_id="default",
+            session_id="chat:jsonl",
+            query="invoice evidence",
+            limit=5,
+        )
+        assert items
+        assert items[0].kind == "turn"
+        assert "JSONL transcript" in items[0].excerpt
     finally:
         await engine.dispose()
 

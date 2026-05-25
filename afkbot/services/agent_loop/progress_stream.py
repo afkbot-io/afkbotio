@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.repositories.runlog_repo import RunlogEventRead, RunlogRepository
+from afkbot.services.session_events import RunlogEventStore
 
 CanonicalProgressStage = Literal[
     "thinking",
@@ -103,9 +104,15 @@ class ProgressEvent(BaseModel):
 class ProgressStream:
     """Read-only polling service over runlog events for one chat session."""
 
-    def __init__(self, session: AsyncSession, *, batch_size: int = 50) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        batch_size: int = 50,
+        runlog_events: RunlogEventStore | None = None,
+    ) -> None:
         self._run_repo = RunRepository(session)
-        self._runlog_repo = RunlogRepository(session)
+        self._runlog_events = runlog_events or RunlogRepository(session)
         self._batch_size = max(1, batch_size)
 
     async def poll(
@@ -131,7 +138,7 @@ class ProgressStream:
             if not owned:
                 return [], cursor
 
-        rows = await self._runlog_repo.list_run_events_since(
+        rows = await self._runlog_events.list_run_events_since(
             run_id=run_id,
             after_event_id=cursor.last_event_id,
             limit=self._batch_size,
