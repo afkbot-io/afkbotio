@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
 from afkbot.services.agent_loop.session_compaction import SessionCompactionService
+from afkbot.services.session_transcripts import ChatTranscriptStore, DatabaseChatTranscriptStore
 from afkbot.services.llm.contracts import LLMMessage
 
 SanitizeText = Callable[[str], str]
@@ -23,11 +24,12 @@ class ChatHistoryBuilder:
         history_turns: int,
         sanitize: SanitizeText,
         session_compaction: SessionCompactionService,
+        transcript_store: ChatTranscriptStore | None = None,
     ) -> None:
         self._history_turns = max(0, history_turns)
         self._sanitize = sanitize
         self._session_compaction = session_compaction
-        self._turns = ChatTurnRepository(session)
+        self._turns = transcript_store or DatabaseChatTranscriptStore(ChatTurnRepository(session))
 
     async def build(
         self,

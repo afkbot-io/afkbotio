@@ -6,11 +6,10 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from afkbot.db.bootstrap import create_schema
-from afkbot.db.engine import create_engine
-from afkbot.db.session import create_session_factory, session_scope
+from afkbot.db.runtime import DatabaseRuntime
+from afkbot.db.session import session_scope
 from afkbot.services.browser_sessions import get_browser_session_manager
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, ActionType, TurnResult
 from afkbot.services.agent_loop.api_runtime_resume import (
@@ -37,6 +36,7 @@ from afkbot.services.agent_loop.progress_stream import (
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.agent_loop.turn_runtime import run_once_result
 from afkbot.services.subagents import reset_subagent_service_for_root_async
+from afkbot.services.session_events import build_runlog_event_store
 from afkbot.services.tools.base import ToolCall
 from afkbot.settings import Settings, get_settings
 
@@ -57,9 +57,19 @@ __all__ = [
 class _ApiRuntimeState:
     """Shared DB resources for API routes lifecycle."""
 
-    settings: Settings
-    engine: AsyncEngine
-    session_factory: async_sessionmaker[AsyncSession]
+    runtime: DatabaseRuntime
+
+    @property
+    def settings(self) -> Settings:
+        """Return settings bound to the shared runtime."""
+
+        return self.runtime.settings
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Return session factory bound to the shared runtime."""
+
+        return self.runtime.session_factory
 
 
 _API_RUNTIME_STATE: _ApiRuntimeState | None = None
@@ -77,14 +87,9 @@ async def initialize_api_runtime(*, settings: Settings | None = None) -> None:
     async with _API_RUNTIME_LOCK:
         if _API_RUNTIME_STATE is not None:
             return
-        resolved_settings = settings or get_settings()
-        engine = create_engine(resolved_settings)
-        await create_schema(engine)
-        _API_RUNTIME_STATE = _ApiRuntimeState(
-            settings=resolved_settings,
-            engine=engine,
-            session_factory=create_session_factory(engine),
-        )
+        runtime = DatabaseRuntime.create(settings)
+        await runtime.ensure_schema()
+        _API_RUNTIME_STATE = _ApiRuntimeState(runtime=runtime)
 
 
 async def shutdown_api_runtime() -> None:
@@ -97,7 +102,7 @@ async def shutdown_api_runtime() -> None:
             return
         await reset_subagent_service_for_root_async(settings=state.settings)
         await get_browser_session_manager().close_all_for_root(root_dir=state.settings.root_dir)
-        await state.engine.dispose()
+        await state.runtime.dispose()
         _API_RUNTIME_STATE = None
 
 
@@ -108,6 +113,15 @@ def get_api_session_factory() -> async_sessionmaker[AsyncSession] | None:
     if state is None:
         return None
     return state.session_factory
+
+
+def _resolve_api_runtime_settings() -> Settings:
+    """Return settings bound to initialized API resources when available."""
+
+    state = _API_RUNTIME_STATE
+    if state is not None:
+        return state.settings
+    return get_settings()
 
 
 async def _wait_for_claimed_turn_result(
@@ -162,7 +176,7 @@ async def run_chat_turn(
 ) -> TurnResult:
     """Execute one chat turn via the canonical runtime service."""
 
-    settings = get_settings()
+    settings = _resolve_api_runtime_settings()
     session_factory = get_api_session_factory()
 
     async def _execute_api_turn(
@@ -267,10 +281,18 @@ async def poll_chat_progress(
 ) -> ProgressPollResponse:
     """Poll progress events for one profile/session pair and return the next cursor."""
 
-    resources = await resolve_session_resources(shared_session_factory=get_api_session_factory())
+    settings = _resolve_api_runtime_settings()
+    resources = await resolve_session_resources(
+        shared_session_factory=get_api_session_factory(),
+        settings=settings,
+    )
     try:
         async with session_scope(resources.session_factory) as db:
-            stream = ProgressStream(db, batch_size=get_settings().cli_progress_batch_size)
+            stream = ProgressStream(
+                db,
+                batch_size=settings.cli_progress_batch_size,
+                runlog_events=build_runlog_event_store(session=db, settings=settings),
+            )
             events, next_cursor = await stream.poll(
                 profile_id=profile_id,
                 session_id=session_id,

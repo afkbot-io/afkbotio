@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from afkbot.db.bootstrap import create_schema
+from afkbot.db.engine import create_engine
+from afkbot.db.session import create_session_factory
 from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
@@ -111,6 +114,45 @@ async def _create_automation_actor(
             next_run_at=None,
         )
         return f"automation:{profile_id}:{automation.id}"
+
+
+async def test_create_task_serializes_sqlite_read_before_write_under_pool_pressure(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_pool_pressure.db'}",
+        root_dir=tmp_path,
+        db_pool_size=1,
+        db_max_overflow=0,
+        db_pool_timeout_sec=1,
+    )
+    engine = create_engine(settings)
+    await create_schema(engine)
+    factory = create_session_factory(engine)
+
+    try:
+        async with session_scope(factory) as session:
+            await ProfileRepository(session).get_or_create_default("default")
+
+        service = TaskFlowService(factory, settings=settings, engine=engine)
+
+        async def _create(index: int) -> str:
+            task = await service.create_task(
+                profile_id="default",
+                title=f"Pool pressure task {index}",
+                description="Exercise concurrent read-before-write task creation.",
+                created_by_type="human",
+                created_by_ref="pytest",
+                owner_type="ai_profile",
+                owner_ref="default",
+            )
+            return task.id
+
+        task_ids = await asyncio.gather(*(_create(index) for index in range(20)))
+
+        assert len(set(task_ids)) == 20
+    finally:
+        await engine.dispose()
 
 
 async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.repositories.chat_session_compaction_repo import ChatSessionCompactionRepository
 from afkbot.repositories.chat_turn_repo import ChatTurnRepository
+from afkbot.services.session_transcripts import ChatTranscriptStore, DatabaseChatTranscriptStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,11 +28,12 @@ class SessionRetentionService:
         *,
         prune_raw_turns: bool,
         gc_batch_size: int = 500,
+        transcript_store: ChatTranscriptStore | None = None,
     ) -> None:
         self._prune_raw_turns = prune_raw_turns
         self._gc_batch_size = max(1, gc_batch_size)
         self._compactions = ChatSessionCompactionRepository(session)
-        self._turns = ChatTurnRepository(session)
+        self._turns = transcript_store or DatabaseChatTranscriptStore(ChatTurnRepository(session))
 
     async def garbage_collect_session(
         self,

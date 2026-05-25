@@ -7,13 +7,14 @@ from dataclasses import dataclass
 import time
 
 from afkbot.services.browser_sessions import BrowserSessionManager, get_browser_session_manager
-from afkbot.repositories.runlog_repo import RunlogEventRead, RunlogRepository
+from afkbot.repositories.runlog_repo import RunlogEventRead
 from afkbot.services.browser_snapshot import (
     capture_browser_page_snapshot,
     normalize_snapshot_link_list,
     normalize_snapshot_string_list,
     normalize_snapshot_text,
 )
+from afkbot.services.session_events import RunlogEventStore
 from afkbot.settings import Settings
 
 
@@ -34,14 +35,14 @@ class BrowserCarryoverService:
         self,
         *,
         settings: Settings,
-        runlog_repo: RunlogRepository,
+        runlog_events: RunlogEventStore,
         session_manager: BrowserSessionManager | None = None,
         max_events: int = 24,
         max_chars: int = 1_600,
         live_refresh_window_sec: float = 5.0,
     ) -> None:
         self._settings = settings
-        self._runlog_repo = runlog_repo
+        self._runlog_events = runlog_events
         self._session_manager = session_manager or get_browser_session_manager()
         self._max_events = max(1, int(max_events))
         self._max_chars = max(200, int(max_chars))
@@ -54,7 +55,7 @@ class BrowserCarryoverService:
             profile_id=profile_id,
             session_id=session_id,
         )
-        rows = await self._runlog_repo.list_session_events(
+        rows = await self._runlog_events.list_session_events(
             session_id=session_id,
             event_type="tool.result",
             limit=self._max_events,

@@ -18,8 +18,8 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema, prune_runtime_history
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
-from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.session_events import build_runlog_event_store
 from afkbot.services.subagents.loader import SubagentLoader
 from afkbot.services.subagents.orchestration import (
     build_subagent_session_orchestrator,
@@ -991,7 +991,8 @@ class TaskFlowRuntimeService:
     async def _classify_runlog_failure(self, *, run_id: int) -> TaskExecutionOutcome | None:
         session_factory = self._require_session_factory()
         async with session_scope(session_factory) as session:
-            events = await RunlogRepository(session).list_run_events_since(
+            runlog_events = build_runlog_event_store(session=session, settings=self._settings)
+            events = await runlog_events.list_run_events_since(
                 run_id=run_id,
                 after_event_id=0,
                 limit=256,

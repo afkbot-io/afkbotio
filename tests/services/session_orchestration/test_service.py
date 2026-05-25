@@ -8,12 +8,13 @@ from pathlib import Path
 import sqlite3
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
 from afkbot.models.chat_session_turn_queue import ChatSessionTurnQueueItem
+from afkbot.models.task import Task
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -21,6 +22,8 @@ from afkbot.repositories.run_repo import RunRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.session_orchestration import SessionOrchestrator
 from afkbot.services.session_orchestration.service import _session_queue_poll_delay
+from afkbot.services.task_flow.service import TaskFlowService
+from afkbot.settings import Settings
 from tests.services.agent_loop._loop_harness import create_test_db
 
 
@@ -106,6 +109,60 @@ class _ParallelObservedRunner:
             if len(self._started_sessions) >= self._expected_count:
                 self._all_started.set()
         await self._release_all.wait()
+        run.status = "completed"
+        await self._session.flush()
+        return TurnResult(
+            run_id=run.id,
+            session_id=session_id,
+            profile_id=profile_id,
+            envelope=ActionEnvelope(action="finalize", message=f"done:{message}"),
+        )
+
+
+class _TaskCreatingRunner:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+    ) -> None:
+        self._session = session
+        self._session_factory = session_factory
+        self._settings = settings
+
+    async def run_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        message: str,
+        **_unused: object,
+    ) -> TurnResult:
+        sessions = ChatSessionRepository(self._session)
+        if await sessions.get(session_id) is None:
+            await sessions.create(session_id=session_id, profile_id=profile_id)
+        run = await RunRepository(self._session).create_run(
+            session_id=session_id,
+            profile_id=profile_id,
+            status="running",
+        )
+        await self._session.commit()
+
+        await TaskFlowService(self._session_factory, settings=self._settings).create_task(
+            profile_id=profile_id,
+            title=f"Task from {message}",
+            description=f"Created by stress turn {message}",
+            created_by_type="human",
+            created_by_ref="cli",
+            session_id=session_id,
+            session_profile_id=profile_id,
+            owner_type="human",
+            owner_ref="cli",
+            source_type="chat",
+            source_ref=f"run:{run.id}",
+        )
+
         run.status = "completed"
         await self._session.flush()
         return TurnResult(
@@ -362,6 +419,70 @@ async def test_session_orchestrator_allows_parallel_turns_for_different_sessions
             assert rows == []
     finally:
         release_all.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_session_orchestrator_handles_many_parallel_task_creating_sessions(
+    tmp_path: Path,
+) -> None:
+    """Many independent sessions should create Task Flow work without SQLite I/O failures."""
+
+    settings, engine, factory = await create_test_db(
+        tmp_path,
+        "session_orchestrator_many_task_sessions.db",
+        db_pool_size=25,
+        db_max_overflow=100,
+    )
+    session_count = 100
+
+    async with session_scope(factory) as session:
+        await ProfileRepository(session).get_or_create_default("default")
+
+    orchestrator = SessionOrchestrator(
+        settings=settings,
+        session_factory=factory,
+        turn_runner_factory=lambda session, _profile_id: _TaskCreatingRunner(
+            session,
+            session_factory=factory,
+            settings=settings,
+        ),
+    )
+
+    tasks = [
+        asyncio.create_task(
+            orchestrator.run_turn(
+                profile_id="default",
+                session_id=f"s-stress-{index:03d}",
+                message=f"stress-{index:03d}",
+                source="chat",
+            )
+        )
+        for index in range(session_count)
+    ]
+
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30.0)
+        assert {result.session_id for result in results} == {
+            f"s-stress-{index:03d}" for index in range(session_count)
+        }
+
+        async with session_scope(factory) as session:
+            task_count = (
+                await session.execute(
+                    select(func.count(Task.id)).where(Task.profile_id == "default")
+                )
+            ).scalar_one()
+            queue_count = (
+                await session.execute(select(func.count(ChatSessionTurnQueueItem.id)))
+            ).scalar_one()
+        assert task_count == session_count
+        assert queue_count == 0
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await engine.dispose()
 

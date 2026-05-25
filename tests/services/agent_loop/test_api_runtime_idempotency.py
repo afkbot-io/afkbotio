@@ -551,9 +551,13 @@ async def test_poll_chat_progress_uses_initialized_runtime_resources(
     await initialize_api_runtime(settings=settings)
     try:
         monkeypatch.setattr(
-            "afkbot.services.agent_loop.api_runtime.create_engine",
+            "afkbot.services.agent_loop.api_runtime.get_settings",
+            lambda: (_ for _ in ()).throw(AssertionError("must use initialized settings")),
+        )
+        monkeypatch.setattr(
+            "afkbot.services.agent_loop.api_runtime.DatabaseRuntime.create",
             lambda _settings: (_ for _ in ()).throw(
-                AssertionError("create_engine must not be called")
+                AssertionError("DatabaseRuntime.create must not be called")
             ),
         )
         response = await poll_chat_progress(
@@ -567,6 +571,49 @@ async def test_poll_chat_progress_uses_initialized_runtime_resources(
     assert response.events == []
     assert response.cursor.run_id is None
     assert response.cursor.last_event_id == 0
+
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_uses_initialized_runtime_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """API turn execution should use settings bound during runtime initialization."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'api-runtime-turn-settings.db'}",
+        root_dir=tmp_path,
+    )
+    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.get_settings", lambda: settings)
+    await initialize_api_runtime(settings=settings)
+
+    async def _fake_run_once_result(**kwargs: object) -> TurnResult:
+        assert kwargs["settings"] is settings
+        return TurnResult(
+            run_id=1,
+            profile_id=str(kwargs["profile_id"]),
+            session_id=str(kwargs["session_id"]),
+            envelope=ActionEnvelope(action="finalize", message="ok"),
+        )
+
+    try:
+        monkeypatch.setattr(
+            "afkbot.services.agent_loop.api_runtime.get_settings",
+            lambda: (_ for _ in ()).throw(AssertionError("must use initialized settings")),
+        )
+        monkeypatch.setattr(
+            "afkbot.services.agent_loop.api_runtime.run_once_result",
+            _fake_run_once_result,
+        )
+        result = await run_chat_turn(
+            message="hello",
+            profile_id="default",
+            session_id="api-s",
+        )
+    finally:
+        await shutdown_api_runtime()
+
+    assert result.envelope.message == "ok"
 
 
 def test_idempotency_wait_poll_delay_uses_capped_backoff() -> None:

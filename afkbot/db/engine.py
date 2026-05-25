@@ -13,6 +13,11 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from afkbot.db.dialect import database_driver_name, is_postgres_url, is_sqlite_url
+from afkbot.db.sqlite_lock import (
+    sqlite_file_lock_sync,
+    sqlite_lock_target_for_url,
+    sqlite_write_key_is_held,
+)
 from afkbot.settings import Settings
 
 _SQLITE_BUSY_TIMEOUT_MS: Final[int] = 5_000
@@ -31,6 +36,14 @@ def create_engine(settings: Settings) -> AsyncEngine:
         "future": True,
         "pool_pre_ping": is_postgres,
     }
+    if is_postgres or (is_sqlite and _sqlite_supports_pool_settings(settings.db_url)):
+        engine_kwargs.update(
+            {
+                "pool_size": max(1, settings.db_pool_size),
+                "max_overflow": max(0, settings.db_max_overflow),
+                "pool_timeout": max(1, settings.db_pool_timeout_sec),
+            }
+        )
     if is_postgres:
         engine_kwargs.update(_postgres_engine_kwargs(settings))
     engine = create_async_engine(settings.db_url, **engine_kwargs)
@@ -51,9 +64,6 @@ def _postgres_engine_kwargs(settings: Settings) -> dict[str, object]:
         ),
     }
     return {
-        "pool_size": max(1, settings.db_pool_size),
-        "max_overflow": max(0, settings.db_max_overflow),
-        "pool_timeout": max(1, settings.db_pool_timeout_sec),
         "connect_args": {"server_settings": server_settings},
     }
 
@@ -62,6 +72,7 @@ def _configure_sqlite(engine: AsyncEngine, *, db_url: str) -> None:
     """Apply SQLite connection pragmas required for integrity and lower lock contention."""
 
     enable_wal = _sqlite_supports_wal(db_url)
+    lock_target = sqlite_lock_target_for_url(db_url)
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
@@ -70,7 +81,12 @@ def _configure_sqlite(engine: AsyncEngine, *, db_url: str) -> None:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
             if enable_wal:
-                journal_mode = _try_enable_sqlite_wal(cursor)
+                lock_path = None if lock_target is None else lock_target.file_lock_path
+                if lock_target is not None and sqlite_write_key_is_held(lock_target.key):
+                    journal_mode = _try_enable_sqlite_wal(cursor)
+                else:
+                    with sqlite_file_lock_sync(lock_path, blocking=False) as lock_acquired:
+                        journal_mode = _try_enable_sqlite_wal(cursor) if lock_acquired else None
                 if journal_mode == "wal":
                     cursor.execute("PRAGMA synchronous=NORMAL")
         finally:
@@ -118,6 +134,18 @@ def _sqlite_datetime_from_bytes(value: bytes) -> datetime:
 
 def _sqlite_supports_wal(db_url: str) -> bool:
     """Return True when the SQLite target is on-disk and can use WAL mode."""
+
+    return _sqlite_is_file_backed(db_url)
+
+
+def _sqlite_supports_pool_settings(db_url: str) -> bool:
+    """Return True when SQLite uses a queue pool that accepts sizing options."""
+
+    return _sqlite_is_file_backed(db_url)
+
+
+def _sqlite_is_file_backed(db_url: str) -> bool:
+    """Return True when the SQLite URL targets an on-disk database file."""
 
     if not database_driver_name(db_url).startswith("sqlite"):
         return False

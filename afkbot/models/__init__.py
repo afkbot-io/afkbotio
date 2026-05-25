@@ -33,6 +33,8 @@ _MODEL_EXPORT_MODULES = {
     "Run": "run",
     "RunlogEvent": "runlog_event",
     "Secret": "secret",
+    "SessionStoreOutbox": "session_store_outbox",
+    "SessionStoreSequence": "session_store_sequence",
     "SubagentTask": "subagent_task",
     "Task": "task",
     "TaskAttachment": "task_attachment",

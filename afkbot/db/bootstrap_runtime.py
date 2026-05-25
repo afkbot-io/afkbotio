@@ -10,6 +10,7 @@ from sqlalchemy import MetaData, Table, delete, exists, inspect, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from afkbot.db.session import sqlite_write_gate_for_engine
 from afkbot.models import load_all_models
 from afkbot.models.base import Base
 from afkbot.models.task import Task
@@ -50,12 +51,13 @@ async def create_schema(engine: AsyncEngine) -> None:
 
     load_all_models()
     settings = _resolve_engine_settings(engine)
-    async with engine.begin() as conn:
-        _requires_managed_runtime_schema_validation(
-            settings=settings, dialect_name=conn.dialect.name
-        )
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_upgrade_schema, settings=settings)
+    async with sqlite_write_gate_for_engine(engine):
+        async with engine.begin() as conn:
+            _requires_managed_runtime_schema_validation(
+                settings=settings, dialect_name=conn.dialect.name
+            )
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_upgrade_schema, settings=settings)
 
 
 def _requires_managed_runtime_schema_validation(
@@ -104,11 +106,12 @@ async def ensure_task_runtime_schema(engine: AsyncEngine) -> None:
 
     load_all_models()
     settings = _resolve_engine_settings(engine)
-    async with engine.begin() as conn:
-        _requires_managed_runtime_schema_validation(
-            settings=settings, dialect_name=conn.dialect.name
-        )
-        await conn.run_sync(_upgrade_task_runtime_schema)
+    async with sqlite_write_gate_for_engine(engine):
+        async with engine.begin() as conn:
+            _requires_managed_runtime_schema_validation(
+                settings=settings, dialect_name=conn.dialect.name
+            )
+            await conn.run_sync(_upgrade_task_runtime_schema)
 
 
 async def prune_runtime_history(
@@ -126,14 +129,15 @@ async def prune_runtime_history(
         raise ValueError("batch_size must be >= 1")
 
     load_all_models()
-    async with engine.begin() as conn:
-        return await conn.run_sync(
-            _prune_runtime_history_sync,
-            task_event_before=task_event_before,
-            task_run_before=task_run_before,
-            runlog_event_before=runlog_event_before,
-            batch_size=normalized_batch_size,
-        )
+    async with sqlite_write_gate_for_engine(engine):
+        async with engine.begin() as conn:
+            return await conn.run_sync(
+                _prune_runtime_history_sync,
+                task_event_before=task_event_before,
+                task_run_before=task_run_before,
+                runlog_event_before=runlog_event_before,
+                batch_size=normalized_batch_size,
+            )
 
 
 def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> None:

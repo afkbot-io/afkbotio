@@ -55,7 +55,7 @@ def _build_runtime(
     runtime = RunlogRuntime(
         session=fake_session,  # type: ignore[arg-type]
         run_repo=fake_run_repo,  # type: ignore[arg-type]
-        runlog_repo=fake_runlog_repo,  # type: ignore[arg-type]
+        runlog_events=fake_runlog_repo,  # type: ignore[arg-type]
         sanitize_value=lambda value: value,
         to_payload_dict=lambda value: value if isinstance(value, dict) else {},
     )

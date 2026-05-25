@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from afkbot.services.session_events import JsonlRunlogEventStore
 from afkbot.services.agent_loop import browser_carryover as browser_carryover_module
 from afkbot.services.agent_loop.browser_carryover import BrowserCarryoverService
 from afkbot.settings import Settings
@@ -16,7 +17,7 @@ def test_browser_carryover_truncates_on_bullet_boundaries(tmp_path) -> None:
 
     service = BrowserCarryoverService(
         settings=Settings(root_dir=tmp_path),
-        runlog_repo=object(),  # type: ignore[arg-type]
+        runlog_events=object(),  # type: ignore[arg-type]
         max_chars=200,
     )
 
@@ -39,7 +40,7 @@ def test_browser_carryover_truncates_on_bullet_boundaries(tmp_path) -> None:
 async def test_browser_carryover_reads_live_session_without_touching_ttl(tmp_path) -> None:
     """Live carryover should inspect browser state without extending the session lifetime."""
 
-    class _FakeRunlogRepo:
+    class _FakeRunlogEvents:
         async def list_session_events(self, **_: object) -> list[object]:
             return []
 
@@ -54,7 +55,7 @@ async def test_browser_carryover_reads_live_session_without_touching_ttl(tmp_pat
     session_manager = _RecordingSessionManager()
     service = BrowserCarryoverService(
         settings=Settings(root_dir=tmp_path),
-        runlog_repo=_FakeRunlogRepo(),  # type: ignore[arg-type]
+        runlog_events=_FakeRunlogEvents(),  # type: ignore[arg-type]
         session_manager=session_manager,  # type: ignore[arg-type]
     )
 
@@ -69,7 +70,7 @@ async def test_browser_carryover_reuses_cached_live_summary_until_page_changes(
 ) -> None:
     """Live carryover should reuse the cached snapshot for steady pages and refresh on URL change."""
 
-    class _FakeRunlogRepo:
+    class _FakeRunlogEvents:
         async def list_session_events(self, **_: object) -> list[object]:
             return []
 
@@ -106,7 +107,7 @@ async def test_browser_carryover_reuses_cached_live_summary_until_page_changes(
 
     service = BrowserCarryoverService(
         settings=Settings(root_dir=tmp_path),
-        runlog_repo=_FakeRunlogRepo(),  # type: ignore[arg-type]
+        runlog_events=_FakeRunlogEvents(),  # type: ignore[arg-type]
         session_manager=_FakeSessionManager(handle),  # type: ignore[arg-type]
         live_refresh_window_sec=60,
     )
@@ -120,3 +121,45 @@ async def test_browser_carryover_reuses_cached_live_summary_until_page_changes(
     assert "https://example.com/first" in first
     assert "https://example.com/second" in third
     assert calls == ["https://example.com/first", "https://example.com/second"]
+
+
+@pytest.mark.asyncio
+async def test_browser_carryover_reads_jsonl_runlog_events(tmp_path) -> None:
+    store = JsonlRunlogEventStore(root_dir=tmp_path)
+    await store.create_event(
+        run_id=1,
+        session_id="s-jsonl-browser",
+        event_type="tool.result",
+        payload={
+            "name": "browser.control",
+            "result": {
+                "ok": True,
+                "payload": {
+                    "action": "snapshot",
+                    "url": "https://example.com/dashboard",
+                    "title": "Dashboard",
+                    "headings": ["Orders"],
+                    "body_text": "Open orders are visible",
+                },
+                "metadata": {"browser_session_state": "open"},
+            },
+        },
+    )
+
+    class _NoLiveSessionManager:
+        async def get(self, **_: object) -> None:
+            return None
+
+    service = BrowserCarryoverService(
+        settings=Settings(root_dir=tmp_path),
+        runlog_events=store,
+        session_manager=_NoLiveSessionManager(),  # type: ignore[arg-type]
+    )
+
+    summary = await service.build_prompt_block(
+        profile_id="default",
+        session_id="s-jsonl-browser",
+    )
+    assert summary is not None
+    assert "https://example.com/dashboard" in summary
+    assert "Orders" in summary

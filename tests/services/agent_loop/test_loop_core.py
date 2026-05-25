@@ -18,6 +18,8 @@ from afkbot.models.runlog_event import RunlogEvent
 from afkbot.services.agent_loop.context_builder import ContextBuilder
 from afkbot.services.agent_loop.loop import AgentLoop
 from afkbot.services.agent_loop.parallel_planning import PARALLEL_EXECUTION_MODE_SESSION_JOBS
+from afkbot.services.session_events import JsonlRunlogEventStore
+from afkbot.services.session_transcripts import JsonlChatTranscriptStore
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
@@ -72,6 +74,57 @@ async def test_run_turn_persists_entities_and_progress_events(tmp_path: Path) ->
 
         payload = json.loads(events[-1].payload_json)
         assert payload["user_message"] == "token abcdefghijklmnopqrstuvwxyz"
+
+    await engine.dispose()
+
+
+async def test_run_turn_can_store_append_heavy_session_data_in_jsonl(
+    tmp_path: Path,
+) -> None:
+    """Hybrid storage can keep run state in SQLite while transcript/runlog writes use JSONL."""
+
+    settings, engine, factory = await create_test_db(tmp_path, "loop_jsonl_session_data.db")
+    settings = settings.model_copy(
+        update={
+            "session_event_store_backend": "jsonl",
+            "session_transcript_store_backend": "jsonl",
+        }
+    )
+
+    async with session_scope(factory) as session:
+        loop = AgentLoop(session, ContextBuilder(settings, SkillLoader(settings)))
+        result = await loop.run_turn(
+            profile_id="default",
+            session_id="s-jsonl",
+            message="persist outside sqlite",
+        )
+
+        turns = (await session.execute(select(ChatTurn))).scalars().all()
+        events = (await session.execute(select(RunlogEvent))).scalars().all()
+        assert turns == []
+        assert events == []
+
+    transcript_store = JsonlChatTranscriptStore(root_dir=settings.root_dir)
+    turn_rows = await transcript_store.list_recent(
+        profile_id="default",
+        session_id="s-jsonl",
+        limit=10,
+    )
+    assert [row.user_message for row in turn_rows] == ["persist outside sqlite"]
+
+    runlog_store = JsonlRunlogEventStore(root_dir=settings.root_dir)
+    event_rows = await runlog_store.list_run_events_since(
+        run_id=result.run_id,
+        after_event_id=0,
+        limit=10,
+    )
+    assert [row.event_type for row in event_rows] == [
+        "turn.think",
+        "turn.progress",
+        "turn.plan",
+        "turn.progress",
+        "turn.finalize",
+    ]
 
     await engine.dispose()
 

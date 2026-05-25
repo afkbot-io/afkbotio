@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from dataclasses import dataclass
 import json
 import time
 from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from afkbot.db.bootstrap import create_schema
-from afkbot.db.engine import create_engine
-from afkbot.db.session import create_session_factory, session_scope
+from afkbot.db.runtime import (
+    DatabaseSessionResources,
+    dispose_session_resources,
+    resolve_session_resources as resolve_database_session_resources,
+)
+from afkbot.db.session import session_scope
 from afkbot.repositories.chat_turn_idempotency_repo import ChatTurnIdempotencyRepository
 from afkbot.repositories.pending_resume_envelope_repo import PendingResumeEnvelopeRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, ActionType, TurnResult
 from afkbot.services.agent_loop.progress_stream import ProgressCursor, ProgressEvent
-from afkbot.settings import Settings, get_settings
+from afkbot.settings import Settings
 
 
 IDEMPOTENCY_WAIT_TIMEOUT_SEC = 60.0
@@ -28,12 +30,7 @@ IDEMPOTENCY_WAIT_MAX_POLL_SEC = 0.5
 IDEMPOTENCY_HEARTBEAT_SEC = 15.0
 
 
-@dataclass(slots=True, frozen=True)
-class ApiSessionResources:
-    """Resolved session factory plus optional owned engine for one API operation."""
-
-    session_factory: async_sessionmaker[AsyncSession]
-    owned_engine: AsyncEngine | None = None
+ApiSessionResources = DatabaseSessionResources
 
 
 class ProgressPollResponse(BaseModel):
@@ -52,23 +49,16 @@ async def resolve_session_resources(
 ) -> ApiSessionResources:
     """Return shared DB resources or create temporary owned resources on demand."""
 
-    if shared_session_factory is not None:
-        return ApiSessionResources(session_factory=shared_session_factory)
-
-    resolved_settings = settings or get_settings()
-    owned_engine = create_engine(resolved_settings)
-    await create_schema(owned_engine)
-    return ApiSessionResources(
-        session_factory=create_session_factory(owned_engine),
-        owned_engine=owned_engine,
+    return await resolve_database_session_resources(
+        shared_session_factory=shared_session_factory,
+        settings=settings,
     )
 
 
 async def dispose_owned_engine(resources: ApiSessionResources) -> None:
     """Dispose the owned engine when one was created for the current operation."""
 
-    if resources.owned_engine is not None:
-        await resources.owned_engine.dispose()
+    await dispose_session_resources(resources)
 
 
 def idempotency_row_to_turn_result(row: object) -> TurnResult:

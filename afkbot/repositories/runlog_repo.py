@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.models.run import Run
@@ -50,6 +50,15 @@ class RunlogRepository:
         self._session.add(event)
         await self._session.flush()
         return event
+
+    async def max_session_event_id(self, *, session_id: str) -> int:
+        """Return the current maximum runlog event id for one chat session."""
+
+        statement = select(func.max(RunlogEvent.id)).where(
+            RunlogEvent.session_id == session_id
+        )
+        value = (await self._session.execute(statement)).scalar_one()
+        return int(value or 0)
 
     async def list_run_events_since(
         self,
@@ -140,6 +149,40 @@ class RunlogRepository:
         if event_type is not None:
             statement = statement.where(RunlogEvent.event_type == event_type)
         statement = statement.order_by(RunlogEvent.id.desc()).limit(limit)
+        rows = (await self._session.execute(statement)).scalars().all()
+        return [
+            RunlogEventRead(
+                id=row.id,
+                run_id=row.run_id,
+                session_id=row.session_id,
+                event_type=row.event_type,
+                payload_json=row.payload_json,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+    async def list_session_events_after(
+        self,
+        *,
+        session_id: str,
+        after_event_id: int = 0,
+        limit: int = 100,
+    ) -> list[RunlogEventRead]:
+        """List session events in ascending id order after provided event id."""
+
+        if limit <= 0:
+            return []
+
+        statement: Select[tuple[RunlogEvent]] = (
+            select(RunlogEvent)
+            .where(
+                RunlogEvent.session_id == session_id,
+                RunlogEvent.id > after_event_id,
+            )
+            .order_by(RunlogEvent.id.asc())
+            .limit(limit)
+        )
         rows = (await self._session.execute(statement)).scalars().all()
         return [
             RunlogEventRead(

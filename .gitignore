@@ -103,6 +103,7 @@ private/
 .history/
 *.log.*
 *.pid.lock
+*.afkbot.lock
 *.seed
 *.stackdump
 .eggs/
