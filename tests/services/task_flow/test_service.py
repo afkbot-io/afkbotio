@@ -281,6 +281,84 @@ async def test_task_flow_service_creates_default_flow_documents_and_revisions(
         await engine.dispose()
 
 
+async def test_task_flow_service_lists_documents_across_scopes_with_filters(
+    tmp_path: Path,
+) -> None:
+    """Document workspace queries should cover flow and task docs without leaking profiles."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_document_workspace.db",
+        profile_ids=("default", "other"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Release coordination",
+            description="Coordinate release documentation.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        other_flow = await service.create_flow(
+            profile_id="other",
+            title="Other profile",
+            description="Must not leak into default profile queries.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Draft launch notes",
+            description="Prepare release handoff details.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        await service.put_task_document(
+            profile_id="default",
+            task_id=task.id,
+            document_key="handoff",
+            title="Launch handoff",
+            body="Release blockers, owner map, and rollout notes.",
+            actor_type="ai_profile",
+            actor_ref="default",
+        )
+        await service.put_flow_document(
+            profile_id="other",
+            flow_id=other_flow.id,
+            document_key="plan",
+            title="Hidden plan",
+            body="Hidden release content.",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        found = await service.list_documents(
+            profile_id="default",
+            query="release",
+            scope_type="task",
+            confirmation_status="draft",
+        )
+
+        assert [document.document_key for document in found] == ["handoff"]
+        assert found[0].scope_id == task.id
+        assert found[0].title == "Launch handoff"
+
+        limited = await service.list_documents(profile_id="default", limit=1)
+        assert len(limited) == 1
+
+        detail = await service.get_document(profile_id="default", document_id=found[0].id)
+        assert detail.id == found[0].id
+        assert "rollout notes" in detail.body
+
+        with pytest.raises(TaskFlowServiceError) as excinfo:
+            await service.get_document(profile_id="other", document_id=found[0].id)
+        assert excinfo.value.error_code == "task_document_not_found"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_builds_task_context_with_docs_history_and_relations(
     tmp_path: Path,
 ) -> None:
