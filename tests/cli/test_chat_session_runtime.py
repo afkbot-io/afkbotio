@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import cast
+
 from pytest import MonkeyPatch
 
 from afkbot.cli.commands.chat_planning_runtime import (
@@ -13,10 +16,16 @@ from afkbot.cli.commands.chat_session_runtime import (
     _invoke_run_repl_transport,
     run_single_turn,
 )
+from afkbot.cli.presentation.progress_heartbeat import (
+    ProgressHeartbeatEmitter,
+    TranscriptProgressHeartbeat,
+)
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
+from afkbot.services.agent_loop.progress_stream import ProgressEvent
 from afkbot.services.chat_session.plan_ledger import ChatPlanSnapshot
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
+from tests.cli._rendering import strip_ansi
 
 
 async def test_run_repl_turn_skips_blocking_plan_prompts_in_auto_mode() -> None:
@@ -208,6 +217,75 @@ def test_run_single_turn_auto_executes_after_plan_without_waiting_for_second_pro
         monkeypatch.undo()
 
     assert captured_callbacks["confirm_plan_execution"] is None
+
+
+def test_run_single_turn_non_json_reports_transcript_heartbeat(capsys) -> None:
+    """One-shot non-JSON chat should show waiting progress in transcript mode."""
+
+    monkeypatch = MonkeyPatch()
+    real_heartbeat = TranscriptProgressHeartbeat
+
+    def _create_fast_heartbeat(**kwargs: object) -> TranscriptProgressHeartbeat:
+        emit = kwargs["emit"]
+        assert callable(emit)
+        return real_heartbeat(
+            emit=cast(ProgressHeartbeatEmitter, emit),
+            interval_sec=0.01,
+        )
+
+    async def _fake_turn_flow(**kwargs: object) -> ChatTurnOutcome:
+        progress_sink = kwargs["progress_sink"]
+        assert callable(progress_sink)
+        progress_sink(
+            ProgressEvent(
+                event_id=1,
+                run_id=1,
+                stage="thinking",
+                iteration=1,
+                tool_name=None,
+                event_type="turn.progress",
+            )
+        )
+        await asyncio.sleep(0.04)
+        return ChatTurnOutcome(
+            result=TurnResult(
+                run_id=1,
+                session_id="s-single-turn",
+                profile_id="default",
+                envelope=ActionEnvelope(action="finalize", message="done"),
+            )
+        )
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_session_runtime.run_chat_turn_with_optional_planning",
+        _fake_turn_flow,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_session_runtime.TranscriptProgressHeartbeat",
+        _create_fast_heartbeat,
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_session_runtime._supports_interactive_confirm",
+        lambda: False,
+    )
+
+    try:
+        run_single_turn(
+            message="wait visibly",
+            profile_id="default",
+            session_id="s-single-turn",
+            json_output=False,
+            run_turn_with_secure_resolution=lambda **_: None,  # type: ignore[arg-type]
+            planning_mode="off",
+            thinking_level=None,
+        )
+    finally:
+        monkeypatch.undo()
+
+    out = strip_ansi(capsys.readouterr().out)
+    assert "Working (" in out
+    assert "[iter 1] thinking" in out
+    assert "done" in out
 
 
 def test_invoke_run_repl_transport_tolerates_older_runtime_signature() -> None:

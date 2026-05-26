@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.3] - 2026-05-26
+
+### Changed
+
+- `afk chat` transcript output now emits periodic `Working (...)` heartbeat
+  lines while a model turn or long-running tool call is still in progress, so
+  non-fullscreen sessions no longer appear idle between progress events.
+- Release metadata and lockfile package metadata are aligned to `1.9.3`.
+
 ## [1.9.1] - 2026-05-24
 
 ### Added

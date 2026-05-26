@@ -29,7 +29,10 @@ class _PromptStub:
 
 
 def _make_chat_ux(
-    *, spinner_enabled: bool, tool_panel_frame_interval_sec: float = 0.12
+    *,
+    spinner_enabled: bool,
+    tool_panel_frame_interval_sec: float = 0.12,
+    fallback_heartbeat_interval_sec: float = 5.0,
 ) -> InteractiveChatUX:
     return InteractiveChatUX(
         _prompt=cast(PromptSession[str], _PromptStub()),
@@ -37,6 +40,7 @@ def _make_chat_ux(
         _stop_event=threading.Event(),
         _lock=threading.Lock(),
         _tool_panel_frame_interval_sec=tool_panel_frame_interval_sec,
+        _fallback_heartbeat_interval_sec=fallback_heartbeat_interval_sec,
     )
 
 
@@ -75,6 +79,7 @@ def test_interactive_chat_skips_setup_thinking_event(monkeypatch) -> None:
     # Assert
     assert after_setup == before
     assert "[iter 1] model running" in stream.getvalue()
+    ux.stop_progress()
 
 
 def test_interactive_chat_keeps_one_live_tool_panel_with_latest_ten_lines(monkeypatch) -> None:
@@ -270,3 +275,72 @@ def test_interactive_chat_animates_live_tool_panel_header(monkeypatch) -> None:
     assert second_output != first_output
     assert ux._tool_panel_thread is None or not ux._tool_panel_thread.is_alive()
     assert second_output.count("● tool running: bash.exec") >= 2
+
+
+def test_interactive_chat_non_tty_reports_working_heartbeat_during_llm_wait(
+    monkeypatch,
+) -> None:
+    """Transcript mode should keep narrating long LLM waits between discrete events."""
+
+    # Arrange
+    stream = StringIO()
+    monkeypatch.setattr("sys.stdout", stream)
+    ux = _make_chat_ux(spinner_enabled=False, fallback_heartbeat_interval_sec=0.01)
+    ux.begin_agent_turn()
+    thinking_event = ProgressEvent(
+        event_id=50,
+        run_id=1,
+        stage="thinking",
+        iteration=1,
+        tool_name=None,
+        event_type="turn.progress",
+    )
+
+    # Act
+    ux.on_progress(thinking_event)
+    first_output = stream.getvalue()
+    time.sleep(0.04)
+    second_output = stream.getvalue()
+    ux.stop_progress()
+
+    # Assert
+    stripped = strip_ansi(second_output)
+    assert "[iter 1] thinking..." in strip_ansi(first_output)
+    assert second_output != first_output
+    assert "Working (" in stripped
+    assert "[iter 1] thinking" in stripped
+
+
+def test_interactive_chat_non_tty_reports_working_heartbeat_during_session_job(
+    monkeypatch,
+) -> None:
+    """Transcript mode should show elapsed waiting while a long session job runs."""
+
+    # Arrange
+    stream = StringIO()
+    monkeypatch.setattr("sys.stdout", stream)
+    ux = _make_chat_ux(spinner_enabled=False, fallback_heartbeat_interval_sec=0.01)
+    ux.begin_agent_turn()
+    tool_event = ProgressEvent(
+        event_id=60,
+        run_id=1,
+        stage="tool_call",
+        iteration=1,
+        tool_name="session.job.run",
+        event_type="tool.call",
+    )
+    tool_event.attach_tool_details(tool_call_params={"jobs": [{"cmd": "sleep 10"}]})
+
+    # Act
+    ux.on_progress(tool_event)
+    first_output = stream.getvalue()
+    time.sleep(0.04)
+    second_output = stream.getvalue()
+    ux.stop_progress()
+
+    # Assert
+    stripped = strip_ansi(second_output)
+    assert "calling tool: session.job.run" in strip_ansi(first_output)
+    assert second_output != first_output
+    assert "Working (" in stripped
+    assert "session.job.run" in stripped

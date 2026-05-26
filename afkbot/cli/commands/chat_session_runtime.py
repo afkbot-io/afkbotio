@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -20,6 +21,7 @@ from afkbot.cli.command_errors import raise_usage_error
 from afkbot.cli.presentation.chat_interactive import InteractiveChatUX
 from afkbot.cli.presentation.chat_style import AFK_AGENT_HEADER
 from afkbot.cli.presentation.chat_turn_output import render_chat_turn_outcome
+from afkbot.cli.presentation.progress_heartbeat import TranscriptProgressHeartbeat
 from afkbot.cli.presentation.progress_timeline import (
     ProgressTimelineState,
     reduce_progress_event,
@@ -61,6 +63,20 @@ def run_single_turn(
     interactive_ux = (
         None if json_output or not _supports_interactive_confirm() else InteractiveChatUX.create()
     )
+    heartbeat_output_lock = threading.Lock()
+
+    def echo_progress_line(line: str = "") -> None:
+        with heartbeat_output_lock:
+            typer.echo(line)
+
+    def emit_heartbeat(line: str, color: str) -> None:
+        echo_progress_line(f"  {color}{line}\033[0m")
+
+    transcript_heartbeat = (
+        None
+        if json_output or interactive_ux is not None
+        else TranscriptProgressHeartbeat(emit=emit_heartbeat)
+    )
 
     def echo_progress(event: ProgressEvent) -> None:
         nonlocal timeline_state, progress_opened
@@ -71,19 +87,25 @@ def run_single_turn(
         if frame is None:
             return
         color = frame.color
+        if frame.stop_spinner and transcript_heartbeat is not None:
+            transcript_heartbeat.stop()
         if not progress_opened:
-            typer.echo()
-            typer.echo(AFK_AGENT_HEADER)
+            echo_progress_line()
+            echo_progress_line(AFK_AGENT_HEADER)
             progress_opened = True
         if frame.separator_before:
-            typer.echo("")
+            echo_progress_line()
         if frame.spinner_label is not None:
-            typer.echo(f"  {color}{frame.spinner_label}...\033[0m")
+            if transcript_heartbeat is not None:
+                transcript_heartbeat.update(frame.spinner_label, color)
+            echo_progress_line(f"  {color}{frame.spinner_label}...\033[0m")
             return
         if frame.status_line is not None:
-            typer.echo(f"  {color}{frame.status_line}\033[0m")
+            if transcript_heartbeat is not None:
+                transcript_heartbeat.update(frame.status_line, color)
+            echo_progress_line(f"  {color}{frame.status_line}\033[0m")
         if frame.detail_line is not None:
-            typer.echo(f"    \033[90m{frame.detail_line}\033[0m")
+            echo_progress_line(f"    \033[90m{frame.detail_line}\033[0m")
 
     if interactive_ux is not None:
         setattr(echo_progress, "before_interactive_prompt", interactive_ux.stop_progress)
@@ -91,6 +113,8 @@ def run_single_turn(
     try:
         if interactive_ux is not None:
             interactive_ux.begin_agent_turn()
+        if transcript_heartbeat is not None:
+            transcript_heartbeat.begin_turn()
         result: ChatTurnOutcome = asyncio.run(
             run_chat_turn_with_optional_planning(
                 message=message,
@@ -123,6 +147,8 @@ def run_single_turn(
     finally:
         if interactive_ux is not None:
             interactive_ux.stop_progress()
+        if transcript_heartbeat is not None:
+            transcript_heartbeat.stop()
 
     if json_output:
         typer.echo(result.result.model_dump_json())

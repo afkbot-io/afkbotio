@@ -11,6 +11,7 @@ from typing import cast
 from prompt_toolkit import PromptSession
 
 from afkbot.cli.presentation.chat_style import AFK_AGENT_HEADER, CHAT_PROMPT
+from afkbot.cli.presentation.progress_heartbeat import TranscriptProgressHeartbeat
 from afkbot.cli.presentation.tty import supports_interactive_tty
 from afkbot.cli.presentation.progress_mapper import is_live_tool_result
 from afkbot.cli.presentation.progress_timeline import ProgressTimelineState, reduce_progress_event
@@ -18,6 +19,7 @@ from afkbot.cli.presentation.progress_renderer import render_progress_detail_lin
 from afkbot.services.agent_loop.progress_stream import ProgressEvent
 
 _MAX_TOOL_PANEL_LINES = 10
+_FALLBACK_HEARTBEAT_INTERVAL_SEC = 5.0
 
 _DOT_FRAMES: tuple[str, ...] = (".  ", ".. ", "...")
 
@@ -30,6 +32,7 @@ class InteractiveChatUX:
     _spinner_enabled: bool
     _stop_event: threading.Event
     _lock: threading.Lock
+    _output_lock: threading.Lock = field(default_factory=threading.Lock)
     _spinner_thread: threading.Thread | None = None
     _active_label: str | None = None
     _active_color: str = "\033[94m"
@@ -47,6 +50,14 @@ class InteractiveChatUX:
     _active_tool_color: str = "\033[94m"
     _active_tool_detail_lines: tuple[str, ...] = ()
     _prompt_read_active: bool = False
+    _fallback_heartbeat_interval_sec: float = _FALLBACK_HEARTBEAT_INTERVAL_SEC
+    _fallback_heartbeat: TranscriptProgressHeartbeat | None = None
+
+    def __post_init__(self) -> None:
+        self._fallback_heartbeat = TranscriptProgressHeartbeat(
+            emit=self._print_status_line,
+            interval_sec=self._fallback_heartbeat_interval_sec,
+        )
 
     @classmethod
     def create(
@@ -85,6 +96,8 @@ class InteractiveChatUX:
 
         self.stop_progress()
         self._timeline_state = ProgressTimelineState()
+        if self._fallback_heartbeat is not None:
+            self._fallback_heartbeat.begin_turn()
         sys.stdout.write(f"\n{AFK_AGENT_HEADER}\n")
         sys.stdout.flush()
 
@@ -104,7 +117,7 @@ class InteractiveChatUX:
             self._print_group_separator()
 
         if frame.stop_spinner:
-            self._stop_spinner()
+            self.stop_progress()
 
         if self._handle_live_tool_frame(event=event, status_line=frame.status_line, color=color):
             return
@@ -113,14 +126,23 @@ class InteractiveChatUX:
             self._start_or_update(frame.spinner_label, color)
             return
 
-        self.stop_progress()
+        self._stop_transient_progress()
         if frame.status_line is not None:
+            self._record_fallback_activity(frame.status_line, color)
             self._print_status_line(frame.status_line, color)
         if frame.detail_line is not None:
             self._print_detail_line(frame.detail_line)
 
     def stop_progress(self) -> None:
         """Stop spinner and clear transient progress line."""
+
+        self._stop_spinner()
+        self._stop_tool_panel(clear=True)
+        if self._fallback_heartbeat is not None:
+            self._fallback_heartbeat.stop()
+
+    def _stop_transient_progress(self) -> None:
+        """Stop single-line TTY animations without ending the current turn heartbeat."""
 
         self._stop_spinner()
         self._stop_tool_panel(clear=True)
@@ -267,9 +289,10 @@ class InteractiveChatUX:
         )
 
         self._erase_active_tool_block_locked()
-        for line in rendered_lines:
-            sys.stdout.write(f"{line}\n")
-        sys.stdout.flush()
+        with self._output_lock:
+            for line in rendered_lines:
+                sys.stdout.write(f"{line}\n")
+            sys.stdout.flush()
 
         self._active_tool_block_lines = len(rendered_lines)
 
@@ -297,14 +320,15 @@ class InteractiveChatUX:
             return
 
         line_count = self._active_tool_block_lines
-        sys.stdout.write(f"\033[{line_count}F")
-        for index in range(line_count):
-            sys.stdout.write("\033[2K")
-            if index < line_count - 1:
-                sys.stdout.write("\033[1E")
-        if line_count > 1:
-            sys.stdout.write(f"\033[{line_count - 1}F")
-        sys.stdout.flush()
+        with self._output_lock:
+            sys.stdout.write(f"\033[{line_count}F")
+            for index in range(line_count):
+                sys.stdout.write("\033[2K")
+                if index < line_count - 1:
+                    sys.stdout.write("\033[1E")
+            if line_count > 1:
+                sys.stdout.write(f"\033[{line_count - 1}F")
+            sys.stdout.flush()
 
     def _reset_active_tool_panel_state_locked(self) -> None:
         """Reset in-memory tool panel state while the render lock is already held."""
@@ -326,11 +350,14 @@ class InteractiveChatUX:
 
     def _start_or_update(self, label: str, color: str) -> None:
         if not self._spinner_enabled or self._prompt_read_active:
-            if self._active_label == label:
-                return
-            self._active_label = label
-            self._active_color = color
+            with self._lock:
+                if self._active_label == label:
+                    return
+                self._active_label = label
+                self._active_color = color
             self._print_status_line(f"{label}...", color)
+            if self._fallback_heartbeat is not None:
+                self._fallback_heartbeat.update(label, color)
             return
         with self._lock:
             self._active_label = label
@@ -348,6 +375,17 @@ class InteractiveChatUX:
             )
             self._spinner_thread.start()
 
+    def _record_fallback_activity(self, label: str, color: str) -> None:
+        """Keep transcript-mode heartbeat aligned with the latest visible activity."""
+
+        if self._spinner_enabled and not self._prompt_read_active:
+            return
+        with self._lock:
+            self._active_label = label
+            self._active_color = color
+        if self._fallback_heartbeat is not None:
+            self._fallback_heartbeat.update(label, color)
+
     def _spin_loop(self, generation: int) -> None:
         frame_index = 0
         while not self._stop_event.is_set():
@@ -362,33 +400,35 @@ class InteractiveChatUX:
             frame_index += 1
             time.sleep(0.08)
 
-    @staticmethod
-    def _print_status_line(line: str, color: str) -> None:
-        sys.stdout.write(f"  {color}{line}\033[0m\n")
-        sys.stdout.flush()
+    def _print_status_line(self, line: str, color: str) -> None:
+        with self._output_lock:
+            sys.stdout.write(f"  {color}{line}\033[0m\n")
+            sys.stdout.flush()
 
-    @staticmethod
-    def _print_detail_line(line: str) -> None:
-        sys.stdout.write(f"    \033[90m{line}\033[0m\n")
-        sys.stdout.flush()
+    def _print_detail_line(self, line: str) -> None:
+        with self._output_lock:
+            sys.stdout.write(f"    \033[90m{line}\033[0m\n")
+            sys.stdout.flush()
 
-    @staticmethod
-    def _print_group_separator() -> None:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+    def _print_group_separator(self) -> None:
+        with self._output_lock:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
     def _write_line(self, rendered: str) -> None:
         clean_len = len(_strip_ansi(rendered).lstrip("\r"))
-        self._last_render_width = max(self._last_render_width, clean_len)
-        sys.stdout.write(rendered)
-        sys.stdout.flush()
+        with self._output_lock:
+            self._last_render_width = max(self._last_render_width, clean_len)
+            sys.stdout.write(rendered)
+            sys.stdout.flush()
 
     def _clear_line(self) -> None:
-        if self._last_render_width <= 0:
-            return
-        sys.stdout.write("\r" + (" " * self._last_render_width) + "\r")
-        sys.stdout.flush()
-        self._last_render_width = 0
+        with self._output_lock:
+            if self._last_render_width <= 0:
+                return
+            sys.stdout.write("\r" + (" " * self._last_render_width) + "\r")
+            sys.stdout.flush()
+            self._last_render_width = 0
 
 
 def _strip_ansi(value: str) -> str:

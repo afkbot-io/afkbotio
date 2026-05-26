@@ -9,6 +9,7 @@ from afkbot.cli.presentation.chat_plan_status import (
     plan_summary_for_chat_workspace,
     stored_plan_status_for_chat_workspace,
 )
+from afkbot.cli.presentation.elapsed import format_elapsed_seconds
 from afkbot.cli.presentation.terminal_text import sanitize_terminal_text
 from afkbot.services.chat_session.activity_state import ChatActivitySnapshot
 from afkbot.services.chat_session.session_state import ChatReplSessionState
@@ -141,15 +142,7 @@ def _elapsed_label(state: ChatReplSessionState) -> str | None:
     started_at = state.active_turn_started_at
     if started_at is None:
         return None
-    elapsed_seconds = max(0, int(monotonic() - started_at))
-    if elapsed_seconds < 60:
-        return f"{elapsed_seconds}s"
-    if elapsed_seconds < 3_600:
-        minutes, seconds = divmod(elapsed_seconds, 60)
-        return f"{minutes}m {seconds:02d}s"
-    hours, remainder = divmod(elapsed_seconds, 3_600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    return format_elapsed_seconds(monotonic() - started_at)
 
 
 def _toolish_activity_label(
