@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from afkbot.api.chat_auth import require_chat_http_context
+from afkbot.services.connect import ConnectAccessTokenContext
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.task_flow.contracts import (
     TaskDocumentMetadata,
@@ -172,7 +173,7 @@ async def _require_profile_context(
     authorization: str | None,
     session_proof: str | None,
     profile_id: str | None,
-):
+) -> ConnectAccessTokenContext:
     auth_context = await require_chat_http_context(
         authorization=authorization,
         session_proof=session_proof,
