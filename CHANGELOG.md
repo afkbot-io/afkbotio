@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.4] - 2026-05-26
+
+### Fixed
+
+- `afk task review-list --all-reviewers` now works on installed runtimes where
+  Click reports no parameter source for defaulted CLI options, instead of
+  treating the default `--actor-type human` value as an explicit actor selector.
+
 ## [1.9.3] - 2026-05-26
 
 ### Added

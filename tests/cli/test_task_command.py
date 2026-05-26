@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from typing import cast
 
+import typer
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
@@ -553,6 +555,18 @@ def test_task_review_list_rejects_all_reviewers_with_actor_selector(monkeypatch)
     )
 
     assert result.exit_code != 0
+
+
+def test_task_option_was_explicit_treats_missing_source_as_default() -> None:
+    """Click may report no source for defaulted options on some installed runtimes."""
+
+    from afkbot.cli.commands import task as module
+
+    class _Context:
+        def get_parameter_source(self, _param_name: str):
+            return None
+
+    assert module._option_was_explicit(cast(typer.Context, _Context()), "actor_type") is False
 
 
 def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
