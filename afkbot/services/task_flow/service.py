@@ -365,6 +365,72 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def list_documents(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        document_key: str | None = None,
+        confirmation_status: str | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TaskDocumentMetadata]:
+        """List Task Flow documents for the profile-wide document workspace."""
+
+        normalized_scope_type = (
+            _normalize_document_scope_type(scope_type) if scope_type is not None else None
+        )
+        normalized_scope_id = _normalize_optional_text(scope_id)
+        normalized_document_key = (
+            _normalize_document_key(document_key) if document_key is not None else None
+        )
+        normalized_status = _normalize_optional_text(confirmation_status)
+        normalized_query = _normalize_optional_text(query)
+        normalized_limit = min(max(int(limit), 1), 200)
+        normalized_offset = max(int(offset), 0)
+
+        async def _op(repo: TaskFlowRepository) -> list[TaskDocumentMetadata]:
+            await _ensure_profile_exists(repo, profile_id)
+            rows = await repo.list_task_documents_for_profile(
+                profile_id=profile_id,
+                scope_type=normalized_scope_type,
+                scope_id=normalized_scope_id,
+                document_key=normalized_document_key,
+                confirmation_status=normalized_status,
+                query=normalized_query,
+                limit=normalized_limit,
+                offset=normalized_offset,
+            )
+            return [_to_task_document_metadata(row) for row in rows]
+
+        return await self._with_repo(_op)
+
+    async def get_document(
+        self,
+        *,
+        profile_id: str,
+        document_id: str,
+    ) -> TaskDocumentMetadata:
+        """Return one Task Flow document by id for the selected profile."""
+
+        normalized_document_id = _normalize_required_text(document_id, field_name="document_id")
+
+        async def _op(repo: TaskFlowRepository) -> TaskDocumentMetadata:
+            document = await repo.get_task_document_by_id(
+                profile_id=profile_id,
+                document_id=normalized_document_id,
+            )
+            if document is None:
+                raise TaskFlowServiceError(
+                    error_code="task_document_not_found",
+                    reason="Task Flow document not found",
+                )
+            return _to_task_document_metadata(document)
+
+        return await self._with_repo(_op)
+
     async def put_flow_document(
         self,
         *,

@@ -15,6 +15,7 @@ from afkbot.api.routes_auth import router as auth_router
 from afkbot.api.routes_connect import router as connect_router
 from afkbot.api.routes_health import router as health_router
 from afkbot.api.routes_plugins import router as plugins_router
+from afkbot.api.routes_task_documents import router as task_documents_router
 from afkbot.api.ui_auth_middleware import PluginUIAuthMiddleware
 from afkbot.services.agent_loop.api_runtime import (
     initialize_api_runtime,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(connect_router)
     app.include_router(health_router)
     app.include_router(plugins_router)
+    app.include_router(task_documents_router)
     for router in plugin_runtime.routers:
         app.include_router(router)
     for mount in plugin_runtime.static_mounts:
