@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from pydantic import Field
 
@@ -13,6 +13,7 @@ from afkbot.services.task_flow import (
     get_task_flow_service,
 )
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
+from afkbot.services.task_flow.timing import TaskTimingInputError, resolve_ready_at_update
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
@@ -134,23 +135,16 @@ class TaskUpdateTool(ToolBase):
                 if blocked_reason_text_explicit
                 else TASK_FLOW_FIELD_UNSET
             )
-            ready_at_explicit = "ready_at" in explicit_fields
-            retry_after_explicit = "retry_after_sec" in explicit_fields
-            if ready_at_explicit and retry_after_explicit:
-                return ToolResult.error(
-                    error_code="task_ready_at_conflict",
-                    reason="ready_at and retry_after_sec cannot be used together",
+            try:
+                ready_at_update = resolve_ready_at_update(
+                    explicit_fields=explicit_fields,
+                    ready_at=payload.ready_at,
+                    retry_after_sec=payload.retry_after_sec,
+                    status=payload.status,
+                    require_blocked_status_for_retry=True,
                 )
-            effective_ready_at = payload.ready_at
-            if retry_after_explicit:
-                if payload.status != "blocked":
-                    return ToolResult.error(
-                        error_code="task_retry_after_requires_blocked_status",
-                        reason="retry_after_sec requires status=blocked",
-                    )
-                effective_ready_at = datetime.now(timezone.utc) + timedelta(
-                    seconds=payload.retry_after_sec or 0
-                )
+            except TaskTimingInputError as exc:
+                return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
             if (
                 actor.actor_type != "automation"
                 and effective_session_id is None
@@ -167,110 +161,43 @@ class TaskUpdateTool(ToolBase):
                 and not session_profile_id_explicit
             ):
                 effective_session_profile_id = ctx.profile_id
-            if ready_at_explicit or retry_after_explicit:
-                if effective_session_id is not None:
-                    item = await service.update_task(
-                        profile_id=target_profile_id,
-                        task_id=payload.task_id,
-                        title=payload.title,
-                        description=payload.description,
-                        status=payload.status,
-                        priority=payload.priority,
-                        due_at=payload.due_at,
-                        ready_at=effective_ready_at,
-                        owner_type=resolved_owner_type,
-                        owner_ref=resolved_owner_ref,
-                        reviewer_type=resolved_reviewer_type,
-                        reviewer_ref=resolved_reviewer_ref,
-                        requires_review=payload.requires_review,
-                        labels=payload.labels,
-                        session_id=effective_session_id,
-                        session_profile_id=(
-                            effective_session_profile_id
-                            if session_profile_id_explicit
-                            or effective_session_profile_id is not None
-                            else None
-                        ),
-                        blocked_reason_code=blocked_reason_code_arg,
-                        blocked_reason_text=blocked_reason_text_arg,
-                        actor_session_id=actor.actor_session_id,
-                        actor_type=actor.actor_type,
-                        actor_ref=actor.actor_ref,
-                        attachments=payload.attachments,
-                    )
-                else:
-                    item = await service.update_task(
-                        profile_id=target_profile_id,
-                        task_id=payload.task_id,
-                        title=payload.title,
-                        description=payload.description,
-                        status=payload.status,
-                        priority=payload.priority,
-                        due_at=payload.due_at,
-                        ready_at=effective_ready_at,
-                        owner_type=resolved_owner_type,
-                        owner_ref=resolved_owner_ref,
-                        reviewer_type=resolved_reviewer_type,
-                        reviewer_ref=resolved_reviewer_ref,
-                        requires_review=payload.requires_review,
-                        labels=payload.labels,
-                        blocked_reason_code=blocked_reason_code_arg,
-                        blocked_reason_text=blocked_reason_text_arg,
-                        actor_session_id=actor.actor_session_id,
-                        actor_type=actor.actor_type,
-                        actor_ref=actor.actor_ref,
-                        attachments=payload.attachments,
-                    )
-            elif effective_session_id is not None:
-                item = await service.update_task(
-                    profile_id=target_profile_id,
-                    task_id=payload.task_id,
-                    title=payload.title,
-                    description=payload.description,
-                    status=payload.status,
-                    priority=payload.priority,
-                    due_at=payload.due_at,
-                    owner_type=resolved_owner_type,
-                    owner_ref=resolved_owner_ref,
-                    reviewer_type=resolved_reviewer_type,
-                    reviewer_ref=resolved_reviewer_ref,
-                    requires_review=payload.requires_review,
-                    labels=payload.labels,
-                    session_id=effective_session_id,
-                    session_profile_id=(
-                        effective_session_profile_id
-                        if session_profile_id_explicit or effective_session_profile_id is not None
-                        else None
-                    ),
-                    blocked_reason_code=blocked_reason_code_arg,
-                    blocked_reason_text=blocked_reason_text_arg,
-                    actor_session_id=actor.actor_session_id,
-                    actor_type=actor.actor_type,
-                    actor_ref=actor.actor_ref,
-                    attachments=payload.attachments,
+            session_id_arg: str | None | object = TASK_FLOW_FIELD_UNSET
+            session_profile_id_arg: str | None | object = TASK_FLOW_FIELD_UNSET
+            if session_id_explicit or effective_session_id is not None:
+                session_id_arg = effective_session_id
+                session_profile_id_arg = (
+                    effective_session_profile_id
+                    if session_profile_id_explicit or effective_session_profile_id is not None
+                    else None
                 )
-            else:
-                item = await service.update_task(
-                    profile_id=target_profile_id,
-                    task_id=payload.task_id,
-                    title=payload.title,
-                    description=payload.description,
-                    status=payload.status,
-                    priority=payload.priority,
-                    due_at=payload.due_at,
-                    owner_type=resolved_owner_type,
-                    owner_ref=resolved_owner_ref,
-                    reviewer_type=resolved_reviewer_type,
-                    reviewer_ref=resolved_reviewer_ref,
-                    requires_review=payload.requires_review,
-                    labels=payload.labels,
-                    blocked_reason_code=blocked_reason_code_arg,
-                    blocked_reason_text=blocked_reason_text_arg,
-                    actor_session_id=actor.actor_session_id,
-                    actor_type=actor.actor_type,
-                    actor_ref=actor.actor_ref,
-                    attachments=payload.attachments,
-                )
+            item = await service.update_task(
+                profile_id=target_profile_id,
+                task_id=payload.task_id,
+                title=payload.title,
+                description=payload.description,
+                status=payload.status,
+                priority=payload.priority,
+                due_at=payload.due_at,
+                ready_at=(
+                    ready_at_update.ready_at
+                    if ready_at_update.should_update
+                    else TASK_FLOW_FIELD_UNSET
+                ),
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+                reviewer_type=resolved_reviewer_type,
+                reviewer_ref=resolved_reviewer_ref,
+                requires_review=payload.requires_review,
+                labels=payload.labels,
+                session_id=session_id_arg,
+                session_profile_id=session_profile_id_arg,
+                blocked_reason_code=blocked_reason_code_arg,
+                blocked_reason_text=blocked_reason_text_arg,
+                actor_session_id=actor.actor_session_id,
+                actor_type=actor.actor_type,
+                actor_ref=actor.actor_ref,
+                attachments=payload.attachments,
+            )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskOwnerInputError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)

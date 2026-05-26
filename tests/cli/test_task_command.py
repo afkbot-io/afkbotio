@@ -509,6 +509,52 @@ def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
     assert captured["actor_ref"] == "papercliper:reviewer"
 
 
+def test_task_review_list_supports_all_reviewers(monkeypatch) -> None:
+    """Review list should expose an operator mode that is not scoped to the local human."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    captured: dict[str, object] = {}
+
+    async def _fake_list_review_tasks_payload(**kwargs):
+        captured.update(kwargs)
+        return '{"review_tasks":[],"review_scope":{"kind":"all_reviewers"}}'
+
+    monkeypatch.setattr(module, "list_review_tasks_payload", _fake_list_review_tasks_payload)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["task", "review-list", "--all-reviewers"])
+
+    assert result.exit_code == 0
+    assert captured["actor_type"] is None
+    assert captured["actor_ref"] is None
+
+
+def test_task_review_list_rejects_all_reviewers_with_actor_selector(monkeypatch) -> None:
+    """All-reviewer mode should not silently ignore a caller-supplied actor filter."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    from afkbot.cli.commands import task as module
+
+    async def _unexpected_list_review_tasks_payload(**kwargs):
+        raise AssertionError(f"list_review_tasks_payload should not be called: {kwargs}")
+
+    monkeypatch.setattr(module, "list_review_tasks_payload", _unexpected_list_review_tasks_payload)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "review-list", "--all-reviewers", "--actor-profile", "papercliper"],
+    )
+
+    assert result.exit_code != 0
+
+
 def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
     monkeypatch,
 ) -> None:

@@ -1210,6 +1210,74 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         await engine.dispose()
 
 
+async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> None:
+    """Operator views should be able to discover review work across every reviewer."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_all_review_list.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        ai_review = await service.create_task(
+            profile_id="default",
+            title="AI profile review",
+            description="Review by the profile orchestrator.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="default",
+            labels=("review",),
+        )
+        await service.update_task(profile_id="default", task_id=ai_review.id, status="review")
+        human_review = await service.create_task(
+            profile_id="default",
+            title="Human review",
+            description="Review by a human operator.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="human",
+            reviewer_ref="cli_user:alice",
+            labels=("review",),
+        )
+        await service.update_task(profile_id="default", task_id=human_review.id, status="review")
+        running_work = await service.create_task(
+            profile_id="default",
+            title="Active implementation",
+            description="Normal active work must not appear in review queues.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="default",
+            labels=("review",),
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=running_work.id,
+            status="running",
+            session_id="session-active-implementation",
+        )
+
+        all_review = await service.list_review_tasks(profile_id="default", labels=("review",))
+        ai_inbox = await service.list_review_tasks(
+            profile_id="default",
+            actor_type="ai_profile",
+            actor_ref="default",
+            labels=("review",),
+        )
+
+        assert {item.id for item in all_review} == {ai_review.id, human_review.id}
+        assert [item.id for item in ai_inbox] == [ai_review.id]
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_owner(
     tmp_path: Path,
 ) -> None:

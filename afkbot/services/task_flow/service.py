@@ -1702,21 +1702,22 @@ class TaskFlowService:
         self,
         *,
         profile_id: str,
-        actor_type: str,
-        actor_ref: str,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
         flow_id: str | None = None,
         labels: Sequence[str] = (),
         limit: int | None = None,
     ) -> list[TaskMetadata]:
-        """List review-queue tasks for one reviewer/actor inbox."""
+        """List review-queue tasks for one reviewer/actor inbox, or all reviewers."""
 
         normalized_actor_type = normalize_task_owner_type(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
-        _validate_actor_pair(
-            actor_type=normalized_actor_type,
-            actor_ref=normalized_actor_ref,
-            allow_missing=False,
-        )
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
         normalized_flow_id = _normalize_optional_text(flow_id)
         normalized_labels = _normalize_labels(labels)
 
@@ -1737,11 +1738,16 @@ class TaskFlowService:
             filtered_rows = [
                 row
                 for row in rows
-                if _task_matches_required_labels(row=row, labels=normalized_labels)
-                and _task_matches_review_inbox(
-                    row=row,
-                    actor_type=normalized_actor_type or "",
-                    actor_ref=normalized_actor_ref or "",
+                if _task_is_review_actionable(row)
+                and _task_matches_required_labels(row=row, labels=normalized_labels)
+                and (
+                    normalized_actor_type is None
+                    or normalized_actor_ref is None
+                    or _task_matches_review_inbox(
+                        row=row,
+                        actor_type=normalized_actor_type,
+                        actor_ref=normalized_actor_ref,
+                    )
                 )
             ]
             if limit is not None:

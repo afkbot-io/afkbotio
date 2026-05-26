@@ -540,13 +540,13 @@ async def sweep_stale_task_claims_payload(
 async def list_review_tasks_payload(
     *,
     profile_id: str,
-    actor_type: str,
-    actor_ref: str,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
     flow_id: str | None = None,
     labels: tuple[str, ...] = (),
     limit: int | None = None,
 ) -> str:
-    """List review inbox tasks for one actor."""
+    """List review inbox tasks for one actor, or every reviewer when omitted."""
 
     settings = get_settings()
     engine = create_engine(settings)
@@ -564,7 +564,15 @@ async def list_review_tasks_payload(
             limit=limit,
         )
         return json.dumps(
-            {"review_tasks": [item.model_dump(mode="json") for item in items]}, ensure_ascii=True
+            {
+                "review_tasks": [item.model_dump(mode="json") for item in items],
+                "review_scope": (
+                    {"kind": "all_reviewers"}
+                    if actor_type is None and actor_ref is None
+                    else {"kind": "actor", "actor_type": actor_type, "actor_ref": actor_ref}
+                ),
+            },
+            ensure_ascii=True,
         )
     except TaskFlowServiceError as exc:
         return _error_json(error_code=exc.error_code, reason=exc.reason)
