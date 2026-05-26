@@ -18,6 +18,7 @@ from afkbot.settings import Settings
 class TaskReviewListParams(ToolParameters):
     """Parameters for task.review.list tool."""
 
+    all_reviewers: bool = False
     actor_type: str | None = Field(default=None, max_length=32)
     actor_ref: str | None = Field(default=None, min_length=1, max_length=255)
     actor_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
@@ -53,18 +54,33 @@ class TaskReviewListTool(ToolBase):
             return scope_error
         try:
             service = get_task_flow_service(self._settings)
-            resolved_actor_type, resolved_actor_ref = resolve_task_owner_inputs(
-                field_prefix="actor",
-                owner_type=payload.actor_type or ("human" if payload.actor_ref else None),
-                owner_ref=payload.actor_ref,
-                owner_profile_id=payload.actor_profile_id,
-                owner_subagent_name=payload.actor_subagent_name,
-            )
-            if resolved_actor_type is None or resolved_actor_ref is None:
-                return ToolResult.error(
-                    error_code="invalid_actor",
-                    reason="actor_type and actor_ref must be provided together",
+            if payload.all_reviewers:
+                if any(
+                    (
+                        payload.actor_type,
+                        payload.actor_ref,
+                        payload.actor_profile_id,
+                        payload.actor_subagent_name,
+                    )
+                ):
+                    return ToolResult.error(
+                        error_code="invalid_actor",
+                        reason="all_reviewers cannot be combined with actor selectors",
+                    )
+                resolved_actor_type, resolved_actor_ref = None, None
+            else:
+                resolved_actor_type, resolved_actor_ref = resolve_task_owner_inputs(
+                    field_prefix="actor",
+                    owner_type=payload.actor_type or ("human" if payload.actor_ref else None),
+                    owner_ref=payload.actor_ref,
+                    owner_profile_id=payload.actor_profile_id,
+                    owner_subagent_name=payload.actor_subagent_name,
                 )
+                if resolved_actor_type is None or resolved_actor_ref is None:
+                    return ToolResult.error(
+                        error_code="invalid_actor",
+                        reason="actor_type and actor_ref must be provided together",
+                    )
             items = await service.list_review_tasks(
                 profile_id=target_profile_id,
                 actor_type=resolved_actor_type,
@@ -73,8 +89,21 @@ class TaskReviewListTool(ToolBase):
                 labels=payload.labels,
                 limit=payload.limit,
             )
+            review_scope: dict[str, object] = (
+                {"kind": "all_reviewers"}
+                if payload.all_reviewers
+                else {
+                    "kind": "actor",
+                    "actor_type": resolved_actor_type,
+                    "actor_ref": resolved_actor_ref,
+                }
+            )
             return ToolResult(
-                ok=True, payload={"review_tasks": [item.model_dump(mode="json") for item in items]}
+                ok=True,
+                payload={
+                    "review_tasks": [item.model_dump(mode="json") for item in items],
+                    "review_scope": review_scope,
+                },
             )
         except TaskOwnerInputError as exc:
             return ToolResult.error(error_code=exc.error_code, reason=exc.reason)

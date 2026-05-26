@@ -873,6 +873,62 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
         await engine.dispose()
 
 
+async def test_task_update_plugin_ignores_null_retry_timer_conflict(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Explicit null timing fields from an LLM payload should not block review handoff."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Prepare review handoff",
+                    "description": "Move to review after work is done.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "status": "review",
+                    "ready_at": None,
+                    "retry_after_sec": None,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert update_result.ok is True
+        updated = update_result.payload["task"]
+        assert isinstance(updated, dict)
+        assert updated["status"] == "review"
+        assert updated["ready_at"] is None
+    finally:
+        await engine.dispose()
+
+
 async def test_task_update_plugin_forwards_explicit_ready_at_null(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -1203,6 +1259,63 @@ async def test_task_block_plugin_rejects_timed_dependency_wait(
         )
         assert block_result.ok is False
         assert block_result.error_code == "task_dependency_wait_ready_at_conflict"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_block_plugin_accepts_explicit_null_timing_fields(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Explicit null ready_at/retry_after_sec should mean no timer, not conflict."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=15)
+
+        create_tool = registry.get("task.create")
+        block_tool = registry.get("task.block")
+        assert create_tool is not None
+        assert block_tool is not None
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Wait for manual check",
+                    "description": "Pause without a scheduled revisit.",
+                    "owner_type": "ai_profile",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+
+        block_result = await block_tool.execute(
+            ctx,
+            block_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "reason_code": "awaiting_input",
+                    "reason_text": "Waiting for operator input.",
+                    "ready_at": None,
+                    "retry_after_sec": None,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert block_result.ok is True
+        task = block_result.payload["task"]
+        assert isinstance(task, dict)
+        assert task["status"] == "blocked"
+        assert task["ready_at"] is None
     finally:
         await engine.dispose()
 
@@ -3041,6 +3154,24 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         assert isinstance(inbox, list)
         assert inbox[0]["id"] == review_task_id
 
+        all_review_list_result = await review_list_tool.execute(
+            ctx,
+            review_list_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "all_reviewers": True,
+                    "labels": ["review"],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert all_review_list_result.ok is True
+        assert all_review_list_result.payload["review_scope"] == {"kind": "all_reviewers"}
+        all_inbox = all_review_list_result.payload["review_tasks"]
+        assert isinstance(all_inbox, list)
+        assert all_inbox[0]["id"] == review_task_id
+
         review_approve_result = await review_approve_tool.execute(
             ctx,
             review_approve_tool.parse_params(
@@ -3435,6 +3566,37 @@ async def test_task_review_list_supports_structured_ai_subagent_actor(
         review_tasks = review_list_result.payload["review_tasks"]
         assert isinstance(review_tasks, list)
         assert [item["id"] for item in review_tasks] == [task["id"]]
+    finally:
+        await engine.dispose()
+
+
+async def test_task_review_list_rejects_all_reviewers_with_actor_selector(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """All-reviewer mode should reject ambiguous mixed scope requests."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        ctx = ToolContext(profile_id="default", session_id="s-review-all-invalid", run_id=2)
+        review_list_tool = registry.get("task.review.list")
+        assert review_list_tool is not None
+
+        review_list_result = await review_list_tool.execute(
+            ctx,
+            review_list_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "all_reviewers": True,
+                    "actor_profile_id": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert review_list_result.ok is False
+        assert review_list_result.error_code == "invalid_actor"
     finally:
         await engine.dispose()
 

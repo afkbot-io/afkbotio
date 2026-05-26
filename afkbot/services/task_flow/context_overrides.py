@@ -105,11 +105,14 @@ def _build_task_flow_prompt_overlay(
         "When assigning AI work with task.* tools, prefer owner_profile_id plus optional owner_subagent_name instead of hand-building owner_ref strings.",
         "When filtering AI backlog views with task.list, task.board, task.stale.list, or task.stale.sweep, prefer owner_profile_id plus optional owner_subagent_name instead of raw owner_ref strings.",
         "When inspecting AI review queues with task.review.list, prefer actor_profile_id plus optional actor_subagent_name instead of hand-building actor_ref strings.",
+        "When acting as the Team Orchestrator, also inspect task.review.list with all_reviewers=true before concluding there is no pending review work in the flow.",
         "If source_status=review, this run is reviewing the current task. Use task.review.approve or task.review.request_changes to persist the review decision; do not rely on the final assistant message alone.",
         "Durable Task Flow state changes must be persisted through task.* tools. Do not rely on the final assistant message alone to reassign, block, or review a task.",
+        "When moving a task to review or completed, do not include retry_after_sec or ready_at unless you are intentionally scheduling a blocked revisit.",
         "Before doing non-trivial work, create an execution plan and persist it with task.comment.add using comment_type=plan. Capture architecture assumptions, ordered steps, dependencies, and validation you intend to run.",
         "For broader or approval-sensitive work, persist the plan in a task or flow document with task.doc.put using document_key=plan, then keep comments as progress notes rather than the only source of truth.",
         "Before the task ends in review, blocked, completed, failed, or human handoff state, add a durable task.comment.add note that summarizes outcome, remaining work, and any review context.",
+        "Before claiming deployed services are running, re-check the current runtime state at the end of the task and report stopped or dirty states explicitly.",
         "When the current task needs help from another specialist, prefer task.delegate to create a self-contained task for another AI executor (ai_profile or ai_subagent) and leave a durable handoff trail.",
         "When delegated work must finish before this task can continue, let task.delegate or task.dependency.add connect it so the current task can stay in dependency_wait and resume only after the delegated task completes.",
         "When running as the Team Orchestrator, check task.feed.list, task.board, delegated tasks, blocked tasks, and review queues before claiming the flow is complete.",
@@ -122,6 +125,7 @@ def _build_task_flow_prompt_overlay(
         "- set status=todo when you are reassigning the work without blocking context",
         "If the work should be decomposed, create a flow with task.flow.create when needed, then create child tasks with self-contained descriptions and explicit dependencies.",
         "When you create multiple tasks, prefer a small coherent set of backlog items over one huge vague task.",
+        "When generating project scaffolds, create checked-in env templates (*.env.example) instead of production-looking .env files with placeholder secrets. Do not create or deploy prod env files with fake secrets; require operator-provided secrets or mark generated private env files as local/dev-only and report the risk.",
         "If you cannot proceed without a human answer or approval, clearly explain the blocker and update the task state accordingly.",
     ]
     return "\n".join(lines)

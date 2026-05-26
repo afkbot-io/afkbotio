@@ -10,6 +10,8 @@ Team Orchestrator protocol.
   decisions, acceptance criteria, and handoff docs current through task.doc.put.
 - Use task.board, task.feed.list, task.review.list, task.context.get, and task.event.list
   to understand the whole flow before creating or reassigning work.
+- When checking review readiness, inspect both your own reviewer inbox and the full
+  review queue before deciding that no review work exists.
 - Decompose large work into small task.create or task.delegate items with explicit owners,
   dependencies, review expectations, and self-contained prompts.
 - When you delegate specialist execution to ai_subagent workers, use owner_profile_id and
@@ -18,6 +20,12 @@ Team Orchestrator protocol.
   progress notes and updating status through task.* tools.
 - Close the parent task only after dependent worker tasks, review, docs, and validation
   evidence are complete or explicitly blocked.
+- Before approving deployment or runtime work, re-check the current live state and report
+  stopped services, dirty worktrees, and unpushed artifacts explicitly.
+- Do not create or deploy production-looking secret files with placeholder credentials.
+  Prefer *.env.example templates. If private env files are required for a smoke run, they
+  must be operator-provided or clearly marked local/dev-only, and the handoff must call
+  out any placeholder-secret risk.
 """.strip()
 
 
@@ -32,11 +40,18 @@ Task Flow worker protocol.
   implementation and update task.doc.put only when you have durable knowledge to preserve.
 - Use task.comment.add for execution plans, progress, blockers, review notes, and final
   handoff. Comments are the team communication log.
+- When a task is ready for review, set status=review without retry timers. If a timer field
+  is irrelevant, omit it instead of sending null placeholders.
 - If blocked, persist the blocker with task.block or task.update instead of only saying it.
 - If another specialist is required, ask the orchestrator through comments or delegate only
   when the current task scope explicitly allows it.
 - Before finishing, leave a handoff note with files changed, validation run, remaining risk,
   and review context.
+- Generated configuration should avoid real secret filenames with fake production secrets;
+  prefer checked-in examples and document how operators create private local env files.
+- Final handoff must reflect the current state, not an earlier successful check: re-run
+  lightweight status/smoke commands before claiming containers, servers, branches, or
+  worktrees are clean and running.
 """.strip()
 
 

@@ -129,6 +129,7 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
    - Prefer `owner_profile_id=<profile_id>` plus optional `owner_subagent_name=<subagent_name>` over raw `owner_ref` filters for AI executors.
 10. When the user wants review work for a specific person/profile, inspect `task.review.list` instead of approximating it from owner filters.
    - Prefer `actor_profile_id=<profile_id>` plus optional `actor_subagent_name=<subagent_name>` for AI reviewers.
+   - Use `all_reviewers=true` when operating as an orchestrator and you need to find every pending review item in the flow.
 11. When an AI profile or subagent needs to see assignments, @mentions, wake requests, recovery actions, or runtime claim rejects, inspect `task.feed.list`.
 12. When a plan/spec/roadmap/decision should survive across agents, use `task.doc.put`; use `task.doc.confirm` when the current revision has been accepted.
 13. When investigating what happened during background execution, inspect `task.run.list` and `task.run.get` instead of guessing from the current task state.
@@ -151,7 +152,10 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
 - If a task is being handed to a human, set both the new owner and a status that matches the reason for handoff.
 - If you reassign a `claimed` or `running` task, move it out of active execution with `status=todo`, `status=blocked`, or `status=review` as part of the handoff.
 - If you need to reassign, block, or review the current task, persist it with `task.update` before the turn ends.
+- When moving work to `review` or `completed`, omit `ready_at` and `retry_after_sec`; use timing fields only for blocked revisits.
 - Before a background task ends in `review`, `blocked`, `completed`, `failed`, or human handoff, add a durable `task.comment.add` note so the task keeps human-readable context beyond raw events and run logs.
+- Before claiming deployed services, branches, or generated worktrees are clean and running, re-check the current state near handoff time and report stopped services, dirty worktrees, or unpushed artifacts explicitly.
+- Do not create or deploy production-looking `.env` files with fake secrets. Prefer checked-in `.env.example` templates; use private real env files only when an operator provides the values or the file is clearly local/dev-only.
 - Prefer `task.review.approve` and `task.review.request_changes` over ad hoc `task.update` when handling a task already in `review`.
 - Prefer `task.event.list` for operator-style history; prefer `task.run.*` for execution-attempt diagnostics.
 - Prefer `task.inbox` for human notification/inbox questions instead of manually filtering `task.list`.
@@ -195,6 +199,8 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
   call `task.feed.list` with `owner_profile_id=<profile_id>` plus optional `owner_subagent_name=<subagent_name>` to see assignments, @mentions, wake requests, stale-claim recovery actions, and runtime claim rejects.
 - Inspect reviewer inbox:
   call `task.review.list` with `actor_profile_id=<profile_id>` plus optional `actor_subagent_name=<subagent_name>` for AI reviewers, or `actor_type/actor_ref` for human reviewers, to see tasks currently waiting in review.
+- Inspect all reviewer inboxes:
+  call `task.review.list` with `all_reviewers=true` to see review tasks assigned to humans, AI profiles, and AI subagents before deciding a flow is clear.
 - Inspect human inbox:
   call `task.inbox` with the human owner ref to see a startup-style summary with counts and preview tasks.
 - Inspect stale claims:

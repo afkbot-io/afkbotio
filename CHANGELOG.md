@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.3] - 2026-05-26
+
+### Added
+
+- Added an all-reviewers Task Flow review queue view through
+  `afk task review-list --all-reviewers` and `task.review.list` with
+  `all_reviewers=true`, so orchestrators can find review work assigned to human,
+  AI profile, or AI subagent reviewers.
+
+### Changed
+
+- Task Flow team prompts now require final deploy/runtime handoffs to re-check
+  current service and worktree state, and to avoid production-looking `.env`
+  files with placeholder secrets.
+- Task Flow timing input handling for `task.update` and `task.block` is shared
+  through one normalization helper.
+- Release metadata and lockfile package metadata are aligned to `1.9.3`.
+
+### Fixed
+
+- `task.update` and `task.block` no longer reject LLM payloads that include both
+  `ready_at=null` and `retry_after_sec=null`; null timing fields now clear or
+  omit scheduling instead of causing `task_ready_at_conflict`.
+- All-reviewer review queue listing now filters to actionable review work and
+  does not leak normal claimed/running implementation tasks into review views.
+
 ## [1.9.1] - 2026-05-24
 
 ### Added

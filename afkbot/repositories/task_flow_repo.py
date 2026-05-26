@@ -206,6 +206,50 @@ class TaskFlowRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def list_task_documents_for_profile(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        document_key: str | None = None,
+        confirmation_status: str | None = None,
+        query: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[TaskDocument]:
+        """Return profile-scoped documents for the operator document workspace."""
+
+        conditions: list[ColumnElement[bool]] = [TaskDocument.profile_id == profile_id]
+        if scope_type is not None:
+            conditions.append(TaskDocument.scope_type == scope_type)
+        if scope_id is not None:
+            conditions.append(TaskDocument.scope_id == scope_id)
+        if document_key is not None:
+            conditions.append(TaskDocument.document_key == document_key)
+        if confirmation_status is not None:
+            conditions.append(TaskDocument.confirmation_status == confirmation_status)
+        if query is not None:
+            pattern = f"%{query.lower()}%"
+            conditions.append(
+                or_(
+                    func.lower(TaskDocument.document_key).like(pattern),
+                    func.lower(TaskDocument.title).like(pattern),
+                    func.lower(TaskDocument.body).like(pattern),
+                    func.lower(TaskDocument.scope_id).like(pattern),
+                    func.lower(TaskDocument.updated_by_ref).like(pattern),
+                )
+            )
+
+        statement: Select[tuple[TaskDocument]] = (
+            select(TaskDocument)
+            .where(*conditions)
+            .order_by(TaskDocument.updated_at.desc(), TaskDocument.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def update_task_document(
         self,
         *,

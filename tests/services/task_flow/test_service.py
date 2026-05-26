@@ -281,6 +281,84 @@ async def test_task_flow_service_creates_default_flow_documents_and_revisions(
         await engine.dispose()
 
 
+async def test_task_flow_service_lists_documents_across_scopes_with_filters(
+    tmp_path: Path,
+) -> None:
+    """Document workspace queries should cover flow and task docs without leaking profiles."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_document_workspace.db",
+        profile_ids=("default", "other"),
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Release coordination",
+            description="Coordinate release documentation.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        other_flow = await service.create_flow(
+            profile_id="other",
+            title="Other profile",
+            description="Must not leak into default profile queries.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Draft launch notes",
+            description="Prepare release handoff details.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        await service.put_task_document(
+            profile_id="default",
+            task_id=task.id,
+            document_key="handoff",
+            title="Launch handoff",
+            body="Release blockers, owner map, and rollout notes.",
+            actor_type="ai_profile",
+            actor_ref="default",
+        )
+        await service.put_flow_document(
+            profile_id="other",
+            flow_id=other_flow.id,
+            document_key="plan",
+            title="Hidden plan",
+            body="Hidden release content.",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        found = await service.list_documents(
+            profile_id="default",
+            query="release",
+            scope_type="task",
+            confirmation_status="draft",
+        )
+
+        assert [document.document_key for document in found] == ["handoff"]
+        assert found[0].scope_id == task.id
+        assert found[0].title == "Launch handoff"
+
+        limited = await service.list_documents(profile_id="default", limit=1)
+        assert len(limited) == 1
+
+        detail = await service.get_document(profile_id="default", document_id=found[0].id)
+        assert detail.id == found[0].id
+        assert "rollout notes" in detail.body
+
+        with pytest.raises(TaskFlowServiceError) as excinfo:
+            await service.get_document(profile_id="other", document_id=found[0].id)
+        assert excinfo.value.error_code == "task_document_not_found"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_builds_task_context_with_docs_history_and_relations(
     tmp_path: Path,
 ) -> None:
@@ -1128,6 +1206,74 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         )
 
         assert {item.id for item in inbox} == {explicit_reviewer.id, owner_fallback.id}
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> None:
+    """Operator views should be able to discover review work across every reviewer."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_all_review_list.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        ai_review = await service.create_task(
+            profile_id="default",
+            title="AI profile review",
+            description="Review by the profile orchestrator.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="default",
+            labels=("review",),
+        )
+        await service.update_task(profile_id="default", task_id=ai_review.id, status="review")
+        human_review = await service.create_task(
+            profile_id="default",
+            title="Human review",
+            description="Review by a human operator.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="human",
+            reviewer_ref="cli_user:alice",
+            labels=("review",),
+        )
+        await service.update_task(profile_id="default", task_id=human_review.id, status="review")
+        running_work = await service.create_task(
+            profile_id="default",
+            title="Active implementation",
+            description="Normal active work must not appear in review queues.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="ai_profile",
+            reviewer_ref="default",
+            labels=("review",),
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=running_work.id,
+            status="running",
+            session_id="session-active-implementation",
+        )
+
+        all_review = await service.list_review_tasks(profile_id="default", labels=("review",))
+        ai_inbox = await service.list_review_tasks(
+            profile_id="default",
+            actor_type="ai_profile",
+            actor_ref="default",
+            labels=("review",),
+        )
+
+        assert {item.id for item in all_review} == {ai_review.id, human_review.id}
+        assert [item.id for item in ai_inbox] == [ai_review.id]
     finally:
         await engine.dispose()
 

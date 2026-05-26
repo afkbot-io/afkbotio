@@ -445,6 +445,11 @@ def register(app: typer.Typer) -> None:
             "--actor-ref",
             help="Reviewer actor ref. Defaults to the local human ref for CLI use.",
         ),
+        all_reviewers: bool = typer.Option(
+            False,
+            "--all-reviewers",
+            help="Show review tasks for every human, AI profile, and AI subagent reviewer.",
+        ),
         actor_profile: str | None = typer.Option(
             None,
             "--actor-profile",
@@ -461,13 +466,22 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """List review queue tasks for one reviewer inbox."""
 
-        resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
-            ctx=ctx,
-            actor_type=actor_type,
-            actor_ref=actor_ref,
-            actor_profile_id=actor_profile,
-            actor_subagent_name=actor_subagent,
-        )
+        if all_reviewers:
+            if any((actor_ref, actor_profile, actor_subagent)) or _option_was_explicit(
+                ctx, "actor_type"
+            ):
+                raise typer.BadParameter(
+                    "--all-reviewers cannot be combined with actor selectors"
+                )
+            resolved_actor_type, resolved_actor_ref = None, None
+        else:
+            resolved_actor_type, resolved_actor_ref = _resolve_review_actor_inputs(
+                ctx=ctx,
+                actor_type=actor_type,
+                actor_ref=actor_ref,
+                actor_profile_id=actor_profile,
+                actor_subagent_name=actor_subagent,
+            )
         typer.echo(
             asyncio.run(
                 list_review_tasks_payload(
