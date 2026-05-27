@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.6] - 2026-05-27
+
+### Added
+
+- Task Flow documents can now be hard-deleted through the service and document
+  API with revision-conflict protection. Deletion removes the editable document
+  and its immutable revision history, and records a task history event for
+  task-scoped documents when the task still exists.
+
 ## [1.9.5] - 2026-05-27
 
 ### Fixed

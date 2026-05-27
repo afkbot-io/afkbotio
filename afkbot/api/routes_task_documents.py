@@ -49,6 +49,14 @@ class TaskDocumentConfirmRequest(BaseModel):
     expected_revision: int | None = Field(default=None, ge=1)
 
 
+class TaskDocumentDeleteRequest(BaseModel):
+    """Delete-document request payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
 @router.get("/", response_model=TaskDocumentListResponse)
 async def get_task_documents(
     authorization: str | None = Header(default=None),
@@ -168,6 +176,36 @@ async def post_task_document_confirm(
     return TaskDocumentResponse(document=document)
 
 
+@router.delete("/{document_id}", response_model=TaskDocumentResponse)
+async def delete_task_document(
+    document_id: str,
+    request: TaskDocumentDeleteRequest | None = None,
+    authorization: str | None = Header(default=None),
+    x_afk_session_proof: str | None = Header(default=None),
+    profile_id: str | None = Query(default=None, min_length=1),
+) -> TaskDocumentResponse:
+    """Delete one Task Flow document and its revisions."""
+
+    auth_context = await _require_profile_context(
+        authorization=authorization,
+        session_proof=x_afk_session_proof,
+        profile_id=profile_id,
+    )
+    service = get_task_flow_service(get_settings())
+    try:
+        document = await service.delete_document(
+            profile_id=auth_context.profile_id,
+            document_id=document_id,
+            actor_type="human",
+            actor_ref=f"api:{auth_context.session_id}",
+            actor_session_id=auth_context.session_id,
+            expected_revision=request.expected_revision if request else None,
+        )
+    except TaskFlowServiceError as exc:
+        raise _task_document_http_error(exc) from exc
+    return TaskDocumentResponse(document=document)
+
+
 async def _require_profile_context(
     *,
     authorization: str | None,
@@ -211,6 +249,7 @@ def _task_document_status_code(error_code: str) -> int:
 
 __all__ = [
     "TaskDocumentConfirmRequest",
+    "TaskDocumentDeleteRequest",
     "TaskDocumentListResponse",
     "TaskDocumentResponse",
     "TaskDocumentRevisionListResponse",

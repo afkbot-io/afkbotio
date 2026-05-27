@@ -110,6 +110,10 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
             calls["confirm"] = kwargs
             return _document(confirmation_status="confirmed", confirmed_revision=2)
 
+        async def delete_document(self, **kwargs: object) -> TaskDocumentMetadata:
+            calls["delete"] = kwargs
+            return _document()
+
     monkeypatch.setattr("afkbot.api.routes_task_documents.get_task_flow_service", lambda _settings: _Service())
     client = TestClient(create_app())
 
@@ -120,15 +124,31 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
         json={"expected_revision": 2},
         headers=auth_headers(),
     )
+    deleted = client.request(
+        "DELETE",
+        "/v1/task-documents/doc_1",
+        json={"expected_revision": 2},
+        headers=auth_headers(),
+    )
 
     assert detail.status_code == 200
     assert revisions.status_code == 200
     assert confirmed.status_code == 200
+    assert deleted.status_code == 200
     assert revisions.json()["revisions"][0]["revision"] == 2
     assert confirmed.json()["document"]["confirmation_status"] == "confirmed"
+    assert deleted.json()["document"]["id"] == "doc_1"
     assert calls["get"] == {"document_id": "doc_1", "profile_id": "default"}
     assert calls["revisions"] == {"document_id": "doc_1", "limit": 3, "profile_id": "default"}
     assert calls["confirm"] == {
+        "actor_ref": "api:ui-session",
+        "actor_session_id": "ui-session",
+        "actor_type": "human",
+        "document_id": "doc_1",
+        "expected_revision": 2,
+        "profile_id": "default",
+    }
+    assert calls["delete"] == {
         "actor_ref": "api:ui-session",
         "actor_session_id": "ui-session",
         "actor_type": "human",

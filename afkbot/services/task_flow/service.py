@@ -596,6 +596,83 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def delete_document(
+        self,
+        *,
+        profile_id: str,
+        document_id: str,
+        actor_type: str,
+        actor_ref: str,
+        actor_session_id: str | None = None,
+        expected_revision: int | None = None,
+    ) -> TaskDocumentMetadata:
+        """Delete one Task Flow document and its revision history."""
+
+        normalized_document_id = _normalize_required_text(document_id, field_name="document_id")
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_document_actor_required",
+            reason="Deleting Task Flow documents requires an explicit actor identity",
+        )
+        if expected_revision is not None and int(expected_revision) < 1:
+            raise TaskFlowServiceError(
+                error_code="task_document_invalid_revision",
+                reason="expected_revision must be greater than zero",
+            )
+
+        async def _op(repo: TaskFlowRepository) -> TaskDocumentMetadata:
+            document = await repo.get_task_document_by_id(
+                profile_id=profile_id,
+                document_id=normalized_document_id,
+            )
+            if document is None:
+                raise TaskFlowServiceError(
+                    error_code="task_document_not_found",
+                    reason="Task Flow document not found",
+                )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_document_actor_required",
+                reason="Deleting Task Flow documents requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            if expected_revision is not None and int(document.revision) != int(expected_revision):
+                raise TaskFlowServiceError(
+                    error_code="task_document_revision_conflict",
+                    reason="Document revision changed; reload the latest revision before deleting",
+                )
+            deleted = _to_task_document_metadata(document)
+            await _record_document_deleted_event(
+                repo=repo,
+                document=document,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            await repo.delete_task_document(document=document)
+            return deleted
+
+        return await self._with_repo(_op)
+
     async def _put_document(
         self,
         *,
@@ -4980,6 +5057,36 @@ async def _record_document_confirmation_event(
             "document_key": document.document_key,
             "revision": document.revision,
             "confirmation_status": document.confirmation_status,
+        },
+    )
+
+
+async def _record_document_deleted_event(
+    *,
+    repo: TaskFlowRepository,
+    document: TaskDocument,
+    actor_type: str,
+    actor_ref: str,
+) -> None:
+    """Record document deletion on task history when the task still exists."""
+
+    if document.scope_type != _TASK_DOCUMENT_SCOPE_TASK:
+        return
+    task = await repo.get_task(profile_id=document.profile_id, task_id=document.scope_id)
+    if task is None:
+        return
+    await record_task_event(
+        repo=repo,
+        task_id=document.scope_id,
+        event_type="document_deleted",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=f"Deleted {document.document_key} document revision {document.revision}.",
+        details={
+            "document_id": document.id,
+            "document_key": document.document_key,
+            "revision": document.revision,
+            "scope_type": document.scope_type,
         },
     )
 

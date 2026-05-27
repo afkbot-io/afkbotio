@@ -355,6 +355,26 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
         with pytest.raises(TaskFlowServiceError) as excinfo:
             await service.get_document(profile_id="other", document_id=found[0].id)
         assert excinfo.value.error_code == "task_document_not_found"
+
+        deleted = await service.delete_document(
+            profile_id="default",
+            document_id=found[0].id,
+            actor_type="human",
+            actor_ref="cli",
+            expected_revision=found[0].revision,
+        )
+        assert deleted.id == found[0].id
+        assert await service.list_documents(
+            profile_id="default",
+            query="release",
+            scope_type="task",
+        ) == []
+        with pytest.raises(TaskFlowServiceError) as deleted_excinfo:
+            await service.list_document_revisions(
+                profile_id="default",
+                document_id=found[0].id,
+            )
+        assert deleted_excinfo.value.error_code == "task_document_not_found"
     finally:
         await engine.dispose()
 

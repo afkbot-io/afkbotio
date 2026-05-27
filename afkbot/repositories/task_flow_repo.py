@@ -347,6 +347,18 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def delete_task_document(self, *, document: TaskDocument) -> bool:
+        """Delete one document and its immutable revisions."""
+
+        document.latest_revision_id = None
+        await self._session.flush()
+        await self._session.execute(
+            delete(TaskDocumentRevision).where(TaskDocumentRevision.document_id == document.id)
+        )
+        await self._session.delete(document)
+        await self._session.flush()
+        return True
+
     async def create_task(
         self,
         *,
