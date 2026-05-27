@@ -228,6 +228,67 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
         await engine.dispose()
 
 
+async def test_task_flow_service_updates_flow_metadata_without_changing_identity(
+    tmp_path: Path,
+) -> None:
+    """Flow edits should preserve ids and linked tasks while updating project metadata."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_update.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Old project name",
+            description="Old project scope",
+            created_by_type="human",
+            created_by_ref="cli",
+            default_owner_type="human",
+            default_owner_ref="alice",
+            labels=("old",),
+        )
+        task = await service.create_task(
+            profile_id="default",
+            title="Linked task",
+            description="Keep this task attached to the edited flow.",
+            created_by_type="human",
+            created_by_ref="cli",
+            flow_id=flow.id,
+        )
+
+        updated = await service.update_flow(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Renamed project",
+            description="Updated project scope",
+            default_owner_type="ai_profile",
+            default_owner_ref="default",
+            labels=("new", "delivery"),
+        )
+
+        assert updated.id == flow.id
+        assert updated.title == "Renamed project"
+        assert updated.description == "Updated project scope"
+        assert updated.default_owner_type == "ai_profile"
+        assert updated.default_owner_ref == "default"
+        assert updated.labels == ("new", "delivery")
+
+        detail = await service.get_task(profile_id="default", task_id=task.id)
+        assert detail.flow_id == flow.id
+
+        with pytest.raises(TaskFlowServiceError) as excinfo:
+            await service.update_flow(
+                profile_id="default",
+                flow_id="missing-flow",
+                title="Nope",
+            )
+        assert excinfo.value.error_code == "task_flow_not_found"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_creates_default_flow_documents_and_revisions(
     tmp_path: Path,
 ) -> None:

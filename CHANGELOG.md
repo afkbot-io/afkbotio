@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.7] - 2026-05-27
+
+### Added
+
+- Task Flow services can now update editable flow metadata without changing the
+  flow id or detaching existing tasks. Updates cover title, description, default
+  owner, and labels, with the same actor and owner validation used by Task Flow
+  operations.
+
 ## [1.9.6] - 2026-05-27
 
 ### Added

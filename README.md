@@ -178,7 +178,9 @@ afk task board --profile default
 Task Flow also exposes agent-facing `task.*` tools for autonomous work. Flows
 carry default editable docs for `brief`, `plan`, `roadmap`, `spec`, and
 `decisions`; tasks can add their own docs such as `plan`, `spec`, `handoff`, or
-`qa`. Agents should inspect `task.context.get` before changing a task, update
+`qa`. Cloud UI can rename and edit flow metadata without changing the `flow_id`,
+so related tasks and docs stay attached to the same project. Agents should inspect
+`task.context.get` before changing a task, update
 durable docs with `task.doc.put`, confirm accepted revisions with
 `task.doc.confirm`, and use `task.feed.list` to see AI assignments plus
 explicit `@profile` / `@profile:subagent` mentions, wake requests, stale-claim

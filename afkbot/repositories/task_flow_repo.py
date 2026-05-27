@@ -99,6 +99,27 @@ class TaskFlowRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def update_flow(
+        self,
+        *,
+        flow: TaskFlow,
+        title: str,
+        description: str | None,
+        default_owner_type: str | None,
+        default_owner_ref: str | None,
+        labels_json: str,
+    ) -> TaskFlow:
+        """Update editable task flow metadata."""
+
+        flow.title = title
+        flow.description = description
+        flow.default_owner_type = default_owner_type
+        flow.default_owner_ref = default_owner_ref
+        flow.labels_json = labels_json
+        await self._session.flush()
+        await self._session.refresh(flow)
+        return flow
+
     async def delete_flow(self, *, profile_id: str, flow_id: str) -> bool:
         """Delete one task flow row when present."""
 

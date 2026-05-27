@@ -338,6 +338,138 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
+    async def update_flow(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str,
+        title: str | None | object = _TASK_FIELD_UNSET,
+        description: str | None | object = _TASK_FIELD_UNSET,
+        actor_type: str = "human",
+        actor_ref: str = "web-user",
+        actor_session_id: str | None | object = _TASK_FIELD_UNSET,
+        default_owner_type: str | None | object = _TASK_FIELD_UNSET,
+        default_owner_ref: str | None | object = _TASK_FIELD_UNSET,
+        labels: Sequence[str] | object = _TASK_FIELD_UNSET,
+    ) -> TaskFlowMetadata:
+        """Update editable metadata for one task flow without changing its identity."""
+
+        normalized_flow_id = _normalize_required_text(flow_id, field_name="flow_id")
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        normalized_actor_session_id = (
+            _normalize_optional_text(cast(str | None, actor_session_id))
+            if actor_session_id is not _TASK_FIELD_UNSET
+            else None
+        )
+        _validate_actor_pair(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            allow_missing=False,
+        )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_actor_required",
+            reason="Task flow updates require an explicit actor identity",
+        )
+        normalized_title = (
+            _normalize_required_text(cast(str, title), field_name="title")
+            if title is not _TASK_FIELD_UNSET
+            else _TASK_FIELD_UNSET
+        )
+        normalized_description = (
+            _normalize_optional_text(cast(str | None, description))
+            if description is not _TASK_FIELD_UNSET
+            else _TASK_FIELD_UNSET
+        )
+        normalized_default_owner_type = (
+            normalize_task_owner_type(cast(str | None, default_owner_type))
+            if default_owner_type is not _TASK_FIELD_UNSET
+            else _TASK_FIELD_UNSET
+        )
+        normalized_default_owner_ref = (
+            _normalize_optional_text(cast(str | None, default_owner_ref))
+            if default_owner_ref is not _TASK_FIELD_UNSET
+            else _TASK_FIELD_UNSET
+        )
+        normalized_labels = (
+            _normalize_labels(cast(Sequence[str], labels))
+            if labels is not _TASK_FIELD_UNSET
+            else _TASK_FIELD_UNSET
+        )
+
+        async def _op(repo: TaskFlowRepository) -> TaskFlowMetadata:
+            await _ensure_profile_exists(repo, profile_id)
+            row = await repo.get_flow(profile_id=profile_id, flow_id=normalized_flow_id)
+            if row is None:
+                raise TaskFlowServiceError(
+                    error_code="task_flow_not_found", reason="Task flow not found"
+                )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_actor_required",
+                reason="Task flow updates require an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            next_default_owner_type = (
+                cast(str | None, normalized_default_owner_type)
+                if normalized_default_owner_type is not _TASK_FIELD_UNSET
+                else row.default_owner_type
+            )
+            next_default_owner_ref = (
+                cast(str | None, normalized_default_owner_ref)
+                if normalized_default_owner_ref is not _TASK_FIELD_UNSET
+                else row.default_owner_ref
+            )
+            _validate_owner_pair(
+                owner_type=next_default_owner_type,
+                owner_ref=next_default_owner_ref,
+                allow_missing=True,
+            )
+            await _ensure_actor_refs_exist(
+                repo,
+                settings=self._settings,
+                owner_type=next_default_owner_type,
+                owner_ref=next_default_owner_ref,
+                reviewer_type=None,
+                reviewer_ref=None,
+            )
+            updated = await repo.update_flow(
+                flow=row,
+                title=(
+                    cast(str, normalized_title)
+                    if normalized_title is not _TASK_FIELD_UNSET
+                    else row.title
+                ),
+                description=(
+                    cast(str | None, normalized_description)
+                    if normalized_description is not _TASK_FIELD_UNSET
+                    else row.description
+                ),
+                default_owner_type=next_default_owner_type,
+                default_owner_ref=next_default_owner_ref,
+                labels_json=json.dumps(
+                    cast(tuple[str, ...], normalized_labels)
+                    if normalized_labels is not _TASK_FIELD_UNSET
+                    else tuple(_decode_labels(row.labels_json))
+                ),
+            )
+            return _to_flow_metadata(updated)
+
+        return await self._with_repo(_op)
+
     async def list_flow_documents(
         self,
         *,
