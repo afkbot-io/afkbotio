@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.5] - 2026-05-27
+
+### Fixed
+
+- `afk task review-list --all-reviewers` now treats defaulted Click/Typer
+  parameter sources consistently across installed runtime dependency versions,
+  including environments where `ParameterSource.DEFAULT` enum instances differ.
+
 ## [1.9.4] - 2026-05-26
 
 ### Fixed

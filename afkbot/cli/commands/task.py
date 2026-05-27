@@ -1191,7 +1191,12 @@ def _option_was_explicit(ctx: typer.Context, param_name: str) -> bool:
     if getter is None:
         return False
     source = getter(param_name)
-    return source not in (None, ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP)
+    if source is None:
+        return False
+    source_name = getattr(source, "name", "")
+    if source_name in {"DEFAULT", "DEFAULT_MAP"}:
+        return False
+    return source not in (ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP)
 
 
 def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:

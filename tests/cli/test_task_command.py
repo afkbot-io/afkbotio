@@ -569,6 +569,24 @@ def test_task_option_was_explicit_treats_missing_source_as_default() -> None:
     assert module._option_was_explicit(cast(typer.Context, _Context()), "actor_type") is False
 
 
+def test_task_option_was_explicit_treats_default_source_name_as_default() -> None:
+    """Click/Typer wrappers can expose different enum instances for the same source."""
+
+    from afkbot.cli.commands import task as module
+
+    class _Source:
+        name = "DEFAULT"
+
+        def __eq__(self, _other: object) -> bool:
+            return False
+
+    class _Context:
+        def get_parameter_source(self, _param_name: str):
+            return _Source()
+
+    assert module._option_was_explicit(cast(typer.Context, _Context()), "actor_type") is False
+
+
 def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
     monkeypatch,
 ) -> None:
