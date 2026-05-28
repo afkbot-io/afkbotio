@@ -15,6 +15,7 @@ from afkbot.db.session import session_scope
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
+from afkbot.repositories.knowledge_repo import KnowledgeRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
@@ -780,6 +781,538 @@ async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
         assert wake_event.details["reason_code"] == "dependencies_satisfied"
         assert wake_event.details["owner_type"] == "ai_profile"
         assert wake_event.details["owner_ref"] == "default"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_crystallizes_manual_terminal_update_when_enabled(
+    tmp_path: Path,
+) -> None:
+    """Manual terminal transitions should use the same dark-launch knowledge storage."""
+
+    db_name = "task_flow_service_manual_knowledge.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Document release process",
+            description="Capture the release process in project notes.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+        )
+
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        assert updated.status == "completed"
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        assert len(artifacts) == 1
+        assert artifacts[0].task_run_id is None
+        assert artifacts[0].summary == "Task was manually moved to completed."
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        crystallized_event = next(
+            item for item in events if item.event_type == "knowledge_crystallized"
+        )
+        assert crystallized_event.actor_type == "human"
+        assert crystallized_event.actor_ref == "cli"
+        assert crystallized_event.details["dedupe_key"] == (
+            f"task_crystal:{task.id}:manual"
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts_after_retry = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        events_after_retry = await service.list_task_events(profile_id="default", task_id=task.id)
+        assert len(artifacts_after_retry) == 1
+        assert (
+            sum(1 for item in events_after_retry if item.event_type == "knowledge_crystallized")
+            == 1
+        )
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_does_not_crystallize_when_disabled(tmp_path: Path) -> None:
+    """Task Flow knowledge capture must stay dark-launched by default."""
+
+    db_name = "task_flow_service_manual_knowledge_disabled.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Document release process",
+            description="Capture the release process in project notes.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        assert artifacts == []
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_skips_crystallization_for_user_facing_transport(
+    tmp_path: Path,
+) -> None:
+    """User-facing Task Flow tool calls must not persist project knowledge artifacts."""
+
+    db_name = "task_flow_service_manual_knowledge_policy.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Document release process",
+            description="Capture the release process in project notes.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="telegram:user-1",
+            actor_transport="telegram",
+            channel_profile="taskflow_operator",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        skipped = next(
+            item for item in events if item.event_type == "knowledge_crystallization_skipped"
+        )
+        assert artifacts == []
+        assert skipped.details["reason_code"] == "knowledge_policy_denied"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_skips_crystallization_without_transport(
+    tmp_path: Path,
+) -> None:
+    """Knowledge capture should fail closed when the caller does not provide a surface."""
+
+    db_name = "task_flow_service_manual_knowledge_missing_transport.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Missing transport task",
+            description="Capture terminal Task Flow state.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        skipped = next(
+            item for item in events if item.event_type == "knowledge_crystallization_skipped"
+        )
+        assert artifacts == []
+        assert skipped.details["reason_code"] == "knowledge_policy_denied"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_confirmed"),
+    (
+        ("review", False),
+        ("failed", False),
+    ),
+)
+async def test_task_flow_service_crystallizes_non_completed_terminal_updates(
+    tmp_path: Path,
+    status: str,
+    expected_confirmed: bool,
+) -> None:
+    """Review and failed terminal transitions should use the same crystal path."""
+
+    db_name = f"task_flow_service_manual_knowledge_{status}.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title=f"Terminal {status} task",
+            description="Capture terminal Task Flow state.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status=status,
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        assert len(artifacts) == 1
+        assert artifacts[0].confirmed is expected_confirmed
+        assert artifacts[0].dedupe_key == f"task_crystal:{task.id}:manual"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_approve_review_updates_existing_crystal(
+    tmp_path: Path,
+) -> None:
+    """Review approval should use the terminal crystal path without a second active artifact."""
+
+    db_name = "task_flow_service_review_approval_knowledge.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review documented process",
+            description="Review the documented process.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            reviewer_type="human",
+            reviewer_ref="cli_user:alice",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+        approved = await service.approve_review_task(
+            profile_id="default",
+            task_id=task.id,
+            actor_type="human",
+            actor_ref="cli_user:alice",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        assert approved.status == "completed"
+        assert len(artifacts) == 1
+        assert artifacts[0].dedupe_key == f"task_crystal:{task.id}:manual"
+        assert artifacts[0].confirmed is True
+        assert artifacts[0].summary == "Review approved and task completed."
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_metadata_includes_structured_ai_owner_fields(tmp_path: Path) -> None:
+    """API metadata should expose structured owner selectors for UI clients."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_structured_owner_metadata.db",
+        profile_ids=("default", "papercliper"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name="task_flow_structured_owner_metadata.db",
+    )
+    _write_profile_subagent(
+        settings=settings,
+        profile_id="papercliper",
+        subagent_name="reviewer",
+        markdown="# Reviewer\nReview task outputs.",
+    )
+    _write_team_runtime_config(
+        settings=settings,
+        profile_id="default",
+        team_profile_ids=("papercliper",),
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review with teamlead",
+            description="Assign this task to a cross-profile subagent.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_subagent",
+            owner_ref="papercliper:reviewer",
+            reviewer_type="ai_profile",
+            reviewer_ref="papercliper",
+        )
+
+        assert task.owner_profile_id == "papercliper"
+        assert task.owner_subagent_name == "reviewer"
+        assert task.reviewer_profile_id == "papercliper"
+        assert task.reviewer_subagent_name is None
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_records_safety_skip_for_secret_content(tmp_path: Path) -> None:
+    """Unsafe source text should create a skip event instead of an artifact."""
+
+    db_name = "task_flow_service_manual_knowledge_secret.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Secret-bearing task",
+            description="Deploy using api_key=sk-test-secret-value.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        skipped = next(
+            item for item in events if item.event_type == "knowledge_crystallization_skipped"
+        )
+        assert artifacts == []
+        assert skipped.details["reason_code"] == "secret_detected"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_skips_crystallization_for_user_facing_source(
+    tmp_path: Path,
+) -> None:
+    """Trusted terminal updates must not crystallize task text sourced from chat."""
+
+    db_name = "task_flow_service_manual_knowledge_source_policy.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Capture chat request",
+            description="This text came from a messaging channel.",
+            created_by_type="human",
+            created_by_ref="telegram:user-1",
+            source_transport="telegram",
+            source_channel_profile="messaging_safe",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        skipped = next(
+            item for item in events if item.event_type == "knowledge_crystallization_skipped"
+        )
+        assert artifacts == []
+        assert skipped.details["reason_code"] == "knowledge_source_policy_denied"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_uses_safe_crystal_title_fallback(tmp_path: Path) -> None:
+    """Unsafe title text should not leak through artifact titles."""
+
+    db_name = "task_flow_service_manual_knowledge_title_secret.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        root_dir=tmp_path,
+        knowledge_crystals_enabled=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Rotate api_key=sk-test-secret-value",
+            description="Rotate the deployment credential.",
+            created_by_type="human",
+            created_by_ref="cli",
+            source_transport="cli",
+        )
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+            actor_transport="cli",
+        )
+
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=task.id,
+                artifact_kind="task_crystal",
+            )
+        assert len(artifacts) == 1
+        assert artifacts[0].title == f"Task outcome crystal: {task.id}"
+        assert "sk-test" not in artifacts[0].title
     finally:
         await engine.dispose()
 
@@ -3850,6 +4383,148 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
         assert fresh_inbox.unseen_event_count == 1
         assert fresh_inbox.recent_events[0].event_type == "comment_added"
         assert fresh_inbox.recent_events[0].message == "Human reviewer note."
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_human_comment_wakes_blocked_ai_task(
+    tmp_path: Path,
+) -> None:
+    """Human comments should make non-dependency AI blockers runnable for response."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_human_comment_ai_wake.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Consolidate final docs",
+            description="React to human feedback and close out the flow.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+        )
+        blocked = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="blocked",
+            blocked_reason_code="awaiting_human_feedback",
+            blocked_reason_text="Waiting for operator direction.",
+            actor_type="ai_profile",
+            actor_ref="default",
+        )
+        assert blocked.ready_at is None
+
+        await service.add_task_comment(
+            profile_id="default",
+            task_id=task.id,
+            message="Dependencies are done; continue or close this task.",
+            actor_type="human",
+            actor_ref="cli_user:alice",
+            comment_type="note",
+        )
+
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "awaiting_human_feedback"
+        assert updated.ready_at is not None
+
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        wake_event = next(
+            event
+            for event in events
+            if event.event_type == "wake_requested"
+            and event.details["reason_code"] == "human_comment"
+        )
+        assert wake_event.actor_type == "human"
+        assert wake_event.actor_ref == "cli_user:alice"
+        assert wake_event.details["owner_type"] == "ai_profile"
+        assert wake_event.details["owner_ref"] == "default"
+        assert wake_event.details["comment_event_id"] is not None
+
+        async with session_scope(factory) as session:
+            claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc) + timedelta(seconds=1),
+                lease_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                claim_token="human-comment-wake",
+                claimed_by="worker-human-comment",
+                profile_id="default",
+                owner_ref="default",
+            )
+        assert claimed is not None
+        assert claimed.id == task.id
+        assert claimed.claim_source_status == "blocked"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_human_comment_does_not_unblock_dependency_wait(
+    tmp_path: Path,
+) -> None:
+    """Human comments must not bypass dependency ordering for AI-owned tasks."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_human_comment_dependency_wait.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        prerequisite = await service.create_task(
+            profile_id="default",
+            title="Finish child work",
+            description="Complete the child task before the parent can continue.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli_user:alice",
+        )
+        dependent = await service.create_task(
+            profile_id="default",
+            title="Consolidate parent",
+            description="Wait for child work before final consolidation.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="ai_profile",
+            owner_ref="default",
+            depends_on_task_ids=(prerequisite.id,),
+        )
+        assert dependent.status == "blocked"
+        assert dependent.blocked_reason_code == "dependency_wait"
+
+        await service.add_task_comment(
+            profile_id="default",
+            task_id=dependent.id,
+            message="Please note this for later.",
+            actor_type="human",
+            actor_ref="cli_user:alice",
+            comment_type="note",
+        )
+
+        updated = await service.get_task(profile_id="default", task_id=dependent.id)
+        assert updated.status == "blocked"
+        assert updated.blocked_reason_code == "dependency_wait"
+        assert updated.ready_at is None
+
+        events = await service.list_task_events(profile_id="default", task_id=dependent.id)
+        assert not any(
+            event.event_type == "wake_requested"
+            and event.details.get("reason_code") == "human_comment"
+            for event in events
+        )
+
+        async with session_scope(factory) as session:
+            claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+                now_utc=datetime.now(timezone.utc) + timedelta(days=1),
+                lease_until=datetime.now(timezone.utc) + timedelta(days=1, minutes=15),
+                claim_token="dependency-wait-human-comment",
+                claimed_by="worker-human-comment",
+                profile_id="default",
+                owner_ref="default",
+            )
+        assert claimed is None
     finally:
         await engine.dispose()
 

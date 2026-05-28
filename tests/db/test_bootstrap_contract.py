@@ -40,6 +40,7 @@ from afkbot.db.session import (
 )
 from afkbot.db.upsert import upsert_insert_for_dialect
 from afkbot.models.chat_session_compaction import ChatSessionCompaction
+from afkbot.models.knowledge_artifact import KnowledgeArtifact
 from afkbot.models.runlog_event import RunlogEvent
 from afkbot.models.task import Task
 from afkbot.models.task_event import TaskEvent
@@ -192,6 +193,47 @@ def test_dialect_aware_upsert_insert_compiles_for_sqlite_and_postgres() -> None:
 
     assert "ON CONFLICT" in str(sqlite_statement.compile(dialect=sqlite.dialect()))
     assert "ON CONFLICT" in str(postgres_statement.compile(dialect=postgresql.dialect()))
+
+
+def test_knowledge_artifact_upsert_conflict_targets_compile_for_sqlite_and_postgres() -> None:
+    """Knowledge artifact upserts should keep both supported dialect paths valid."""
+
+    payload = {
+        "profile_id": "default",
+        "scope_type": "task",
+        "scope_id": "task-1",
+        "artifact_kind": "task_crystal",
+        "title": "Task outcome",
+        "summary": "Summary",
+        "source_refs_json": "[]",
+        "tags_json": "[]",
+        "confidence": 0.75,
+        "confirmed": True,
+        "source_fingerprint": "a" * 64,
+        "dedupe_key": "task_crystal:task-1:manual:completed",
+        "status": "active",
+    }
+    sqlite_statement = upsert_insert_for_dialect(
+        dialect_name="sqlite",
+        model=KnowledgeArtifact,
+    ).values(**payload)
+    sqlite_statement = sqlite_statement.on_conflict_do_update(
+        index_elements=["profile_id", "dedupe_key"],
+        set_={"summary": payload["summary"]},
+    )
+    postgres_statement = upsert_insert_for_dialect(
+        dialect_name="postgresql",
+        model=KnowledgeArtifact,
+    ).values(**payload)
+    postgres_statement = postgres_statement.on_conflict_do_update(
+        constraint="uq_knowledge_artifact_profile_dedupe",
+        set_={"summary": payload["summary"]},
+    )
+
+    assert "ON CONFLICT" in str(sqlite_statement.compile(dialect=sqlite.dialect()))
+    assert "ON CONSTRAINT uq_knowledge_artifact_profile_dedupe" in str(
+        postgres_statement.compile(dialect=postgresql.dialect())
+    )
 
 
 def test_task_claim_uses_skip_locked_only_for_postgres() -> None:
@@ -600,6 +642,24 @@ async def test_create_schema_materializes_profile_memory_indexes(tmp_path: Path)
     await engine.dispose()
 
 
+async def test_create_schema_materializes_knowledge_artifact_indexes(tmp_path: Path) -> None:
+    """Fresh bootstrap should create indexes for dark-launch Task Flow knowledge artifacts."""
+
+    db_path = tmp_path / "knowledge-artifact-indexes.db"
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("PRAGMA index_list(knowledge_artifact)"))).all()
+
+    index_names = {str(row[1]) for row in rows}
+    assert any(bool(row[2]) for row in rows)
+    assert "ix_knowledge_artifact_profile_task_active" in index_names
+    assert "ix_knowledge_artifact_scope" in index_names
+    await engine.dispose()
+
+
 async def test_create_schema_materializes_task_active_owner_unique_index(tmp_path: Path) -> None:
     """Fresh bootstrap should create the unique active-owner Task Flow index."""
 
@@ -610,9 +670,13 @@ async def test_create_schema_materializes_task_active_owner_unique_index(tmp_pat
     await create_schema(engine)
     async with engine.connect() as conn:
         rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
+        column_rows = (await conn.execute(text("PRAGMA table_info(task)"))).all()
 
     index_names = {str(row[1]) for row in rows}
+    column_names = {str(row[1]) for row in column_rows}
     assert "ux_task_active_ai_owner" in index_names
+    assert "source_transport" in column_names
+    assert "source_channel_profile" in column_names
     await engine.dispose()
 
 

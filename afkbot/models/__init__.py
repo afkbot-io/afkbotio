@@ -24,6 +24,7 @@ _MODEL_EXPORT_MODULES = {
     "ConnectClaimToken": "connect_claim_token",
     "ConnectSessionToken": "connect_session_token",
     "CredentialProfile": "credential_profile",
+    "KnowledgeArtifact": "knowledge_artifact",
     "MemoryItem": "memory_item",
     "PendingResumeEnvelope": "pending_resume_envelope",
     "PendingSecureRequest": "pending_secure_request",

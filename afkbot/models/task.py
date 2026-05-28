@@ -69,6 +69,8 @@ class Task(Base, TimestampMixin):
     reviewer_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_type: Mapped[str] = mapped_column(String(64), default="manual")
     source_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_transport: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_channel_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_type: Mapped[str] = mapped_column(String(32))
     created_by_ref: Mapped[str] = mapped_column(String(255))
     labels_json: Mapped[str] = mapped_column(Text, default="[]")

@@ -6,6 +6,9 @@ from datetime import datetime
 
 from pydantic import Field
 
+from afkbot.services.agent_loop.channel_tool_policy import (
+    resolve_channel_tool_profile_for_runtime,
+)
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
@@ -92,6 +95,10 @@ class TaskDelegateTool(ToolBase):
                 actor_type=actor.actor_type,
                 actor_ref=actor.actor_ref,
                 actor_session_id=actor.actor_session_id,
+                actor_transport=_runtime_transport(ctx.runtime_metadata),
+                channel_profile=resolve_channel_tool_profile_for_runtime(
+                    runtime_metadata=ctx.runtime_metadata,
+                ),
                 title=payload.title,
                 flow_id=payload.flow_id,
                 priority=payload.priority,
@@ -112,3 +119,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create task.delegate tool instance."""
 
     return TaskDelegateTool(settings=settings)
+
+
+def _runtime_transport(runtime_metadata: dict[str, object] | None) -> str | None:
+    if not isinstance(runtime_metadata, dict):
+        return None
+    transport = runtime_metadata.get("transport")
+    return str(transport).strip().lower() if isinstance(transport, str) else None

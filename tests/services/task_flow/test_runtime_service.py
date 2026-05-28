@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from afkbot.db.session import session_scope
 from afkbot.models.task_run import TaskRun
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.knowledge_repo import KnowledgeRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
@@ -322,6 +323,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_complete.db'}",
+        knowledge_crystals_enabled=True,
     )
     runtime = TaskFlowRuntimeService(
         settings=settings,
@@ -348,6 +350,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
             description="Summarize the last ten support tickets.",
             created_by_type="human",
             created_by_ref="cli",
+            source_transport="cli",
             owner_type="ai_profile",
             owner_ref="analyst",
         )
@@ -392,6 +395,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert execution_event.to_status == "completed"
         assert execution_event.details["run_id"] == listed_runs[0].run_id
         assert any(item.event_type == "comment_added" for item in listed_events)
+        assert any(item.event_type == "knowledge_crystallized" for item in listed_events)
         fallback_comment = next(
             item for item in listed_events if item.event_type == "comment_added"
         )
@@ -422,6 +426,15 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert "flow: Support operations" in observed.message
         assert "task docs:" in observed.message
         assert "plan r1: Analysis plan" in observed.message
+        async with session_scope(factory) as session:
+            artifacts = await KnowledgeRepository(session).list_artifacts_for_task(
+                profile_id="default",
+                task_id=first.id,
+                artifact_kind="task_crystal",
+            )
+        assert len(artifacts) == 1
+        assert artifacts[0].task_run_id == updated.last_run_id
+        assert artifacts[0].summary == "analysis complete"
     finally:
         await runtime.shutdown()
         await engine.dispose()

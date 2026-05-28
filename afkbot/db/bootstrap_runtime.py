@@ -241,6 +241,8 @@ def _legacy_task_select_expression(*, column_name: str, legacy_columns: set[str]
         "owner_type": "'human'",
         "owner_ref": "''",
         "source_type": "'manual'",
+        "source_transport": "NULL",
+        "source_channel_profile": "NULL",
         "created_by_type": "'human'",
         "created_by_ref": "''",
         "labels_json": "'[]'",
@@ -263,6 +265,10 @@ def _ensure_task_runtime_columns(conn: Connection) -> None:
         "claim_owner_ref": "ALTER TABLE task ADD COLUMN claim_owner_ref VARCHAR(255)",
         "claim_source_status": "ALTER TABLE task ADD COLUMN claim_source_status VARCHAR(32)",
         "last_session_profile_id": "ALTER TABLE task ADD COLUMN last_session_profile_id VARCHAR(120)",
+        "source_transport": "ALTER TABLE task ADD COLUMN source_transport VARCHAR(64)",
+        "source_channel_profile": (
+            "ALTER TABLE task ADD COLUMN source_channel_profile VARCHAR(64)"
+        ),
     }
     for column_name, ddl in missing_columns.items():
         if column_name not in columns:

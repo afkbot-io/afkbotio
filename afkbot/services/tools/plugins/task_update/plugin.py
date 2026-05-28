@@ -6,6 +6,9 @@ from datetime import datetime
 
 from pydantic import Field
 
+from afkbot.services.agent_loop.channel_tool_policy import (
+    resolve_channel_tool_profile_for_runtime,
+)
 from afkbot.services.task_flow import (
     TASK_FLOW_FIELD_UNSET,
     TaskAttachmentCreate,
@@ -196,6 +199,10 @@ class TaskUpdateTool(ToolBase):
                 actor_session_id=actor.actor_session_id,
                 actor_type=actor.actor_type,
                 actor_ref=actor.actor_ref,
+                actor_transport=_runtime_transport(ctx.runtime_metadata),
+                channel_profile=resolve_channel_tool_profile_for_runtime(
+                    runtime_metadata=ctx.runtime_metadata,
+                ),
                 attachments=payload.attachments,
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
@@ -209,3 +216,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create task.update tool instance."""
 
     return TaskUpdateTool(settings=settings)
+
+
+def _runtime_transport(runtime_metadata: dict[str, object] | None) -> str | None:
+    if not isinstance(runtime_metadata, dict):
+        return None
+    transport = runtime_metadata.get("transport")
+    return str(transport).strip().lower() if isinstance(transport, str) else None

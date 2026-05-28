@@ -778,6 +778,29 @@ class TaskFlowRuntimeService:
                 profile_id=claimed.task_profile_id,
                 task_id=claimed.task_id,
             )
+        if finalized:
+            from afkbot.services.knowledge.crystallizer import (
+                TaskOutcomeCrystalInput,
+                try_crystallize_task_outcome,
+            )
+
+            await try_crystallize_task_outcome(
+                session_factory=session_factory,
+                settings=self._settings,
+                payload=TaskOutcomeCrystalInput(
+                    profile_id=claimed.task_profile_id,
+                    task_id=claimed.task_id,
+                    task_run_id=claimed.task_run_id,
+                    status=outcome.status,
+                    summary=outcome.summary,
+                    error_code=outcome.error_code,
+                    error_text=outcome.error_text,
+                    actor_type="runtime",
+                    actor_ref=claimed.worker_id,
+                    transport="taskflow",
+                    occurred_at=finished_at,
+                ),
+            )
 
     async def _persist_failure(
         self,

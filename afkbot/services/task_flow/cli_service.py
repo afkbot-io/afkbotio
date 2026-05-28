@@ -144,6 +144,7 @@ async def create_task_payload(
             reviewer_ref=reviewer_ref,
             source_type=source_type,
             source_ref=source_ref,
+            source_transport="cli",
             labels=labels,
             requires_review=requires_review,
             depends_on_task_ids=depends_on_task_ids,
@@ -738,6 +739,7 @@ async def update_task_payload(
             blocked_reason_text=blocked_reason_text,
             actor_type=actor_type,
             actor_ref=actor_ref,
+            actor_transport="cli",
         )
         return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:
@@ -788,6 +790,7 @@ async def approve_review_task_payload(
             task_id=task_id,
             actor_type=actor_type,
             actor_ref=actor_ref,
+            actor_transport="cli",
         )
         return json.dumps({"task": item.model_dump(mode="json")}, ensure_ascii=True)
     except TaskFlowServiceError as exc:

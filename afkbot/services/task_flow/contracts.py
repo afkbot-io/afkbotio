@@ -150,11 +150,17 @@ class TaskMetadata(BaseModel):
     ready_at: datetime | None = None
     owner_type: str
     owner_ref: str
+    owner_profile_id: str | None = None
+    owner_subagent_name: str | None = None
     reviewer_type: str | None = None
     reviewer_ref: str | None = None
+    reviewer_profile_id: str | None = None
+    reviewer_subagent_name: str | None = None
     review_actionable: bool = False
     source_type: str
     source_ref: str | None = None
+    source_transport: str | None = None
+    source_channel_profile: str | None = None
     created_by_type: str
     created_by_ref: str
     labels: tuple[str, ...] = ()

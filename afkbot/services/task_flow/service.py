@@ -39,6 +39,7 @@ from afkbot.services.automations.principals import (
 from afkbot.services.profile_runtime import get_profile_runtime_config_service
 from afkbot.services.subagents.loader import SubagentLoader
 from afkbot.services.task_flow.ai_executors import (
+    AI_PROFILE_OWNER_TYPE,
     AI_SUBAGENT_OWNER_TYPE,
     is_ai_executor_owner_type,
     normalize_task_owner_type,
@@ -973,6 +974,8 @@ class TaskFlowService:
         reviewer_ref: str | None = None,
         source_type: str = "manual",
         source_ref: str | None = None,
+        source_transport: str | None = None,
+        source_channel_profile: str | None = None,
         labels: Sequence[str] = (),
         requires_review: bool = False,
         depends_on_task_ids: Sequence[str] = (),
@@ -988,6 +991,8 @@ class TaskFlowService:
         normalized_depends_on = _normalize_identifier_list(depends_on_task_ids)
         normalized_attachments = _normalize_task_attachment_inputs(attachments)
         normalized_source_type = _normalize_required_text(source_type, field_name="source_type")
+        normalized_source_transport = _normalize_optional_text(source_transport)
+        normalized_source_channel_profile = _normalize_optional_text(source_channel_profile)
         normalized_created_by_type = _normalize_required_text(
             created_by_type, field_name="created_by_type"
         )
@@ -1140,6 +1145,8 @@ class TaskFlowService:
                 reviewer_ref=normalized_reviewer_ref,
                 source_type=normalized_source_type,
                 source_ref=_normalize_optional_text(source_ref),
+                source_transport=normalized_source_transport,
+                source_channel_profile=normalized_source_channel_profile,
                 created_by_type=normalized_created_by_type,
                 created_by_ref=normalized_created_by_ref,
                 labels_json=json.dumps(normalized_labels),
@@ -1182,6 +1189,8 @@ class TaskFlowService:
                     "reviewer_type": normalized_reviewer_type,
                     "reviewer_ref": normalized_reviewer_ref,
                     "priority": priority,
+                    "source_transport": normalized_source_transport,
+                    "source_channel_profile": normalized_source_channel_profile,
                     "labels": list(normalized_labels),
                     "depends_on_task_ids": list(normalized_depends_on),
                     "requires_review": bool(requires_review),
@@ -1720,6 +1729,51 @@ class TaskFlowService:
                 message=normalized_message,
                 comment_type=normalized_comment_type,
             )
+            if _should_wake_ai_task_from_human_comment(
+                task,
+                actor_type=normalized_actor_type,
+            ):
+                before = _snapshot_task(task)
+                ready_at: datetime | object = _REPO_FIELD_UNSET
+                now_utc = datetime.now(timezone.utc)
+                if task.status == "blocked" and (
+                    task.ready_at is None or _coerce_aware_utc(task.ready_at) > now_utc
+                ):
+                    ready_at = now_utc
+                if ready_at is not _REPO_FIELD_UNSET:
+                    updated = await repo.update_task(
+                        profile_id=profile_id,
+                        task_id=task.id,
+                        ready_at=ready_at,
+                    )
+                    if updated is not None:
+                        task = updated
+                        update_details = _build_task_update_event_details(
+                            before=before,
+                            after=task,
+                            labels=None,
+                        )
+                        if update_details:
+                            await record_task_event(
+                                repo=repo,
+                                task_id=task.id,
+                                event_type="updated",
+                                actor_type=normalized_actor_type,
+                                actor_ref=normalized_actor_ref,
+                                details=update_details,
+                            )
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=task,
+                    reason_code="human_comment",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    message="Human comment requested AI attention.",
+                    details={
+                        "comment_event_id": row.id,
+                        "comment_type": normalized_comment_type,
+                    },
+                )
             return _to_task_comment_metadata(row)
 
         return await self._with_repo(_op)
@@ -1977,6 +2031,8 @@ class TaskFlowService:
         actor_type: str | None = None,
         actor_ref: str | None = None,
         actor_session_id: str | None = None,
+        actor_transport: str | None = None,
+        channel_profile: str | None = None,
     ) -> TaskMetadata:
         """Approve one review task and transition it into completed."""
 
@@ -2054,7 +2110,28 @@ class TaskFlowService:
             )
             return await _build_task_metadata(repo, updated, settings=self._settings)
 
-        return await self._with_repo(_op)
+        item = await self._with_repo(_op)
+        from afkbot.services.knowledge.crystallizer import (
+            TaskOutcomeCrystalInput,
+            try_crystallize_task_outcome,
+        )
+
+        await try_crystallize_task_outcome(
+            session_factory=self._session_factory,
+            settings=self._settings or get_settings(),
+            payload=TaskOutcomeCrystalInput(
+                profile_id=profile_id,
+                task_id=item.id,
+                task_run_id=item.last_run_id,
+                status=item.status,
+                summary="Review approved and task completed.",
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                transport=actor_transport,
+                channel_profile=channel_profile,
+            ),
+        )
+        return item
 
     async def request_review_changes(
         self,
@@ -2402,6 +2479,8 @@ class TaskFlowService:
         actor_type: str,
         actor_ref: str,
         actor_session_id: str | None = None,
+        actor_transport: str | None = None,
+        channel_profile: str | None = None,
         title: str | None = None,
         flow_id: str | None = None,
         priority: int | None = None,
@@ -2430,6 +2509,8 @@ class TaskFlowService:
         normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
         normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
+        normalized_actor_transport = _normalize_optional_text(actor_transport)
+        normalized_channel_profile = _normalize_optional_text(channel_profile)
         normalized_title = _normalize_optional_text(title)
         normalized_flow_id = _normalize_optional_text(flow_id)
         normalized_labels = _normalize_labels(labels) if labels is not None else None
@@ -2547,6 +2628,8 @@ class TaskFlowService:
                 reviewer_ref=None,
                 source_type="task_delegation",
                 source_ref=source_task.id,
+                source_transport=normalized_actor_transport,
+                source_channel_profile=normalized_channel_profile,
                 created_by_type=normalized_actor_type,
                 created_by_ref=normalized_actor_ref,
                 labels_json=json.dumps(delegated_labels),
@@ -2767,6 +2850,8 @@ class TaskFlowService:
         blocked_reason_text: str | None | object = _TASK_FIELD_UNSET,
         actor_type: str | None = None,
         actor_ref: str | None = None,
+        actor_transport: str | None = None,
+        channel_profile: str | None = None,
         attachments: Sequence[TaskAttachmentCreate | dict[str, object]] = (),
     ) -> TaskMetadata:
         """Update mutable task fields."""
@@ -2867,7 +2952,7 @@ class TaskFlowService:
             reason="Task updates require an explicit actor identity",
         )
 
-        async def _op(repo: TaskFlowRepository) -> tuple[TaskMetadata, bool]:
+        async def _op(repo: TaskFlowRepository) -> tuple[TaskMetadata, bool, bool]:
             await _ensure_profile_exists(repo, profile_id)
             await _ensure_public_ai_principal_session(
                 repo,
@@ -3128,14 +3213,40 @@ class TaskFlowService:
             ) or (
                 is_ai_executor_owner_type(row.owner_type) and row.status in {"claimed", "running"}
             )
+            should_crystallize_terminal_transition = (
+                normalized_status in {"completed", "review", "failed"}
+                and before.status != row.status
+                and row.status in {"completed", "review", "failed"}
+            )
             return (
                 await _build_task_metadata(repo, row, settings=self._settings),
                 refresh_schema_invariants,
+                should_crystallize_terminal_transition,
             )
 
-        item, refresh_schema_invariants = await self._with_repo(_op)
+        item, refresh_schema_invariants, should_crystallize = await self._with_repo(_op)
         if refresh_schema_invariants:
             await self._refresh_schema_invariants()
+        if should_crystallize:
+            from afkbot.services.knowledge.crystallizer import (
+                TaskOutcomeCrystalInput,
+                try_crystallize_task_outcome,
+            )
+
+            await try_crystallize_task_outcome(
+                session_factory=self._session_factory,
+                settings=self._settings or get_settings(),
+                payload=TaskOutcomeCrystalInput(
+                    profile_id=profile_id,
+                    task_id=item.id,
+                    status=item.status,
+                    summary=f"Task was manually moved to {item.status}.",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    transport=actor_transport,
+                    channel_profile=channel_profile,
+                ),
+            )
         return item
 
     async def block_task(
@@ -4212,11 +4323,17 @@ def _to_task_metadata(
         ready_at=row.ready_at,
         owner_type=row.owner_type,
         owner_ref=row.owner_ref,
+        owner_profile_id=_task_owner_profile_id(row.owner_type, row.owner_ref),
+        owner_subagent_name=_task_owner_subagent_name(row.owner_type, row.owner_ref),
         reviewer_type=row.reviewer_type,
         reviewer_ref=row.reviewer_ref,
+        reviewer_profile_id=_task_owner_profile_id(row.reviewer_type, row.reviewer_ref),
+        reviewer_subagent_name=_task_owner_subagent_name(row.reviewer_type, row.reviewer_ref),
         review_actionable=_task_is_review_actionable(row),
         source_type=row.source_type,
         source_ref=row.source_ref,
+        source_transport=row.source_transport,
+        source_channel_profile=row.source_channel_profile,
         created_by_type=row.created_by_type,
         created_by_ref=row.created_by_ref,
         labels=tuple(_decode_labels(row.labels_json)),
@@ -4354,6 +4471,24 @@ def _to_dependency_metadata(row: TaskDependency) -> TaskDependencyMetadata:
         satisfied_on_status=row.satisfied_on_status,
         created_at=row.created_at,
     )
+
+
+def _task_owner_profile_id(owner_type: str | None, owner_ref: str | None) -> str | None:
+    normalized_type = normalize_task_owner_type(owner_type)
+    normalized_ref = _normalize_optional_text(owner_ref)
+    if normalized_type == AI_PROFILE_OWNER_TYPE:
+        return normalized_ref
+    if normalized_type == AI_SUBAGENT_OWNER_TYPE:
+        parsed = parse_ai_subagent_owner_ref(normalized_ref)
+        return None if parsed is None else parsed[0]
+    return None
+
+
+def _task_owner_subagent_name(owner_type: str | None, owner_ref: str | None) -> str | None:
+    if normalize_task_owner_type(owner_type) != AI_SUBAGENT_OWNER_TYPE:
+        return None
+    parsed = parse_ai_subagent_owner_ref(_normalize_optional_text(owner_ref))
+    return None if parsed is None else parsed[1]
 
 
 def _to_task_attachment_metadata(row: TaskAttachment) -> TaskAttachmentMetadata:
@@ -5015,6 +5150,22 @@ async def _require_task(
     if row is None:
         raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
     return row
+
+
+def _coerce_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _should_wake_ai_task_from_human_comment(row: Task, *, actor_type: str) -> bool:
+    if actor_type != "human":
+        return False
+    if not is_ai_executor_owner_type(row.owner_type) or not str(row.owner_ref or "").strip():
+        return False
+    if row.status not in {"todo", "blocked", "review"}:
+        return False
+    return row.status != "blocked" or row.blocked_reason_code != "dependency_wait"
 
 
 async def _append_task_comment_event(

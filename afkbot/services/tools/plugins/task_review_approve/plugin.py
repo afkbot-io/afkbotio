@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from afkbot.services.agent_loop.channel_tool_policy import (
+    resolve_channel_tool_profile_for_runtime,
+)
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.task_flow.ai_executors import normalize_task_owner_type
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
@@ -66,6 +69,10 @@ class TaskReviewApproveTool(ToolBase):
                 actor_type=actor.actor_type,
                 actor_ref=actor.actor_ref,
                 actor_session_id=actor.actor_session_id,
+                actor_transport=_runtime_transport(ctx.runtime_metadata),
+                channel_profile=resolve_channel_tool_profile_for_runtime(
+                    runtime_metadata=ctx.runtime_metadata,
+                ),
             )
             return ToolResult(ok=True, payload={"task": item.model_dump(mode="json")})
         except TaskFlowServiceError as exc:
@@ -76,3 +83,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create task.review.approve tool instance."""
 
     return TaskReviewApproveTool(settings=settings)
+
+
+def _runtime_transport(runtime_metadata: dict[str, object] | None) -> str | None:
+    if not isinstance(runtime_metadata, dict):
+        return None
+    transport = runtime_metadata.get("transport")
+    return str(transport).strip().lower() if isinstance(transport, str) else None

@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.8] - 2026-05-29
+
+### Added
+
+- Added dark-launch Task Flow knowledge crystals for completed, review, and
+  failed outcomes with source references, safety checks, stable task/run dedupe,
+  and write-only storage that stays separate from semantic memory.
+- Task Flow metadata now exposes structured owner, reviewer, and source
+  provenance fields for UI/API clients.
+
+### Changed
+
+- Human comments on AI-owned, non-dependency-blocked tasks now request an AI
+  wake so the responsible owner can react to new operator context.
+- Task Flow review approval now enters the same terminal crystallization path
+  as runtime and manual terminal updates.
+
+### Security
+
+- Task Flow knowledge crystallization now requires both trusted caller transport
+  and trusted task source provenance, rejects unsafe summary/details, and uses a
+  generic artifact title fallback when the task title itself fails redaction.
+
 ## [1.9.7] - 2026-05-27
 
 ### Added

@@ -13,6 +13,9 @@ from afkbot.services.task_flow import (
 )
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.error_logging import log_exception
+from afkbot.services.agent_loop.channel_tool_policy import (
+    resolve_channel_tool_profile_for_runtime,
+)
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
@@ -161,6 +164,10 @@ class TaskCreateTool(ToolBase):
                 reviewer_ref=resolved_reviewer_ref,
                 source_type=payload.source_type,
                 source_ref=payload.source_ref,
+                source_transport=_runtime_transport(ctx.runtime_metadata),
+                source_channel_profile=resolve_channel_tool_profile_for_runtime(
+                    runtime_metadata=ctx.runtime_metadata,
+                ),
                 labels=payload.labels,
                 requires_review=payload.requires_review,
                 depends_on_task_ids=payload.depends_on_task_ids,
@@ -189,3 +196,10 @@ def create_tool(settings: Settings) -> ToolBase:
     """Create task.create tool instance."""
 
     return TaskCreateTool(settings=settings)
+
+
+def _runtime_transport(runtime_metadata: dict[str, object] | None) -> str | None:
+    if not isinstance(runtime_metadata, dict):
+        return None
+    transport = runtime_metadata.get("transport")
+    return str(transport).strip().lower() if isinstance(transport, str) else None
