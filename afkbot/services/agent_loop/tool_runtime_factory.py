@@ -58,6 +58,7 @@ def build_guarded_tool_execution_runtime(
         log_skill_read=log_skill_read,
     )
     return ToolExecutionRuntime(
+        settings=settings,
         tool_registry=tool_registry,
         actor=actor,
         policy_engine=policy_engine,

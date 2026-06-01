@@ -38,7 +38,6 @@ class ProfileRuntimeConfig(BaseModel):
     chat_planning_mode: Literal["off", "auto", "on"] | None = None
     chat_secret_guard_enabled: bool | None = None
     enabled_tool_plugins: tuple[str, ...] | None = None
-    taskflow_team_profile_ids: tuple[str, ...] | None = None
     memory_core_enabled: bool | None = None
     memory_core_max_items: int | None = None
     memory_core_max_chars: int | None = None
@@ -83,7 +82,6 @@ class ProfileRuntimeConfig(BaseModel):
 
     @field_validator(
         "enabled_tool_plugins",
-        "taskflow_team_profile_ids",
         "wizard_work_contexts",
         "wizard_actions",
         "wizard_network_allowlist",

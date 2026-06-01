@@ -7,6 +7,10 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import (
+    ensure_employee_flow_read_scope,
+    ensure_employee_task_read_scope,
+)
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -49,11 +53,32 @@ class TaskDocListTool(ToolBase):
             service = get_task_flow_service(self._settings)
             scope_type = payload.scope_type.strip().lower()
             if scope_type == "flow":
+                flow = await service.get_flow(
+                    profile_id=target_profile_id,
+                    flow_id=payload.scope_id,
+                )
+                read_error = await ensure_employee_flow_read_scope(
+                    ctx=ctx,
+                    settings=self._settings,
+                    target_profile_id=target_profile_id,
+                    flow=flow,
+                )
+                if read_error is not None:
+                    return read_error
                 documents = await service.list_flow_documents(
                     profile_id=target_profile_id,
                     flow_id=payload.scope_id,
                 )
             elif scope_type == "task":
+                task = await service.get_task(profile_id=target_profile_id, task_id=payload.scope_id)
+                read_error = await ensure_employee_task_read_scope(
+                    ctx=ctx,
+                    settings=self._settings,
+                    target_profile_id=target_profile_id,
+                    task=task,
+                )
+                if read_error is not None:
+                    return read_error
                 context = await service.build_task_context(
                     profile_id=target_profile_id,
                     task_id=payload.scope_id,

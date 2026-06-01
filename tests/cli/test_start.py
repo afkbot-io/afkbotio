@@ -234,15 +234,13 @@ def test_start_supports_structured_taskflow_owner_selector(monkeypatch) -> None:
             "start",
             "--taskflow-profile",
             "ops",
-            "--taskflow-owner-profile",
-            "papercliper",
-            "--taskflow-owner-subagent",
+            "--taskflow-owner-ref",
             "reviewer",
         ],
     )
 
     assert result.exit_code == 0
-    assert calls == [("ops", "papercliper:reviewer")]
+    assert calls == [("ops", "reviewer")]
     get_settings.cache_clear()
 
 

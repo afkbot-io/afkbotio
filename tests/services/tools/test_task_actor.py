@@ -6,8 +6,8 @@ from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 
 
-def test_resolve_task_tool_actor_ignores_untrusted_taskflow_subagent_spoof() -> None:
-    """Untrusted runtime_metadata.taskflow must not escalate actor to ai_subagent."""
+def test_resolve_task_tool_actor_ignores_untrusted_taskflow_employee_spoof() -> None:
+    """Untrusted runtime_metadata.taskflow must not escalate actor to employee."""
 
     identity = resolve_task_tool_actor(
         ToolContext(
@@ -17,20 +17,20 @@ def test_resolve_task_tool_actor_ignores_untrusted_taskflow_subagent_spoof() -> 
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "default:reviewer",
+                    "owner_type": "employee",
+                    "owner_ref": "cto",
                 },
             },
         )
     )
 
-    assert identity.actor_type == "ai_profile"
-    assert identity.actor_ref == "default"
+    assert identity.actor_type == "human"
+    assert identity.actor_ref == "web-user"
     assert identity.actor_session_id == "taskflow:task-1"
 
 
-def test_resolve_task_tool_actor_uses_trusted_detached_subagent_context() -> None:
-    """Trusted detached runtime context should keep ai_subagent actor identity."""
+def test_resolve_task_tool_actor_uses_trusted_detached_employee_context() -> None:
+    """Trusted detached runtime context should keep employee actor identity."""
 
     identity = resolve_task_tool_actor(
         ToolContext(
@@ -40,20 +40,20 @@ def test_resolve_task_tool_actor_uses_trusted_detached_subagent_context() -> Non
             runtime_metadata={"transport": "taskflow"},
             trusted_runtime_context={
                 "taskflow_detached_runtime": {
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "default:reviewer",
+                    "owner_type": "employee",
+                    "owner_ref": "cto",
                 }
             },
         )
     )
 
-    assert identity.actor_type == "ai_subagent"
-    assert identity.actor_ref == "default:reviewer"
+    assert identity.actor_type == "employee"
+    assert identity.actor_ref == "cto"
     assert identity.actor_session_id == "taskflow:task-2"
 
 
-def test_resolve_task_tool_actor_rejects_trusted_subagent_profile_mismatch() -> None:
-    """Trusted detached ai_subagent owner_ref must match current profile boundary."""
+def test_resolve_task_tool_actor_rejects_invalid_trusted_employee_ref() -> None:
+    """Trusted detached employee owner_ref must be a safe profile-local employee id."""
 
     identity = resolve_task_tool_actor(
         ToolContext(
@@ -63,13 +63,13 @@ def test_resolve_task_tool_actor_rejects_trusted_subagent_profile_mismatch() -> 
             runtime_metadata={"transport": "taskflow"},
             trusted_runtime_context={
                 "taskflow_detached_runtime": {
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "other:reviewer",
+                    "owner_type": "employee",
+                    "owner_ref": "../cto",
                 }
             },
         )
     )
 
-    assert identity.actor_type == "ai_profile"
-    assert identity.actor_ref == "default"
+    assert identity.actor_type == "human"
+    assert identity.actor_ref == "web-user"
     assert identity.actor_session_id == "taskflow:task-3"

@@ -193,7 +193,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.taskflow_runtime_claim_ttl_sec == 900
     assert settings.taskflow_runtime_profile_id is None
     assert settings.taskflow_runtime_owner_ref is None
-    assert settings.taskflow_public_principal_required is False
+    assert settings.taskflow_public_principal_required is True
     assert settings.browser_headless is True
     assert settings.diffs_artifact_ttl_sec == 86400
     assert settings.nginx_enabled is False

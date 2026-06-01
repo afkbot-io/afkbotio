@@ -21,11 +21,12 @@ from afkbot.services.channels.active_context import (
     filter_generic_approved_tool_names,
 )
 from afkbot.services.error_logging import log_exception, redact_log_text
+from afkbot.services.employees.tool_policy import employee_tool_policy_result
 from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.tools.base import ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParametersValidationError
 from afkbot.services.tools.registry import ToolRegistry
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 
 AsyncLogEvent = Callable[..., Awaitable[None]]
 AsyncCancelCheck = Callable[..., Awaitable[None]]
@@ -70,7 +71,9 @@ class ToolExecutionRuntime:
         sanitize_value: SanitizeValue,
         to_params_dict: NormalizeParams,
         tool_log_payload: BuildToolLogPayload,
+        settings: Settings | None = None,
     ) -> None:
+        self._settings = settings or get_settings()
         self._tool_registry = tool_registry
         self._actor = actor
         self._policy_engine = policy_engine
@@ -458,6 +461,16 @@ class ToolExecutionRuntime:
         )
         if skill_gate_result is not None:
             return skill_gate_result
+
+        employee_gate_result = await employee_tool_policy_result(
+            settings=self._settings,
+            profile_id=profile_id,
+            trusted_runtime_context=ctx.trusted_runtime_context,
+            tool_name=execution_name,
+            params=execution_params,
+        )
+        if employee_gate_result is not None:
+            return employee_gate_result
 
         try:
             self._policy_engine.ensure_tool_call_allowed(

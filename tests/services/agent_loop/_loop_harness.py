@@ -62,6 +62,7 @@ async def create_test_db(
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
+        taskflow_public_principal_required=False,
         **{
             key: value
             for key, value in {

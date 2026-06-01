@@ -619,6 +619,44 @@ class TaskFlowRepository:
         statement: Select[tuple[str]] = select(Task.id).where(*conditions).limit(1)
         return (await self._session.execute(statement)).scalar_one_or_none() is not None
 
+    async def employee_has_references(self, *, profile_id: str, employee_id: str) -> bool:
+        """Return whether tasks or flows still reference one Task Flow employee."""
+
+        task_statement: Select[tuple[str]] = (
+            select(Task.id)
+            .where(
+                Task.profile_id == profile_id,
+                or_(
+                    and_(
+                        Task.owner_type == "employee",
+                        Task.owner_ref == employee_id,
+                    ),
+                    and_(
+                        Task.reviewer_type == "employee",
+                        Task.reviewer_ref == employee_id,
+                    ),
+                    and_(
+                        Task.claim_owner_type == "employee",
+                        Task.claim_owner_ref == employee_id,
+                    ),
+                ),
+            )
+            .limit(1)
+        )
+        if (await self._session.execute(task_statement)).scalar_one_or_none() is not None:
+            return True
+
+        flow_statement: Select[tuple[str]] = (
+            select(TaskFlow.id)
+            .where(
+                TaskFlow.profile_id == profile_id,
+                TaskFlow.default_owner_type == "employee",
+                TaskFlow.default_owner_ref == employee_id,
+            )
+            .limit(1)
+        )
+        return (await self._session.execute(flow_statement)).scalar_one_or_none() is not None
+
     async def update_task(
         self,
         *,

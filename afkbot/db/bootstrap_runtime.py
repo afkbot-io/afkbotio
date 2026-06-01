@@ -268,12 +268,13 @@ def _ensure_task_runtime_columns(conn: Connection) -> None:
         if column_name not in columns:
             conn.execute(text(ddl))
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_employee_claim_owner"))
     conn.execute(
         text(
             "UPDATE task "
             "SET claim_owner_type = owner_type, claim_owner_ref = owner_ref, claim_source_status = status "
             "WHERE status IN ('claimed', 'running') "
-            "AND owner_type IN ('ai_profile', 'ai_subagent') "
+            "AND owner_type = 'employee' "
             "AND claim_owner_type IS NULL "
             "AND claim_owner_ref IS NULL"
         )
@@ -305,11 +306,13 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
     columns = _table_columns(conn, "task")
     if not columns:
         return
-    duplicate_owner_scopes = _list_duplicate_active_ai_owner_scopes(conn)
-    duplicate_claim_scopes = _list_duplicate_active_ai_claim_owner_scopes(conn)
+    duplicate_owner_scopes = _list_duplicate_active_employee_owner_scopes(conn)
+    duplicate_claim_scopes = _list_duplicate_active_employee_claim_owner_scopes(conn)
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_owner"))
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
-    predicate = "owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_employee_owner"))
+    conn.execute(text("DROP INDEX IF EXISTS ux_task_active_employee_claim_owner"))
+    predicate = "owner_type = 'employee' AND status IN ('claimed', 'running')"
     if duplicate_owner_scopes:
         excluded_owner_scopes = " AND ".join(
             "NOT (profile_id = "
@@ -324,7 +327,7 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
         predicate = f"{predicate} AND {excluded_owner_scopes}"
     conn.execute(
         text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_owner "
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_employee_owner "
             "ON task (profile_id, owner_type, owner_ref) "
             f"WHERE {predicate}"
         )
@@ -336,7 +339,7 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
         )
     )
     claim_predicate = (
-        "claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running')"
+        "claim_owner_type = 'employee' AND status IN ('claimed', 'running')"
     )
     if duplicate_claim_scopes:
         excluded_claim_scopes = " AND ".join(
@@ -352,7 +355,7 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
         claim_predicate = f"{claim_predicate} AND {excluded_claim_scopes}"
     conn.execute(
         text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_ai_claim_owner "
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_active_employee_claim_owner "
             "ON task (profile_id, claim_owner_type, claim_owner_ref) "
             f"WHERE {claim_predicate}"
         )
@@ -383,8 +386,10 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
         )
 
 
-def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str, str, str], ...]:
-    """Return active AI owner profile scopes violating the one-active-task invariant."""
+def _list_duplicate_active_employee_owner_scopes(
+    conn: Connection,
+) -> tuple[tuple[str, str, str], ...]:
+    """Return active employee owner profile scopes violating the one-active-task invariant."""
 
     if not _table_columns(conn, "task"):
         return ()
@@ -392,7 +397,7 @@ def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str,
         text(
             "SELECT profile_id, owner_type, owner_ref "
             "FROM task "
-            "WHERE owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "WHERE owner_type = 'employee' AND status IN ('claimed', 'running') "
             "GROUP BY profile_id, owner_type, owner_ref "
             "HAVING COUNT(*) > 1 "
             "ORDER BY profile_id ASC, owner_type ASC, owner_ref ASC"
@@ -408,10 +413,10 @@ def _list_duplicate_active_ai_owner_scopes(conn: Connection) -> tuple[tuple[str,
     return tuple(scopes)
 
 
-def _list_duplicate_active_ai_claim_owner_scopes(
+def _list_duplicate_active_employee_claim_owner_scopes(
     conn: Connection,
 ) -> tuple[tuple[str, str, str], ...]:
-    """Return active AI claim-owner scopes violating the one-active-task invariant."""
+    """Return active employee claim-owner scopes violating the one-active-task invariant."""
 
     columns = _table_columns(conn, "task")
     if not columns or "claim_owner_type" not in columns or "claim_owner_ref" not in columns:
@@ -420,7 +425,7 @@ def _list_duplicate_active_ai_claim_owner_scopes(
         text(
             "SELECT profile_id, claim_owner_type, claim_owner_ref "
             "FROM task "
-            "WHERE claim_owner_type IN ('ai_profile', 'ai_subagent') AND status IN ('claimed', 'running') "
+            "WHERE claim_owner_type = 'employee' AND status IN ('claimed', 'running') "
             "GROUP BY profile_id, claim_owner_type, claim_owner_ref "
             "HAVING COUNT(*) > 1 "
             "ORDER BY profile_id ASC, claim_owner_type ASC, claim_owner_ref ASC"

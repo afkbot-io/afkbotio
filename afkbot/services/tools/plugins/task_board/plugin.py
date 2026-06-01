@@ -8,6 +8,7 @@ from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_servic
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import restrict_employee_read_owner_scope
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -21,8 +22,6 @@ class TaskBoardParams(ToolParameters):
     flow_id: str | None = Field(default=None, max_length=64)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     labels: tuple[str, ...] = ()
     limit_per_column: int = Field(default=20, ge=1, le=100)
 
@@ -57,9 +56,18 @@ class TaskBoardTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
+            resolved_owner_type, resolved_owner_ref, read_scope_error = (
+                await restrict_employee_read_owner_scope(
+                    ctx=ctx,
+                    settings=self._settings,
+                    target_profile_id=target_profile_id,
+                    owner_type=resolved_owner_type,
+                    owner_ref=resolved_owner_ref,
+                )
+            )
+            if read_scope_error is not None:
+                return read_scope_error
             board = await service.build_board(
                 profile_id=target_profile_id,
                 flow_id=payload.flow_id,

@@ -27,8 +27,6 @@ class TaskMaintenanceSweepParams(ToolParameters):
 
     limit: int | None = Field(default=None, ge=1, le=100)
     owner_ref: str | None = Field(default=None, min_length=1, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class TaskMaintenanceSweepTool(ToolBase):
@@ -66,8 +64,6 @@ class TaskMaintenanceSweepTool(ToolBase):
                 field_prefix="owner",
                 owner_type=None,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
             released_count = await runtime.sweep_expired_claims(
                 worker_id=f"taskflow-tool-maintenance:{ctx.profile_id}",

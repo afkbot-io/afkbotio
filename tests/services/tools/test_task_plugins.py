@@ -18,11 +18,11 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
-from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import get_task_flow_service, reset_task_flow_services_async
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.settings import Settings, get_settings
+from tests.repositories._harness import _write_test_employees
 
 
 def _write_profile_subagent(
@@ -41,7 +41,7 @@ async def _prepare(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
     *,
-    taskflow_public_principal_required: bool = False,
+    taskflow_public_principal_required: bool = True,
 ) -> tuple[Settings, AsyncEngine, ToolRegistry]:
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'tools_taskflow.db'}"
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
@@ -50,10 +50,14 @@ async def _prepare(
     await reset_task_flow_services_async()
 
     settings = get_settings()
+    settings.chat_human_owner_ref = "web-user"
     settings.taskflow_public_principal_required = taskflow_public_principal_required
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
+    _write_test_employees(settings=settings, profile_id="default")
+    _write_test_employees(settings=settings, profile_id="analyst")
+    _write_test_employees(settings=settings, profile_id="papercliper")
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
@@ -95,14 +99,16 @@ def _write_team_runtime_config(
     profile_id: str,
     team_profile_ids: tuple[str, ...],
 ) -> None:
-    get_profile_runtime_config_service(settings).write(
-        profile_id,
-        ProfileRuntimeConfig(
-            llm_provider=settings.llm_provider,
-            llm_model=settings.llm_model,
-            taskflow_team_profile_ids=team_profile_ids,
-        ),
-    )
+    _ = (settings, profile_id, team_profile_ids)
+
+
+def _employee_trusted_context(employee_id: str) -> dict[str, object]:
+    return {
+        "taskflow_detached_runtime": {
+            "owner_type": "employee",
+            "owner_ref": employee_id,
+        }
+    }
 
 
 async def _create_chat_session(
@@ -244,8 +250,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         task_comments = comment_list_result.payload["task_comments"]
         assert isinstance(task_comments, list)
         assert task_comments[0]["message"] == "Add the missing KPI breakdown."
-        assert task_comments[0]["actor_type"] == "ai_profile"
-        assert task_comments[0]["actor_ref"] == "default"
+        assert task_comments[0]["actor_type"] == "human"
+        assert task_comments[0]["actor_ref"] == "web-user"
 
         list_tool = registry.get("task.list")
         assert list_tool is not None
@@ -308,8 +314,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         task_events = event_list_result.payload["task_events"]
         assert isinstance(task_events, list)
         assert task_events[0]["event_type"] == "updated"
-        assert task_events[0]["actor_type"] == "ai_profile"
-        assert task_events[0]["actor_ref"] == "default"
+        assert task_events[0]["actor_type"] == "human"
+        assert task_events[0]["actor_ref"] == "web-user"
         assert {item["event_type"] for item in task_events} >= {
             "created",
             "comment_added",
@@ -591,7 +597,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
                 {
                     "profile_key": "default",
                     "title": "Agent project memory",
-                    "description": "Persist plans, specs, and roadmap docs for AI work.",
+                    "description": "Persist plans, specs, and roadmap docs for Employee work.",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -608,7 +614,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
                     "flow_id": flow_id,
                     "title": "Implement context bundle",
                     "description": "Give agents the work state before execution.",
-                    "owner_profile_id": "default",
+                    "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -698,7 +704,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
             feed_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "owner_profile_id": "default",
+                    "owner_ref": "default",
                     "event_limit": 10,
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -706,8 +712,156 @@ async def test_task_plugins_docs_context_and_agent_feed(
             ),
         )
         assert feed_result.ok is True
-        assert feed_result.payload["feed"]["owner_type"] == "ai_profile"
+        assert feed_result.payload["feed"]["owner_type"] == "employee"
         assert feed_result.payload["feed"]["mention_event_count"] == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_employee_runtime_read_tools_are_scoped_to_self_or_reports(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Employee task reads should not expose another employee's queue by default."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        operator_ctx = ToolContext(profile_id="default", session_id="s-task", run_id=1)
+        create_tool = registry.get("task.create")
+        get_tool = registry.get("task.get")
+        list_tool = registry.get("task.list")
+        board_tool = registry.get("task.board")
+        feed_tool = registry.get("task.feed.list")
+        comment_list_tool = registry.get("task.comment.list")
+        context_tool = registry.get("task.context.get")
+        doc_list_tool = registry.get("task.doc.list")
+        event_list_tool = registry.get("task.event.list")
+        assert create_tool is not None
+        assert get_tool is not None
+        assert list_tool is not None
+        assert board_tool is not None
+        assert feed_tool is not None
+        assert comment_list_tool is not None
+        assert context_tool is not None
+        assert doc_list_tool is not None
+        assert event_list_tool is not None
+
+        reviewer_task_result = await create_tool.execute(
+            operator_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Reviewer queue item",
+                    "description": "Visible to reviewer and reviewer managers.",
+                    "owner_ref": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert reviewer_task_result.ok is True
+        reviewer_task_id = reviewer_task_result.payload["task"]["id"]
+        auditor_task_result = await create_tool.execute(
+            operator_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "Auditor queue item",
+                    "description": "Not visible to reviewer employee runtime.",
+                    "owner_ref": "auditor",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert auditor_task_result.ok is True
+        auditor_task_id = auditor_task_result.payload["task"]["id"]
+
+        reviewer_ctx = ToolContext(
+            profile_id="default",
+            session_id="s-task",
+            run_id=2,
+            trusted_runtime_context=_employee_trusted_context("reviewer"),
+        )
+        self_list_result = await list_tool.execute(
+            reviewer_ctx,
+            list_tool.parse_params(
+                {"profile_key": "default"},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert self_list_result.ok is True
+        self_tasks = self_list_result.payload["tasks"]
+        assert [item["title"] for item in self_tasks] == ["Reviewer queue item"]
+
+        forbidden_result = await feed_tool.execute(
+            reviewer_ctx,
+            feed_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "auditor",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert forbidden_result.ok is False
+        assert forbidden_result.error_code == "task_employee_scope_forbidden"
+
+        for tool, payload in (
+            (get_tool, {"profile_key": "default", "task_id": auditor_task_id}),
+            (context_tool, {"profile_key": "default", "task_id": auditor_task_id}),
+            (comment_list_tool, {"profile_key": "default", "task_id": auditor_task_id}),
+            (event_list_tool, {"profile_key": "default", "task_id": auditor_task_id}),
+            (
+                doc_list_tool,
+                {"profile_key": "default", "scope_type": "task", "scope_id": auditor_task_id},
+            ),
+        ):
+            direct_read_result = await tool.execute(
+                reviewer_ctx,
+                tool.parse_params(
+                    payload,
+                    default_timeout_sec=settings.tool_timeout_default_sec,
+                    max_timeout_sec=settings.tool_timeout_max_sec,
+                ),
+            )
+            assert direct_read_result.ok is False
+            assert direct_read_result.error_code == "task_employee_scope_forbidden"
+
+        analyst_ctx = ToolContext(
+            profile_id="default",
+            session_id="s-task",
+            run_id=3,
+            trusted_runtime_context=_employee_trusted_context("analyst"),
+        )
+        report_board_result = await board_tool.execute(
+            analyst_ctx,
+            board_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "reviewer",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert report_board_result.ok is True
+        assert report_board_result.payload["board"]["total_count"] == 1
+
+        report_get_result = await get_tool.execute(
+            analyst_ctx,
+            get_tool.parse_params(
+                {"profile_key": "default", "task_id": reviewer_task_id},
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert report_get_result.ok is True
+        assert report_get_result.payload["task"]["id"] == reviewer_task_id
     finally:
         await engine.dispose()
 
@@ -766,7 +920,26 @@ async def test_task_update_plugin_binds_current_session_for_running_status(
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
-        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
+                },
+            },
+            trusted_runtime_context={
+                "taskflow_detached_runtime": {
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
+                }
+            },
+        )
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -780,8 +953,8 @@ async def test_task_update_plugin_binds_current_session_for_running_status(
                     "profile_key": "default",
                     "title": "Bind session",
                     "description": "Attach the current session when work starts.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -820,7 +993,21 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
-        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("papercliper"),
+        )
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -830,12 +1017,12 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
         create_result = await create_tool.execute(
             ctx,
             create_tool.parse_params(
-                {
-                    "profile_key": "default",
-                    "title": "Poll vendor status",
-                    "description": "Recheck the external vendor later.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "default",
+                    {
+                        "profile_key": "default",
+                        "title": "Poll vendor status",
+                        "description": "Recheck the external vendor later.",
+                        "owner_type": "employee",
+                        "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -881,7 +1068,21 @@ async def test_task_update_plugin_ignores_null_retry_timer_conflict(
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
-        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("papercliper"),
+        )
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -891,12 +1092,12 @@ async def test_task_update_plugin_ignores_null_retry_timer_conflict(
         create_result = await create_tool.execute(
             ctx,
             create_tool.parse_params(
-                {
-                    "profile_key": "default",
-                    "title": "Prepare review handoff",
-                    "description": "Move to review after work is done.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "default",
+                    {
+                        "profile_key": "default",
+                        "title": "Prepare review handoff",
+                        "description": "Move to review after work is done.",
+                        "owner_type": "employee",
+                        "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -943,17 +1144,17 @@ async def test_task_update_plugin_forwards_explicit_ready_at_null(
             title="Scheduled retry to clear",
             description="Clear explicit ready_at via task.update.",
             created_by_type="human",
-            created_by_ref="cli",
+            created_by_ref="web-user",
         )
         await service.update_task(
             profile_id="default",
             task_id=task.id,
             status="blocked",
-            blocked_reason_code="blocked_on_dependency",
-            actor_type="human",
-            actor_ref="cli",
-            ready_at=datetime.now(timezone.utc) + timedelta(minutes=30),
-        )
+                blocked_reason_code="blocked_on_dependency",
+                actor_type="human",
+                actor_ref="web-user",
+                ready_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            )
 
         update_tool = registry.get("task.update")
         get_tool = registry.get("task.get")
@@ -999,7 +1200,7 @@ async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """AI actors should not bind a task to some other live session id."""
+    """Employee actors should not bind a task to some other live session id."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     factory = create_session_factory(engine)
@@ -1012,7 +1213,21 @@ async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
             team_profile_ids=("papercliper",),
         )
 
-        ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
+        )
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -1026,7 +1241,7 @@ async def test_task_update_plugin_rejects_explicit_foreign_session_binding(
                     "profile_key": "default",
                     "title": "Bind delegated session",
                     "description": "Attach a delegated execution session.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1072,7 +1287,21 @@ async def test_task_update_plugin_rejects_explicit_session_binding_in_automation
         assert create_tool is not None
         assert update_tool is not None
 
-        seed_ctx = ToolContext(profile_id="default", session_id="session-live-42", run_id=1)
+        seed_ctx = ToolContext(
+            profile_id="default",
+            session_id="session-live-42",
+            run_id=1,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("default"),
+        )
         create_result = await create_tool.execute(
             seed_ctx,
             create_tool.parse_params(
@@ -1142,7 +1371,7 @@ async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit
                     "profile_key": "default",
                     "title": "Recheck vendor reply",
                     "description": "Work this task until the vendor answers.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1166,7 +1395,7 @@ async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit
                 "taskflow": {
                     "task_id": task_id,
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
             },
@@ -1233,7 +1462,7 @@ async def test_task_block_plugin_rejects_timed_dependency_wait(
                     "profile_key": "default",
                     "title": "Wait for teammate result",
                     "description": "Pause until the delegated teammate finishes.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1285,7 +1514,7 @@ async def test_task_block_plugin_accepts_explicit_null_timing_fields(
                     "profile_key": "default",
                     "title": "Wait for manual check",
                     "description": "Pause without a scheduled revisit.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1320,11 +1549,11 @@ async def test_task_block_plugin_accepts_explicit_null_timing_fields(
         await engine.dispose()
 
 
-async def test_task_block_plugin_supports_structured_ai_subagent_reassignment(
+async def test_task_block_plugin_supports_structured_employee_reassignment(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.block should accept structured ai_subagent owner reassignment inputs."""
+    """task.block should accept structured employee owner reassignment inputs."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -1370,8 +1599,7 @@ async def test_task_block_plugin_supports_structured_ai_subagent_reassignment(
                     "task_id": task_id,
                     "reason_code": "needs_review",
                     "reason_text": "Handing this off to the review specialist.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -1381,8 +1609,8 @@ async def test_task_block_plugin_supports_structured_ai_subagent_reassignment(
         assert block_result.ok is True
         task_payload = block_result.payload["task"]
         assert task_payload["status"] == "blocked"
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "papercliper:reviewer"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
@@ -1409,7 +1637,7 @@ async def test_task_maintenance_sweep_plugin_repairs_stale_claims(
                     "profile_key": "default",
                     "title": "Repair stale claim",
                     "description": "Repair a stale claim via explicit maintenance.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1506,16 +1734,19 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
         assert get_tool is not None
 
         ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
+            profile_id="default",
+            session_id="session-live-42",
             run_id=7,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_profile_id": "default",
                     "task_id": "task_demo",
+                    "owner_type": "employee",
+                    "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
 
         create_result = await create_tool.execute(
@@ -1548,7 +1779,7 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
         assert get_result.ok is True
         fetched = get_result.payload["task"]
         assert isinstance(fetched, dict)
-        assert fetched["created_by_type"] == "ai_profile"
+        assert fetched["created_by_type"] == "employee"
         assert fetched["created_by_ref"] == "analyst"
         assert fetched["profile_id"] == "default"
     finally:
@@ -1571,18 +1802,19 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
         )
 
         ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
+            profile_id="default",
+            session_id="session-live-42",
             run_id=7,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
         create_tool = registry.get("task.create")
         get_tool = registry.get("task.get")
@@ -1595,6 +1827,8 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
                 {
                     "title": "Runtime scoped create",
                     "description": "Follow the runtime principal guard",
+                    "owner_type": "employee",
+                    "owner_ref": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -1604,7 +1838,7 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
         assert create_result.ok is True
         task_payload = create_result.payload["task"]
         task_id = str(task_payload["id"])
-        assert task_payload["last_session_id"] == "taskflow:task_demo"
+        assert task_payload["last_session_id"] == "session-live-42"
         assert task_payload["last_session_profile_id"] == "default"
 
         get_result = await get_tool.execute(
@@ -1617,7 +1851,7 @@ async def test_task_create_runtime_scope_binds_session_profile_to_task_profile_b
         )
         assert get_result.ok is True
         fetched = get_result.payload["task"]
-        assert fetched["last_session_id"] == "taskflow:task_demo"
+        assert fetched["last_session_id"] == "session-live-42"
         assert fetched["last_session_profile_id"] == "default"
     finally:
         await engine.dispose()
@@ -1643,18 +1877,19 @@ async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
         )
 
         ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
+            profile_id="default",
+            session_id="session-live-42",
             run_id=7,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
         create_tool = registry.get("task.create")
         flow_tool = registry.get("task.flow.create")
@@ -1668,7 +1903,7 @@ async def test_task_create_runtime_scope_rejects_cross_profile_session_binding(
             flow_tool.parse_params(
                 {
                     "title": "Cross profile reject flow",
-                    "default_owner_type": "ai_profile",
+                    "default_owner_type": "employee",
                     "default_owner_ref": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1861,7 +2096,7 @@ async def test_task_update_plugin_rejects_running_status_without_real_session_in
             ctx,
             create_tool.parse_params(
                 {
-                    "title": "Task awaiting AI worker",
+                    "title": "Task awaiting Employee worker",
                     "description": "automation can create it, but cannot fake a live worker lease",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -1915,7 +2150,7 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
@@ -1973,7 +2208,7 @@ async def test_task_plugins_runtime_profile_scope_ignores_env_override_in_taskfl
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
@@ -2003,11 +2238,11 @@ async def test_task_plugins_runtime_profile_scope_ignores_env_override_in_taskfl
         await engine.dispose()
 
 
-async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
+async def test_task_plugins_allow_agent_to_delegate_task_to_another_employee(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Runtime-scoped agents should be able to create backlog tasks owned by another AI profile."""
+    """Runtime-scoped agents should be able to create backlog tasks owned by another Employee profile."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2022,18 +2257,19 @@ async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
         )
 
         ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
+            profile_id="default",
+            session_id="s-task",
             run_id=8,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
 
         create_tool = registry.get("task.create")
@@ -2044,7 +2280,7 @@ async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
                 {
                     "title": "Papercliper follow-up",
                     "description": "Take over the research-heavy follow-up work.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -2055,9 +2291,9 @@ async def test_task_plugins_allow_agent_to_delegate_task_to_another_ai_profile(
         task = create_result.payload["task"]
         assert isinstance(task, dict)
         assert task["profile_id"] == "default"
-        assert task["owner_type"] == "ai_profile"
+        assert task["owner_type"] == "employee"
         assert task["owner_ref"] == "papercliper"
-        assert task["created_by_type"] == "ai_profile"
+        assert task["created_by_type"] == "employee"
         assert task["created_by_ref"] == "analyst"
     finally:
         await engine.dispose()
@@ -2096,7 +2332,7 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
                     "profile_key": "default",
                     "title": "Own launch brief",
                     "description": "Prepare the launch brief and delegate research.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -2116,7 +2352,7 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
                 "taskflow": {
                     "task_id": parent_task_id,
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
@@ -2157,11 +2393,11 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
         await engine.dispose()
 
 
-async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subagent(
+async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_employee(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Runtime subagents should keep ai_subagent actor identity when delegating work."""
+    """Runtime subagents should keep employee actor identity when delegating work."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2199,8 +2435,8 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subage
                     "profile_key": "default",
                     "title": "Own launch brief",
                     "description": "Prepare the launch brief and delegate review research.",
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "analyst:researcher",
+                    "owner_type": "employee",
+                    "owner_ref": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2211,22 +2447,22 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subage
         parent_task_id = str(parent_task["id"])
 
         ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:task_demo",
+            profile_id="default",
+            session_id="s-task",
             run_id=22,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_id": parent_task_id,
                     "task_profile_id": "default",
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "analyst:researcher",
+                    "owner_type": "employee",
+                    "owner_ref": "analyst",
                 },
             },
             trusted_runtime_context={
                 "taskflow_detached_runtime": {
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "analyst:researcher",
+                    "owner_type": "employee",
+                    "owner_ref": "analyst",
                 }
             },
         )
@@ -2235,8 +2471,8 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subage
             delegate_tool.parse_params(
                 {
                     "description": "Review the launch brief assumptions and call out gaps.",
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "papercliper:reviewer",
+                    "owner_type": "employee",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2245,19 +2481,19 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_ai_subage
 
         assert delegate_result.ok is True
         delegation = delegate_result.payload["delegation"]
-        assert delegation["delegated_task"]["owner_type"] == "ai_subagent"
-        assert delegation["delegated_task"]["owner_ref"] == "papercliper:reviewer"
-        assert delegation["delegated_task"]["created_by_type"] == "ai_subagent"
-        assert delegation["delegated_task"]["created_by_ref"] == "analyst:researcher"
+        assert delegation["delegated_task"]["owner_type"] == "employee"
+        assert delegation["delegated_task"]["owner_ref"] == "reviewer"
+        assert delegation["delegated_task"]["created_by_type"] == "employee"
+        assert delegation["delegated_task"]["created_by_ref"] == "analyst"
     finally:
         await engine.dispose()
 
 
-async def test_task_create_plugin_supports_structured_ai_subagent_assignment(
+async def test_task_create_plugin_infers_employee_owner_from_owner_ref(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.create should accept structured ai_subagent owner inputs and infer owner_type."""
+    """task.create should accept structured employee owner inputs and infer owner_type."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2283,10 +2519,9 @@ async def test_task_create_plugin_supports_structured_ai_subagent_assignment(
             ToolContext(profile_id="default", session_id="s-task", run_id=31),
             create_tool.parse_params(
                 {
-                    "title": "Structured subagent assignment",
-                    "description": "Assign directly to one subagent without manual owner_ref.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "title": "Employee assignment",
+                    "description": "Assign directly to one employee.",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2295,17 +2530,17 @@ async def test_task_create_plugin_supports_structured_ai_subagent_assignment(
 
         assert result.ok is True
         task_payload = result.payload["task"]
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "papercliper:reviewer"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
 
-async def test_task_create_plugin_supports_structured_ai_profile_assignment(
+async def test_task_create_plugin_infers_employee_owner_and_reviewer_from_refs(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.create should accept structured profile-only owner/reviewer inputs and infer ai_profile."""
+    """task.create should accept structured profile-only owner/reviewer inputs and infer employee."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2326,10 +2561,10 @@ async def test_task_create_plugin_supports_structured_ai_profile_assignment(
             ToolContext(profile_id="default", session_id="s-task", run_id=31),
             create_tool.parse_params(
                 {
-                    "title": "Structured profile assignment",
-                    "description": "Assign directly to one orchestrator profile without manual owner_ref.",
-                    "owner_profile_id": "papercliper",
-                    "reviewer_profile_id": "reviewer",
+                    "title": "Employee owner and reviewer",
+                    "description": "Assign directly to employee owner and reviewer refs.",
+                    "owner_ref": "papercliper",
+                    "reviewer_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2338,19 +2573,19 @@ async def test_task_create_plugin_supports_structured_ai_profile_assignment(
 
         assert result.ok is True
         task_payload = result.payload["task"]
-        assert task_payload["owner_type"] == "ai_profile"
+        assert task_payload["owner_type"] == "employee"
         assert task_payload["owner_ref"] == "papercliper"
-        assert task_payload["reviewer_type"] == "ai_profile"
+        assert task_payload["reviewer_type"] == "employee"
         assert task_payload["reviewer_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
 
-async def test_task_update_plugin_supports_structured_ai_subagent_reassignment(
+async def test_task_update_plugin_supports_structured_employee_reassignment(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.update should accept structured ai_subagent owner inputs when reassigning a task."""
+    """task.update should accept structured employee owner inputs when reassigning a task."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2393,8 +2628,7 @@ async def test_task_update_plugin_supports_structured_ai_subagent_reassignment(
             update_tool.parse_params(
                 {
                     "task_id": task_id,
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2403,17 +2637,17 @@ async def test_task_update_plugin_supports_structured_ai_subagent_reassignment(
 
         assert update_result.ok is True
         task_payload = update_result.payload["task"]
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "papercliper:reviewer"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
 
-async def test_task_delegate_plugin_supports_structured_ai_subagent_assignment(
+async def test_task_delegate_plugin_supports_structured_employee_assignment(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.delegate should accept structured ai_subagent target inputs and infer owner_type."""
+    """task.delegate should accept structured employee target inputs and infer owner_type."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2444,7 +2678,7 @@ async def test_task_delegate_plugin_supports_structured_ai_subagent_assignment(
                 {
                     "title": "Parent task",
                     "description": "Delegate structured subagent follow-up.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -2464,16 +2698,15 @@ async def test_task_delegate_plugin_supports_structured_ai_subagent_assignment(
                     "taskflow": {
                         "task_id": parent_task_id,
                         "task_profile_id": "default",
-                        "owner_type": "ai_profile",
+                        "owner_type": "employee",
                         "owner_ref": "analyst",
                     },
                 },
             ),
             delegate_tool.parse_params(
                 {
-                    "description": "Hand off review work to the reviewer subagent.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "description": "Hand off review work to the reviewer employee.",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2482,17 +2715,17 @@ async def test_task_delegate_plugin_supports_structured_ai_subagent_assignment(
 
         assert delegate_result.ok is True
         delegation = delegate_result.payload["delegation"]
-        assert delegation["delegated_task"]["owner_type"] == "ai_subagent"
-        assert delegation["delegated_task"]["owner_ref"] == "papercliper:reviewer"
+        assert delegation["delegated_task"]["owner_type"] == "employee"
+        assert delegation["delegated_task"]["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
 
-async def test_task_flow_create_plugin_supports_structured_ai_subagent_default_owner(
+async def test_task_flow_create_plugin_supports_structured_employee_default_owner(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.flow.create should accept structured ai_subagent default-owner inputs."""
+    """task.flow.create should accept structured employee default-owner inputs."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -2519,8 +2752,7 @@ async def test_task_flow_create_plugin_supports_structured_ai_subagent_default_o
             flow_tool.parse_params(
                 {
                     "title": "Structured default-owner flow",
-                    "default_owner_profile_id": "papercliper",
-                    "default_owner_subagent_name": "reviewer",
+                    "default_owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2529,13 +2761,13 @@ async def test_task_flow_create_plugin_supports_structured_ai_subagent_default_o
 
         assert result.ok is True
         flow_payload = result.payload["task_flow"]
-        assert flow_payload["default_owner_type"] == "ai_subagent"
-        assert flow_payload["default_owner_ref"] == "papercliper:reviewer"
+        assert flow_payload["default_owner_type"] == "employee"
+        assert flow_payload["default_owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
 
-async def test_task_flow_create_plugin_supports_structured_ai_profile_default_owner(
+async def test_task_flow_create_plugin_infers_employee_default_owner_from_ref(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -2560,7 +2792,7 @@ async def test_task_flow_create_plugin_supports_structured_ai_profile_default_ow
             flow_tool.parse_params(
                 {
                     "title": "Structured profile default-owner flow",
-                    "default_owner_profile_id": "papercliper",
+                    "default_owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2569,116 +2801,10 @@ async def test_task_flow_create_plugin_supports_structured_ai_profile_default_ow
 
         assert result.ok is True
         flow_payload = result.payload["task_flow"]
-        assert flow_payload["default_owner_type"] == "ai_profile"
+        assert flow_payload["default_owner_type"] == "employee"
         assert flow_payload["default_owner_ref"] == "papercliper"
     finally:
         await engine.dispose()
-
-
-async def test_task_create_plugin_accepts_equivalent_raw_and_structured_subagent_owner_inputs(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """task.create should accept migration-period duplicate owner selectors when equivalent."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        _write_profile_subagent(
-            settings=settings,
-            profile_id="default",
-            subagent_name="reviewer",
-            markdown="# Reviewer\nReview-only subagent.",
-        )
-
-        create_tool = registry.get("task.create")
-        assert create_tool is not None
-
-        result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="s-task", run_id=37),
-            create_tool.parse_params(
-                {
-                    "title": "Equivalent owner selectors",
-                    "description": "Accept equivalent raw and structured selectors during migration.",
-                    "owner_type": "ai_subagent",
-                    "owner_ref": " default:Reviewer ",
-                    "owner_profile_id": "default",
-                    "owner_subagent_name": "reviewer",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert result.ok is True
-        task_payload = result.payload["task"]
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "default:reviewer"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_create_plugin_rejects_mismatched_raw_and_structured_subagent_owner_inputs(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """task.create should reject duplicate owner selectors when raw and structured values diverge."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        create_tool = registry.get("task.create")
-        assert create_tool is not None
-
-        result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="s-task", run_id=38),
-            create_tool.parse_params(
-                {
-                    "title": "Mismatched owner selectors",
-                    "description": "Reject conflicting raw and structured selectors.",
-                    "owner_type": "ai_subagent",
-                    "owner_ref": "default:reviewer",
-                    "owner_profile_id": "default",
-                    "owner_subagent_name": "researcher",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert result.ok is False
-        assert result.error_code == "invalid_owner_ref"
-        assert "conflicts with" in (result.reason or "")
-    finally:
-        await engine.dispose()
-
-
-async def test_task_create_plugin_rejects_invalid_structured_subagent_owner_inputs(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """task.create should fail closed when structured subagent owner inputs are invalid."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        create_tool = registry.get("task.create")
-        assert create_tool is not None
-
-        result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="s-task", run_id=38),
-            create_tool.parse_params(
-                {
-                    "title": "Invalid structured owner selector",
-                    "description": "Do not allow invalid profile ids through structured subagent fields.",
-                    "owner_profile_id": "invalid profile",
-                    "owner_subagent_name": "reviewer",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-
-        assert result.ok is False
-        assert result.error_code == "invalid_owner_ref"
-    finally:
-        await engine.dispose()
-
 
 async def test_task_update_plugin_rejects_coworker_task_mutation(
     tmp_path: Path,
@@ -2709,10 +2835,10 @@ async def test_task_update_plugin_rejects_coworker_task_mutation(
             create_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "title": "Papercliper owned task",
-                    "description": "This task belongs to Papercliper.",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "papercliper",
+                    "title": "Auditor owned task",
+                    "description": "This task belongs to an employee outside Analyst's team.",
+                    "owner_type": "employee",
+                    "owner_ref": "auditor",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2722,18 +2848,19 @@ async def test_task_update_plugin_rejects_coworker_task_mutation(
         task_id = str(create_result.payload["task"]["id"])
 
         analyst_ctx = ToolContext(
-            profile_id="analyst",
-            session_id="taskflow:analyst-demo",
+            profile_id="default",
+            session_id="s-task",
             run_id=22,
             runtime_metadata={
                 "transport": "taskflow",
                 "taskflow": {
                     "task_id": "task_demo",
                     "task_profile_id": "default",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
         update_result = await update_tool.execute(
             analyst_ctx,
@@ -2778,7 +2905,7 @@ async def test_task_plugins_list_and_repair_stale_claims(
                     "profile_key": "default",
                     "title": "Recover stale claim",
                     "description": "Repair the stale claim and retry the task.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -2928,8 +3055,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
                     "profile_key": "default",
                     "title": "Recover reviewer stale claim",
                     "description": "Repair only the reviewer stale claim.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2942,8 +3068,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
                     "profile_key": "default",
                     "title": "Leave researcher stale claim",
                     "description": "Keep the researcher stale claim untouched.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "researcher",
+                    "owner_ref": "researcher",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2960,13 +3085,13 @@ async def test_task_stale_plugins_support_structured_owner_filter(
             for task_id, owner_ref, claim_token, worker_id in (
                 (
                     reviewer_task_id,
-                    "papercliper:reviewer",
+                    "reviewer",
                     "tool-filter-reviewer-claim",
                     "taskflow-runtime:reviewer",
                 ),
                 (
                     researcher_task_id,
-                    "papercliper:researcher",
+                    "researcher",
                     "tool-filter-researcher-claim",
                     "taskflow-runtime:researcher",
                 ),
@@ -3011,8 +3136,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
             stale_list_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3028,8 +3152,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
             maintenance_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                     "limit": 5,
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -3039,7 +3162,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
         assert maintenance_result.ok is True
         maintenance = maintenance_result.payload["maintenance"]
         assert isinstance(maintenance, dict)
-        assert maintenance["owner_ref"] == "papercliper:reviewer"
+        assert maintenance["owner_ref"] == "reviewer"
         assert maintenance["repaired_count"] == 1
         assert maintenance["remaining_count"] == 0
 
@@ -3067,7 +3190,21 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
-        ctx = ToolContext(profile_id="default", session_id="s-review", run_id=2)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="s-review",
+            run_id=2,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("default"),
+        )
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -3087,11 +3224,11 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
             create_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "title": "Review AI answer",
+                    "title": "Review Employee answer",
                     "description": "Review the AI-produced answer.",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
-                    "reviewer_type": "ai_profile",
+                    "reviewer_type": "employee",
                     "reviewer_ref": "default",
                     "labels": ["review"],
                 },
@@ -3141,7 +3278,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
             review_list_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "actor_type": "ai_profile",
+                    "actor_type": "employee",
                     "actor_ref": "default",
                     "labels": ["review"],
                 },
@@ -3210,7 +3347,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                     "description": "Send this task back with review feedback.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
-                    "reviewer_type": "ai_profile",
+                    "reviewer_type": "employee",
                     "reviewer_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -3242,7 +3379,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                 {
                     "profile_key": "default",
                     "task_id": change_task_id,
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                     "reason_text": "Add citations before approval.",
                 },
@@ -3254,7 +3391,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         changed_task = request_changes_result.payload["task"]
         assert isinstance(changed_task, dict)
         assert changed_task["status"] == "blocked"
-        assert changed_task["owner_type"] == "ai_profile"
+        assert changed_task["owner_type"] == "employee"
         assert changed_task["owner_ref"] == "default"
         assert changed_task["blocked_reason_code"] == "review_changes_requested"
 
@@ -3282,7 +3419,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                     "task_id": change_task_id,
                     "actor_type": "human",
                     "actor_ref": "cli_user:alice",
-                    "owner_type": "ai_profile",
+                    "owner_type": "employee",
                     "owner_ref": "default",
                     "reason_text": "This spoofed actor should be rejected.",
                 },
@@ -3296,11 +3433,11 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         await engine.dispose()
 
 
-async def test_task_review_request_changes_supports_structured_ai_subagent_owner(
+async def test_task_review_request_changes_supports_structured_employee_owner(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """task.review.request_changes should accept structured ai_subagent owner reassignment."""
+    """task.review.request_changes should accept structured employee owner reassignment."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -3319,7 +3456,21 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
             markdown="# Reviewer\nReview-only subagent.",
         )
 
-        ctx = ToolContext(profile_id="default", session_id="s-review", run_id=5)
+        ctx = ToolContext(
+            profile_id="default",
+            session_id="s-review",
+            run_id=5,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": "task_demo",
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context("default"),
+        )
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
         review_request_changes_tool = registry.get("task.review.request_changes")
@@ -3335,7 +3486,7 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
                     "description": "Return this review task to one subagent.",
                     "owner_type": "human",
                     "owner_ref": "cli_user:alice",
-                    "reviewer_type": "ai_profile",
+                    "reviewer_type": "employee",
                     "reviewer_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -3364,8 +3515,7 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
                 {
                     "task_id": task_id,
                     "reason_text": "Route this back to the reviewer specialist.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3375,127 +3525,16 @@ async def test_task_review_request_changes_supports_structured_ai_subagent_owner
         assert request_changes_result.ok is True
         task_payload = request_changes_result.payload["task"]
         assert task_payload["status"] == "blocked"
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "papercliper:reviewer"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
 
-
-async def test_task_review_tools_accept_subagent_actor_alias_for_current_runtime(
+async def test_task_review_list_supports_structured_employee_actor(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Review action tools should treat actor_type=subagent as the current ai_subagent actor."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        factory = create_session_factory(engine)
-        async with session_scope(factory) as session:
-            await ProfileRepository(session).get_or_create_default("papercliper")
-        _write_team_runtime_config(
-            settings=settings,
-            profile_id="default",
-            team_profile_ids=("papercliper",),
-        )
-        _write_profile_subagent(
-            settings=settings,
-            profile_id="papercliper",
-            subagent_name="reviewer",
-            markdown="# Reviewer\nReview-only subagent.",
-        )
-        service = get_task_flow_service(settings)
-        approval_task = await service.create_task(
-            profile_id="default",
-            title="Approve as subagent alias",
-            description="Approve this task from the detached reviewer runtime.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="ai_profile",
-            owner_ref="default",
-            reviewer_type="ai_subagent",
-            reviewer_ref="papercliper:reviewer",
-        )
-        await service.update_task(profile_id="default", task_id=approval_task.id, status="review")
-        changes_task = await service.create_task(
-            profile_id="default",
-            title="Request changes as subagent alias",
-            description="Request changes from the detached reviewer runtime.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="papercliper:reviewer",
-        )
-        await service.update_task(profile_id="default", task_id=changes_task.id, status="review")
-
-        runtime_context = {
-            "taskflow_detached_runtime": {
-                "owner_type": "ai_subagent",
-                "owner_ref": "papercliper:reviewer",
-            },
-        }
-        ctx = ToolContext(
-            profile_id="papercliper",
-            session_id="taskflow:reviewer-alias",
-            run_id=6,
-            runtime_metadata={
-                "taskflow": {
-                    "task_id": approval_task.id,
-                    "task_profile_id": "default",
-                },
-            },
-            trusted_runtime_context=runtime_context,
-        )
-        review_approve_tool = registry.get("task.review.approve")
-        review_request_changes_tool = registry.get("task.review.request_changes")
-        assert review_approve_tool is not None
-        assert review_request_changes_tool is not None
-
-        approve_result = await review_approve_tool.execute(
-            ctx,
-            review_approve_tool.parse_params(
-                {
-                    "task_id": approval_task.id,
-                    "actor_type": "subagent",
-                    "actor_ref": "papercliper:reviewer",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert approve_result.ok is True
-        assert approve_result.payload["task"]["status"] == "completed"
-
-        request_changes_result = await review_request_changes_tool.execute(
-            ctx,
-            review_request_changes_tool.parse_params(
-                {
-                    "task_id": changes_task.id,
-                    "actor_type": "subagent",
-                    "actor_ref": "papercliper:reviewer",
-                    "owner_type": "ai_profile",
-                    "owner_ref": "default",
-                    "reason_text": "Add the missing details.",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert request_changes_result.ok is True
-        changed_task = request_changes_result.payload["task"]
-        assert changed_task["status"] == "blocked"
-        assert changed_task["owner_type"] == "ai_profile"
-        assert changed_task["owner_ref"] == "default"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_review_list_supports_structured_ai_subagent_actor(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """task.review.list should accept structured actor selectors for ai_subagent inboxes."""
+    """task.review.list should accept structured actor selectors for employee inboxes."""
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
@@ -3523,10 +3562,9 @@ async def test_task_review_list_supports_structured_ai_subagent_actor(
                 {
                     "profile_key": "papercliper",
                     "title": "Structured review inbox",
-                    "description": "List review work for one structured subagent actor.",
-                    "owner_profile_id": "papercliper",
-                    "reviewer_profile_id": "papercliper",
-                    "reviewer_subagent_name": "reviewer",
+                    "description": "List review work for one employee reviewer.",
+                    "owner_ref": "papercliper",
+                    "reviewer_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3555,8 +3593,7 @@ async def test_task_review_list_supports_structured_ai_subagent_actor(
             review_list_tool.parse_params(
                 {
                     "profile_key": "papercliper",
-                    "actor_profile_id": "papercliper",
-                    "actor_subagent_name": "reviewer",
+                    "actor_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3588,7 +3625,7 @@ async def test_task_review_list_rejects_all_reviewers_with_actor_selector(
                 {
                     "profile_key": "default",
                     "all_reviewers": True,
-                    "actor_profile_id": "default",
+                    "actor_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3600,50 +3637,7 @@ async def test_task_review_list_rejects_all_reviewers_with_actor_selector(
     finally:
         await engine.dispose()
 
-
-async def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """task.review.list should fail closed when human actor_type conflicts with structured AI actor fields."""
-
-    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
-    try:
-        factory = create_session_factory(engine)
-        async with session_scope(factory) as session:
-            await ProfileRepository(session).get_or_create_default("papercliper")
-        _write_profile_subagent(
-            settings=settings,
-            profile_id="papercliper",
-            subagent_name="reviewer",
-            markdown="# Reviewer\n\nReview specialist.",
-        )
-        ctx = ToolContext(
-            profile_id="papercliper", session_id="s-review-structured-invalid", run_id=2
-        )
-        review_list_tool = registry.get("task.review.list")
-        assert review_list_tool is not None
-
-        review_list_result = await review_list_tool.execute(
-            ctx,
-            review_list_tool.parse_params(
-                {
-                    "profile_key": "papercliper",
-                    "actor_type": "human",
-                    "actor_profile_id": "papercliper",
-                    "actor_subagent_name": "reviewer",
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert review_list_result.ok is False
-        assert review_list_result.error_code == "invalid_owner_type"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_list_and_board_support_structured_ai_owner_filters(
+async def test_task_list_and_board_support_employee_owner_filters(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -3675,9 +3669,8 @@ async def test_task_list_and_board_support_structured_ai_owner_filters(
                 {
                     "profile_key": "papercliper",
                     "title": "Review task",
-                    "description": "Owned by one structured reviewer subagent.",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "description": "Owned by one reviewer employee.",
+                    "owner_ref": "reviewer",
                     "labels": ["queue"],
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -3695,7 +3688,7 @@ async def test_task_list_and_board_support_structured_ai_owner_filters(
                     "profile_key": "papercliper",
                     "title": "Orchestrator task",
                     "description": "Owned by the orchestrator profile directly.",
-                    "owner_profile_id": "papercliper",
+                    "owner_ref": "papercliper",
                     "labels": ["queue"],
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -3709,8 +3702,7 @@ async def test_task_list_and_board_support_structured_ai_owner_filters(
             list_tool.parse_params(
                 {
                     "profile_key": "papercliper",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -3726,8 +3718,7 @@ async def test_task_list_and_board_support_structured_ai_owner_filters(
             board_tool.parse_params(
                 {
                     "profile_key": "papercliper",
-                    "owner_profile_id": "papercliper",
-                    "owner_subagent_name": "reviewer",
+                    "owner_ref": "reviewer",
                     "labels": ["queue"],
                     "limit_per_column": 5,
                 },

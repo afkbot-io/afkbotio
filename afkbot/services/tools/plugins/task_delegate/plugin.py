@@ -27,8 +27,6 @@ class TaskDelegateParams(ToolParameters):
     description: str = Field(min_length=1)
     owner_type: str | None = Field(default=None, min_length=1, max_length=32)
     owner_ref: str | None = Field(default=None, min_length=1, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int | None = Field(default=None, ge=0)
     due_at: datetime | None = None
@@ -75,8 +73,6 @@ class TaskDelegateTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
             if resolved_owner_ref is None:
                 return ToolResult.error(
@@ -86,7 +82,7 @@ class TaskDelegateTool(ToolBase):
             item = await service.delegate_task(
                 profile_id=target_profile_id,
                 source_task_id=source_task_id,
-                delegated_owner_type=resolved_owner_type or "ai_profile",
+                delegated_owner_type=resolved_owner_type or "employee",
                 delegated_owner_ref=resolved_owner_ref,
                 description=payload.description,
                 actor_type=actor.actor_type,

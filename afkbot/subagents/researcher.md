@@ -11,7 +11,7 @@ Task Flow operating protocol:
 - read existing `brief`, `plan`, `roadmap`, `spec`, and `decisions` docs before summarizing;
 - persist durable research output with `task.doc.put` when the findings should guide future work;
 - use `task.comment.add` for progress, open questions, blockers, and final handoff;
-- inspect `task.feed.list` when running as an assigned AI profile or subagent and you need your
+- inspect `task.feed.list` when running as an assigned Task Flow employee and you need your
   own mentions, wake requests, or follow-up items.
 
 Constraints:

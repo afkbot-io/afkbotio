@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from pydantic import Field
+from pytest import MonkeyPatch
 
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
@@ -133,6 +135,56 @@ class _FakeRegistry:
         return (self._tool.name,)
 
 
+class _MultiRegistry:
+    def __init__(self, *tools: ToolBase) -> None:
+        self._tools = {tool.name: tool for tool in tools}
+
+    def get(self, tool_name: str) -> ToolBase | None:
+        return self._tools.get(tool_name)
+
+    def list_names(self) -> tuple[str, ...]:
+        return tuple(self._tools)
+
+
+def _write_employee_descriptor(
+    root: Path,
+    *,
+    employee_id: str,
+    status: str = "active",
+    allowed_tools: tuple[str, ...] = (),
+    can_use_subagents: bool = False,
+    subagent_allowlist: tuple[str, ...] = (),
+) -> None:
+    path = root / "profiles" / "default" / "employees" / f"{employee_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "---",
+        f"id: {employee_id}",
+        "name: CTO",
+        "title: Technical Director",
+        "role: cto",
+        f"status: {status}",
+    ]
+    if allowed_tools:
+        lines.append("allowed_tools:")
+        lines.extend(f"  - {item}" for item in allowed_tools)
+    lines.append(f"can_use_subagents: {str(can_use_subagents).lower()}")
+    if subagent_allowlist:
+        lines.append("subagent_allowlist:")
+        lines.extend(f"  - {item}" for item in subagent_allowlist)
+    lines.extend(["---", "# CTO", ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _employee_trusted_context(employee_id: str) -> dict[str, object]:
+    return {
+        "taskflow_detached_runtime": {
+            "owner_type": "employee",
+            "owner_ref": employee_id,
+        }
+    }
+
+
 async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_policy_params() -> None:
     """Disallowed tools should fail before policy-parameter expansion runs."""
 
@@ -173,6 +225,252 @@ async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_polic
     assert results[0].ok is False
     assert results[0].error_code == "tool_not_allowed_in_turn"
     assert results[0].reason == "Tool not available in current turn: mcp.github.search"
+
+
+async def test_execute_requested_tool_calls_enforces_employee_allowed_tools(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Employee descriptor allowed_tools must be a hard runtime gate."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(tmp_path, employee_id="cto", allowed_tools=("bash.exec",))
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool(), _ExplodingExecuteTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:employee-tool",
+        profile_id="default",
+        tool_calls=[ToolCall(name="debug.echo", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context("cto"),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+
+
+async def test_execute_requested_tool_calls_accepts_employee_tool_wildcards(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Employee allowed_tools should support prefix wildcards such as task.* or bash.*."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(tmp_path, employee_id="cto", allowed_tools=("bash.*",))
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:employee-tool-wildcard",
+        profile_id="default",
+        tool_calls=[ToolCall(name="bash.exec", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context("cto"),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is True
+
+
+async def test_execute_requested_tool_calls_rejects_employee_without_allowed_tools(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Missing employee allowed_tools should be default-deny, not profile allow-all."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(tmp_path, employee_id="cto")
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:employee-tool-default-deny",
+        profile_id="default",
+        tool_calls=[ToolCall(name="debug.echo", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context("cto"),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "no allowed tools" in results[0].reason
+
+
+async def test_execute_requested_tool_calls_rejects_disabled_employee(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Disabled employees should not be able to call tools from a trusted runtime."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        status="disabled",
+        allowed_tools=("bash.exec",),
+    )
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:employee-disabled",
+        profile_id="default",
+        tool_calls=[ToolCall(name="bash.exec", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context("cto"),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "disabled" in str(results[0].reason)
+
+
+async def test_execute_requested_tool_calls_enforces_employee_subagent_allowlist(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Nested session.job.run subagent jobs must not bypass employee subagent policy."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("session.job.run",),
+        can_use_subagents=True,
+        subagent_allowlist=("reviewer",),
+    )
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_SessionJobTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:employee-subagent-tool",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="session.job.run",
+                params={
+                    "jobs": [
+                        {
+                            "kind": "subagent",
+                            "subagent_name": "researcher",
+                            "prompt": "check",
+                        }
+                    ]
+                },
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context("cto"),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "researcher" in str(results[0].reason)
 
 
 class _PolicyCaptureEngine(_FakePolicyEngine):

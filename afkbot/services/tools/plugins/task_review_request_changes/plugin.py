@@ -26,8 +26,6 @@ class TaskReviewRequestChangesParams(ToolParameters):
     actor_ref: str | None = Field(default=None, max_length=255)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     reason_code: str = Field(default="review_changes_requested", min_length=1, max_length=64)
 
 
@@ -71,8 +69,6 @@ class TaskReviewRequestChangesTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
             item = await service.request_review_changes(
                 profile_id=target_profile_id,

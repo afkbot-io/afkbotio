@@ -36,6 +36,7 @@ def build_task_flow_runtime_target(
     attempt: int,
     requires_review: bool,
     labels: tuple[str, ...] = (),
+    executor_is_manager: bool = False,
 ) -> TaskFlowRuntimeTarget:
     """Build one shared task runtime target using the same context layering as chat."""
 
@@ -62,6 +63,7 @@ def build_task_flow_runtime_target(
         attempt=attempt,
         requires_review=requires_review,
         labels=labels,
+        executor_is_manager=executor_is_manager,
     )
     return TaskFlowRuntimeTarget(
         profile_id=execution_profile_id,

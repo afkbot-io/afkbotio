@@ -139,19 +139,19 @@ def test_task_create_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
             "Structured",
             "--description",
             "Route work through structured selectors.",
-            "--owner-profile",
-            "papercliper",
-            "--owner-subagent",
-            "researcher",
-            "--reviewer-profile",
-            "analyst",
+            "--owner-ref",
+                "researcher",
+            "--reviewer-type",
+                "employee",
+                "--reviewer-ref",
+                "analyst",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_type"] == "ai_subagent"
-    assert captured["owner_ref"] == "papercliper:researcher"
-    assert captured["reviewer_type"] == "ai_profile"
+    assert captured["owner_type"] == "employee"
+    assert captured["owner_ref"] == "researcher"
+    assert captured["reviewer_type"] == "employee"
     assert captured["reviewer_ref"] == "analyst"
 
 
@@ -183,60 +183,15 @@ def test_task_create_accepts_equivalent_raw_and_structured_owner_inputs(monkeypa
             "--description",
             "Allow equivalent selectors.",
             "--owner-type",
-            "ai_subagent",
+            "employee",
             "--owner-ref",
-            " default:Reviewer ",
-            "--owner-profile",
-            "default",
-            "--owner-subagent",
-            "reviewer",
+            " reviewer ",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_type"] == "ai_subagent"
-    assert captured["owner_ref"] == "default:reviewer"
-
-
-def test_task_create_rejects_mismatched_raw_and_structured_owner_inputs(monkeypatch) -> None:
-    """Create should fail early when raw and structured owner selectors diverge."""
-
-    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
-    get_settings.cache_clear()
-
-    from afkbot.cli.commands import task as module
-
-    async def _unexpected_create_task_payload(**kwargs):
-        raise AssertionError(f"create_task_payload should not be called: {kwargs}")
-
-    monkeypatch.setattr(module, "create_task_payload", _unexpected_create_task_payload)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        [
-            "task",
-            "create",
-            "--title",
-            "Conflict",
-            "--description",
-            "Do not accept conflicting owner selectors.",
-            "--owner-type",
-            "ai_subagent",
-            "--owner-ref",
-            "papercliper:reviewer",
-            "--owner-profile",
-            "analyst",
-            "--owner-subagent",
-            "researcher",
-        ],
-    )
-
-    assert result.exit_code != 0
-    output = _strip_ansi(result.stdout + (result.stderr or ""))
-    assert "conflicts with" in output
-
-
+    assert captured["owner_type"] == "employee"
+    assert captured["owner_ref"] == "reviewer"
 def test_task_update_supports_structured_owner_and_reviewer_inputs(monkeypatch) -> None:
     """Update should normalize structured profile/subagent selectors for owners and reviewers."""
 
@@ -261,19 +216,19 @@ def test_task_update_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
             "task",
             "update",
             "task_1",
-            "--owner-profile",
-            "papercliper",
-            "--owner-subagent",
-            "reviewer",
-            "--reviewer-profile",
-            "analyst",
+            "--owner-ref",
+                "reviewer",
+            "--reviewer-type",
+                "employee",
+                "--reviewer-ref",
+                "analyst",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_type"] == "ai_subagent"
-    assert captured["owner_ref"] == "papercliper:reviewer"
-    assert captured["reviewer_type"] == "ai_profile"
+    assert captured["owner_type"] == "employee"
+    assert captured["owner_ref"] == "reviewer"
+    assert captured["reviewer_type"] == "employee"
     assert captured["reviewer_ref"] == "analyst"
 
 
@@ -299,20 +254,18 @@ def test_task_list_supports_structured_owner_filter(monkeypatch) -> None:
         [
             "task",
             "list",
-            "--owner-profile",
-            "papercliper",
-            "--owner-subagent",
-            "reviewer",
+            "--owner-ref",
+                "reviewer",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_type"] == "ai_subagent"
-    assert captured["owner_ref"] == "papercliper:reviewer"
+    assert captured["owner_type"] == "employee"
+    assert captured["owner_ref"] == "reviewer"
 
 
 def test_task_feed_supports_structured_ai_owner(monkeypatch) -> None:
-    """Feed should normalize AI profile/subagent selectors before payload generation."""
+    """Feed should normalize Employee profile/subagent selectors before payload generation."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -323,7 +276,7 @@ def test_task_feed_supports_structured_ai_owner(monkeypatch) -> None:
 
     async def _fake_build_agent_feed_payload(**kwargs):
         captured.update(kwargs)
-        return '{"feed":{"owner_type":"ai_subagent"}}'
+        return '{"feed":{"owner_type":"employee"}}'
 
     monkeypatch.setattr(module, "build_agent_feed_payload", _fake_build_agent_feed_payload)
 
@@ -333,16 +286,14 @@ def test_task_feed_supports_structured_ai_owner(monkeypatch) -> None:
         [
             "task",
             "feed",
-            "--owner-profile",
-            "papercliper",
-            "--owner-subagent",
-            "researcher",
+            "--owner-ref",
+                "researcher",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_type"] == "ai_subagent"
-    assert captured["owner_ref"] == "papercliper:researcher"
+    assert captured["owner_type"] == "employee"
+    assert captured["owner_ref"] == "researcher"
 
 
 def test_task_context_invokes_context_payload(monkeypatch) -> None:
@@ -467,18 +418,20 @@ def test_task_flow_create_supports_structured_default_owner_profile(monkeypatch)
             "flow-create",
             "--title",
             "Structured flow",
-            "--default-owner-profile",
-            "analyst",
+            "--default-owner-type",
+                "employee",
+                "--default-owner-ref",
+                "analyst",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["default_owner_type"] == "ai_profile"
+    assert captured["default_owner_type"] == "employee"
     assert captured["default_owner_ref"] == "analyst"
 
 
 def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
-    """Review list should normalize structured reviewer selectors for ai_subagent inboxes."""
+    """Review list should normalize structured reviewer selectors for employee inboxes."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -499,16 +452,16 @@ def test_task_review_list_supports_structured_actor_inputs(monkeypatch) -> None:
         [
             "task",
             "review-list",
-            "--actor-profile",
-            "papercliper",
-            "--actor-subagent",
-            "reviewer",
+            "--actor-type",
+                "employee",
+                "--actor-ref",
+                "reviewer",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["actor_type"] == "ai_subagent"
-    assert captured["actor_ref"] == "papercliper:reviewer"
+    assert captured["actor_type"] == "employee"
+    assert captured["actor_ref"] == "reviewer"
 
 
 def test_task_review_list_supports_all_reviewers(monkeypatch) -> None:
@@ -551,7 +504,7 @@ def test_task_review_list_rejects_all_reviewers_with_actor_selector(monkeypatch)
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["task", "review-list", "--all-reviewers", "--actor-profile", "papercliper"],
+        ["task", "review-list", "--all-reviewers", "--actor-ref", "papercliper"],
     )
 
     assert result.exit_code != 0
@@ -585,43 +538,6 @@ def test_task_option_was_explicit_treats_default_source_name_as_default() -> Non
             return _Source()
 
     assert module._option_was_explicit(cast(typer.Context, _Context()), "actor_type") is False
-
-
-def test_task_review_list_rejects_explicit_human_actor_with_structured_ai_selector(
-    monkeypatch,
-) -> None:
-    """Explicit human actor type should not be silently reinterpreted as an AI selector."""
-
-    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
-    get_settings.cache_clear()
-
-    from afkbot.cli.commands import task as module
-
-    async def _unexpected_list_review_tasks_payload(**kwargs):
-        raise AssertionError(f"list_review_tasks_payload should not be called: {kwargs}")
-
-    monkeypatch.setattr(module, "list_review_tasks_payload", _unexpected_list_review_tasks_payload)
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        [
-            "task",
-            "review-list",
-            "--actor-type",
-            "human",
-            "--actor-profile",
-            "papercliper",
-            "--actor-subagent",
-            "reviewer",
-        ],
-    )
-
-    assert result.exit_code != 0
-    output = _strip_ansi(result.stdout + (result.stderr or ""))
-    assert "require actor_type=ai_subagent" in output
-
-
 def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(
     monkeypatch,
 ) -> None:
@@ -651,19 +567,19 @@ def test_task_review_request_changes_supports_structured_actor_and_owner_inputs(
             "task_1",
             "--reason-text",
             "Needs fixes",
-            "--actor-profile",
-            "papercliper",
-            "--actor-subagent",
-            "reviewer",
-            "--owner-profile",
-            "analyst",
+            "--actor-type",
+                "employee",
+                "--actor-ref",
+                "reviewer",
+            "--owner-ref",
+                "analyst",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["actor_type"] == "ai_subagent"
-    assert captured["actor_ref"] == "papercliper:reviewer"
-    assert captured["owner_type"] == "ai_profile"
+    assert captured["actor_type"] == "employee"
+    assert captured["actor_ref"] == "reviewer"
+    assert captured["owner_type"] == "employee"
     assert captured["owner_ref"] == "analyst"
 
 
@@ -691,12 +607,10 @@ def test_task_stale_sweep_supports_structured_owner_filter(monkeypatch) -> None:
         [
             "task",
             "stale-sweep",
-            "--owner-profile",
-            "papercliper",
-            "--owner-subagent",
-            "reviewer",
+            "--owner-ref",
+                "reviewer",
         ],
     )
 
     assert result.exit_code == 0
-    assert captured["owner_ref"] == "papercliper:reviewer"
+    assert captured["owner_ref"] == "reviewer"

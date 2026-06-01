@@ -21,8 +21,6 @@ class TaskReviewListParams(ToolParameters):
     all_reviewers: bool = False
     actor_type: str | None = Field(default=None, max_length=32)
     actor_ref: str | None = Field(default=None, min_length=1, max_length=255)
-    actor_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    actor_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     flow_id: str | None = Field(default=None, max_length=64)
     labels: tuple[str, ...] = ()
     limit: int | None = Field(default=None, ge=1, le=100)
@@ -59,8 +57,6 @@ class TaskReviewListTool(ToolBase):
                     (
                         payload.actor_type,
                         payload.actor_ref,
-                        payload.actor_profile_id,
-                        payload.actor_subagent_name,
                     )
                 ):
                     return ToolResult.error(
@@ -71,10 +67,8 @@ class TaskReviewListTool(ToolBase):
             else:
                 resolved_actor_type, resolved_actor_ref = resolve_task_owner_inputs(
                     field_prefix="actor",
-                    owner_type=payload.actor_type or ("human" if payload.actor_ref else None),
+                    owner_type=payload.actor_type,
                     owner_ref=payload.actor_ref,
-                    owner_profile_id=payload.actor_profile_id,
-                    owner_subagent_name=payload.actor_subagent_name,
                 )
                 if resolved_actor_type is None or resolved_actor_ref is None:
                     return ToolResult.error(

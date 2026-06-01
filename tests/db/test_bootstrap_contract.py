@@ -51,6 +51,7 @@ from afkbot.repositories.task_flow_repo import _apply_task_claim_locking_for_dia
 from afkbot.settings import Settings
 from afkbot.services.task_flow import TaskFlowServiceError
 from afkbot.services.task_flow.service import TaskFlowService
+from tests.repositories._harness import _write_test_employees
 
 
 def test_postgres_database_per_bot_contract_renders_safe_role_plan() -> None:
@@ -220,7 +221,7 @@ async def test_create_schema_and_ping(tmp_path: Path) -> None:
 
     # Arrange
     db_path = tmp_path / "test.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     # Act
@@ -261,7 +262,7 @@ async def test_sqlite_writes_are_serialized_across_factories(tmp_path: Path) -> 
     """SQLite writes for one database file should not execute concurrently."""
 
     db_path = tmp_path / "serialized-scopes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     first_engine = create_engine(settings)
     second_engine = create_engine(settings)
     second_factory = create_session_factory(second_engine)
@@ -307,7 +308,7 @@ async def test_sqlite_write_gate_is_reentrant_only_within_current_task(tmp_path:
     """Child asyncio tasks must not inherit a parent's SQLite write lease."""
 
     db_path = tmp_path / "task-local-gate.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     child_started = asyncio.Event()
@@ -344,7 +345,7 @@ async def test_create_session_factory_uses_serialized_sqlite_session(tmp_path: P
     """All factory-created SQLite sessions should carry the write gate."""
 
     db_path = tmp_path / "serialized-session-class.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
 
@@ -362,7 +363,7 @@ async def test_sqlite_wal_activation_uses_shared_file_lock(
     """Connection-time WAL writes should share the same SQLite file lock."""
 
     db_path = tmp_path / "wal-lock.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     lock_path = db_path.with_suffix(f"{db_path.suffix}.afkbot.lock")
     events: list[tuple[str, Path | None]] = []
 
@@ -466,7 +467,7 @@ async def test_create_schema_is_idempotent_without_migration_side_state(tmp_path
 
     # Arrange
     db_path = tmp_path / "repeat.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     # Act
@@ -489,7 +490,7 @@ async def test_create_schema_adds_session_store_tables_to_existing_runtime_db(
     """Old runtime DBs should gain JSONL outbox tables without losing existing rows."""
 
     db_path = tmp_path / "legacy-runtime.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     try:
@@ -532,7 +533,7 @@ async def test_database_runtime_adds_session_store_tables_to_existing_runtime_db
     """Shared runtime schema initialization should also upgrade old DB files."""
 
     db_path = tmp_path / "legacy-runtime-shared.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     setup_engine = create_engine(settings)
     try:
         await create_schema(setup_engine)
@@ -566,7 +567,7 @@ async def test_create_schema_materializes_memory_indexes(tmp_path: Path) -> None
 
     # Arrange
     db_path = tmp_path / "memory-indexes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     # Act
@@ -587,7 +588,7 @@ async def test_create_schema_materializes_profile_memory_indexes(tmp_path: Path)
     """Fresh bootstrap should create dedicated profile-memory indexes for pinned core facts."""
 
     db_path = tmp_path / "profile-memory-indexes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -604,7 +605,7 @@ async def test_create_schema_materializes_task_active_owner_unique_index(tmp_pat
     """Fresh bootstrap should create the unique active-owner Task Flow index."""
 
     db_path = tmp_path / "task-indexes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -612,7 +613,7 @@ async def test_create_schema_materializes_task_active_owner_unique_index(tmp_pat
         rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
 
     index_names = {str(row[1]) for row in rows}
-    assert "ux_task_active_ai_owner" in index_names
+    assert "ux_task_active_employee_owner" in index_names
     await engine.dispose()
 
 
@@ -620,7 +621,7 @@ async def test_create_schema_materializes_run_hot_path_indexes(tmp_path: Path) -
     """Fresh bootstrap should create the run indexes used by progress and cancel lookups."""
 
     db_path = tmp_path / "run-indexes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -639,7 +640,7 @@ async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(
     """Repeated bootstrap should backfill run indexes for legacy databases that missed them."""
 
     db_path = tmp_path / "run-indexes-legacy.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -663,7 +664,8 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
     """Bootstrap should preserve live duplicates but keep the unique guard active for healthy owners."""
 
     db_path = tmp_path / "task-legacy-duplicates.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
+    _write_test_employees(settings=settings, profile_id="default")
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -672,14 +674,14 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
         repo = ProfileRepository(session)
         await repo.get_or_create_default("default")
         await repo.get_or_create_default("analyst")
-    service = TaskFlowService(factory)
+    service = TaskFlowService(factory, settings=settings)
     first = await service.create_task(
         profile_id="default",
         title="Legacy active analyst task",
         description="Keep this active after upgrade normalization.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="ai_profile",
+        owner_type="employee",
         owner_ref="analyst",
     )
     second = await service.create_task(
@@ -688,12 +690,12 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
         description="This should be released during schema normalization.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="ai_profile",
+        owner_type="employee",
         owner_ref="analyst",
     )
 
     async with engine.begin() as conn:
-        await conn.execute(text("DROP INDEX ux_task_active_ai_owner"))
+        await conn.execute(text("DROP INDEX ux_task_active_employee_owner"))
         await conn.execute(
             text(
                 "UPDATE task "
@@ -721,17 +723,17 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
             await conn.execute(
                 text(
                     "SELECT sql FROM sqlite_master "
-                    "WHERE type = 'index' AND name = 'ux_task_active_ai_owner'"
+                    "WHERE type = 'index' AND name = 'ux_task_active_employee_owner'"
                 )
             )
         ).scalar_one()
 
     index_names = {str(row[1]) for row in rows}
-    assert "ux_task_active_ai_owner" in index_names
+    assert "ux_task_active_employee_owner" in index_names
     index_sql_text = str(index_sql)
     assert "ON task (profile_id, owner_type, owner_ref)" in index_sql_text
     assert (
-        "NOT (profile_id = 'default' AND owner_type = 'ai_profile' AND owner_ref = 'analyst')"
+        "NOT (profile_id = 'default' AND owner_type = 'employee' AND owner_ref = 'analyst')"
         in index_sql_text
     )
     assert first_after.status == "running"
@@ -744,7 +746,7 @@ async def test_create_schema_materializes_runtime_history_retention_indexes(tmp_
     """Fresh bootstrap should create the indexes used by bounded runtime history cleanup."""
 
     db_path = tmp_path / "runtime-history-indexes.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     await create_schema(engine)
@@ -765,7 +767,7 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     """Bounded runtime cleanup should prune old append-only rows without touching linked task runs."""
 
     db_path = tmp_path / "runtime-history-prune.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -927,7 +929,7 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
     """Cleanup should preserve old task runs that still have newer task_event FK references."""
 
     db_path = tmp_path / "runtime-history-keep-referenced-run.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -1006,7 +1008,7 @@ async def test_prune_runtime_history_rejects_non_positive_batch_size(tmp_path: P
     """Bounded cleanup should fail fast when batch_size is not positive."""
 
     db_path = tmp_path / "runtime-history-invalid-batch-size.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     try:
         await create_schema(engine)
@@ -1033,7 +1035,7 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
     """Bounded cleanup must not delete a finished orphan run still referenced as the task's last run."""
 
     db_path = tmp_path / "runtime-history-keep-last-run.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
@@ -1104,7 +1106,7 @@ async def test_sqlite_connect_degrades_gracefully_when_wal_pragma_fails(tmp_path
     """Engine connect should keep working when WAL activation is unsupported or read-only."""
 
     db_path = tmp_path / "wal-fallback.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     wal_attempts = {"count": 0}
@@ -1160,7 +1162,7 @@ async def test_create_schema_backfills_task_description_from_legacy_prompt_colum
     """Legacy task tables should gain the description column and preserve prompt text."""
 
     db_path = tmp_path / "legacy_task_description.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1266,7 +1268,7 @@ async def test_create_schema_preserves_existing_description_over_legacy_prompt(
     """When both columns exist, migration should keep filled description and fallback only blanks."""
 
     db_path = tmp_path / "legacy_task_description_precedence.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1338,7 +1340,7 @@ async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade
     """Legacy prompt-only task tables should accept new description-based inserts after upgrade."""
 
     db_path = tmp_path / "legacy_task_prompt_not_null.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1424,14 +1426,15 @@ async def test_create_schema_allows_new_task_inserts_after_legacy_prompt_upgrade
 
     await create_schema(engine)
 
-    service = TaskFlowService(create_session_factory(engine))
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(create_session_factory(engine), settings=settings)
     created = await service.create_task(
         profile_id="default",
         title="New description task",
         description="This insert should succeed after the upgrade.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="ai_profile",
+        owner_type="employee",
         owner_ref="default",
     )
 
@@ -1451,7 +1454,7 @@ async def test_task_runtime_schema_upkeep_migrates_legacy_prompt_to_description(
     """Task runtime upkeep should migrate prompt-only task tables before hot-path indexes."""
 
     db_path = tmp_path / "runtime_legacy_task_prompt.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1559,7 +1562,7 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
     """Legacy task tables should raise one structured compatibility error instead of raw DB failure."""
 
     db_path = tmp_path / "legacy_task_schema_mismatch.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1648,7 +1651,8 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
             )
         )
 
-    service = TaskFlowService(create_session_factory(engine))
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(create_session_factory(engine), settings=settings)
 
     with pytest.raises(TaskFlowServiceError) as exc_info:
         await service.create_task(
@@ -1657,7 +1661,7 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
             description="This should surface a compatibility error.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             session_id="session-1",
             session_profile_id="default",
@@ -1674,7 +1678,7 @@ async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
     """Legacy task_event tables should raise one structured compatibility error instead of raw DB failure."""
 
     db_path = tmp_path / "legacy_task_event_schema_mismatch.db"
-    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path)
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
     engine = create_engine(settings)
 
     async with engine.begin() as conn:
@@ -1763,7 +1767,8 @@ async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
             )
         )
 
-    service = TaskFlowService(create_session_factory(engine))
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(create_session_factory(engine), settings=settings)
 
     with pytest.raises(TaskFlowServiceError) as exc_info:
         await service.create_task(
@@ -1772,7 +1777,7 @@ async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
             description="This should surface a compatibility error.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
 

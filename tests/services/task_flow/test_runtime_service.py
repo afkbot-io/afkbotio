@@ -19,7 +19,6 @@ from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
-from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow.context_overrides import build_task_flow_context_overrides
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
@@ -45,14 +44,7 @@ def _write_team_runtime_config(
     profile_id: str,
     team_profile_ids: tuple[str, ...],
 ) -> None:
-    get_profile_runtime_config_service(settings).write(
-        profile_id,
-        ProfileRuntimeConfig(
-            llm_provider=settings.llm_provider,
-            llm_model=settings.llm_model,
-            taskflow_team_profile_ids=team_profile_ids,
-        ),
-    )
+    _ = (settings, profile_id, team_profile_ids)
 
 
 @dataclass
@@ -348,7 +340,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
             description="Summarize the last ten support tickets.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         await service.put_task_document(
@@ -407,7 +399,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert unblocked.status == "todo"
         assert len(observed_calls) == 1
         observed = observed_calls[0]
-        assert observed.profile_id == "analyst"
+        assert observed.profile_id == "default"
         assert observed.session_id == f"taskflow:{first.id}"
         assert observed.transport == "taskflow"
         assert observed.account_id == first.id
@@ -522,13 +514,13 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
             description="Prepare the incident summary and route it to the on-call human reviewer.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         dependent = await service.create_task(
             profile_id="default",
             title="Send escalation outcome",
-            description="Send the incident outcome after the AI task fully completes.",
+            description="Send the incident outcome after the Employee task fully completes.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
@@ -724,7 +716,7 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
             description="Recover a stale claim and finish the work.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         stale_now = datetime.now(timezone.utc)
@@ -1023,7 +1015,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
             description="Repair the default-profile stale task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         ops_task = await service.create_task(
@@ -1032,7 +1024,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_profile(tmp_path: Path) -
             description="Leave the ops-profile stale task untouched for now.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="ops",
         )
         stale_now = datetime.now(timezone.utc)
@@ -1109,6 +1101,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1149,8 +1142,8 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
             description="Repair only the researcher stale claim.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
         )
         reviewer_task = await service.create_task(
             profile_id="default",
@@ -1158,8 +1151,8 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
             description="Leave the reviewer stale claim untouched.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
         stale_now = datetime.now(timezone.utc)
         async with session_scope(factory) as session:
@@ -1204,7 +1197,7 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
         released_count = await runtime.sweep_expired_claims(
             worker_id="taskflow-cli-maintenance",
             profile_id="default",
-            owner_ref="analyst:researcher",
+            owner_ref="researcher",
             limit=10,
         )
 
@@ -1250,7 +1243,7 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
             description="Leave this duplicate stale until maintenance repairs it.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         second = await service.create_task(
@@ -1259,12 +1252,12 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
             description="Also leave this duplicate stale until maintenance repairs it.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 
         async with engine.begin() as conn:
-            await conn.execute(text("DROP INDEX ux_task_active_ai_owner"))
+            await conn.execute(text("DROP INDEX ux_task_active_employee_owner"))
             await conn.execute(
                 text(
                     "UPDATE task "
@@ -1303,7 +1296,7 @@ async def test_taskflow_runtime_sweep_reinstalls_active_owner_index_when_duplica
         async with engine.connect() as conn:
             rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
         index_names = {str(row[1]) for row in rows}
-        assert "ux_task_active_ai_owner" in index_names
+        assert "ux_task_active_employee_owner" in index_names
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -1327,14 +1320,14 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 behavior="complete",
                 observed_calls=observed_calls,
             ),
-            settings=Settings(taskflow_runtime_owner_ref="researcher", llm_max_iterations=10),
+            settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}", taskflow_runtime_owner_ref="researcher", llm_max_iterations=10),
         )
         try:
             allowed = await service.create_task(
                 profile_id="default",
                 title="Allowed owner",
                 description="Please handle researcher queue.",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="researcher",
                 created_by_type="human",
                 created_by_ref="cli",
@@ -1343,7 +1336,7 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 profile_id="default",
                 title="Skipped owner",
                 description="Please handle analyst queue.",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="analyst",
                 created_by_type="human",
                 created_by_ref="cli",
@@ -1369,7 +1362,7 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 behavior="complete",
                 observed_calls=observed_calls,
             ),
-            settings=Settings(llm_max_iterations=10),
+            settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}", llm_max_iterations=10),
         )
         try:
             processed = await unfiltered_runtime.execute_next_claimable_task(
@@ -1404,14 +1397,14 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
             behavior="complete",
             observed_calls=observed_calls,
         ),
-        settings=Settings(taskflow_runtime_profile_id="ops", llm_max_iterations=10),
+        settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_profile_filter.db'}", taskflow_runtime_profile_id="ops", llm_max_iterations=10),
     )
     try:
         skipped = await service.create_task(
             profile_id="default",
             title="Skipped backlog task",
             description="This task should stay untouched in the default backlog.",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             created_by_type="human",
             created_by_ref="cli",
@@ -1420,7 +1413,7 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
             profile_id="ops",
             title="Allowed ops task",
             description="This task should run because the runtime is pinned to the ops backlog.",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             created_by_type="human",
             created_by_ref="cli",
@@ -1443,17 +1436,18 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
         await engine.dispose()
 
 
-async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
+async def test_taskflow_runtime_owner_ref_filter_matches_specific_employee(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime owner_ref filter should allow targeting one concrete ai_subagent executor."""
+    """Detached runtime owner_ref filter should allow targeting one concrete employee executor."""
 
     db_name = "taskflow_runtime_owner_ref_subagent_filter.db"
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
-        taskflow_runtime_owner_ref="analyst:researcher",
+        taskflow_runtime_owner_ref="researcher",
         llm_max_iterations=10,
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1493,8 +1487,8 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
             profile_id="default",
             title="Allowed researcher task",
             description="Execute only on the configured researcher subagent.",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1502,8 +1496,8 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
             profile_id="default",
             title="Skipped reviewer task",
             description="This should wait because runtime is pinned to a different subagent.",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1515,7 +1509,7 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
         assert processed is True
         assert len(observed_calls) == 1
         assert observed_calls[0].task_id == allowed.id
-        assert observed_calls[0].profile_id == "analyst"
+        assert observed_calls[0].profile_id == "default"
         allowed_after = await service.get_task(profile_id="default", task_id=allowed.id)
         skipped_after = await service.get_task(profile_id="default", task_id=skipped.id)
         assert allowed_after.status == "completed"
@@ -1525,16 +1519,17 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_ai_subagent(
         await engine.dispose()
 
 
-async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
+async def test_taskflow_runtime_executes_employee_task_with_subagent_overlay(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime should execute ai_subagent work on the host profile with subagent prompt."""
+    """Detached runtime should execute employee work on the host profile with subagent prompt."""
 
-    db_name = "taskflow_runtime_ai_subagent_overlay.db"
+    db_name = "taskflow_runtime_employee_overlay.db"
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
         llm_max_iterations=10,
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1570,18 +1565,17 @@ async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
             description="Execute this as the analyst researcher subagent.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
         )
 
         processed = await runtime.execute_next_claimable_task(worker_id="taskflow-runtime:subagent")
 
         assert processed is True
         assert observed_calls[0].task_id == task.id
-        assert observed_calls[0].profile_id == "analyst"
+        assert observed_calls[0].profile_id == "default"
         assert observed_calls[0].prompt_overlay is not None
-        assert "Subagent: researcher" in observed_calls[0].prompt_overlay
-        assert "Subagent marker: deep-brief." in observed_calls[0].prompt_overlay
+        assert "employee_id: researcher" in observed_calls[0].prompt_overlay
         assert "Task Flow execution context." in observed_calls[0].prompt_overlay
         assert "Task Flow worker protocol." in observed_calls[0].prompt_overlay
     finally:
@@ -1589,16 +1583,17 @@ async def test_taskflow_runtime_executes_ai_subagent_task_with_subagent_overlay(
         await engine.dispose()
 
 
-async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
+async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
     tmp_path: Path,
 ) -> None:
-    """Review tasks should be claimed by the assigned AI reviewer, not by the task owner."""
+    """Review tasks should be claimed by the assigned Employee reviewer, not by the task owner."""
 
-    db_name = "taskflow_runtime_ai_subagent_review_claim.db"
+    db_name = "taskflow_runtime_employee_review_claim.db"
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
         llm_max_iterations=10,
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1636,8 +1631,8 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=task.id, status="review")
 
@@ -1645,12 +1640,11 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
 
         assert processed is True
         assert observed_calls[0].task_id == task.id
-        assert observed_calls[0].profile_id == "analyst"
+        assert observed_calls[0].profile_id == "default"
         assert observed_calls[0].prompt_overlay is not None
-        assert "Subagent: reviewer" in observed_calls[0].prompt_overlay
-        assert "Subagent marker: review-queue." in observed_calls[0].prompt_overlay
+        assert "employee_id: reviewer" in observed_calls[0].prompt_overlay
         assert "source_status: review" in observed_calls[0].prompt_overlay
-        assert "executor: ai_subagent:analyst:reviewer" in observed_calls[0].prompt_overlay
+        assert "executor: employee:reviewer" in observed_calls[0].prompt_overlay
         assert "Task Flow worker protocol." in observed_calls[0].prompt_overlay
 
         updated = await service.get_task(profile_id="default", task_id=task.id)
@@ -1661,8 +1655,8 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
         async with session_scope(factory) as session:
             repo = TaskFlowRepository(session)
             runs = await repo.list_task_runs(task_id=task.id, limit=1)
-        assert runs[0].owner_type == "ai_subagent"
-        assert runs[0].owner_ref == "analyst:reviewer"
+        assert runs[0].owner_type == "employee"
+        assert runs[0].owner_ref == "reviewer"
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -1671,13 +1665,14 @@ async def test_taskflow_runtime_executes_review_task_with_ai_subagent_reviewer(
 async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
     tmp_path: Path,
 ) -> None:
-    """Detached scheduling should enforce reviewer concurrency for AI review claims."""
+    """Detached scheduling should enforce reviewer concurrency for Employee review claims."""
 
     db_name = "taskflow_runtime_ai_review_claim_scope.db"
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
         llm_max_iterations=10,
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1706,8 +1701,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
             priority=90,
         )
         second_same_reviewer = await service.create_task(
@@ -1718,8 +1713,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
             priority=80,
         )
         auditor = await service.create_task(
@@ -1730,8 +1725,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:auditor",
+            reviewer_type="employee",
+            reviewer_ref="auditor",
             priority=70,
         )
         for item in (first, second_same_reviewer, auditor):
@@ -1761,8 +1756,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
 
         assert first_claim is not None
         assert first_claim.id == first.id
-        assert first_claim.claim_owner_type == "ai_subagent"
-        assert first_claim.claim_owner_ref == "analyst:reviewer"
+        assert first_claim.claim_owner_type == "employee"
+        assert first_claim.claim_owner_ref == "reviewer"
         assert first_claim.claim_source_status == "review"
         assert second_claim is not None
         assert second_claim.id == auditor.id
@@ -1774,7 +1769,7 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
         await engine.dispose()
 
 
-async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
+async def test_taskflow_runtime_claims_only_one_active_task_per_distinct_employee(
     tmp_path: Path,
 ) -> None:
     """Detached scheduling should never hand one agent multiple active tasks at once."""
@@ -1792,7 +1787,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
             description="Take the highest-priority analyst task first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=90,
         )
@@ -1802,7 +1797,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
             description="This should wait until analyst is free again.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=80,
         )
@@ -1812,7 +1807,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
             description="Take this once the analyst already has active work.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
             priority=70,
         )
@@ -1851,16 +1846,17 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_profile(
         await engine.dispose()
 
 
-async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
+async def test_taskflow_runtime_claims_only_one_active_task_per_employee(
     tmp_path: Path,
 ) -> None:
-    """Detached scheduling should enforce one active task per ai_subagent executor."""
+    """Detached scheduling should enforce one active task per employee executor."""
 
     db_name = "taskflow_runtime_per_subagent_limit.db"
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
         root_dir=tmp_path,
         llm_max_iterations=10,
+        taskflow_public_principal_required=False,
     )
     _write_profile_subagent(
         settings=settings,
@@ -1892,8 +1888,8 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
             description="Take the highest-priority researcher task first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             priority=90,
         )
         researcher_second = await service.create_task(
@@ -1902,8 +1898,8 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
             description="This should wait until the researcher subagent is free again.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             priority=80,
         )
         reviewer_task = await service.create_task(
@@ -1912,8 +1908,8 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
             description="This can run while the researcher subagent is busy.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
             priority=70,
         )
 
@@ -1954,7 +1950,7 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_ai_subagent(
 async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
     tmp_path: Path,
 ) -> None:
-    """Claim guard should stay profile-scoped for shared AI owner refs."""
+    """Claim guard should stay profile-scoped for shared Employee owner refs."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -1969,7 +1965,7 @@ async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
             description="Claim analyst work in default profile.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=90,
         )
@@ -1979,7 +1975,7 @@ async def test_taskflow_runtime_allows_same_ai_owner_ref_across_profiles(
             description="Claim analyst work in researcher profile.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=85,
         )
@@ -2040,7 +2036,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             description="Take the first Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=90,
         )
@@ -2051,7 +2047,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             description="Take the second Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="researcher",
             priority=90,
         )
@@ -2062,7 +2058,7 @@ async def test_taskflow_runtime_spreads_equal_priority_claims_across_flows(
             description="Take the first Flow B task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
             priority=90,
         )
@@ -2126,7 +2122,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             description="Take the highest-priority task first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=95,
         )
@@ -2137,7 +2133,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             description="This is still higher priority than Flow B.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="researcher",
             priority=94,
         )
@@ -2148,7 +2144,7 @@ async def test_taskflow_runtime_keeps_priority_ahead_of_flow_fairness(
             description="This should wait behind the higher-priority Flow A task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
             priority=90,
         )
@@ -2204,7 +2200,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
             description="Take the first no-flow task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=90,
         )
@@ -2214,7 +2210,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
             description="This should wait behind the idle flow bucket.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="researcher",
             priority=90,
         )
@@ -2225,7 +2221,7 @@ async def test_taskflow_runtime_treats_no_flow_backlog_as_its_own_fairness_bucke
             description="Idle flow work should be preferred on the second claim.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
             priority=90,
         )
@@ -2291,10 +2287,10 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
         claim_attempts += 1
         if claim_attempts == 1:
             raise IntegrityError(
-                statement="UPDATE task SET status='claimed' /* ux_task_active_ai_owner */",
+                statement="UPDATE task SET status='claimed' /* ux_task_active_employee_owner */",
                 params=None,
                 orig=Exception(
-                    "UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_ai_owner)"
+                    "UNIQUE constraint failed: task.profile_id, task.owner_ref (ux_task_active_employee_owner)"
                 ),
             )
         return await original_claim_next(self, **kwargs)
@@ -2307,7 +2303,7 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
             description="Claim this after retrying a transient uniqueness conflict.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             priority=90,
         )
@@ -2355,7 +2351,7 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
             description="Delegate a prerequisite and wait on dependency completion.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 
@@ -2401,12 +2397,12 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             behavior="complete",
             observed_calls=observed_calls,
         ),
-        settings=Settings(taskflow_runtime_owner_ref="researcher"),
+        settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_plan_skip.db'}", taskflow_runtime_owner_ref="researcher"),
     )
     try:
         planned = await service.create_task(
             profile_id="default",
-            title="Draft the task before AI starts",
+            title="Draft the task before Employee starts",
             description="Stay in PLAN until a human finishes the brief.",
             status="plan",
             created_by_type="human",
@@ -2417,7 +2413,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         async with session_scope(factory) as session:
             await session.execute(
                 text(
-                    "UPDATE task SET status = 'plan', owner_type = 'ai_profile', owner_ref = 'researcher' "
+                    "UPDATE task SET status = 'plan', owner_type = 'employee', owner_ref = 'researcher' "
                     "WHERE profile_id = :profile_id AND id = :task_id"
                 ),
                 {"profile_id": "default", "task_id": planned.id},
@@ -2429,7 +2425,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             description="This task is ready for the detached runtime.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="researcher",
         )
 
@@ -2437,7 +2433,7 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             profile_id="default",
             title="Other owner remains queued",
             description="Wait for another runtime worker",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             created_by_type="human",
             created_by_ref="cli",
@@ -2497,7 +2493,7 @@ async def test_taskflow_runtime_includes_task_attachments_in_execution_message(
             description="Use the attached requirements before answering.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             attachments=(
                 {
@@ -2529,9 +2525,9 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     overrides = build_task_flow_context_overrides(
         task_id="task_demo",
         task_profile_id="default",
-        owner_type="ai_profile",
+        owner_type="employee",
         owner_ref="analyst",
-        executor_type="ai_profile",
+        executor_type="employee",
         executor_ref="analyst",
         source_status="todo",
         flow_id="flow_demo",
@@ -2561,32 +2557,24 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "task.comment.add" in overrides.prompt_overlay
     assert "task.delegate" in overrides.prompt_overlay
     assert "execution plan" in overrides.prompt_overlay
-    assert "another AI executor (ai_profile or ai_subagent)" in overrides.prompt_overlay
+    assert "Employees are the only Task Flow owners" in overrides.prompt_overlay
     assert "task.list, task.board, task.stale.list, or task.stale.sweep" in overrides.prompt_overlay
-    assert "owner_profile_id plus optional owner_subagent_name" in overrides.prompt_overlay
+    assert "owner_type=employee and owner_ref=<employee_id>" in overrides.prompt_overlay
     assert "task.review.list" in overrides.prompt_overlay
-    assert "actor_profile_id plus optional actor_subagent_name" in overrides.prompt_overlay
     assert "task.dependency.add" in overrides.prompt_overlay
     assert "retry_after_sec" in overrides.prompt_overlay
-    assert "ai_profile:default is the Team Orchestrator" in overrides.prompt_overlay
-    assert "focused workers" in overrides.prompt_overlay
-    assert "flow-level completion" in overrides.prompt_overlay
-    assert "do not take unrelated backlog work" in overrides.prompt_overlay
-    assert "Team Orchestrator protocol." in overrides.prompt_overlay
-    assert "docs/spec/roadmap workflow" in overrides.prompt_overlay
     assert "task.board" in overrides.prompt_overlay
-    assert "delegate specialist execution" in overrides.prompt_overlay
 
 
-def test_taskflow_context_overrides_include_worker_guidance_for_ai_subagents() -> None:
-    """Subagent-owned Task Flow runs should receive worker-specific collaboration rules."""
+def test_taskflow_context_overrides_include_worker_guidance_for_employees() -> None:
+    """Focused employee Task Flow runs should receive worker-specific collaboration rules."""
 
     overrides = build_task_flow_context_overrides(
         task_id="task_worker",
         task_profile_id="default",
-        owner_type="ai_subagent",
+        owner_type="employee",
         owner_ref="default:backend-engineer",
-        executor_type="ai_subagent",
+        executor_type="employee",
         executor_ref="default:backend-engineer",
         source_status="todo",
         flow_id="flow_demo",
@@ -2604,3 +2592,29 @@ def test_taskflow_context_overrides_include_worker_guidance_for_ai_subagents() -
     assert "task.doc.put" in overrides.prompt_overlay
     assert "task.comment.add" in overrides.prompt_overlay
     assert "handoff" in overrides.prompt_overlay.lower()
+
+
+def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers() -> None:
+    """Manager employee Task Flow runs should receive decomposition and review protocol."""
+
+    overrides = build_task_flow_context_overrides(
+        task_id="task_manager",
+        task_profile_id="default",
+        owner_type="employee",
+        owner_ref="cto",
+        executor_type="employee",
+        executor_ref="cto",
+        source_status="todo",
+        flow_id="flow_demo",
+        source_type="manual",
+        source_ref=None,
+        priority=90,
+        attempt=1,
+        requires_review=True,
+        executor_is_manager=True,
+    )
+
+    assert overrides.prompt_overlay is not None
+    assert "Team Orchestrator protocol." in overrides.prompt_overlay
+    assert "Task Flow worker protocol." not in overrides.prompt_overlay
+    assert "Decompose large work" in overrides.prompt_overlay

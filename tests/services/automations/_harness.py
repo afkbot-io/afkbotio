@@ -16,6 +16,7 @@ from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.automations import AutomationsService
 from afkbot.services.automations.graph.executor import AutomationGraphSubagentFactory
 from afkbot.settings import Settings
+from tests.repositories._harness import _write_test_employees
 
 
 class FakeLoop:
@@ -128,6 +129,8 @@ async def prepare_service(
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
+    _write_test_employees(settings=settings, profile_id="default")
+    _write_test_employees(settings=settings, profile_id="other")
     service = AutomationsService(
         factory,
         settings=settings,

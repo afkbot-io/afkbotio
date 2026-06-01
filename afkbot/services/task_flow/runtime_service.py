@@ -19,16 +19,11 @@ from afkbot.db.bootstrap_runtime import ensure_task_runtime_schema, prune_runtim
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
+from afkbot.services.employees import EmployeeService, EmployeeServiceError
+from afkbot.services.employees.prompts import build_employee_prompt_overlay
 from afkbot.services.session_events import build_runlog_event_store
-from afkbot.services.subagents.loader import SubagentLoader
-from afkbot.services.subagents.orchestration import (
-    build_subagent_session_orchestrator,
-    resolve_subagent_loop_settings,
-)
-from afkbot.services.subagents.runtime_policy import DEFAULT_SUBAGENT_RUNTIME_POLICY
 from afkbot.services.task_flow.ai_executors import (
-    AI_SUBAGENT_OWNER_TYPE,
-    parse_ai_subagent_owner_ref,
+    EMPLOYEE_OWNER_TYPE,
     resolve_ai_executor_profile_id,
 )
 from afkbot.services.task_flow.event_log import record_task_event
@@ -48,6 +43,7 @@ from afkbot.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from afkbot.services.agent_loop.action_contracts import TurnResult
+    from afkbot.services.employees.contracts import EmployeeMetadata
 
 _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
@@ -114,7 +110,11 @@ class TaskFlowRuntimeService:
         ]
         | None = None,
     ) -> None:
-        self._settings = settings or get_settings()
+        self._settings = (
+            settings
+            or getattr(session_factory, "_afkbot_test_settings", None)
+            or get_settings()
+        )
         self._session_factory = session_factory
         self._engine = engine
         self._managed_engine: AsyncEngine | None = None
@@ -402,11 +402,19 @@ class TaskFlowRuntimeService:
                     )
                     if row is None:
                         return None
+                    executor_type = str(row.claim_owner_type or row.owner_type or "").strip()
+                    executor_ref = str(row.claim_owner_ref or row.owner_ref or "").strip()
+                    if await self._block_inactive_employee_claim(
+                        repo=repo,
+                        row=row,
+                        worker_id=worker_id,
+                        executor_type=executor_type,
+                        executor_ref=executor_ref,
+                    ):
+                        continue
                     session_id = task_session_id(task_id=row.id)
                     next_attempt = row.current_attempt + 1
                     execution_profile_id = _resolve_execution_profile_id(row)
-                    executor_type = str(row.claim_owner_type or row.owner_type or "").strip()
-                    executor_ref = str(row.claim_owner_ref or row.owner_ref or "").strip()
                     source_status = str(row.claim_source_status or row.status or "").strip()
                     task_run = await repo.create_task_run(
                         task_id=row.id,
@@ -474,6 +482,77 @@ class TaskFlowRuntimeService:
                 continue
         return None
 
+    async def _block_inactive_employee_claim(
+        self,
+        *,
+        repo: TaskFlowRepository,
+        row: object,
+        worker_id: str,
+        executor_type: str,
+        executor_ref: str,
+    ) -> bool:
+        """Move a just-claimed task to Blocked when its employee cannot run work."""
+
+        if executor_type != EMPLOYEE_OWNER_TYPE:
+            return False
+        try:
+            employee = await EmployeeService(self._settings).get_employee(
+                profile_id=str(getattr(row, "profile_id", "") or ""),
+                employee_id=executor_ref,
+            )
+        except EmployeeServiceError as exc:
+            reason_code = exc.error_code
+            reason_text = exc.reason
+        else:
+            if employee.status == "active":
+                return False
+            reason_code = "task_employee_inactive"
+            reason_text = f"Employee {employee.id} is {employee.status} and cannot run tasks."
+        task_id = str(getattr(row, "id", "") or "")
+        profile_id = str(getattr(row, "profile_id", "") or "")
+        previous_status = str(getattr(row, "claim_source_status", None) or "todo")
+        updated = await repo.update_task(
+            profile_id=profile_id,
+            task_id=task_id,
+            status="blocked",
+            ready_at=None,
+            blocked_reason_code=reason_code,
+            blocked_reason_text=reason_text,
+        )
+        if updated is None:
+            return True
+        await record_task_event(
+            repo=repo,
+            task_id=task_id,
+            event_type="blocked",
+            actor_type="runtime",
+            actor_ref=worker_id,
+            message=reason_text,
+            from_status=previous_status,
+            to_status="blocked",
+            details={
+                "reason_code": reason_code,
+                "owner_type": executor_type,
+                "owner_ref": executor_ref,
+            },
+        )
+        await record_task_event(
+            repo=repo,
+            task_id=task_id,
+            event_type="runtime_claim_rejected",
+            actor_type="runtime",
+            actor_ref=worker_id,
+            message=reason_text,
+            from_status=previous_status,
+            to_status="blocked",
+            details={
+                "error_code": reason_code,
+                "owner_type": executor_type,
+                "owner_ref": executor_ref,
+            },
+        )
+        return True
+
     async def _execute_claimed_task(self, claimed: ClaimedTaskExecution) -> None:
         started = await self._mark_started(claimed=claimed)
         if not started:
@@ -534,6 +613,14 @@ class TaskFlowRuntimeService:
             )
 
     async def _build_runtime_target(self, claimed: ClaimedTaskExecution) -> TaskFlowRuntimeTarget:
+        employee = None
+        if claimed.executor_type == EMPLOYEE_OWNER_TYPE:
+            employee = await EmployeeService(self._settings).get_employee(
+                profile_id=claimed.task_profile_id,
+                employee_id=claimed.executor_ref,
+            )
+            if employee.status != "active":
+                raise RuntimeError(f"Employee {employee.id} is {employee.status} and cannot run tasks")
         runtime_target = build_task_flow_runtime_target(
             execution_profile_id=claimed.execution_profile_id,
             session_id=claimed.session_id,
@@ -551,34 +638,24 @@ class TaskFlowRuntimeService:
             attempt=claimed.attempt,
             requires_review=claimed.requires_review,
             labels=claimed.labels,
+            executor_is_manager=_employee_has_manager_scope(employee),
         )
-        if claimed.executor_type != AI_SUBAGENT_OWNER_TYPE:
+        if employee is None:
             return runtime_target
-        parsed = parse_ai_subagent_owner_ref(claimed.executor_ref)
-        if parsed is None:
-            raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
-        host_profile_id, subagent_name = parsed
         from afkbot.services.agent_loop.turn_context import (
             TurnContextOverrides,
             merge_turn_context_overrides,
         )
 
-        subagent_markdown = await SubagentLoader(self._settings).load_subagent_markdown(
-            name=subagent_name,
-            profile_id=host_profile_id,
-        )
-        subagent_overrides = TurnContextOverrides(
-            prompt_overlay=DEFAULT_SUBAGENT_RUNTIME_POLICY.build_prompt_overlay(
-                subagent_name=subagent_name,
-                subagent_markdown=subagent_markdown,
-            )
+        employee_overrides = TurnContextOverrides(
+            prompt_overlay=build_employee_prompt_overlay(employee)
         )
         return type(runtime_target)(
             profile_id=runtime_target.profile_id,
             session_id=runtime_target.session_id,
             context_overrides=merge_turn_context_overrides(
                 runtime_target.context_overrides,
-                subagent_overrides,
+                employee_overrides,
             ),
         )
 
@@ -643,17 +720,7 @@ class TaskFlowRuntimeService:
             return self._session_runner_factory_override(
                 session_factory, claimed.execution_profile_id
             )
-        if claimed.executor_type != AI_SUBAGENT_OWNER_TYPE:
-            return self._session_runner_factory(session_factory, claimed.execution_profile_id)
-        parsed = parse_ai_subagent_owner_ref(claimed.executor_ref)
-        if parsed is None:
-            raise RuntimeError("Invalid ai_subagent owner ref on claimed task")
-        _host_profile_id, subagent_name = parsed
-        return build_taskflow_subagent_runtime_session_runner(
-            session_factory,
-            profile_id=claimed.execution_profile_id,
-            settings=self._settings,
-        )
+        return self._session_runner_factory(session_factory, claimed.execution_profile_id)
 
     async def _mark_started(self, *, claimed: ClaimedTaskExecution) -> bool:
         session_factory = self._require_session_factory()
@@ -1073,28 +1140,6 @@ def build_taskflow_runtime_session_runner(
     )
 
 
-def build_taskflow_subagent_runtime_session_runner(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    profile_id: str,
-    settings: Settings | None = None,
-) -> SessionTurnRunner:
-    """Build the session runner used by Task Flow ai_subagent detached execution."""
-
-    effective_settings = settings or get_settings()
-    loop_settings = resolve_subagent_loop_settings(
-        settings=effective_settings,
-        profile_id=profile_id,
-        runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
-    )
-    orchestrator = build_subagent_session_orchestrator(
-        session_factory,
-        loop_settings=loop_settings,
-        runtime_policy=DEFAULT_SUBAGENT_RUNTIME_POLICY,
-    )
-    return orchestrator
-
-
 def _default_session_runner_factory(
     settings: Settings,
 ) -> Callable[[async_sessionmaker[AsyncSession], str], SessionTurnRunner]:
@@ -1268,7 +1313,7 @@ def _task_event_details_for_outcome(outcome: TaskExecutionOutcome) -> dict[str, 
 
 
 def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
-    """Return whether one database error comes from the active AI owner uniqueness guard."""
+    """Return whether one database error comes from the active employee uniqueness guard."""
 
     message = " ".join(
         str(part).strip()
@@ -1280,7 +1325,9 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         if part is not None
     ).lower()
     return (
-        "ux_task_active_ai_owner" in message
+        "ux_task_active_employee_owner" in message
+        or "ux_task_active_employee_claim_owner" in message
+        or "ux_task_active_ai_owner" in message
         or "ux_task_active_ai_claim_owner" in message
         or (
             (
@@ -1324,6 +1371,17 @@ def _runtime_profile_id(settings: Settings) -> str | None:
 
 def _runtime_owner_ref(settings: Settings) -> str | None:
     return settings.taskflow_runtime_owner_ref
+
+
+def _employee_has_manager_scope(employee: "EmployeeMetadata | None") -> bool:
+    if employee is None:
+        return False
+    return (
+        employee.manager_id is None
+        or bool(employee.reports)
+        or bool(employee.derived_reports)
+        or bool(employee.can_delegate_to)
+    )
 
 
 def _claim_release_status(row: object) -> str:

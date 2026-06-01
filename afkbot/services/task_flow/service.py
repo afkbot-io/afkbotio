@@ -36,13 +36,13 @@ from afkbot.services.automations.principals import (
     ensure_automation_principal_exists,
     parse_automation_principal_ref,
 )
-from afkbot.services.profile_runtime import get_profile_runtime_config_service
-from afkbot.services.subagents.loader import SubagentLoader
+from afkbot.services.employees import EmployeeService, EmployeeServiceError
 from afkbot.services.task_flow.ai_executors import (
-    AI_SUBAGENT_OWNER_TYPE,
+    EMPLOYEE_OWNER_TYPE,
     is_ai_executor_owner_type,
+    LEGACY_AI_EXECUTOR_OWNER_TYPES,
     normalize_task_owner_type,
-    parse_ai_subagent_owner_ref,
+    parse_employee_owner_ref,
     resolve_ai_executor_profile_id,
 )
 from afkbot.services.session_orchestration.service import session_turn_queue_stale_cutoff
@@ -73,11 +73,10 @@ from afkbot.services.task_flow.contracts import (
 from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.human_ref import resolve_local_human_ref
-from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
-_VALID_OWNER_TYPES = {"ai_profile", AI_SUBAGENT_OWNER_TYPE, "human"}
+_VALID_OWNER_TYPES = {EMPLOYEE_OWNER_TYPE, "human"}
 _VALID_ACTOR_TYPES = _VALID_OWNER_TYPES | {"automation"}
 _VALID_TASK_STATUSES = {
     "plan",
@@ -197,7 +196,7 @@ class TaskFlowService:
         engine: AsyncEngine | None = None,
     ) -> None:
         self._session_factory = session_factory
-        self._settings = settings
+        self._settings = settings or getattr(session_factory, "_afkbot_test_settings", None)
         self._engine = engine
 
     async def create_flow(
@@ -256,6 +255,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_created_by_type,
                 actor_ref=normalized_created_by_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -265,12 +265,20 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
+                actor_type=normalized_created_by_type,
+                actor_ref=normalized_created_by_ref,
+            )
+            await _ensure_flow_actor_can_manage(
+                settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_created_by_type,
                 actor_ref=normalized_created_by_ref,
             )
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=normalized_default_owner_type,
                 owner_ref=normalized_default_owner_ref,
                 reviewer_type=None,
@@ -284,7 +292,7 @@ class TaskFlowService:
                 error_code="task_owner_forbidden",
                 reason="AI actor is not allowed to create flows in this backlog",
             )
-            _ensure_ai_owner_assignment_allowed(
+            await _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_created_by_type,
@@ -411,6 +419,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -420,6 +429,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            await _ensure_flow_actor_can_manage(
+                settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -441,6 +457,7 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=next_default_owner_type,
                 owner_ref=next_default_owner_ref,
                 reviewer_type=None,
@@ -695,6 +712,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -704,6 +722,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -776,6 +795,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -785,6 +805,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -858,6 +879,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -867,6 +889,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -1016,6 +1039,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_created_by_type,
                 actor_ref=normalized_created_by_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -1038,9 +1062,12 @@ class TaskFlowService:
                 flow.default_owner_ref if flow is not None else None
             )
             if resolved_owner_type is None:
-                resolved_owner_type = "ai_profile"
+                resolved_owner_type = EMPLOYEE_OWNER_TYPE
             if resolved_owner_ref is None:
-                resolved_owner_ref = profile_id
+                resolved_owner_ref = await _resolve_default_employee_owner_ref(
+                    settings=self._settings,
+                    profile_id=profile_id,
+                )
             _validate_owner_pair(owner_type=resolved_owner_type, owner_ref=resolved_owner_ref)
             _validate_owner_pair(
                 owner_type=normalized_reviewer_type,
@@ -1058,6 +1085,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_created_by_type,
                 actor_ref=normalized_created_by_ref,
             )
@@ -1072,12 +1100,13 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
                 reviewer_type=normalized_reviewer_type,
                 reviewer_ref=normalized_reviewer_ref,
             )
-            _ensure_ai_owner_assignment_allowed(
+            await _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_created_by_type,
@@ -1303,6 +1332,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -1312,11 +1342,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -1366,6 +1398,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -1375,11 +1408,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -1678,6 +1713,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -1687,11 +1723,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -1699,6 +1737,7 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=normalized_actor_type,
                 owner_ref=normalized_actor_ref,
                 reviewer_type=None,
@@ -1713,6 +1752,8 @@ class TaskFlowService:
                     )
             row = await _append_task_comment_event(
                 repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
                 task_id=task.id,
                 task_run_id=task_run_id,
                 actor_type=normalized_actor_type,
@@ -1720,6 +1761,24 @@ class TaskFlowService:
                 message=normalized_message,
                 comment_type=normalized_comment_type,
             )
+            if (
+                task.owner_type == EMPLOYEE_OWNER_TYPE
+                and task.owner_ref
+                and task.status not in {"completed", "failed", "cancelled"}
+                and not (
+                    normalized_actor_type == EMPLOYEE_OWNER_TYPE
+                    and normalized_actor_ref == task.owner_ref
+                )
+            ):
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=task,
+                    reason_code="comment_added",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    message="Comment added for the responsible employee.",
+                    details={"comment_id": row.id},
+                )
             return _to_task_comment_metadata(row)
 
         return await self._with_repo(_op)
@@ -1745,12 +1804,12 @@ class TaskFlowService:
         if normalized_owner_type is None or normalized_owner_ref is None:
             raise TaskFlowServiceError(
                 error_code="invalid_owner_ref",
-                reason="AI inbox owner is required",
+                reason="Employee inbox owner is required",
             )
         if not is_ai_executor_owner_type(normalized_owner_type):
             raise TaskFlowServiceError(
                 error_code="task_agent_inbox_owner_required",
-                reason="Agent inbox requires an AI profile or AI subagent owner",
+                reason="Task Flow inbox requires an employee owner",
             )
 
         async def _op(repo: TaskFlowRepository) -> AgentTaskInboxMetadata:
@@ -1758,6 +1817,7 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=normalized_owner_type,
                 owner_ref=normalized_owner_ref,
                 reviewer_type=None,
@@ -2003,6 +2063,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2012,6 +2073,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -2104,6 +2166,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2113,6 +2176,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -2149,12 +2213,13 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=effective_owner_type,
                 owner_ref=effective_owner_ref,
                 reviewer_type=row.reviewer_type,
                 reviewer_ref=row.reviewer_ref,
             )
-            _ensure_ai_owner_assignment_allowed(
+            await _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
@@ -2260,6 +2325,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2269,11 +2335,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2348,6 +2416,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2357,11 +2426,13 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2396,7 +2467,7 @@ class TaskFlowService:
         *,
         profile_id: str,
         source_task_id: str,
-        delegated_owner_type: str = "ai_profile",
+        delegated_owner_type: str = EMPLOYEE_OWNER_TYPE,
         delegated_owner_ref: str,
         description: str | None = None,
         actor_type: str,
@@ -2460,6 +2531,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2469,6 +2541,7 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -2477,8 +2550,9 @@ class TaskFlowService:
                     error_code="task_delegate_invalid_state",
                     reason="Terminal task cannot delegate new work",
                 )
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=source_task,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2486,6 +2560,7 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=normalized_actor_type,
                 owner_ref=normalized_actor_ref,
                 reviewer_type=None,
@@ -2494,12 +2569,13 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=normalized_delegate_owner_type,
                 owner_ref=normalized_delegate_owner_ref,
                 reviewer_type=None,
                 reviewer_ref=None,
             )
-            _ensure_ai_owner_assignment_allowed(
+            await _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
@@ -2581,6 +2657,8 @@ class TaskFlowService:
             )
             await _append_task_comment_event(
                 repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
                 task_id=source_task.id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2589,6 +2667,8 @@ class TaskFlowService:
             )
             await _append_task_comment_event(
                 repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
                 task_id=delegated_row.id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2872,6 +2952,7 @@ class TaskFlowService:
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
+                task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
                 actor_session_id=normalized_actor_session_id,
@@ -2881,14 +2962,16 @@ class TaskFlowService:
             await _ensure_principal_exists(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
             current_row = await repo.get_task(profile_id=profile_id, task_id=task_id)
             if current_row is None:
                 raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
-            _ensure_task_actor_can_manage(
+            await _ensure_task_actor_can_manage(
                 row=current_row,
+                settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
@@ -2935,12 +3018,13 @@ class TaskFlowService:
             await _ensure_actor_refs_exist(
                 repo,
                 settings=self._settings,
+                profile_id=profile_id,
                 owner_type=effective_owner_type,
                 owner_ref=effective_owner_ref,
                 reviewer_type=effective_reviewer_type,
                 reviewer_ref=effective_reviewer_ref,
             )
-            _ensure_ai_owner_assignment_allowed(
+            await _ensure_ai_owner_assignment_allowed(
                 settings=self._settings,
                 task_profile_id=profile_id,
                 actor_type=normalized_actor_type,
@@ -3009,6 +3093,7 @@ class TaskFlowService:
                 if effective_session_profile_id is not None:
                     await _ensure_profile_exists(repo, cast(str, effective_session_profile_id))
                 _ensure_ai_actor_session_binding_allowed(
+                    task_profile_id=profile_id,
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
                     actor_session_id=normalized_actor_session_id,
@@ -3486,6 +3571,7 @@ async def _ensure_actor_refs_exist(
     repo: TaskFlowRepository,
     *,
     settings: Settings | None,
+    profile_id: str | None = None,
     owner_type: str | None,
     owner_ref: str | None,
     reviewer_type: str | None,
@@ -3496,6 +3582,7 @@ async def _ensure_actor_refs_exist(
     await _ensure_task_principal_ref_exists(
         repo,
         settings=settings,
+        profile_id=profile_id,
         principal_type=owner_type,
         principal_ref=owner_ref,
         invalid_error_code="invalid_owner_ref",
@@ -3503,9 +3590,39 @@ async def _ensure_actor_refs_exist(
     await _ensure_task_principal_ref_exists(
         repo,
         settings=settings,
+        profile_id=profile_id,
         principal_type=reviewer_type,
         principal_ref=reviewer_ref,
         invalid_error_code="invalid_reviewer_ref",
+    )
+
+
+async def _resolve_default_employee_owner_ref(
+    *,
+    settings: Settings | None,
+    profile_id: str,
+) -> str:
+    """Return the single active root employee for a profile or require explicit owner."""
+
+    try:
+        org_chart = await EmployeeService(settings or get_settings()).build_org_chart(
+            profile_id=profile_id
+        )
+    except EmployeeServiceError as exc:
+        raise TaskFlowServiceError(
+            error_code="task_employee_owner_required",
+            reason="Task owner is required because this profile has no valid employee root",
+        ) from exc
+    root_ids = tuple(
+        employee_id
+        for employee_id in org_chart.root_employee_ids
+        if org_chart.employees[employee_id].status == "active"
+    )
+    if len(root_ids) == 1:
+        return root_ids[0]
+    raise TaskFlowServiceError(
+        error_code="task_employee_owner_required",
+        reason="Task owner is required when the profile has zero or multiple root employees",
     )
 
 
@@ -3513,14 +3630,16 @@ async def _ensure_principal_exists(
     repo: TaskFlowRepository,
     *,
     settings: Settings | None,
+    profile_id: str | None = None,
     actor_type: str | None,
     actor_ref: str | None,
 ) -> None:
-    """Validate one actor principal reference when it points at an AI profile or automation."""
+    """Validate one actor principal reference when it points at an employee or automation."""
 
     await _ensure_task_principal_ref_exists(
         repo,
         settings=settings,
+        profile_id=profile_id,
         principal_type=actor_type,
         principal_ref=actor_ref,
         invalid_error_code="invalid_actor_ref",
@@ -3551,6 +3670,7 @@ async def _ensure_task_principal_ref_exists(
     repo: TaskFlowRepository,
     *,
     settings: Settings | None,
+    profile_id: str | None = None,
     principal_type: str | None,
     principal_ref: str | None,
     invalid_error_code: str,
@@ -3559,38 +3679,44 @@ async def _ensure_task_principal_ref_exists(
 
     normalized_type = normalize_task_owner_type(principal_type)
     normalized_ref = _normalize_optional_text(principal_ref)
-    if normalized_type == "ai_profile" and normalized_ref is not None:
-        await _ensure_profile_exists(repo, normalized_ref)
+    if normalized_type == EMPLOYEE_OWNER_TYPE and normalized_ref is not None:
+        employee_id = parse_employee_owner_ref(normalized_ref)
+        if employee_id is None:
+            raise TaskFlowServiceError(
+                error_code=invalid_error_code,
+                reason="employee ref must match a profile-local employee id",
+            )
+        if profile_id is None:
+            return
+        try:
+            employee = await EmployeeService(settings or get_settings()).get_employee(
+                profile_id=profile_id,
+                employee_id=employee_id,
+            )
+        except EmployeeServiceError as exc:
+            raise TaskFlowServiceError(
+                error_code=exc.error_code,
+                reason=exc.reason,
+            ) from exc
+        if employee.status != "active":
+            raise TaskFlowServiceError(
+                error_code=invalid_error_code,
+                reason=f"Employee {employee_id} is {employee.status} and cannot be used",
+            )
         return
-    if normalized_type != AI_SUBAGENT_OWNER_TYPE or normalized_ref is None:
-        return
-    parsed = parse_ai_subagent_owner_ref(normalized_ref)
-    if parsed is None:
+    if normalized_type in LEGACY_AI_EXECUTOR_OWNER_TYPES:
         raise TaskFlowServiceError(
             error_code=invalid_error_code,
-            reason="ai_subagent ref must match <profile_id>:<subagent_name>",
+            reason="Legacy Task Flow AI principals are no longer supported; use employee",
         )
-    host_profile_id, subagent_name = parsed
-    await _ensure_profile_exists(repo, host_profile_id)
-    loader = SubagentLoader(settings or get_settings())
-    try:
-        await loader.resolve_subagent(name=subagent_name, profile_id=host_profile_id)
-    except ValueError as exc:
-        raise TaskFlowServiceError(
-            error_code=invalid_error_code,
-            reason="ai_subagent ref must match <profile_id>:<subagent_name>",
-        ) from exc
-    except FileNotFoundError as exc:
-        raise TaskFlowServiceError(
-            error_code="subagent_not_found",
-            reason="Subagent descriptor not found",
-        ) from exc
+    return
 
 
 async def _ensure_public_ai_principal_session(
     repo: TaskFlowRepository,
     *,
     settings: Settings | None,
+    task_profile_id: str,
     actor_type: str | None,
     actor_ref: str | None,
     actor_session_id: str | None | object,
@@ -3608,9 +3734,13 @@ async def _ensure_public_ai_principal_session(
         if actor_session_id is not _TASK_FIELD_UNSET
         else None
     )
-    actor_profile_id = _task_executor_profile_id(
-        actor_type=normalized_actor_type,
-        actor_ref=normalized_actor_ref,
+    actor_profile_id = (
+        task_profile_id
+        if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_ref is not None
+        else _task_executor_profile_id(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+        )
     )
     if actor_profile_id is None or normalized_actor_session_id is None:
         return
@@ -3870,12 +4000,12 @@ def _validate_owner_pair(
             reason=f"Unsupported owner type: {normalized_type}",
         )
     if (
-        normalized_type == AI_SUBAGENT_OWNER_TYPE
-        and parse_ai_subagent_owner_ref(normalized_ref) is None
+        normalized_type == EMPLOYEE_OWNER_TYPE
+        and parse_employee_owner_ref(normalized_ref) is None
     ):
         raise TaskFlowServiceError(
             error_code="invalid_owner_ref",
-            reason="ai_subagent ref must match <profile_id>:<subagent_name>",
+            reason="employee ref must match a profile-local employee id",
         )
 
 
@@ -3904,30 +4034,21 @@ def _validate_actor_pair(
             error_code="invalid_actor_ref",
             reason="automation actor_ref must match automation:<profile_id>:<automation_id>",
         )
-    if (
-        normalized_type == AI_SUBAGENT_OWNER_TYPE
-        and parse_ai_subagent_owner_ref(normalized_ref) is None
-    ):
+    if normalized_type == EMPLOYEE_OWNER_TYPE and parse_employee_owner_ref(normalized_ref) is None:
         raise TaskFlowServiceError(
             error_code="invalid_actor_ref",
-            reason="ai_subagent ref must match <profile_id>:<subagent_name>",
+            reason="employee ref must match a profile-local employee id",
         )
 
 
 def _task_executor_profile_id(*, actor_type: str | None, actor_ref: str | None) -> str | None:
-    normalized_actor_type = normalize_task_owner_type(actor_type)
-    normalized_actor_ref = _normalize_optional_text(actor_ref)
-    if normalized_actor_type == "ai_profile" and normalized_actor_ref is not None:
-        return normalized_actor_ref
-    if normalized_actor_type == AI_SUBAGENT_OWNER_TYPE and normalized_actor_ref is not None:
-        parsed = parse_ai_subagent_owner_ref(normalized_actor_ref)
-        if parsed is not None:
-            return parsed[0]
     return None
 
 
-def _task_actor_has_manager_scope(
+async def _task_actor_has_manager_scope(
     *,
+    row: Task,
+    settings: Settings | None,
     task_profile_id: str,
     actor_type: str | None,
     actor_ref: str | None,
@@ -3936,23 +4057,55 @@ def _task_actor_has_manager_scope(
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_actor_type == "human" and normalized_actor_ref is not None:
         return True
-    return normalized_actor_type == "ai_profile" and normalized_actor_ref == task_profile_id
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
+        return False
+    try:
+        chart = await EmployeeService(settings or get_settings()).build_org_chart(
+            profile_id=task_profile_id,
+        )
+    except EmployeeServiceError as exc:
+        raise TaskFlowServiceError(error_code=exc.error_code, reason=exc.reason) from exc
+    actor_employee = chart.employees.get(normalized_actor_ref)
+    if actor_employee is None or actor_employee.status != "active":
+        return False
+    if actor_employee.manager_id is None:
+        return True
+    managed_employee_ids = {
+        *actor_employee.can_delegate_to,
+        *actor_employee.reports,
+        *actor_employee.derived_reports,
+    }
+    task_employee_refs = {
+        ref
+        for ref in (row.owner_ref, row.reviewer_ref, row.created_by_ref)
+        if ref and ref != normalized_actor_ref
+    }
+    if row.owner_type == EMPLOYEE_OWNER_TYPE and row.owner_ref in managed_employee_ids:
+        return True
+    if row.reviewer_type == EMPLOYEE_OWNER_TYPE and row.reviewer_ref in managed_employee_ids:
+        return True
+    if row.created_by_type == EMPLOYEE_OWNER_TYPE and task_employee_refs.intersection(managed_employee_ids):
+        return True
+    return False
 
 
-def _ensure_task_actor_can_manage(
+async def _ensure_task_actor_can_manage(
     *,
     row: Task,
+    settings: Settings | None,
     task_profile_id: str,
     actor_type: str | None,
     actor_ref: str | None,
 ) -> None:
-    """Allow backlog-manager AI or the owning AI worker to mutate durable task state."""
+    """Allow humans, responsible employees, or managers to mutate durable task state."""
 
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_actor_type is None and normalized_actor_ref is None:
         return
-    if _task_actor_has_manager_scope(
+    if await _task_actor_has_manager_scope(
+        row=row,
+        settings=settings,
         task_profile_id=task_profile_id,
         actor_type=normalized_actor_type,
         actor_ref=normalized_actor_ref,
@@ -3966,16 +4119,9 @@ def _ensure_task_actor_can_manage(
     ):
         return
     if (
-        normalized_actor_type == "ai_profile"
+        normalized_actor_type == EMPLOYEE_OWNER_TYPE
         and normalized_actor_ref is not None
-        and row.owner_type == "ai_profile"
-        and row.owner_ref == normalized_actor_ref
-    ):
-        return
-    if (
-        normalized_actor_type == AI_SUBAGENT_OWNER_TYPE
-        and normalized_actor_ref is not None
-        and row.owner_type == AI_SUBAGENT_OWNER_TYPE
+        and row.owner_type == EMPLOYEE_OWNER_TYPE
         and row.owner_ref == normalized_actor_ref
     ):
         return
@@ -3985,7 +4131,53 @@ def _ensure_task_actor_can_manage(
     )
 
 
-def _ensure_ai_owner_assignment_allowed(
+async def _ensure_flow_actor_can_manage(
+    *,
+    settings: Settings | None,
+    profile_id: str,
+    actor_type: str | None,
+    actor_ref: str | None,
+) -> None:
+    normalized_actor_type = _normalize_optional_text(actor_type)
+    normalized_actor_ref = _normalize_optional_text(actor_ref)
+    if normalized_actor_type == "human" and normalized_actor_ref is not None:
+        return
+    if normalized_actor_type == "automation" and normalized_actor_ref is not None:
+        _ensure_ai_actor_admitted_to_backlog(
+            settings=settings,
+            task_profile_id=profile_id,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            error_code="task_actor_forbidden",
+            reason="Automation actor is not allowed to manage this flow",
+        )
+        return
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
+        raise TaskFlowServiceError(
+            error_code="task_actor_forbidden",
+            reason="Task flow cannot be changed by this actor",
+        )
+    try:
+        chart = await EmployeeService(settings or get_settings()).build_org_chart(
+            profile_id=profile_id,
+        )
+    except EmployeeServiceError as exc:
+        raise TaskFlowServiceError(error_code=exc.error_code, reason=exc.reason) from exc
+    employee = chart.employees.get(normalized_actor_ref)
+    if employee is None or employee.status != "active":
+        raise TaskFlowServiceError(
+            error_code="task_actor_forbidden",
+            reason="Employee actor is not allowed to manage this flow",
+        )
+    if employee.manager_id is None or employee.reports or employee.derived_reports:
+        return
+    raise TaskFlowServiceError(
+        error_code="task_actor_forbidden",
+        reason="Task flow can only be changed by a human operator or manager employee",
+    )
+
+
+async def _ensure_ai_owner_assignment_allowed(
     *,
     settings: Settings | None,
     task_profile_id: str,
@@ -3994,29 +4186,14 @@ def _ensure_ai_owner_assignment_allowed(
     owner_type: str | None,
     owner_ref: str | None,
 ) -> None:
-    """Restrict AI ownership changes to the actor itself or configured backlog teammates."""
+    """Restrict employee ownership changes to humans, automations, self, or delegates."""
 
     normalized_owner_type = normalize_task_owner_type(owner_type)
     normalized_owner_ref = _normalize_optional_text(owner_ref)
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
-    if not is_ai_executor_owner_type(normalized_owner_type) or normalized_owner_ref is None:
+    if normalized_owner_type != EMPLOYEE_OWNER_TYPE or normalized_owner_ref is None:
         return
-    normalized_owner_profile_id = resolve_ai_executor_profile_id(
-        owner_type=normalized_owner_type,
-        owner_ref=normalized_owner_ref,
-        task_profile_id=task_profile_id,
-    )
-    if settings is not None:
-        allowed_profiles = _taskflow_allowed_ai_profile_ids(
-            settings=settings,
-            profile_id=task_profile_id,
-        )
-        if allowed_profiles and normalized_owner_profile_id not in allowed_profiles:
-            raise TaskFlowServiceError(
-                error_code="task_owner_forbidden",
-                reason=f"Task cannot be assigned to this {normalized_owner_type}",
-            )
     if normalized_actor_type == "human" and normalized_actor_ref is not None:
         return
     if normalized_actor_type == "automation" and normalized_actor_ref is not None:
@@ -4026,35 +4203,40 @@ def _ensure_ai_owner_assignment_allowed(
             actor_type=normalized_actor_type,
             actor_ref=normalized_actor_ref,
             error_code="task_owner_forbidden",
-            reason="Automation actor is not allowed to assign tasks in this backlog",
+            reason="Automation actor is not allowed to assign tasks in this project",
         )
         return
-    normalized_actor_profile_id = _task_executor_profile_id(
-        actor_type=normalized_actor_type,
-        actor_ref=normalized_actor_ref,
-    )
-    if normalized_actor_profile_id is None:
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
         return
-    _ensure_ai_actor_admitted_to_backlog(
-        settings=settings,
-        task_profile_id=task_profile_id,
-        actor_type=normalized_actor_type,
-        actor_ref=normalized_actor_ref,
-        error_code="task_owner_forbidden",
-        reason="AI actor is not allowed to assign tasks in this backlog",
-    )
-    if normalized_owner_profile_id == normalized_actor_profile_id:
+    if normalized_actor_ref == normalized_owner_ref:
         return
-    allowed_profiles = _taskflow_allowed_ai_profile_ids(
-        settings=settings, profile_id=task_profile_id
-    )
-    if not allowed_profiles:
-        return
-    if normalized_owner_profile_id in allowed_profiles:
+    try:
+        chart = await EmployeeService(settings or get_settings()).build_org_chart(
+            profile_id=task_profile_id,
+        )
+    except EmployeeServiceError as exc:
+        raise TaskFlowServiceError(error_code=exc.error_code, reason=exc.reason) from exc
+    actor_employee = chart.employees.get(normalized_actor_ref)
+    if actor_employee is None:
+        raise TaskFlowServiceError(
+            error_code="task_owner_forbidden",
+            reason="Employee actor is not allowed to assign tasks in this project",
+        )
+    if actor_employee.status != "active":
+        raise TaskFlowServiceError(
+            error_code="task_owner_forbidden",
+            reason=f"Employee {actor_employee.id} is {actor_employee.status} and cannot assign tasks",
+        )
+    allowed_delegate_ids = {
+        *actor_employee.can_delegate_to,
+        *actor_employee.reports,
+        *actor_employee.derived_reports,
+    }
+    if normalized_owner_ref in allowed_delegate_ids:
         return
     raise TaskFlowServiceError(
         error_code="task_owner_forbidden",
-        reason=f"AI actor is not allowed to assign tasks to this {normalized_owner_type}",
+        reason="Employee actor is not allowed to assign tasks to this employee",
     )
 
 
@@ -4067,7 +4249,7 @@ def _ensure_ai_actor_admitted_to_backlog(
     error_code: str,
     reason: str,
 ) -> None:
-    """Allow AI/automation actors only when they belong to the backlog scope."""
+    """Allow automation actors only when they belong to the project profile."""
 
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
@@ -4076,24 +4258,12 @@ def _ensure_ai_actor_admitted_to_backlog(
         if parsed is None or parsed[0] != task_profile_id:
             raise TaskFlowServiceError(error_code=error_code, reason=reason)
         return
-    normalized_actor_profile_id = _task_executor_profile_id(
-        actor_type=normalized_actor_type,
-        actor_ref=normalized_actor_ref,
-    )
-    if normalized_actor_profile_id is None:
-        return
-    allowed_profiles = _taskflow_allowed_ai_profile_ids(
-        settings=settings, profile_id=task_profile_id
-    )
-    if not allowed_profiles:
-        return
-    if normalized_actor_profile_id in allowed_profiles:
-        return
-    raise TaskFlowServiceError(error_code=error_code, reason=reason)
+    return
 
 
 def _ensure_ai_actor_session_binding_allowed(
     *,
+    task_profile_id: str,
     actor_type: str | None,
     actor_ref: str | None,
     actor_session_id: str | None | object,
@@ -4104,9 +4274,13 @@ def _ensure_ai_actor_session_binding_allowed(
 
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
-    actor_profile_id = _task_executor_profile_id(
-        actor_type=normalized_actor_type,
-        actor_ref=normalized_actor_ref,
+    actor_profile_id = (
+        task_profile_id
+        if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_ref is not None
+        else _task_executor_profile_id(
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+        )
     )
     if actor_profile_id is None:
         return
@@ -4130,45 +4304,6 @@ def _ensure_ai_actor_session_binding_allowed(
             error_code="task_session_binding_forbidden",
             reason="AI actor cannot bind its current session to another profile",
         )
-
-
-def _taskflow_allowed_ai_profile_ids(
-    *,
-    settings: Settings | None,
-    profile_id: str,
-) -> tuple[str, ...]:
-    """Return the AI profiles allowed to participate in one backlog."""
-
-    team_profile_ids = _taskflow_team_profile_ids(settings=settings, profile_id=profile_id)
-    if team_profile_ids is None:
-        return (profile_id,)
-    allowed: list[str] = [profile_id]
-    seen: set[str] = {profile_id}
-    for item in team_profile_ids:
-        if item in seen:
-            continue
-        seen.add(item)
-        allowed.append(item)
-    return tuple(allowed)
-
-
-def _taskflow_team_profile_ids(
-    *, settings: Settings | None, profile_id: str
-) -> tuple[str, ...] | None:
-    """Return configured teammate AI profiles for one backlog profile."""
-
-    if settings is None:
-        return None
-    explicit_team_profile_ids = get_taskflow_team_config_service(settings).load(profile_id)
-    if explicit_team_profile_ids is not None:
-        return explicit_team_profile_ids
-    config = get_profile_runtime_config_service(settings).load(profile_id)
-    if config is None:
-        return None
-    team_profile_ids = config.taskflow_team_profile_ids
-    if team_profile_ids is None:
-        return None
-    return tuple(str(item).strip() for item in team_profile_ids if str(item).strip())
 
 
 def _new_identifier(prefix: str) -> str:
@@ -4460,7 +4595,7 @@ def _build_task_block_state(
 
 
 def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
-    """Return whether one database error comes from the active AI owner uniqueness guard."""
+    """Return whether one database error comes from the active employee uniqueness guard."""
 
     message = " ".join(
         str(part).strip()
@@ -4471,7 +4606,12 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
         )
         if part is not None
     ).lower()
-    return "ux_task_active_ai_owner" in message or (
+    return (
+        "ux_task_active_employee_owner" in message
+        or "ux_task_active_employee_claim_owner" in message
+        or "ux_task_active_ai_owner" in message
+        or "ux_task_active_ai_claim_owner" in message
+    ) or (
         (
             "unique constraint failed" in message
             or "duplicate key value violates unique constraint" in message
@@ -5020,6 +5160,8 @@ async def _require_task(
 async def _append_task_comment_event(
     *,
     repo: TaskFlowRepository,
+    settings: Settings | None,
+    profile_id: str,
     task_id: str,
     actor_type: str,
     actor_ref: str,
@@ -5028,7 +5170,11 @@ async def _append_task_comment_event(
     task_run_id: int | None = None,
 ) -> TaskEvent:
     details: dict[str, object] = {"comment_type": comment_type}
-    mentions = _extract_task_mentions(message)
+    mentions = await _extract_active_task_mentions(
+        settings=settings,
+        profile_id=profile_id,
+        message=message,
+    )
     if mentions:
         details["mentions"] = mentions
     row = await repo.create_task_event(
@@ -5104,23 +5250,17 @@ async def _record_task_wake_requested(
 
 
 def _extract_task_mentions(message: str) -> list[dict[str, str]]:
-    """Parse lightweight @profile and @profile:subagent mentions from comments."""
+    """Parse lightweight profile-local @employee mentions from comments."""
 
     mentions: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for match in _MENTION_PATTERN.finditer(message):
-        profile_id = str(match.group(1) or "").strip()
-        subagent_name = str(match.group(2) or "").strip()
-        if not profile_id:
+        employee_id = str(match.group(1) or "").strip()
+        if not employee_id or parse_employee_owner_ref(employee_id) is None:
             continue
-        if subagent_name:
-            owner_type = AI_SUBAGENT_OWNER_TYPE
-            owner_ref = f"{profile_id}:{subagent_name}"
-            token = f"@{profile_id}:{subagent_name}"
-        else:
-            owner_type = "ai_profile"
-            owner_ref = profile_id
-            token = f"@{profile_id}"
+        owner_type = EMPLOYEE_OWNER_TYPE
+        owner_ref = employee_id
+        token = f"@{employee_id}"
         key = (owner_type, owner_ref)
         if key in seen:
             continue
@@ -5133,6 +5273,33 @@ def _extract_task_mentions(message: str) -> list[dict[str, str]]:
             }
         )
     return mentions
+
+
+async def _extract_active_task_mentions(
+    *,
+    settings: Settings | None,
+    profile_id: str,
+    message: str,
+) -> list[dict[str, str]]:
+    mentions = _extract_task_mentions(message)
+    if not mentions:
+        return []
+    employee_service = EmployeeService(settings or get_settings())
+    active_mentions: list[dict[str, str]] = []
+    for mention in mentions:
+        if mention.get("owner_type") != EMPLOYEE_OWNER_TYPE:
+            continue
+        employee_id = mention.get("owner_ref") or ""
+        try:
+            employee = await employee_service.get_employee(
+                profile_id=profile_id,
+                employee_id=employee_id,
+            )
+        except EmployeeServiceError:
+            continue
+        if employee.status == "active":
+            active_mentions.append(mention)
+    return active_mentions
 
 
 async def _record_document_event(

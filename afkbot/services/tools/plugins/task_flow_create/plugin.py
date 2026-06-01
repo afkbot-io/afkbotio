@@ -23,8 +23,6 @@ class TaskFlowCreateParams(ToolParameters):
     description: str | None = None
     default_owner_type: str | None = Field(default=None, max_length=32)
     default_owner_ref: str | None = Field(default=None, max_length=255)
-    default_owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    default_owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     labels: tuple[str, ...] = ()
 
 
@@ -60,8 +58,6 @@ class TaskFlowCreateTool(ToolBase):
                 field_prefix="default_owner",
                 owner_type=payload.default_owner_type,
                 owner_ref=payload.default_owner_ref,
-                owner_profile_id=payload.default_owner_profile_id,
-                owner_subagent_name=payload.default_owner_subagent_name,
             )
             item = await service.create_flow(
                 profile_id=target_profile_id,

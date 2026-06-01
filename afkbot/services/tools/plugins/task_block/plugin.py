@@ -34,12 +34,8 @@ class TaskBlockParams(ToolParameters):
     retry_after_sec: int | None = Field(default=None, ge=1)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     reviewer_type: str | None = Field(default=None, max_length=32)
     reviewer_ref: str | None = Field(default=None, max_length=255)
-    reviewer_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    reviewer_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class TaskBlockTool(ToolBase):
@@ -89,15 +85,11 @@ class TaskBlockTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
             resolved_reviewer_type, resolved_reviewer_ref = resolve_task_owner_inputs(
                 field_prefix="reviewer",
                 owner_type=payload.reviewer_type,
                 owner_ref=payload.reviewer_ref,
-                owner_profile_id=payload.reviewer_profile_id,
-                owner_subagent_name=payload.reviewer_subagent_name,
             )
             item = await service.block_task(
                 profile_id=target_profile_id,

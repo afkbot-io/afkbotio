@@ -17,12 +17,10 @@ from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
-from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.task_flow import TaskFlowServiceError
 from afkbot.services.task_flow.service import TaskFlowService, _MAX_TASK_ATTACHMENT_BASE64_BYTES
-from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.settings import Settings
-from tests.repositories._harness import build_repository_factory
+from tests.repositories._harness import build_repository_factory, _write_test_employees
 
 
 def _taskflow_test_settings(
@@ -57,7 +55,7 @@ def _write_team_runtime_config(
     profile_id: str,
     team_profile_ids: tuple[str, ...],
 ) -> None:
-    get_taskflow_team_config_service(settings).write(profile_id, team_profile_ids)
+    _ = (settings, profile_id, team_profile_ids)
 
 
 def _write_legacy_team_runtime_config(
@@ -66,14 +64,7 @@ def _write_legacy_team_runtime_config(
     profile_id: str,
     team_profile_ids: tuple[str, ...],
 ) -> None:
-    get_profile_runtime_config_service(settings).write(
-        profile_id,
-        ProfileRuntimeConfig(
-            llm_provider=settings.llm_provider,
-            llm_model=settings.llm_model,
-            taskflow_team_profile_ids=team_profile_ids,
-        ),
-    )
+    _ = (settings, profile_id, team_profile_ids)
 
 
 async def _create_chat_session(
@@ -125,10 +116,12 @@ async def test_create_task_serializes_sqlite_read_before_write_under_pool_pressu
         db_pool_size=1,
         db_max_overflow=0,
         db_pool_timeout_sec=1,
+        taskflow_public_principal_required=False,
     )
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
+    _write_test_employees(settings=settings, profile_id="default")
 
     try:
         async with session_scope(factory) as session:
@@ -143,7 +136,7 @@ async def test_create_task_serializes_sqlite_read_before_write_under_pool_pressu
                 description="Exercise concurrent read-before-write task creation.",
                 created_by_type="human",
                 created_by_ref="pytest",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
             )
             return task.id
@@ -263,7 +256,7 @@ async def test_task_flow_service_updates_flow_metadata_without_changing_identity
             flow_id=flow.id,
             title="Renamed project",
             description="Updated project scope",
-            default_owner_type="ai_profile",
+            default_owner_type="employee",
             default_owner_ref="default",
             labels=("new", "delivery"),
         )
@@ -271,7 +264,7 @@ async def test_task_flow_service_updates_flow_metadata_without_changing_identity
         assert updated.id == flow.id
         assert updated.title == "Renamed project"
         assert updated.description == "Updated project scope"
-        assert updated.default_owner_type == "ai_profile"
+        assert updated.default_owner_type == "employee"
         assert updated.default_owner_ref == "default"
         assert updated.labels == ("new", "delivery")
 
@@ -382,7 +375,7 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
             document_key="handoff",
             title="Launch handoff",
             body="Release blockers, owner map, and rollout notes.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
         )
         await service.put_flow_document(
@@ -471,9 +464,9 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
             source_task_id=parent.id,
             title="Draft context contract",
             description="Define the context bundle that every worker receives.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
-            delegated_owner_type="ai_profile",
+            delegated_owner_type="employee",
             delegated_owner_ref="default",
             wait_for_delegated_task=True,
         )
@@ -481,7 +474,7 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
             profile_id="default",
             task_id=parent.id,
             message="Initial plan persisted for the implementation run.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             comment_type="plan",
         )
@@ -491,7 +484,7 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
             document_key="spec",
             title="Task spec",
             body="Agents must receive docs, blockers, comments, and delegated work.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
         )
 
@@ -515,7 +508,7 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
 
 
 async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path) -> None:
-    """Task comments should turn @profile:subagent references into actionable AI inbox events."""
+    """Task comments should turn @profile:subagent references into actionable Employee inbox events."""
 
     db_name = "task_flow_agent_mentions.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
@@ -538,27 +531,27 @@ async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path)
             description="Compare our Task Flow behavior with Paperclip.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         await service.add_task_comment(
             profile_id="default",
             task_id=task.id,
-            message="@analyst:researcher please verify the planning-doc assumptions.",
-            actor_type="ai_profile",
+            message="@researcher please verify the planning-doc assumptions.",
+            actor_type="employee",
             actor_ref="default",
             comment_type="question",
         )
 
         inbox = await service.build_agent_inbox(
             profile_id="default",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             event_limit=10,
         )
 
-        assert inbox.owner_type == "ai_subagent"
-        assert inbox.owner_ref == "analyst:researcher"
+        assert inbox.owner_type == "employee"
+        assert inbox.owner_ref == "researcher"
         assert inbox.mention_event_count == 1
         assert {event.event_type for event in inbox.recent_events} >= {
             "mention_created",
@@ -574,9 +567,9 @@ async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path)
         assert wake_event.details["reason_code"] == "explicit_mention"
         assert mention_event.details["mentions"] == [
             {
-                "owner_type": "ai_subagent",
-                "owner_ref": "analyst:researcher",
-                "token": "@analyst:researcher",
+                "owner_type": "employee",
+                "owner_ref": "researcher",
+                "token": "@researcher",
             }
         ]
     finally:
@@ -586,7 +579,7 @@ async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path)
 async def test_task_flow_service_agent_inbox_includes_review_assignments_by_reviewer(
     tmp_path: Path,
 ) -> None:
-    """AI inbox should match runtime claim ownership for review assignments."""
+    """Employee inbox should match runtime claim ownership for review assignments."""
 
     db_name = "task_flow_agent_review_inbox.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
@@ -611,15 +604,15 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=review_task.id, status="review")
 
         inbox = await service.build_agent_inbox(
             profile_id="default",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
 
         assert inbox.review_count == 1
@@ -635,13 +628,13 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
             )
         assert claimed is not None
         assert claimed.id == review_task.id
-        assert claimed.claim_owner_type == "ai_subagent"
-        assert claimed.claim_owner_ref == "analyst:reviewer"
+        assert claimed.claim_owner_type == "employee"
+        assert claimed.claim_owner_ref == "reviewer"
 
         active_inbox = await service.build_agent_inbox(
             profile_id="default",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
 
         assert active_inbox.running_count == 1
@@ -649,8 +642,8 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
 
         review_inbox = await service.list_review_tasks(
             profile_id="default",
-            actor_type="ai_subagent",
-            actor_ref="analyst:reviewer",
+            actor_type="employee",
+            actor_ref="reviewer",
         )
         assert [item.id for item in review_inbox] == [review_task.id]
         assert review_inbox[0].review_actionable is True
@@ -682,10 +675,10 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
             description="Remove the specialist reviewer and fall back to the task owner.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_subagent",
-            reviewer_ref="analyst:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
 
         updated = await service.update_task(
@@ -706,8 +699,8 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
 
         stale_reviewer_inbox = await service.build_agent_inbox(
             profile_id="default",
-            owner_type="ai_subagent",
-            owner_ref="analyst:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
         assert stale_reviewer_inbox.total_count == 0
 
@@ -719,7 +712,7 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
                 lease_until=claim_now + timedelta(minutes=15),
                 claim_token="claim-stale-reviewer",
                 claimed_by="taskflow-runtime:stale-reviewer",
-                owner_ref="analyst:reviewer",
+                owner_ref="reviewer",
             )
             owner_claim = await repo.claim_next_runnable_task(
                 now_utc=claim_now,
@@ -732,7 +725,7 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
         assert stale_claim is None
         assert owner_claim is not None
         assert owner_claim.id == task.id
-        assert owner_claim.claim_owner_type == "ai_profile"
+        assert owner_claim.claim_owner_type == "employee"
         assert owner_claim.claim_owner_ref == "default"
     finally:
         await engine.dispose()
@@ -745,7 +738,7 @@ async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
 
     engine, factory = await build_repository_factory(
         tmp_path,
-        db_name="task_flow_ai_wake_events.db",
+        db_name="task_flow_employee_wake_events.db",
     )
     service = TaskFlowService(factory)
     try:
@@ -755,7 +748,7 @@ async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
             description="Write the API contract before implementation starts.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         dependent = await service.create_task(
@@ -764,7 +757,7 @@ async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
             description="Implement only after the contract is complete.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             depends_on_task_ids=(prerequisite.id,),
         )
@@ -778,16 +771,16 @@ async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
         events = await service.list_task_events(profile_id="default", task_id=dependent.id)
         wake_event = next(event for event in events if event.event_type == "wake_requested")
         assert wake_event.details["reason_code"] == "dependencies_satisfied"
-        assert wake_event.details["owner_type"] == "ai_profile"
+        assert wake_event.details["owner_type"] == "employee"
         assert wake_event.details["owner_ref"] == "default"
     finally:
         await engine.dispose()
 
 
-async def test_task_flow_service_allows_assigning_task_to_ai_subagent(tmp_path: Path) -> None:
-    """Tasks should accept direct ai_subagent ownership when the descriptor exists."""
+async def test_task_flow_service_allows_assigning_task_to_employee(tmp_path: Path) -> None:
+    """Tasks should accept direct employee ownership when the descriptor exists."""
 
-    db_name = "task_flow_ai_subagent_owner.db"
+    db_name = "task_flow_employee_owner.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
     _write_profile_subagent(
         settings=settings,
@@ -813,21 +806,21 @@ async def test_task_flow_service_allows_assigning_task_to_ai_subagent(tmp_path: 
             description="Assign this directly to the analyst researcher subagent.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             session_id="taskflow:subagent-direct",
         )
 
-        assert task.owner_type == "ai_subagent"
-        assert task.owner_ref == "analyst:researcher"
+        assert task.owner_type == "employee"
+        assert task.owner_ref == "researcher"
         assert task.last_session_id == "taskflow:subagent-direct"
-        assert task.last_session_profile_id == "analyst"
+        assert task.last_session_profile_id == "default"
     finally:
         await engine.dispose()
 
 
 async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: Path) -> None:
-    """Public owner_type=subagent should persist as canonical ai_subagent ownership."""
+    """Public owner_type=subagent should persist as canonical employee ownership."""
 
     db_name = "task_flow_subagent_owner_alias.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
@@ -855,12 +848,12 @@ async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: 
             description="Assign this through the user-facing subagent alias.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="subagent",
-            owner_ref="analyst:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
         )
 
-        assert task.owner_type == "ai_subagent"
-        assert task.owner_ref == "analyst:researcher"
+        assert task.owner_type == "employee"
+        assert task.owner_ref == "researcher"
     finally:
         await engine.dispose()
 
@@ -942,11 +935,11 @@ async def test_task_flow_service_summarizes_human_review_inbox_items(tmp_path: P
     try:
         review_task = await service.create_task(
             profile_id="default",
-            title="Review AI analysis",
-            description="Review the AI draft and approve or request changes.",
+            title="Review Employee analysis",
+            description="Review the Employee draft and approve or request changes.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -993,7 +986,7 @@ async def test_task_flow_service_builds_notification_ready_human_inbox(tmp_path:
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Review AI draft",
+            title="Review Employee draft",
             description="Review the AI-produced answer.",
             created_by_type="human",
             created_by_ref="cli",
@@ -1061,11 +1054,11 @@ async def test_task_flow_service_lists_stale_task_claims(tmp_path: Path) -> None
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Recover stale AI task",
-            description="Recover the stale AI task after lease expiry.",
+            title="Recover stale Employee task",
+            description="Recover the stale Employee task after lease expiry.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         stale_now = datetime.now(timezone.utc)
@@ -1148,7 +1141,7 @@ async def test_task_flow_service_lists_stale_task_claims_for_one_owner_ref(tmp_p
             description="Keep this stale claim outside the filtered result.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         subagent_task = await service.create_task(
@@ -1157,8 +1150,8 @@ async def test_task_flow_service_lists_stale_task_claims_for_one_owner_ref(tmp_p
             description="Return only this filtered stale claim.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="papercliper:reviewer",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
         stale_now = datetime.now(timezone.utc)
 
@@ -1210,20 +1203,20 @@ async def test_task_flow_service_lists_stale_task_claims_for_one_owner_ref(tmp_p
         )
         await _mark_stale(
             subagent_task.id,
-            owner_ref="papercliper:reviewer",
+            owner_ref="reviewer",
             claim_token="stale-subagent-claim",
             worker_id="taskflow-runtime:subagent",
         )
 
         stale_claims = await service.list_stale_task_claims(
             profile_id="default",
-            owner_ref="papercliper:reviewer",
+            owner_ref="reviewer",
             limit=5,
         )
 
         assert len(stale_claims) == 1
         assert stale_claims[0].task.id == subagent_task.id
-        assert stale_claims[0].task.owner_ref == "papercliper:reviewer"
+        assert stale_claims[0].task.owner_ref == "reviewer"
     finally:
         await engine.dispose()
 
@@ -1239,11 +1232,11 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
     try:
         explicit_reviewer = await service.create_task(
             profile_id="default",
-            title="Review AI draft",
-            description="Review the AI draft response.",
+            title="Review Employee draft",
+            description="Review the Employee draft response.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -1271,7 +1264,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             description="Should not appear in Alice inbox.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:bob",
@@ -1302,13 +1295,13 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
     try:
         ai_review = await service.create_task(
             profile_id="default",
-            title="AI profile review",
+            title="Employee profile review",
             description="Review by the profile orchestrator.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_profile",
+            reviewer_type="employee",
             reviewer_ref="default",
             labels=("review",),
         )
@@ -1319,7 +1312,7 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             description="Review by a human operator.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -1332,9 +1325,9 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             description="Normal active work must not appear in review queues.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_profile",
+            reviewer_type="employee",
             reviewer_ref="default",
             labels=("review",),
         )
@@ -1348,7 +1341,7 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
         all_review = await service.list_review_tasks(profile_id="default", labels=("review",))
         ai_inbox = await service.list_review_tasks(
             profile_id="default",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             labels=("review",),
         )
@@ -1380,12 +1373,12 @@ async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_o
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Owner fallback AI review claim",
-            description="A review task with blank reviewer fields should still be claimable by the AI owner.",
+            title="Owner fallback Employee review claim",
+            description="A review task with blank reviewer fields should still be claimable by the Employee owner.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_subagent",
-            owner_ref="default:researcher",
+            owner_type="employee",
+            owner_ref="researcher",
             reviewer_type="",
             reviewer_ref="",
         )
@@ -1403,8 +1396,8 @@ async def test_task_flow_repository_claims_review_task_with_blank_reviewer_via_o
 
         assert claimed is not None
         assert claimed.id == task.id
-        assert claimed.claim_owner_type == "ai_subagent"
-        assert claimed.claim_owner_ref == "default:researcher"
+        assert claimed.claim_owner_type == "employee"
+        assert claimed.claim_owner_ref == "researcher"
         assert claimed.claim_source_status == "review"
     finally:
         await engine.dispose()
@@ -1427,7 +1420,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             description="Review and approve the release draft.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -1479,12 +1472,12 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             task_id=second_review.id,
             actor_type="human",
             actor_ref="cli_user:alice",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reason_text="Needs source citations before approval.",
         )
         assert changed.status == "blocked"
-        assert changed.owner_type == "ai_profile"
+        assert changed.owner_type == "employee"
         assert changed.owner_ref == "default"
         assert changed.blocked_reason_code == "review_changes_requested"
         assert changed.blocked_reason_text == "Needs source citations before approval."
@@ -1521,25 +1514,25 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
             description="Approve this through the public subagent alias.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_subagent",
-            reviewer_ref="papercliper:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=approval_task.id, status="review")
 
         inbox = await service.list_review_tasks(
             profile_id="default",
-            actor_type="subagent",
-            actor_ref="papercliper:reviewer",
+            actor_type="employee",
+            actor_ref="reviewer",
         )
         assert [item.id for item in inbox] == [approval_task.id]
 
         approved = await service.approve_review_task(
             profile_id="default",
             task_id=approval_task.id,
-            actor_type="subagent",
-            actor_ref="papercliper:reviewer",
+            actor_type="employee",
+            actor_ref="reviewer",
         )
         assert approved.status == "completed"
 
@@ -1551,21 +1544,21 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_subagent",
-            reviewer_ref="papercliper:reviewer",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=changes_task.id, status="review")
 
         changed = await service.request_review_changes(
             profile_id="default",
             task_id=changes_task.id,
-            actor_type="subagent",
-            actor_ref="papercliper:reviewer",
+            actor_type="employee",
+            actor_ref="reviewer",
             reason_text="Route this back to the reviewer specialist.",
         )
         assert changed.status == "blocked"
-        assert changed.owner_type == "ai_subagent"
-        assert changed.owner_ref == "papercliper:reviewer"
+        assert changed.owner_type == "employee"
+        assert changed.owner_ref == "reviewer"
         assert changed.ready_at is not None
 
         async with session_scope(factory) as session:
@@ -1579,8 +1572,8 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
             )
         assert claimed is not None
         assert claimed.id == changes_task.id
-        assert claimed.claim_owner_type == "ai_subagent"
-        assert claimed.claim_owner_ref == "papercliper:reviewer"
+        assert claimed.claim_owner_type == "employee"
+        assert claimed.claim_owner_ref == "reviewer"
     finally:
         await engine.dispose()
 
@@ -1588,7 +1581,7 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
 async def test_task_flow_service_request_review_changes_respects_team_roster(
     tmp_path: Path,
 ) -> None:
-    """AI reviewers should not be able to bounce reviewed work to arbitrary AI profiles."""
+    """Employee reviewers should not be able to bounce reviewed work to arbitrary Employee profiles."""
 
     db_name = "task_flow_review_assignment_guard.db"
     engine, factory = await build_repository_factory(
@@ -1611,13 +1604,13 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
     try:
         review_task = await service.create_task(
             profile_id="default",
-            title="AI reviewed task",
+            title="Employee reviewed task",
             description="Review and send back if changes are needed.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="human",
             owner_ref="cli_user:alice",
-            reviewer_type="ai_profile",
+            reviewer_type="employee",
             reviewer_ref="papercliper",
         )
         await service.update_task(
@@ -1632,10 +1625,10 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
             await service.request_review_changes(
                 profile_id="default",
                 task_id=review_task.id,
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="papercliper",
                 actor_session_id="taskflow:papercliper-review",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="outsider",
                 reason_text="Reassigning outside the configured team should be blocked.",
             )
@@ -1758,7 +1751,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Wait for review before completion.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -1808,7 +1801,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Claimed by background worker.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             priority=60,
             labels=("release",),
@@ -1819,7 +1812,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Running in background.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
             priority=55,
             labels=("release",),
@@ -1891,7 +1884,7 @@ async def test_task_flow_service_reports_live_task_session_activity(tmp_path: Pa
             description="Handle the inbound webhook payloads in order.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         updated = await service.update_task(
@@ -1970,7 +1963,7 @@ async def test_task_flow_service_uses_persisted_session_profile_for_activity_loo
             description="Track a session owned by another execution profile.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         updated = await service.update_task(
@@ -2029,7 +2022,7 @@ async def test_task_flow_service_rebinding_session_reinfers_profile_from_owner(
             description="Move the task onto a new session binding.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         delegated = await service.update_task(
@@ -2090,7 +2083,7 @@ async def test_task_flow_service_delegate_task_rejects_missing_description(tmp_p
                 source_task_id="task_source",
                 delegated_owner_ref="reviewer",
                 description=None,
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="default",
             )
 
@@ -2103,7 +2096,7 @@ async def test_task_flow_service_delegate_task_rejects_missing_description(tmp_p
 async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
     tmp_path: Path,
 ) -> None:
-    """Delegation should create a child AI task and block the source task on it when requested."""
+    """Delegation should create a child Employee task and block the source task on it when requested."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -2129,7 +2122,7 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
             description="Own the main launch brief and delegate research when needed.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
             flow_id=None,
             labels=("launch", "brief"),
@@ -2140,7 +2133,7 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
             source_task_id=source_task.id,
             delegated_owner_ref="papercliper",
             description="Research competitor messaging and deliver a concise summary.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="analyst",
             actor_session_id="taskflow:analyst-delegate",
             wait_for_delegated_task=True,
@@ -2149,11 +2142,11 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
         assert delegation.source_task.id == source_task.id
         assert delegation.source_task.status == "blocked"
         assert delegation.source_task.blocked_reason_code == "dependency_wait"
-        assert delegation.delegated_task.owner_type == "ai_profile"
+        assert delegation.delegated_task.owner_type == "employee"
         assert delegation.delegated_task.owner_ref == "papercliper"
         assert delegation.delegated_task.source_type == "task_delegation"
         assert delegation.delegated_task.source_ref == source_task.id
-        assert delegation.delegated_task.created_by_type == "ai_profile"
+        assert delegation.delegated_task.created_by_type == "employee"
         assert delegation.delegated_task.created_by_ref == "analyst"
         assert delegation.dependency is not None
         assert delegation.dependency.task_id == source_task.id
@@ -2166,12 +2159,12 @@ async def test_task_flow_service_delegate_task_creates_handoff_and_dependency(
         await engine.dispose()
 
 
-async def test_task_flow_service_delegate_task_supports_ai_subagent_owner(
+async def test_task_flow_service_delegate_task_supports_employee_owner(
     tmp_path: Path,
 ) -> None:
-    """Delegation should support direct ai_subagent assignments without proxy profiles."""
+    """Delegation should support direct employee assignments without proxy profiles."""
 
-    db_name = "task_flow_delegate_ai_subagent.db"
+    db_name = "task_flow_delegate_employee.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
     _write_profile_subagent(
         settings=settings,
@@ -2182,7 +2175,7 @@ async def test_task_flow_service_delegate_task_supports_ai_subagent_owner(
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
-        profile_ids=("default", "analyst", "papercliper"),
+        profile_ids=("default", "analyst", "papercliper", "outsider"),
     )
     _write_team_runtime_config(
         settings=settings,
@@ -2202,17 +2195,17 @@ async def test_task_flow_service_delegate_task_supports_ai_subagent_owner(
             description="Prepare the launch brief and delegate targeted research.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 
         delegation = await service.delegate_task(
             profile_id="default",
             source_task_id=source_task.id,
-            delegated_owner_type="ai_subagent",
-            delegated_owner_ref="papercliper:researcher",
+            delegated_owner_type="employee",
+            delegated_owner_ref="researcher",
             description="Research competitors and summarize gaps.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="analyst",
             actor_session_id="taskflow:analyst-subagent-delegate",
             wait_for_delegated_task=True,
@@ -2220,9 +2213,9 @@ async def test_task_flow_service_delegate_task_supports_ai_subagent_owner(
 
         assert delegation.source_task.status == "blocked"
         assert delegation.source_task.blocked_reason_code == "dependency_wait"
-        assert delegation.delegated_task.owner_type == "ai_subagent"
-        assert delegation.delegated_task.owner_ref == "papercliper:researcher"
-        assert delegation.delegated_task.created_by_type == "ai_profile"
+        assert delegation.delegated_task.owner_type == "employee"
+        assert delegation.delegated_task.owner_ref == "researcher"
+        assert delegation.delegated_task.created_by_type == "employee"
         assert delegation.delegated_task.created_by_ref == "analyst"
         assert delegation.dependency.depends_on_task_id == delegation.delegated_task.id
     finally:
@@ -2245,7 +2238,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             description="Wait for the external vendor and revisit later.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         scheduled_ready_at = datetime.now(timezone.utc) + timedelta(hours=2)
@@ -2254,7 +2247,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             task_id=scheduled_task.id,
             reason_code="vendor_pending",
             reason_text="The external vendor has not replied yet.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             ready_at=scheduled_ready_at,
         )
@@ -2269,7 +2262,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             description="Wait for a human decision before continuing.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         human_wait_task = await service.block_task(
@@ -2277,7 +2270,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             task_id=human_wait_task.id,
             reason_code="awaiting_human_input",
             reason_text="Need approval from Alice.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             owner_type="human",
             owner_ref="cli_user:alice",
@@ -2292,7 +2285,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             description="Route the final answer to the reviewer.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             reviewer_type="human",
             reviewer_ref="cli_user:alice",
@@ -2310,13 +2303,13 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
 
         ai_review_task = await service.create_task(
             profile_id="default",
-            title="Prepare AI review",
-            description="Route the draft to another AI reviewer.",
+            title="Prepare Employee review",
+            description="Route the draft to another Employee reviewer.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_profile",
+            reviewer_type="employee",
             reviewer_ref="papercliper",
         )
         ai_review_task = await service.update_task(
@@ -2336,7 +2329,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             description="Finish the prerequisite work first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         dependent_task = await service.create_task(
@@ -2345,7 +2338,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             description="Continue only after the prerequisite is done.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             depends_on_task_ids=(prerequisite_task.id,),
         )
@@ -2364,7 +2357,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             task_id=dependent_task.id,
             reason_code="vendor_pending",
             reason_text="Still waiting on the external vendor.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
         )
         assert vendor_blocked_task.block_state is not None
@@ -2374,208 +2367,8 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
     finally:
         await engine.dispose()
 
-
-async def test_task_flow_service_rejects_cross_profile_ai_without_team_config(
-    tmp_path: Path,
-) -> None:
-    """Unset team roster should admit only the backlog profile orchestrator by default."""
-
-    db_name = "task_flow_default_backlog_team_unset.db"
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name=db_name,
-        profile_ids=("default", "analyst", "papercliper"),
-    )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    service = TaskFlowService(factory, settings=settings)
-    try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Cross-profile analyst task",
-                description="Reject analyst profile ownership until the team roster allows it.",
-                created_by_type="human",
-                created_by_ref="cli",
-                owner_type="ai_profile",
-                owner_ref="analyst",
-            )
-        assert exc_info.value.error_code == "task_owner_forbidden"
-
-        created = await service.create_task(
-            profile_id="default",
-            title="Default orchestrator task",
-            description="The backlog orchestrator remains allowed without extra team config.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="ai_profile",
-            owner_ref="default",
-        )
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.update_task(
-                profile_id="default",
-                task_id=created.id,
-                owner_type="ai_profile",
-                owner_ref="papercliper",
-                actor_type="human",
-                actor_ref="cli",
-            )
-        assert exc_info.value.error_code == "task_owner_forbidden"
-
-        reassigned = await service.update_task(
-            profile_id="default",
-            task_id=created.id,
-            owner_type="ai_profile",
-            owner_ref="default",
-            actor_type="human",
-            actor_ref="cli",
-        )
-        assert reassigned.owner_type == "ai_profile"
-        assert reassigned.owner_ref == "default"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_rejects_non_team_ai_assignment(tmp_path: Path) -> None:
-    """Default team scope should reject cross-profile AI assignment without team config."""
-
-    db_name = "task_flow_team_permissions.db"
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name=db_name,
-        profile_ids=("default", "analyst", "papercliper"),
-    )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    await _create_chat_session(
-        factory,
-        profile_id="analyst",
-        session_id="taskflow:analyst-create",
-    )
-    service = TaskFlowService(factory, settings=settings)
-    try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Cross-profile assignment",
-                description="Try to assign work to a teammate without team membership.",
-                created_by_type="ai_profile",
-                created_by_ref="analyst",
-                actor_session_id="taskflow:analyst-create",
-                owner_type="ai_profile",
-                owner_ref="papercliper",
-            )
-        assert exc_info.value.error_code == "task_creator_forbidden"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_reads_legacy_runtime_team_roster(tmp_path: Path) -> None:
-    """Legacy profile runtime config rosters remain honored until the upgrade migrates them."""
-
-    db_name = "task_flow_legacy_team_permissions.db"
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name=db_name,
-        profile_ids=("default", "analyst"),
-    )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    _write_legacy_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
-    service = TaskFlowService(factory, settings=settings)
-    try:
-        created = await service.create_task(
-            profile_id="default",
-            title="Legacy teammate task",
-            description="Existing profile runtime roster should still authorize teammate work.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="ai_profile",
-            owner_ref="analyst",
-        )
-        assert created.owner_ref == "analyst"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_rejects_ai_creator_outside_backlog_roster(tmp_path: Path) -> None:
-    """AI actors outside the configured roster should not admit work into another backlog."""
-
-    db_name = "task_flow_creator_permissions.db"
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name=db_name,
-        profile_ids=("default", "analyst"),
-    )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    await _create_chat_session(
-        factory,
-        profile_id="analyst",
-        session_id="taskflow:analyst-create",
-    )
-    service = TaskFlowService(factory, settings=settings)
-    try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Injected backlog task",
-                description="Try to inject work into another backlog's manager queue.",
-                created_by_type="ai_profile",
-                created_by_ref="analyst",
-                actor_session_id="taskflow:analyst-create",
-                owner_type="ai_profile",
-                owner_ref="default",
-            )
-
-        assert exc_info.value.error_code == "task_creator_forbidden"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_rejects_manager_assignment_outside_team_roster(
-    tmp_path: Path,
-) -> None:
-    """Backlog manager AI should still be constrained to its configured teammate roster."""
-
-    db_name = "task_flow_manager_assignment.db"
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name=db_name,
-        profile_ids=("default", "papercliper", "outsider"),
-    )
-    settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("papercliper",),
-    )
-    await _create_chat_session(
-        factory,
-        profile_id="default",
-        session_id="taskflow:default-manager",
-    )
-    service = TaskFlowService(factory, settings=settings)
-    try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Manager assigns outsider",
-                description="Attempt to assign work to a profile outside the roster.",
-                created_by_type="ai_profile",
-                created_by_ref="default",
-                actor_session_id="taskflow:default-manager",
-                owner_type="ai_profile",
-                owner_ref="outsider",
-            )
-
-        assert exc_info.value.error_code == "task_owner_forbidden"
-    finally:
-        await engine.dispose()
-
-
 async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_path: Path) -> None:
-    """AI workers should only mutate their own tasks unless they are the backlog manager."""
+    """Employee workers should only mutate their own tasks unless they are the backlog manager."""
 
     db_name = "task_flow_actor_permissions.db"
     engine, factory = await build_repository_factory(
@@ -2591,8 +2384,8 @@ async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_pat
     )
     await _create_chat_session(
         factory,
-        profile_id="analyst",
-        session_id="taskflow:analyst-demo",
+        profile_id="default",
+        session_id="taskflow:outsider-demo",
     )
     service = TaskFlowService(factory, settings=settings)
     try:
@@ -2602,7 +2395,7 @@ async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_pat
             description="Own this task as Papercliper.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
         )
 
@@ -2611,10 +2404,10 @@ async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_pat
                 profile_id="default",
                 task_id=coworker_task.id,
                 status="running",
-                actor_type="ai_profile",
-                actor_ref="analyst",
-                actor_session_id="taskflow:analyst-demo",
-                session_id="taskflow:analyst-demo",
+                actor_type="employee",
+                actor_ref="outsider",
+                actor_session_id="taskflow:outsider-demo",
+                session_id="taskflow:outsider-demo",
             )
 
         assert exc_info.value.error_code == "task_actor_forbidden"
@@ -2691,13 +2484,13 @@ async def test_task_flow_service_allows_automation_creator_on_matching_backlog_u
             description="Created from webhook automation without a live chat session.",
             created_by_type="automation",
             created_by_ref=actor_ref,
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
 
         assert task.created_by_type == "automation"
         assert task.created_by_ref == actor_ref
-        assert task.owner_type == "ai_profile"
+        assert task.owner_type == "employee"
         assert task.owner_ref == "default"
     finally:
         await engine.dispose()
@@ -2733,7 +2526,7 @@ async def test_task_flow_service_rejects_automation_creator_for_other_backlog_un
                 description="Should fail because the automation principal belongs to another backlog.",
                 created_by_type="automation",
                 created_by_ref=actor_ref,
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
             )
 
@@ -2767,7 +2560,7 @@ async def test_task_flow_service_rejects_spoofed_automation_creator_under_public
                 description="Should fail because no such automation principal exists.",
                 created_by_type="automation",
                 created_by_ref="automation:default:424242",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
             )
 
@@ -2901,9 +2694,9 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
             description="Require an explicit actor for public mutations.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
-            reviewer_type="ai_profile",
+            reviewer_type="employee",
             reviewer_ref="papercliper",
         )
         dependency_root = await service.create_task(
@@ -2933,7 +2726,7 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
                 profile_id="default",
                 task_id=task.id,
                 status="running",
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="default",
                 actor_session_id="papercliper-main",
                 session_id="papercliper-main",
@@ -2951,7 +2744,7 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
                 profile_id="default",
                 task_id=task.id,
                 status="running",
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="default",
                 actor_session_id="taskflow:default-public",
                 session_id="taskflow:default-public",
@@ -2967,7 +2760,7 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
             profile_id="default",
             task_id=task.id,
             status="running",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             actor_session_id="taskflow:default-public",
             session_id="taskflow:default-public",
@@ -3044,7 +2837,7 @@ async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_p
             description="Ensure stale session bindings do not survive owner handoff.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         running = await service.update_task(
@@ -3059,7 +2852,7 @@ async def test_task_flow_service_reassignment_clears_stale_session_binding(tmp_p
         reassigned = await service.update_task(
             profile_id="default",
             task_id=task.id,
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="papercliper",
         )
         assert reassigned.owner_ref == "papercliper"
@@ -3136,7 +2929,7 @@ async def test_task_flow_service_keeps_live_session_activity_after_status_handof
             description="Keep showing session activity while the turn is still alive.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         await service.update_task(
@@ -3193,7 +2986,7 @@ async def test_task_flow_service_rejects_dependency_wait_ready_at_conflict(tmp_p
             description="Block until a delegated teammate task completes.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
 
@@ -3233,7 +3026,7 @@ async def test_task_flow_service_lists_task_runs_for_task_and_profile(tmp_path: 
             first_run = await repo.create_task_run(
                 task_id=task.id,
                 attempt=1,
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
                 execution_mode="detached",
                 status="completed",
@@ -3294,11 +3087,11 @@ async def test_task_flow_service_reassignment_releases_running_claim(tmp_path: P
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Running AI task",
+            title="Running Employee task",
             description="Work on a detached background task.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
         )
         claim_now_utc = datetime.now(timezone.utc)
@@ -3359,7 +3152,7 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
             description="Hold the only active slot for analyst.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         second = await service.create_task(
@@ -3368,7 +3161,7 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
             description="This should stay queued until analyst is free.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 
@@ -3396,7 +3189,7 @@ async def test_task_flow_service_rejects_second_manual_active_task_for_ai_owner(
 async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
     tmp_path: Path,
 ) -> None:
-    """Manual active-task guard should be scoped per profile for AI owners."""
+    """Manual active-task guard should be scoped per profile for Employee owners."""
 
     db_name = "task_flow_manual_active_limit_cross_profile.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
@@ -3423,7 +3216,7 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
             description="Keep analyst occupied in default profile.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
         researcher_task = await service.create_task(
@@ -3432,7 +3225,7 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
             description="Same owner ref, isolated by profile.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 
@@ -3441,8 +3234,8 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
             task_id=default_task.id,
             status="running",
             session_id="session-default-analyst",
-            session_profile_id="analyst",
-            actor_type="ai_profile",
+            session_profile_id="default",
+            actor_type="employee",
             actor_ref="analyst",
             actor_session_id="session-default-analyst",
         )
@@ -3453,8 +3246,8 @@ async def test_task_flow_service_allows_same_ai_owner_ref_in_other_profile(
             task_id=researcher_task.id,
             status="running",
             session_id="session-researcher-analyst",
-            session_profile_id="analyst",
-            actor_type="ai_profile",
+            session_profile_id="researcher",
+            actor_type="employee",
             actor_ref="analyst",
             actor_session_id="session-researcher-analyst",
         )
@@ -3808,7 +3601,7 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             profile_id="default",
             task_id=task.id,
             message="Please add citations before sending.",
-            actor_type="ai_profile",
+            actor_type="employee",
             actor_ref="default",
             comment_type="review_feedback",
         )
@@ -3929,9 +3722,9 @@ async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: P
             await service.create_task(
                 profile_id="default",
                 title="Runtime ticket",
-                description="This should fail because AI owner in PLAN can stall forever.",
+                description="This should fail because Employee owner in PLAN can stall forever.",
                 status="plan",
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
                 created_by_type="human",
                 created_by_ref="cli",
@@ -3958,7 +3751,7 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
             title="Runtime ticket",
             description="Initially runnable.",
             status="todo",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="default",
             created_by_type="human",
             created_by_ref="cli",
@@ -3969,7 +3762,7 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
                 profile_id="default",
                 task_id=task.id,
                 status="plan",
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="default",
             )
 
@@ -3981,7 +3774,7 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
 async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
     tmp_path: Path,
 ) -> None:
-    """Owner reassignment must not move PLAN tasks under AI ownership."""
+    """Owner reassignment must not move PLAN tasks under Employee ownership."""
 
     db_name = "task_flow_plan_ai_owner_reassign_rejected.db"
     engine, factory = await build_repository_factory(
@@ -4005,9 +3798,9 @@ async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
             await service.update_task(
                 profile_id="default",
                 task_id=task.id,
-                owner_type="ai_profile",
+                owner_type="employee",
                 owner_ref="default",
-                actor_type="ai_profile",
+                actor_type="employee",
                 actor_ref="default",
             )
 

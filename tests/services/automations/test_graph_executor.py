@@ -19,7 +19,6 @@ from afkbot.services.automations.graph.contracts import (
 )
 from afkbot.services.automations.graph.os_sandbox import CodeNodeLaunch
 from afkbot.services.automations.graph.os_sandbox import OSSandboxUnavailableError
-from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
 from afkbot.services.subagents.contracts import (
     SubagentResultResponse,
     SubagentRunAccepted,
@@ -50,14 +49,7 @@ def _write_team_runtime_config(
     profile_id: str,
     team_profile_ids: tuple[str, ...],
 ) -> None:
-    get_profile_runtime_config_service(settings).write(
-        profile_id,
-        ProfileRuntimeConfig(
-            llm_provider=settings.llm_provider,
-            llm_model=settings.llm_model,
-            taskflow_team_profile_ids=team_profile_ids,
-        ),
-    )
+    _ = (settings, profile_id, team_profile_ids)
 
 
 class _GraphPersistingRunner(SubagentRunner):
@@ -1312,10 +1304,10 @@ async def test_graph_executor_task_create_node_creates_task(tmp_path: Path) -> N
         await engine.dispose()
 
 
-async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
+async def test_graph_executor_task_create_node_supports_employee_assignment(
     tmp_path: Path,
 ) -> None:
-    """Graph runtime should create Task Flow items assigned directly to one ai_subagent."""
+    """Graph runtime should create Task Flow items assigned directly to one employee."""
 
     _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
     engine, factory, service = await prepare_service(tmp_path)
@@ -1354,8 +1346,8 @@ async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
                         config={
                             "title": "Process researcher webhook",
                             "description_path": "default.event_id",
-                            "owner_type": "ai_subagent",
-                            "owner_ref": "analyst:researcher",
+                            "owner_type": "employee",
+                            "owner_ref": "researcher",
                             "labels": ["automation", "subagent"],
                         },
                     ),
@@ -1381,17 +1373,17 @@ async def test_graph_executor_task_create_node_supports_ai_subagent_assignment(
         task_payload = create_task.output["default"]["task"]
         assert task_payload["title"] == "Process researcher webhook"
         assert task_payload["description"] == "evt-task-create-subagent"
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "analyst:researcher"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "researcher"
         assert set(task_payload["labels"]) == {"automation", "subagent"}
     finally:
         await engine.dispose()
 
 
-async def test_graph_executor_task_create_node_supports_structured_ai_subagent_assignment(
+async def test_graph_executor_task_create_node_supports_structured_employee_assignment(
     tmp_path: Path,
 ) -> None:
-    """Graph runtime should accept structured ai_subagent owner inputs without manual owner_ref."""
+    """Graph runtime should accept structured employee owner inputs without manual owner_ref."""
 
     _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
     engine, factory, service = await prepare_service(tmp_path)
@@ -1430,8 +1422,8 @@ async def test_graph_executor_task_create_node_supports_structured_ai_subagent_a
                         config={
                             "title": "Process structured researcher webhook",
                             "description_path": "default.event_id",
-                            "owner_profile_id": "analyst",
-                            "owner_subagent_name": "researcher",
+                            "owner_type": "employee",
+                            "owner_ref": "researcher",
                             "labels": ["automation", "subagent"],
                         },
                     ),
@@ -1457,8 +1449,8 @@ async def test_graph_executor_task_create_node_supports_structured_ai_subagent_a
         task_payload = create_task.output["default"]["task"]
         assert task_payload["title"] == "Process structured researcher webhook"
         assert task_payload["description"] == "evt-task-create-structured-subagent"
-        assert task_payload["owner_type"] == "ai_subagent"
-        assert task_payload["owner_ref"] == "analyst:researcher"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "researcher"
     finally:
         await engine.dispose()
 

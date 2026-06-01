@@ -227,7 +227,7 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
             description="Analyze the backlog in the background and persist the result.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="ai_profile",
+            owner_type="employee",
             owner_ref="analyst",
         )
 

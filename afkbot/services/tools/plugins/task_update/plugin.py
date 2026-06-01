@@ -37,12 +37,8 @@ class TaskUpdateParams(ToolParameters):
     retry_after_sec: int | None = Field(default=None, ge=1)
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     reviewer_type: str | None = Field(default=None, max_length=32)
     reviewer_ref: str | None = Field(default=None, max_length=255)
-    reviewer_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    reviewer_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     requires_review: bool | None = None
     labels: tuple[str, ...] | None = None
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -84,8 +80,6 @@ class TaskUpdateTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
             reviewer_fields_explicit = bool(
@@ -93,8 +87,6 @@ class TaskUpdateTool(ToolBase):
                 & {
                     "reviewer_type",
                     "reviewer_ref",
-                    "reviewer_profile_id",
-                    "reviewer_subagent_name",
                 }
             )
             if reviewer_fields_explicit:
@@ -104,8 +96,6 @@ class TaskUpdateTool(ToolBase):
                     field_prefix="reviewer",
                     owner_type=payload.reviewer_type,
                     owner_ref=payload.reviewer_ref,
-                    owner_profile_id=payload.reviewer_profile_id,
-                    owner_subagent_name=payload.reviewer_subagent_name,
                 )
             else:
                 resolved_reviewer_type = TASK_FLOW_FIELD_UNSET

@@ -14,7 +14,6 @@ from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.models.task import Task
 from afkbot.models.task_flow import TaskFlow
 from afkbot.services.profile_runtime.runtime_secrets import get_profile_runtime_secrets_service
-from afkbot.services.task_flow.team_config import get_taskflow_team_config_service
 from afkbot.services.upgrade import UpgradeService
 from afkbot.settings import Settings
 
@@ -316,10 +315,10 @@ async def test_upgrade_service_canonicalizes_channel_endpoint_rows(tmp_path: Pat
     await engine.dispose()
 
 
-async def test_upgrade_service_materializes_taskflow_team_rosters_from_legacy_rows(
+async def test_upgrade_service_blocks_legacy_taskflow_ai_rows(
     tmp_path: Path,
 ) -> None:
-    """Upgrade runner should preserve pre-strict cross-profile Task Flow assignments."""
+    """Upgrade runner should make old AI profile/subagent rows explicit and inert."""
 
     settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
     engine = create_engine(settings)
@@ -365,9 +364,19 @@ async def test_upgrade_service_materializes_taskflow_team_rosters_from_legacy_ro
     finally:
         await service.shutdown()
 
-    step = next(item for item in report.steps if item.name == "taskflow_team_rosters")
+    step = next(item for item in report.steps if item.name == "taskflow_legacy_ai_rows")
     assert step.changed is True
-    assert get_taskflow_team_config_service(settings).load("default") == ("analyst", "qa")
+    async with session_scope(session_factory) as session:
+        task = await session.get(Task, "task_legacy")
+        flow = await session.get(TaskFlow, "flow_legacy")
+        assert task is not None
+        assert task.status == "blocked"
+        assert task.blocked_reason_code == "legacy_ai_principal"
+        assert task.owner_type == "human"
+        assert task.owner_ref == "legacy-taskflow-upgrade"
+        assert flow is not None
+        assert flow.default_owner_type is None
+        assert flow.default_owner_ref is None
     await engine.dispose()
 
 

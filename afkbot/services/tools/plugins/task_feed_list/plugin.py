@@ -8,6 +8,10 @@ from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_servic
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import (
+    resolve_task_tool_actor,
+    restrict_employee_read_owner_scope,
+)
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -20,8 +24,6 @@ class TaskFeedListParams(ToolParameters):
 
     owner_type: str | None = Field(default=None, max_length=32)
     owner_ref: str | None = Field(default=None, max_length=255)
-    owner_profile_id: str | None = Field(default=None, min_length=1, max_length=120)
-    owner_subagent_name: str | None = Field(default=None, min_length=1, max_length=255)
     task_limit: int = Field(default=10, ge=1, le=50)
     event_limit: int = Field(default=10, ge=1, le=50)
 
@@ -58,12 +60,25 @@ class TaskFeedListTool(ToolBase):
                 field_prefix="owner",
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
-                owner_profile_id=payload.owner_profile_id,
-                owner_subagent_name=payload.owner_subagent_name,
             )
+            owner_type, owner_ref, read_scope_error = await restrict_employee_read_owner_scope(
+                ctx=ctx,
+                settings=self._settings,
+                target_profile_id=target_profile_id,
+                owner_type=owner_type,
+                owner_ref=owner_ref,
+            )
+            if read_scope_error is not None:
+                return read_scope_error
             if owner_type is None and owner_ref is None:
-                owner_type = "ai_profile"
-                owner_ref = ctx.profile_id
+                actor = resolve_task_tool_actor(ctx)
+                if actor.actor_type != "employee":
+                    return ToolResult.error(
+                        error_code="invalid_owner",
+                        reason="owner_type and owner_ref are required outside employee runtime",
+                    )
+                owner_type = actor.actor_type
+                owner_ref = actor.actor_ref
             feed = await service.build_agent_inbox(
                 profile_id=target_profile_id,
                 owner_type=owner_type or "",

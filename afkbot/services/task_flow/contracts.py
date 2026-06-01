@@ -363,7 +363,7 @@ class HumanTaskInboxMetadata(BaseModel):
 
 
 class AgentTaskInboxMetadata(BaseModel):
-    """Notification-ready Task Flow inbox for an AI profile or subagent."""
+    """Notification-ready Task Flow inbox for an employee."""
 
     model_config = ConfigDict(extra="forbid")
 
