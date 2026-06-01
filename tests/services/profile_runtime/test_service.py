@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from afkbot.services.atomic_writes import atomic_text_write
 from afkbot.services.profile_runtime import ProfileRuntimeConfig
 from afkbot.services.profile_runtime.service import (
     ProfileService,
@@ -68,6 +69,10 @@ async def test_profile_service_creates_profile_with_config_and_policy(tmp_path: 
         assert (tmp_path / "profiles/analyst/bootstrap").is_dir()
         assert (tmp_path / "profiles/analyst/skills").is_dir()
         assert (tmp_path / "profiles/analyst/subagents").is_dir()
+        cto_path = tmp_path / "profiles/analyst/employees/cto.md"
+        assert cto_path.is_file()
+        assert "id: cto" in cto_path.read_text(encoding="utf-8")
+        assert "role: executive_orchestrator" in cto_path.read_text(encoding="utf-8")
         assert (tmp_path / "profiles/analyst/bootstrap/AGENTS.md").read_text(encoding="utf-8") == (
             "No profile-specific role instructions. Follow the global bootstrap and the current user request.\n"
         )
@@ -128,6 +133,7 @@ def test_run_profile_service_sync_creates_and_reads_default_profile(tmp_path: Pa
 
     assert created.id == "default"
     assert loaded.id == "default"
+    assert (tmp_path / "profiles/default/employees/cto.md").is_file()
 
 
 def test_run_profile_service_sync_keeps_existing_default_bootstrap_files(tmp_path: Path) -> None:
@@ -264,6 +270,52 @@ async def test_profile_service_removes_bootstrap_files_after_partial_seed_failur
         assert not (bootstrap_dir / "AGENTS.md").exists()
         assert not (bootstrap_dir / "IDENTITY.md").exists()
         assert not (tmp_path / "profiles/broken-bootstrap/.system/agent_config.json").exists()
+        assert await service.list() == []
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_profile_service_rolls_back_profile_files_when_default_employee_seed_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile creation should remain atomic if the default employee descriptor cannot be written."""
+
+    settings = Settings(db_url=f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}", root_dir=tmp_path)
+    service = ProfileService(settings)
+    original_write = atomic_text_write
+
+    def _fail_cto_write(path: Path, content: str, *, mode: int) -> None:
+        if path.name == "cto.md":
+            raise OSError("disk full during employee seed")
+        original_write(path, content, mode=mode)
+
+    monkeypatch.setattr(
+        "afkbot.services.profile_runtime.service.atomic_text_write",
+        _fail_cto_write,
+    )
+
+    try:
+        with pytest.raises(OSError, match="disk full during employee seed"):
+            await service.create(
+                profile_id="broken-employee",
+                name="Broken Employee",
+                runtime_config=ProfileRuntimeConfig(
+                    llm_provider="openai",
+                    llm_model="gpt-4o-mini",
+                ),
+                runtime_secrets=None,
+                policy_enabled=False,
+                policy_preset=None,
+                policy_capabilities=(),
+                policy_network_allowlist=(),
+            )
+
+        profile_root = tmp_path / "profiles/broken-employee"
+        assert not (profile_root / ".system/agent_config.json").exists()
+        assert not (profile_root / "bootstrap/AGENTS.md").exists()
+        assert not (profile_root / "employees/cto.md").exists()
         assert await service.list() == []
     finally:
         await service.shutdown()

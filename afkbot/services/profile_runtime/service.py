@@ -51,6 +51,22 @@ _PROFILE_BOOTSTRAP_STARTERS: dict[str, str] = {
 _GENERIC_PROFILE_BOOTSTRAP_STARTER = (
     "No profile-specific instructions in this bootstrap file. Use the global defaults."
 )
+_DEFAULT_CTO_EMPLOYEE_MARKDOWN = """---
+id: cto
+name: "CTO"
+title: "Technical Director"
+role: executive_orchestrator
+status: active
+can_delegate_to: []
+allowed_tools: ["task.*", "memory.*", "file.read", "diffs.render", "web.*", "http.request", "file.*", "bash.exec", "browser.*", "session.job.run", "subagent.run"]
+can_use_subagents: true
+max_active_tasks: 1
+---
+
+# CTO
+
+Default Task Flow employee for this profile. Owns decomposition, routing, dependency control, review escalation, and creation of the first discipline-specific employees.
+"""
 
 
 class ProfileServiceError(ValueError):
@@ -122,6 +138,7 @@ class ProfileService:
         config_written = False
         secrets_written = False
         created_bootstrap_files: list[Path] = []
+        created_employee_files: list[Path] = []
 
         async def _op(session: AsyncSession) -> ProfileDetails:
             nonlocal config_written, secrets_written, created_bootstrap_files
@@ -171,14 +188,19 @@ class ProfileService:
                     profile_id=profile_id,
                     created=created_bootstrap_files,
                 )
+                await asyncio.to_thread(
+                    self._seed_default_cto_employee,
+                    profile_id=profile_id,
+                    created=created_employee_files,
+                )
             return await self._build_details(row=row, session=session)
 
         try:
             return await self._with_session(_op)
         except Exception:
-            if config_written or secrets_written or created_bootstrap_files:
+            if config_written or secrets_written or created_bootstrap_files or created_employee_files:
                 async with self._profile_files_lock.acquire(profile_id):
-                    for path in created_bootstrap_files:
+                    for path in (*created_bootstrap_files, *created_employee_files):
                         if await asyncio.to_thread(path.exists):
                             await asyncio.to_thread(path.unlink)
                     if config_written:
@@ -252,6 +274,7 @@ class ProfileService:
                 else:
                     await asyncio.to_thread(self._runtime_secrets.remove, "default")
                 await asyncio.to_thread(self._seed_missing_bootstrap_files, profile_id="default")
+                await asyncio.to_thread(self._seed_default_cto_employee, profile_id="default")
             await session.flush()
             return await self._build_details(row=row, session=session)
 
@@ -517,6 +540,22 @@ class ProfileService:
             atomic_text_write(path, starter + "\n", mode=0o600)
             created_paths.append(path)
         return tuple(created_paths)
+
+    def _seed_default_cto_employee(
+        self,
+        *,
+        profile_id: str,
+        created: MutableSequence[Path] | None = None,
+    ) -> Path | None:
+        """Create a default Task Flow CTO employee when a profile has no CTO descriptor."""
+
+        path = self._settings.profiles_dir / profile_id / "employees" / "cto.md"
+        if path.exists():
+            return None
+        atomic_text_write(path, _DEFAULT_CTO_EMPLOYEE_MARKDOWN, mode=0o600)
+        if created is not None:
+            created.append(path)
+        return path
 
     async def shutdown(self) -> None:
         """Dispose owned database engine."""

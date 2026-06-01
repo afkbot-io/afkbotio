@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.10] - 2026-06-01
+
+### Added
+
+- New runtime profiles now seed a default Task Flow `cto` employee descriptor in
+  `profiles/<profile_id>/employees/cto.md`, giving every new organization a
+  root employee for Task Flow ownership, delegation, and org-chart setup.
+
+### Fixed
+
+- Profile creation rolls back the default employee descriptor together with
+  runtime config and bootstrap files if profile file seeding fails.
+
 ## [1.9.7] - 2026-05-27
 
 ### Added
