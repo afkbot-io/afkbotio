@@ -233,12 +233,10 @@ def _inspect_managed_update(*, context: ManagedInstallContext) -> UpdateAvailabi
 def _inspect_uv_tool_update(*, runtime_config: dict[str, object]) -> UpdateAvailability | None:
     """Check whether one legacy uv-tool install has a newer package/archive target."""
 
-    install_source = read_install_source_from_runtime_config(runtime_config)
-    if install_source is None:
-        install_source = (
-            _read_uv_tool_receipt_install_source(uv_executable=_resolve_uv_executable())
-            or default_package_install_source()
-        )
+    install_source = _resolve_uv_tool_install_source(
+        runtime_config=runtime_config,
+        uv_executable=_resolve_uv_executable(),
+    )
     return _inspect_installer_source_update(
         install_source=install_source,
         runtime_config=runtime_config,
@@ -252,6 +250,7 @@ def _inspect_installer_source_update(
 ) -> UpdateAvailability | None:
     """Check whether installer-source metadata points to a newer remote release."""
 
+    install_source = _prefer_uv_tool_receipt_source(install_source=install_source)
     if install_source.mode == "package":
         current_info = load_cli_version_info()
         saved_target = read_install_source_resolved_target_from_runtime_config(runtime_config)
@@ -417,13 +416,11 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
 def _run_uv_tool_update(*, settings: Settings, runtime_config: dict[str, object]) -> UpdateResult:
     """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
 
-    install_source = read_install_source_from_runtime_config(runtime_config)
     uv_executable = _resolve_uv_executable()
-    if install_source is None:
-        install_source = (
-            _read_uv_tool_receipt_install_source(uv_executable=uv_executable)
-            or default_package_install_source()
-        )
+    install_source = _resolve_uv_tool_install_source(
+        runtime_config=runtime_config,
+        uv_executable=uv_executable,
+    )
     _assert_installer_source_not_downgrade(install_source=install_source)
     return _run_installer_source_update(
         settings=settings,
@@ -440,6 +437,7 @@ def _run_installer_source_update(
 ) -> UpdateResult:
     """Replay one installer-style uv tool install and then apply maintenance."""
 
+    install_source = _prefer_uv_tool_receipt_source(install_source=install_source)
     uv_executable = _resolve_uv_executable()
     install_command = build_uv_tool_install_command(
         uv_executable=uv_executable,
@@ -661,6 +659,36 @@ def _resolve_uv_tool_dir(*, uv_executable: Path) -> Path:
             reason="uv did not report a tool directory",
         )
     return Path(output).resolve(strict=False)
+
+
+def _resolve_uv_tool_install_source(
+    *,
+    runtime_config: dict[str, object],
+    uv_executable: Path,
+) -> InstallSource:
+    """Resolve the source that should be replayed for one uv-tool install."""
+
+    saved_source = read_install_source_from_runtime_config(runtime_config)
+    receipt_source = _read_uv_tool_receipt_install_source(uv_executable=uv_executable)
+    if receipt_source is not None and receipt_source.mode != "package":
+        if saved_source is None or saved_source.mode == "package":
+            return receipt_source
+    return saved_source or receipt_source or default_package_install_source()
+
+
+def _prefer_uv_tool_receipt_source(*, install_source: InstallSource) -> InstallSource:
+    """Prefer a concrete GitHub/archive uv receipt over stale package metadata."""
+
+    if install_source.mode != "package":
+        return install_source
+    try:
+        uv_executable = _resolve_uv_executable()
+    except UpdateRuntimeError:
+        return install_source
+    receipt_source = _read_uv_tool_receipt_install_source(uv_executable=uv_executable)
+    if receipt_source is not None and receipt_source.mode != "package":
+        return receipt_source
+    return install_source
 
 
 def _read_uv_tool_receipt_install_source(*, uv_executable: Path) -> InstallSource | None:

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.13] - 2026-06-02
+
+### Fixed
+
+- `afk update` now prefers a GitHub/archive uv-tool receipt over stale package
+  runtime metadata, preventing a direct GitHub reinstall from being downgraded
+  by an older saved package source on the next update.
+- Release metadata and lockfile package metadata are aligned to `1.9.13`.
+
 ## [1.9.12] - 2026-06-02
 
 ### Fixed
