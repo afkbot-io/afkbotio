@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.14] - 2026-06-02
+
+### Fixed
+
+- `afk update` now treats the actual uv-tool receipt as the source of truth for
+  GitHub/archive installs, including receipts stored as `git` or `url`
+  requirements, so stale archive or package runtime metadata cannot replay an
+  older install source.
+- Release metadata and lockfile package metadata are aligned to `1.9.14`.
+
 ## [1.9.13] - 2026-06-02
 
 ### Fixed

@@ -671,16 +671,13 @@ def _resolve_uv_tool_install_source(
     saved_source = read_install_source_from_runtime_config(runtime_config)
     receipt_source = _read_uv_tool_receipt_install_source(uv_executable=uv_executable)
     if receipt_source is not None and receipt_source.mode != "package":
-        if saved_source is None or saved_source.mode == "package":
-            return receipt_source
+        return receipt_source
     return saved_source or receipt_source or default_package_install_source()
 
 
 def _prefer_uv_tool_receipt_source(*, install_source: InstallSource) -> InstallSource:
-    """Prefer a concrete GitHub/archive uv receipt over stale package metadata."""
+    """Prefer a concrete GitHub/archive uv receipt over stale runtime metadata."""
 
-    if install_source.mode != "package":
-        return install_source
     try:
         uv_executable = _resolve_uv_executable()
     except UpdateRuntimeError:
@@ -715,6 +712,9 @@ def _read_uv_tool_receipt_install_source(*, uv_executable: Path) -> InstallSourc
         git_url = str(requirement.get("git") or "").strip()
         if git_url:
             return InstallSource(mode="archive", spec=_uv_receipt_git_url_to_source_spec(git_url))
+        archive_url = str(requirement.get("url") or "").strip()
+        if archive_url:
+            return InstallSource(mode="archive", spec=archive_url)
         return default_package_install_source()
     return None
 
