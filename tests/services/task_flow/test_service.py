@@ -2769,6 +2769,27 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
         assert claimed.last_session_id == "taskflow:default-public"
         assert claimed.last_session_profile_id == "default"
 
+        analyst_task = await service.create_task(
+            profile_id="default",
+            title="Analyst public mutation target",
+            description="A different employee must not reuse another live task session.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="analyst",
+        )
+        with pytest.raises(TaskFlowServiceError) as hijack_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=analyst_task.id,
+                status="running",
+                actor_type="employee",
+                actor_ref="analyst",
+                actor_session_id="taskflow:default-public",
+                session_id="taskflow:default-public",
+            )
+        assert hijack_exc.value.error_code == "task_actor_required"
+
         reviewed = await service.update_task(
             profile_id="default",
             task_id=task.id,
@@ -3601,8 +3622,8 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             profile_id="default",
             task_id=task.id,
             message="Please add citations before sending.",
-            actor_type="employee",
-            actor_ref="default",
+            actor_type="human",
+            actor_ref="cli",
             comment_type="review_feedback",
         )
         assert comment.task_id == task.id
@@ -3612,7 +3633,7 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
         comments = await service.list_task_comments(profile_id="default", task_id=task.id)
         assert len(comments) == 1
         assert comments[0].id == comment.id
-        assert comments[0].actor_ref == "default"
+        assert comments[0].actor_ref == "cli"
 
         events = await service.list_task_events(profile_id="default", task_id=task.id)
         assert events[0].event_type == "comment_added"
@@ -3800,8 +3821,8 @@ async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
                 task_id=task.id,
                 owner_type="employee",
                 owner_ref="default",
-                actor_type="employee",
-                actor_ref="default",
+                actor_type="human",
+                actor_ref="cli",
             )
 
         assert exc_info.value.error_code == "task_plan_requires_human_owner"

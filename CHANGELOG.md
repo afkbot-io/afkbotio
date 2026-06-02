@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.15] - 2026-06-02
+
+### Fixed
+
+- Task Flow now turns structured employee blocker handoffs into idempotent
+  manager escalation tasks for the blocked employee's active direct manager,
+  wakes that manager, and annotates the blocked source task so autonomous
+  recovery can continue without an operator manually creating follow-up work.
+- Task Flow no longer treats root employees as global dispatchers for
+  assignment changes; employee reassignment remains scoped to explicit reports,
+  derived reports, and `can_delegate_to` targets.
+- Task Flow employee prompts now describe manager escalation work as active
+  management duty and tell blocked workers to emit structured handoff blocker
+  codes when ownership policy prevents progress.
+- Manager escalation source tasks now stay parked until a human operator or the
+  responsible manager resolves them; the blocked employee cannot re-arm the
+  source task by setting `ready_at` or moving it back to `todo`.
+- Release metadata and lockfile package metadata are aligned to `1.9.15`.
+
 ## [1.9.14] - 2026-06-02
 
 ### Fixed

@@ -16,6 +16,9 @@ Team Orchestrator protocol.
   dependencies, review expectations, and self-contained prompts.
 - Delegate specialist execution only to employees listed in your descriptor or org chart.
   Do not overload one employee with parallel active work.
+- Treat manager_escalation tasks as active management work: inspect the source task,
+  decide whether to reassign, delegate remediation, split work, or escalate upward, and
+  update the source task so it has a clear next executable owner, dependency, or terminal state.
 - Keep blocked, review, running, and delegated tasks visible by leaving task.comment.add
   progress notes and updating status through task.* tools.
 - Close the parent task only after dependent worker tasks, review, docs, and validation
@@ -43,6 +46,8 @@ Task Flow worker protocol.
 - When a task is ready for review, set status=review without retry timers. If a timer field
   is irrelevant, omit it instead of sending null placeholders.
 - If blocked, persist the blocker with task.block or task.update instead of only saying it.
+- If policy or ownership prevents you from assigning work to the right employee, block
+  with manager_reassignment_required and include the forbidden action and target employee.
 - If another specialist is required, ask the orchestrator through comments or delegate only
   when the current task scope explicitly allows it.
 - Before finishing, leave a handoff note with files changed, validation run, remaining risk,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
+from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.repositories.run_repo import RunRepository
 from afkbot.repositories.runlog_repo import RunlogRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -210,6 +212,58 @@ async def test_task_flow_accepts_existing_profile_employee_owner(tmp_path: Path)
     assert task.owner_ref == "cto"
 
 
+async def test_root_employee_cannot_manage_unrelated_task_without_delegation(
+    tmp_path: Path,
+) -> None:
+    service = await _service(tmp_path, "employee_root_scope_guard.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="cto")
+    _write_employee(tmp_path, profile_id="default", employee_id="developer")
+    task = await service.create_task(
+        profile_id="default",
+        title="Unrelated employee task",
+        description="A root employee is not a global dispatcher by default.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="developer",
+    )
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            owner_type="employee",
+            owner_ref="cto",
+            actor_type="employee",
+            actor_ref="cto",
+        )
+
+    assert exc_info.value.error_code == "task_actor_forbidden"
+
+
+async def test_root_employee_without_reports_cannot_manage_flows(tmp_path: Path) -> None:
+    service = await _service(tmp_path, "employee_root_flow_scope_guard.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="cto")
+    flow = await service.create_flow(
+        profile_id="default",
+        title="Operator flow",
+        description="Root employees without reports cannot mutate flow routing.",
+        created_by_type="human",
+        created_by_ref="cli",
+    )
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.update_flow(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Taken over",
+            actor_type="employee",
+            actor_ref="cto",
+        )
+
+    assert exc_info.value.error_code == "task_actor_forbidden"
+
+
 async def test_task_flow_rejects_missing_employee_owner(tmp_path: Path) -> None:
     service = await _service(tmp_path, "missing_employee_owner.db")
 
@@ -325,7 +379,11 @@ async def test_manager_employee_can_comment_on_direct_report_task(tmp_path: Path
 
 
 async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Path) -> None:
-    service = await _service(tmp_path, "employee_manager_escalation.db")
+    settings, engine, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_manager_escalation.db",
+    )
+    _ = settings, engine
     _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
     _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
     task = await service.create_task(
@@ -349,15 +407,475 @@ async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Pat
 
     assert blocked.status == "blocked"
     assert blocked.owner_ref == "qa-reviewer"
+    manager_tasks = await service.list_tasks(
+        profile_id="default",
+        owner_type="employee",
+        owner_ref="qa",
+    )
+    escalation_task = next(
+        item for item in manager_tasks if item.source_type == "manager_escalation"
+    )
+    assert escalation_task.status == "todo"
+    assert escalation_task.source_ref == task.id
+    assert "task_owner_forbidden" in escalation_task.description
     manager_feed = await service.build_agent_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="qa",
     )
+    assert any(item.id == escalation_task.id for item in manager_feed.tasks)
     assert manager_feed.recent_events
-    assert manager_feed.recent_events[0].event_type == "wake_requested"
-    assert manager_feed.recent_events[0].details["escalation_type"] == "manager_reassignment"
-    assert manager_feed.recent_events[0].details["source_owner_ref"] == "qa-reviewer"
+    assert any(
+        event.event_type == "wake_requested"
+        and event.details["escalation_type"] == "manager_reassignment"
+        and event.details["source_owner_ref"] == "qa-reviewer"
+        for event in manager_feed.recent_events
+    )
+    worker_feed = await service.build_agent_inbox(
+        profile_id="default",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    assert all(item.id != task.id for item in worker_feed.tasks)
+    async with session_scope(factory) as session:
+        claim_now = datetime.now(timezone.utc)
+        worker_claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+            now_utc=claim_now,
+            lease_until=claim_now + timedelta(minutes=15),
+            claim_token="claim-blocked-source",
+            claimed_by="taskflow-runtime:qa-reviewer",
+            profile_id="default",
+            owner_ref="qa-reviewer",
+        )
+        claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+            now_utc=claim_now,
+            lease_until=claim_now + timedelta(minutes=15),
+            claim_token="claim-manager-escalation",
+            claimed_by="taskflow-runtime:qa",
+            profile_id="default",
+            owner_ref="qa",
+        )
+    assert worker_claimed is None
+    assert claimed is not None
+    assert claimed.id == escalation_task.id
+    assert claimed.claim_owner_ref == "qa"
+
+
+async def test_manager_reassignment_blocker_rejects_timed_revisit(tmp_path: Path) -> None:
+    service = await _service(tmp_path, "employee_manager_escalation_ready_at.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Timed manager handoff",
+        description="Manager handoffs must park source work until routing changes.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.block_task(
+            profile_id="default",
+            task_id=task.id,
+            reason_code="manager_reassignment_required",
+            reason_text="Needs manager handoff after task_owner_forbidden.",
+            actor_type="employee",
+            actor_ref="qa-reviewer",
+            ready_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+
+    assert exc_info.value.error_code == "task_manager_escalation_ready_at_conflict"
+
+
+async def test_orchestrator_handoff_blocker_parks_source_task(tmp_path: Path) -> None:
+    settings, engine, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_orchestrator_handoff_escalation.db",
+    )
+    _ = settings, engine
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Orchestrator handoff blocker",
+        description="A supported escalation blocker should park source work.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+
+    blocked = await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="task_owner_forbidden",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    assert blocked.ready_at is None
+    assert blocked.blocked_reason_code == "manager_reassignment_required"
+    worker_feed = await service.build_agent_inbox(
+        profile_id="default",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    assert all(item.id != task.id for item in worker_feed.tasks)
+    async with session_scope(factory) as session:
+        claim_now = datetime.now(timezone.utc)
+        worker_claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+            now_utc=claim_now,
+            lease_until=claim_now + timedelta(minutes=15),
+            claim_token="claim-orchestrator-handoff-source",
+            claimed_by="taskflow-runtime:qa-reviewer",
+            profile_id="default",
+            owner_ref="qa-reviewer",
+        )
+    assert worker_claimed is None
+
+
+async def test_review_changes_manager_handoff_creates_escalation_without_source_revisit(
+    tmp_path: Path,
+) -> None:
+    settings, engine, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_review_changes_manager_escalation.db",
+    )
+    _ = settings, engine
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Review handoff blocker",
+        description="Review changes can require manager routing.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="human",
+        owner_ref="cli",
+        reviewer_type="employee",
+        reviewer_ref="qa-reviewer",
+    )
+    await service.update_task(profile_id="default", task_id=task.id, status="review")
+
+    changed = await service.request_review_changes(
+        profile_id="default",
+        task_id=task.id,
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    assert changed.status == "blocked"
+    assert changed.owner_ref == "qa-reviewer"
+    assert changed.ready_at is None
+    assert changed.blocked_reason_code == "manager_reassignment_required"
+    async with session_scope(factory) as session:
+        repo = TaskFlowRepository(session)
+        escalations = await repo.list_tasks_by_source(
+            profile_id="default",
+            source_type="manager_escalation",
+            source_ref=task.id,
+        )
+        claim_now = datetime.now(timezone.utc)
+        worker_claimed = await repo.claim_next_runnable_task(
+            now_utc=claim_now,
+            lease_until=claim_now + timedelta(minutes=15),
+            claim_token="claim-review-manager-source",
+            claimed_by="taskflow-runtime:qa-reviewer",
+            profile_id="default",
+            owner_ref="qa-reviewer",
+        )
+
+    assert len(escalations) == 1
+    assert escalations[0].owner_ref == "qa"
+    assert worker_claimed is None
+
+
+async def test_manager_handoff_update_clears_existing_ready_at(tmp_path: Path) -> None:
+    settings, engine, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_manager_escalation_ready_at_clear.db",
+    )
+    _ = settings, engine
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Existing revisit blocker",
+        description="Changing blocker class must clear stale ready_at.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    stale_ready_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="review_changes_requested",
+        reason_text="Retry later.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+        ready_at=stale_ready_at,
+    )
+
+    updated = await service.update_task(
+        profile_id="default",
+        task_id=task.id,
+        blocked_reason_code="task_owner_forbidden",
+        blocked_reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    assert updated.blocked_reason_code == "manager_reassignment_required"
+    assert updated.ready_at is None
+    async with session_scope(factory) as session:
+        claim_now = datetime.now(timezone.utc)
+        claimed = await TaskFlowRepository(session).claim_next_runnable_task(
+            now_utc=claim_now,
+            lease_until=claim_now + timedelta(minutes=15),
+            claim_token="claim-stale-ready-at-source",
+            claimed_by="taskflow-runtime:qa-reviewer",
+            profile_id="default",
+            owner_ref="qa-reviewer",
+        )
+    assert claimed is None
+
+
+async def test_manager_handoff_source_cannot_be_rearmed_without_blocker_fields(
+    tmp_path: Path,
+) -> None:
+    service = await _service(tmp_path, "employee_manager_escalation_rearm_guard.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Parked handoff blocker",
+        description="Omitting blocker fields must not clear manager handoff state.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="blocked",
+            ready_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            actor_type="employee",
+            actor_ref="qa-reviewer",
+        )
+    assert exc_info.value.error_code == "task_manager_escalation_ready_at_conflict"
+
+    preserved = await service.update_task(
+        profile_id="default",
+        task_id=task.id,
+        status="blocked",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+    assert preserved.blocked_reason_code == "manager_reassignment_required"
+    assert preserved.ready_at is None
+
+
+async def test_manager_handoff_source_owner_cannot_move_source_back_to_todo(
+    tmp_path: Path,
+) -> None:
+    service = await _service(tmp_path, "employee_manager_escalation_owner_rearm_guard.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Parked source cannot self-reactivate",
+        description="Source owner must not resolve manager handoff blockers alone.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="todo",
+            actor_type="employee",
+            actor_ref="qa-reviewer",
+        )
+
+    assert exc_info.value.error_code == "task_manager_escalation_resolution_forbidden"
+    refreshed = await service.get_task(profile_id="default", task_id=task.id)
+    assert refreshed.status == "blocked"
+    assert refreshed.blocked_reason_code == "manager_reassignment_required"
+    assert refreshed.ready_at is None
+
+
+async def test_direct_manager_can_resolve_manager_handoff_source(
+    tmp_path: Path,
+) -> None:
+    service = await _service(tmp_path, "employee_manager_escalation_manager_resolves.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Manager resolves source blocker",
+        description="Direct manager can deliberately requeue source work after triage.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    updated = await service.update_task(
+        profile_id="default",
+        task_id=task.id,
+        status="todo",
+        actor_type="employee",
+        actor_ref="qa",
+    )
+
+    assert updated.status == "todo"
+    assert updated.blocked_reason_code is None
+    assert updated.blocked_reason_text is None
+    assert updated.ready_at is not None
+
+
+async def test_manager_reassignment_escalation_is_idempotent_for_repeated_wakes(
+    tmp_path: Path,
+) -> None:
+    _, _, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_manager_escalation_idempotent.db",
+    )
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="Repeated QA blocker",
+        description="Repeated comments should not create duplicate manager tasks.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+    await service.add_task_comment(
+        profile_id="default",
+        task_id=task.id,
+        actor_type="human",
+        actor_ref="cli",
+        message="Проверь можешь ли ты начать задачу",
+    )
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    async with session_scope(factory) as session:
+        escalations = await TaskFlowRepository(session).list_tasks_by_source(
+            profile_id="default",
+            source_type="manager_escalation",
+            source_ref=task.id,
+        )
+
+    assert len(escalations) == 1
+    assert escalations[0].owner_ref == "qa"
+    assert escalations[0].status == "todo"
+
+
+async def test_manager_reassignment_without_active_direct_manager_is_unroutable(
+    tmp_path: Path,
+) -> None:
+    _, _, factory, service = await _runtime_fixture(
+        tmp_path,
+        "employee_manager_escalation_unroutable.db",
+    )
+    _write_employee(tmp_path, profile_id="default", employee_id="cto")
+    _write_employee(tmp_path, profile_id="default", employee_id="developer")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer")
+    task = await service.create_task(
+        profile_id="default",
+        title="Missing manager blocker",
+        description="Unrouted blockers must not leak to an unrelated root employee.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+
+    await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    async with session_scope(factory) as session:
+        repo = TaskFlowRepository(session)
+        escalations = await repo.list_tasks_by_source(
+            profile_id="default",
+            source_type="manager_escalation",
+            source_ref=task.id,
+        )
+        events = await repo.list_task_events(task_id=task.id, limit=20)
+
+    assert escalations == []
+    assert any(event.event_type == "manager_escalation_unroutable" for event in events)
+
+    with pytest.raises(TaskFlowServiceError) as exc_info:
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            owner_type="employee",
+            owner_ref="developer",
+            actor_type="employee",
+            actor_ref="cto",
+        )
+    assert exc_info.value.error_code == "task_actor_forbidden"
 
 
 async def test_task_comment_ignores_invalid_or_inactive_employee_mentions(

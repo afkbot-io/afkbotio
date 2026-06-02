@@ -36,7 +36,7 @@ from afkbot.services.automations.principals import (
     ensure_automation_principal_exists,
     parse_automation_principal_ref,
 )
-from afkbot.services.employees import EmployeeService, EmployeeServiceError
+from afkbot.services.employees import EmployeeMetadata, EmployeeService, EmployeeServiceError
 from afkbot.services.task_flow.ai_executors import (
     EMPLOYEE_OWNER_TYPE,
     is_ai_executor_owner_type,
@@ -112,6 +112,9 @@ _MANAGER_ESCALATION_TEXT_MARKERS = (
     "orchestrator handoff",
     "менеджерский",
 )
+_MANAGER_ESCALATION_SOURCE_TYPE = "manager_escalation"
+_MANAGER_ESCALATION_TYPE = "manager_reassignment"
+_TASK_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _TASK_DOCUMENT_SCOPE_FLOW = "flow"
 _TASK_DOCUMENT_SCOPE_TASK = "task"
 _DEFAULT_FLOW_DOCUMENTS: tuple[tuple[str, str, str], ...] = (
@@ -1790,6 +1793,16 @@ class TaskFlowService:
                     message="Comment added for the responsible employee.",
                     details={"comment_id": row.id},
                 )
+                if task.status == "blocked":
+                    await _record_manager_escalation_if_needed(
+                        repo=repo,
+                        settings=self._settings,
+                        task=task,
+                        reason_code=task.blocked_reason_code,
+                        reason_text=task.blocked_reason_text,
+                        actor_type=normalized_actor_type,
+                        actor_ref=normalized_actor_ref,
+                    )
             return _to_task_comment_metadata(row)
 
         return await self._with_repo(_op)
@@ -2146,6 +2159,10 @@ class TaskFlowService:
 
         normalized_reason_text = _normalize_required_text(reason_text, field_name="reason_text")
         normalized_reason_code = _normalize_required_text(reason_code, field_name="reason_code")
+        normalized_reason_code = _canonical_manager_escalation_reason_code(
+            reason_code=normalized_reason_code,
+            reason_text=normalized_reason_text,
+        )
         normalized_actor_type = normalize_task_owner_type(actor_type)
         normalized_actor_ref = _normalize_optional_text(actor_ref)
         normalized_actor_session_id = _normalize_optional_text(actor_session_id)
@@ -2238,6 +2255,10 @@ class TaskFlowService:
                 owner_type=effective_owner_type,
                 owner_ref=effective_owner_ref,
             )
+            manager_escalation_blocker = _requires_manager_escalation_blocker(
+                reason_code=normalized_reason_code,
+                reason_text=normalized_reason_text,
+            )
             updated = await repo.update_task(
                 profile_id=profile_id,
                 task_id=row.id,
@@ -2248,6 +2269,7 @@ class TaskFlowService:
                     datetime.now(timezone.utc)
                     if is_ai_executor_owner_type(effective_owner_type)
                     and normalized_reason_code != "dependency_wait"
+                    and not manager_escalation_blocker
                     else None
                 ),
                 blocked_reason_code=normalized_reason_code,
@@ -2271,7 +2293,7 @@ class TaskFlowService:
                     "owner_ref": updated.owner_ref,
                 },
             )
-            if is_ai_executor_owner_type(updated.owner_type):
+            if is_ai_executor_owner_type(updated.owner_type) and not manager_escalation_blocker:
                 await _record_task_wake_requested(
                     repo=repo,
                     task=updated,
@@ -2280,6 +2302,7 @@ class TaskFlowService:
                     actor_ref=normalized_actor_ref,
                     message="Review changes requested; AI owner should resume this task.",
                 )
+            if is_ai_executor_owner_type(updated.owner_type):
                 await _record_manager_escalation_if_needed(
                     repo=repo,
                     settings=self._settings,
@@ -2923,6 +2946,42 @@ class TaskFlowService:
                 error_code="task_dependency_wait_ready_at_conflict",
                 reason="dependency_wait blockers cannot schedule a timed revisit",
             )
+        manager_escalation_blocker_update = (
+            normalized_blocked_reason_code is not _TASK_FIELD_UNSET
+            or normalized_blocked_reason_text is not _TASK_FIELD_UNSET
+        ) and _requires_manager_escalation_blocker(
+            reason_code=(
+                cast(str | None, normalized_blocked_reason_code)
+                if normalized_blocked_reason_code is not _TASK_FIELD_UNSET
+                else None
+            ),
+            reason_text=(
+                cast(str | None, normalized_blocked_reason_text)
+                if normalized_blocked_reason_text is not _TASK_FIELD_UNSET
+                else None
+            ),
+        )
+        if (
+            (
+                normalized_blocked_reason_code is not _TASK_FIELD_UNSET
+                or normalized_blocked_reason_text is not _TASK_FIELD_UNSET
+            )
+            and manager_escalation_blocker_update
+            and ready_at not in {_TASK_FIELD_UNSET, None}
+        ):
+            raise TaskFlowServiceError(
+                error_code="task_manager_escalation_ready_at_conflict",
+                reason="manager escalation blockers cannot schedule a timed revisit",
+            )
+        if manager_escalation_blocker_update and (
+            normalized_blocked_reason_code is _TASK_FIELD_UNSET
+            or cast(str | None, normalized_blocked_reason_code)
+            not in _MANAGER_ESCALATION_BLOCKER_CODES
+        ):
+            normalized_blocked_reason_code = "manager_reassignment_required"
+        normalized_ready_at = (
+            None if manager_escalation_blocker_update and ready_at is _TASK_FIELD_UNSET else ready_at
+        )
         normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
         if normalized_owner_type is not None or normalized_owner_ref is not None:
@@ -2989,6 +3048,9 @@ class TaskFlowService:
             current_row = await repo.get_task(profile_id=profile_id, task_id=task_id)
             if current_row is None:
                 raise TaskFlowServiceError(error_code="task_not_found", reason="Task not found")
+            repo_blocked_reason_code = normalized_blocked_reason_code
+            repo_blocked_reason_text = normalized_blocked_reason_text
+            repo_ready_at = normalized_ready_at
             await _ensure_task_actor_can_manage(
                 row=current_row,
                 settings=self._settings,
@@ -3053,6 +3115,46 @@ class TaskFlowService:
                 owner_ref=effective_owner_ref,
             )
             effective_status_after_update = effective_status or current_row.status
+            existing_manager_escalation_blocker = (
+                current_row.status == "blocked"
+                and _requires_manager_escalation_blocker(
+                    reason_code=current_row.blocked_reason_code,
+                    reason_text=current_row.blocked_reason_text,
+                )
+            )
+            preserving_existing_manager_blocker = (
+                existing_manager_escalation_blocker
+                and effective_status_after_update == "blocked"
+                and normalized_blocked_reason_code is _TASK_FIELD_UNSET
+                and normalized_blocked_reason_text is _TASK_FIELD_UNSET
+            )
+            if preserving_existing_manager_blocker:
+                if ready_at not in {_TASK_FIELD_UNSET, None}:
+                    raise TaskFlowServiceError(
+                        error_code="task_manager_escalation_ready_at_conflict",
+                        reason="manager escalation blockers cannot schedule a timed revisit",
+                    )
+                repo_blocked_reason_code = current_row.blocked_reason_code
+                repo_blocked_reason_text = current_row.blocked_reason_text
+                repo_ready_at = None
+            elif (
+                existing_manager_escalation_blocker
+                and effective_status_after_update != "blocked"
+                and not await _task_actor_has_manager_scope(
+                    row=current_row,
+                    settings=self._settings,
+                    task_profile_id=profile_id,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
+            ):
+                raise TaskFlowServiceError(
+                    error_code="task_manager_escalation_resolution_forbidden",
+                    reason=(
+                        "Only a human operator or the responsible manager can resolve "
+                        "a manager escalation blocker"
+                    ),
+                )
             _ensure_plan_status_owner_is_human(
                 status=effective_status_after_update,
                 owner_type=effective_owner_type,
@@ -3129,7 +3231,11 @@ class TaskFlowService:
                     status=effective_status,
                     priority=priority,
                     due_at=due_at,
-                    ready_at=ready_at if ready_at is not _TASK_FIELD_UNSET else _REPO_FIELD_UNSET,
+                    ready_at=(
+                        repo_ready_at
+                        if repo_ready_at is not _TASK_FIELD_UNSET
+                        else _REPO_FIELD_UNSET
+                    ),
                     owner_type=normalized_owner_type,
                     owner_ref=normalized_owner_ref,
                     reviewer_type=(
@@ -3157,13 +3263,13 @@ class TaskFlowService:
                         else _REPO_FIELD_UNSET
                     ),
                     blocked_reason_code=(
-                        normalized_blocked_reason_code
-                        if normalized_blocked_reason_code is not _TASK_FIELD_UNSET
+                        repo_blocked_reason_code
+                        if repo_blocked_reason_code is not _TASK_FIELD_UNSET
                         else _REPO_FIELD_UNSET
                     ),
                     blocked_reason_text=(
-                        normalized_blocked_reason_text
-                        if normalized_blocked_reason_text is not _TASK_FIELD_UNSET
+                        repo_blocked_reason_text
+                        if repo_blocked_reason_text is not _TASK_FIELD_UNSET
                         else _REPO_FIELD_UNSET
                     ),
                 )
@@ -3273,6 +3379,10 @@ class TaskFlowService:
 
         normalized_reason_code = _normalize_required_text(reason_code, field_name="reason_code")
         normalized_reason_text = _normalize_required_text(reason_text, field_name="reason_text")
+        normalized_reason_code = _canonical_manager_escalation_reason_code(
+            reason_code=normalized_reason_code,
+            reason_text=normalized_reason_text,
+        )
         if normalized_reason_code == "dependency_wait" and ready_at not in {
             _TASK_FIELD_UNSET,
             None,
@@ -3280,6 +3390,17 @@ class TaskFlowService:
             raise TaskFlowServiceError(
                 error_code="task_dependency_wait_ready_at_conflict",
                 reason="dependency_wait blockers cannot schedule a timed revisit",
+            )
+        if _requires_manager_escalation_blocker(
+            reason_code=normalized_reason_code,
+            reason_text=normalized_reason_text,
+        ) and ready_at not in {
+            _TASK_FIELD_UNSET,
+            None,
+        }:
+            raise TaskFlowServiceError(
+                error_code="task_manager_escalation_ready_at_conflict",
+                reason="manager escalation blockers cannot schedule a timed revisit",
             )
         return await self.update_task(
             profile_id=profile_id,
@@ -3777,6 +3898,19 @@ async def _ensure_public_ai_principal_session(
     session_row = await ChatSessionRepository(repo._session).get(normalized_actor_session_id)
     if session_row is None or session_row.profile_id != actor_profile_id:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
+    if normalized_actor_type == EMPLOYEE_OWNER_TYPE:
+        bound_task = await repo.get_task_by_session_binding(
+            profile_id=actor_profile_id,
+            session_id=normalized_actor_session_id,
+            actor_type=EMPLOYEE_OWNER_TYPE,
+            actor_ref=normalized_actor_ref or "",
+        )
+        active_bound_task = await repo.get_active_task_by_session(
+            profile_id=actor_profile_id,
+            session_id=normalized_actor_session_id,
+        )
+        if bound_task is None and active_bound_task is not None:
+            raise TaskFlowServiceError(error_code=error_code, reason=reason)
     activity_rows = await ChatSessionTurnQueueRepository(repo._session).list_session_activity(
         session_keys=((actor_profile_id, normalized_actor_session_id),),
         older_than=session_turn_queue_stale_cutoff(settings=settings),
@@ -4098,8 +4232,6 @@ async def _task_actor_has_manager_scope(
     actor_employee = chart.employees.get(normalized_actor_ref)
     if actor_employee is None or actor_employee.status != "active":
         return False
-    if actor_employee.manager_id is None:
-        return True
     managed_employee_ids = {
         *actor_employee.can_delegate_to,
         *actor_employee.reports,
@@ -4145,6 +4277,13 @@ async def _ensure_task_actor_can_manage(
         normalized_actor_type == "automation"
         and normalized_actor_ref is not None
         and row.created_by_type == "automation"
+        and row.created_by_ref == normalized_actor_ref
+    ):
+        return
+    if (
+        normalized_actor_type == EMPLOYEE_OWNER_TYPE
+        and normalized_actor_ref is not None
+        and row.created_by_type == EMPLOYEE_OWNER_TYPE
         and row.created_by_ref == normalized_actor_ref
     ):
         return
@@ -4199,7 +4338,7 @@ async def _ensure_flow_actor_can_manage(
             error_code="task_actor_forbidden",
             reason="Employee actor is not allowed to manage this flow",
         )
-    if employee.manager_id is None or employee.reports or employee.derived_reports:
+    if employee.reports or employee.derived_reports or employee.can_delegate_to:
         return
     raise TaskFlowServiceError(
         error_code="task_actor_forbidden",
@@ -5289,52 +5428,281 @@ async def _record_manager_escalation_if_needed(
     actor_type: str | None = None,
     actor_ref: str | None = None,
 ) -> None:
-    """Wake an employee manager when a blocked task explicitly needs reassignment."""
+    """Create runnable manager work when a blocked task needs reassignment."""
 
     if task.owner_type != EMPLOYEE_OWNER_TYPE or not task.owner_ref:
         return
     normalized_reason_code = str(reason_code or "").strip().lower()
     normalized_reason_text = str(reason_text or "").strip()
-    reason_text_lower = normalized_reason_text.lower()
-    if normalized_reason_code not in _MANAGER_ESCALATION_BLOCKER_CODES and not any(
-        marker in reason_text_lower for marker in _MANAGER_ESCALATION_TEXT_MARKERS
+    if not _requires_manager_escalation_blocker(
+        reason_code=normalized_reason_code,
+        reason_text=normalized_reason_text,
     ):
         return
-    try:
-        employee = await EmployeeService(settings or get_settings()).get_employee(
-            profile_id=task.profile_id,
-            employee_id=task.owner_ref,
+    existing_escalations = await repo.list_tasks_by_source(
+        profile_id=task.profile_id,
+        source_type=_MANAGER_ESCALATION_SOURCE_TYPE,
+        source_ref=task.id,
+        limit=10,
+    )
+    open_escalation = next(
+        (
+            row
+            for row in existing_escalations
+            if row.status not in _TASK_TERMINAL_STATUSES
+        ),
+        None,
+    )
+    if open_escalation is not None:
+        await _record_task_wake_requested(
+            repo=repo,
+            task=open_escalation,
+            reason_code=normalized_reason_code or "manager_reassignment_required",
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            message="Manager escalation is already open and should continue.",
+            details={
+                "source_task_id": task.id,
+                "source_owner_type": task.owner_type,
+                "source_owner_ref": task.owner_ref,
+                "escalation_type": _MANAGER_ESCALATION_TYPE,
+                "blocked_reason_code": normalized_reason_code or None,
+                "blocked_reason_text": normalized_reason_text or None,
+            },
         )
-    except EmployeeServiceError:
         return
-    manager_id = str(employee.manager_id or "").strip()
-    if not manager_id:
-        return
-    try:
-        manager = await EmployeeService(settings or get_settings()).get_employee(
-            profile_id=task.profile_id,
-            employee_id=manager_id,
+    manager = await _resolve_manager_escalation_employee(
+        settings=settings,
+        profile_id=task.profile_id,
+        employee_id=task.owner_ref,
+    )
+    if manager is None:
+        await repo.create_task_event(
+            task_id=task.id,
+            event_type="manager_escalation_unroutable",
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+            message=(
+                "Manager escalation could not find the blocked employee's "
+                "active direct manager in this profile."
+            ),
+            details_json=encode_task_event_details(
+                {
+                    "source_owner_type": task.owner_type,
+                    "source_owner_ref": task.owner_ref,
+                    "escalation_type": _MANAGER_ESCALATION_TYPE,
+                    "blocked_reason_code": normalized_reason_code or None,
+                    "blocked_reason_text": normalized_reason_text or None,
+                }
+            ),
         )
-    except EmployeeServiceError:
+        await _append_task_comment_event(
+            repo=repo,
+            settings=settings,
+            profile_id=task.profile_id,
+            task_id=task.id,
+            actor_type="system",
+            actor_ref="task-flow",
+            message=(
+                "Manager escalation could not be routed because the blocked "
+                "employee has no active direct manager configured."
+            ),
+            comment_type="system",
+        )
         return
-    if manager.status != "active":
-        return
+    labels = _normalize_labels(
+        (
+            *_decode_labels(task.labels_json),
+            "manager-escalation",
+            "autonomous-routing",
+        )
+    )
+    now_utc = datetime.now(timezone.utc)
+    escalation = await repo.create_task(
+        task_id=_new_identifier("task"),
+        profile_id=task.profile_id,
+        flow_id=task.flow_id,
+        title=f"Resolve blocker for {task.title}"[:255],
+        description=_build_manager_escalation_description(
+            source_task=task,
+            manager_id=manager.id,
+            reason_code=normalized_reason_code,
+            reason_text=normalized_reason_text,
+        ),
+        status="todo",
+        priority=max(int(task.priority or 0), 80),
+        due_at=task.due_at,
+        ready_at=now_utc,
+        owner_type=EMPLOYEE_OWNER_TYPE,
+        owner_ref=manager.id,
+        reviewer_type=None,
+        reviewer_ref=None,
+        source_type=_MANAGER_ESCALATION_SOURCE_TYPE,
+        source_ref=task.id,
+        created_by_type=actor_type or task.owner_type,
+        created_by_ref=actor_ref or task.owner_ref,
+        labels_json=json.dumps(labels),
+        requires_review=False,
+        blocked_reason_code=None,
+        blocked_reason_text=None,
+    )
+    await record_task_event(
+        repo=repo,
+        task_id=escalation.id,
+        event_type="created",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        to_status=escalation.status,
+        details={
+            "flow_id": escalation.flow_id,
+            "owner_type": escalation.owner_type,
+            "owner_ref": escalation.owner_ref,
+            "reviewer_type": escalation.reviewer_type,
+            "reviewer_ref": escalation.reviewer_ref,
+            "priority": escalation.priority,
+            "labels": list(labels),
+            "depends_on_task_ids": [],
+            "requires_review": False,
+            "source_type": escalation.source_type,
+            "source_ref": escalation.source_ref,
+            "escalation_type": _MANAGER_ESCALATION_TYPE,
+        },
+    )
+    await repo.create_task_event(
+        task_id=task.id,
+        event_type="recovery_action_created",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=f"Created manager escalation task {escalation.id} for {manager.id}.",
+        details_json=encode_task_event_details(
+            {
+                "owner_type": EMPLOYEE_OWNER_TYPE,
+                "owner_ref": manager.id,
+                "source_owner_type": task.owner_type,
+                "source_owner_ref": task.owner_ref,
+                "source_task_id": task.id,
+                "recovery_task_id": escalation.id,
+                "escalation_type": _MANAGER_ESCALATION_TYPE,
+                "blocked_reason_code": normalized_reason_code or None,
+                "blocked_reason_text": normalized_reason_text or None,
+            }
+        ),
+    )
+    await _append_task_comment_event(
+        repo=repo,
+        settings=settings,
+        profile_id=task.profile_id,
+        task_id=task.id,
+        actor_type=actor_type or task.owner_type,
+        actor_ref=actor_ref or task.owner_ref,
+        message=(
+            f"Autonomous manager escalation created for {EMPLOYEE_OWNER_TYPE}:{manager.id} "
+            f"as task {escalation.id}."
+        ),
+        comment_type="system",
+    )
     await _record_task_wake_requested(
         repo=repo,
-        task=task,
+        task=escalation,
         reason_code=normalized_reason_code or "manager_reassignment_required",
         actor_type=actor_type,
         actor_ref=actor_ref,
         message=f"Manager escalation requested for {task.owner_type}:{task.owner_ref}.",
         details={
-            "owner_type": EMPLOYEE_OWNER_TYPE,
-            "owner_ref": manager.id,
+            "source_task_id": task.id,
             "source_owner_type": task.owner_type,
             "source_owner_ref": task.owner_ref,
-            "escalation_type": "manager_reassignment",
+            "escalation_type": _MANAGER_ESCALATION_TYPE,
             "blocked_reason_code": normalized_reason_code or None,
             "blocked_reason_text": normalized_reason_text or None,
         },
+    )
+
+
+async def _resolve_manager_escalation_employee(
+    *,
+    settings: Settings | None,
+    profile_id: str,
+    employee_id: str,
+) -> EmployeeMetadata | None:
+    employee_service = EmployeeService(settings or get_settings())
+    try:
+        employee = await employee_service.get_employee(
+            profile_id=profile_id,
+            employee_id=employee_id,
+        )
+    except EmployeeServiceError:
+        return None
+    manager_id = str(employee.manager_id or "").strip()
+    if not manager_id:
+        return None
+    try:
+        manager = await employee_service.get_employee(
+            profile_id=profile_id,
+            employee_id=manager_id,
+        )
+    except EmployeeServiceError:
+        return None
+    if manager.status != "active":
+        return None
+    return manager
+
+
+def _requires_manager_escalation_blocker(
+    *,
+    reason_code: str | None,
+    reason_text: str | None,
+) -> bool:
+    normalized_reason_code = str(reason_code or "").strip().lower()
+    normalized_reason_text = str(reason_text or "").strip().lower()
+    return normalized_reason_code in _MANAGER_ESCALATION_BLOCKER_CODES or any(
+        marker in normalized_reason_text for marker in _MANAGER_ESCALATION_TEXT_MARKERS
+    )
+
+
+def _canonical_manager_escalation_reason_code(
+    *,
+    reason_code: str,
+    reason_text: str | None,
+) -> str:
+    normalized_reason_code = str(reason_code or "").strip().lower()
+    if normalized_reason_code in _MANAGER_ESCALATION_BLOCKER_CODES:
+        return normalized_reason_code
+    if _requires_manager_escalation_blocker(
+        reason_code=normalized_reason_code,
+        reason_text=reason_text,
+    ):
+        return "manager_reassignment_required"
+    return normalized_reason_code
+
+
+def _build_manager_escalation_description(
+    *,
+    source_task: Task,
+    manager_id: str,
+    reason_code: str,
+    reason_text: str,
+) -> str:
+    reason = reason_code or "manager_reassignment_required"
+    text = reason_text or "The responsible employee cannot continue without manager routing."
+    return "\n".join(
+        (
+            "Resolve an autonomous Task Flow blocker.",
+            "",
+            f"Source task: {source_task.id}",
+            f"Source owner: {source_task.owner_type}:{source_task.owner_ref}",
+            f"Assigned manager: {EMPLOYEE_OWNER_TYPE}:{manager_id}",
+            f"Blocker: {reason}",
+            f"Details: {text}",
+            "",
+            "Expected manager actions:",
+            "- inspect the source task, comments, dependencies, and flow documents;",
+            "- decide whether to reassign, delegate remediation, split work, or escalate upward;",
+            "- create any needed remediation/check tasks with explicit dependencies;",
+            "- update the source task so it can continue, or leave a concrete blocker comment if it cannot.",
+            "",
+            "Do not mark this task complete until the source task has a clear next executable owner, dependency, or terminal state.",
+        )
     )
 
 

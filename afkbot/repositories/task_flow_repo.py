@@ -40,6 +40,9 @@ from afkbot.services.task_flow.ai_executors import AI_EXECUTOR_OWNER_TYPES
 
 _UNSET = object()
 _NO_FLOW_BUCKET = "__taskflow_no_flow__"
+_MANAGER_ESCALATION_BLOCKER_CODES = frozenset(
+    {"manager_reassignment_required", "orchestrator_handoff_required"}
+)
 
 
 class TaskFlowRepository:
@@ -447,6 +450,58 @@ class TaskFlowRepository:
         )
         return (await self._session.execute(statement)).scalar_one_or_none()
 
+    async def get_task_by_session_binding(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        actor_type: str,
+        actor_ref: str,
+    ) -> Task | None:
+        """Return one active task that binds a live session to one actor."""
+
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(
+                Task.profile_id == profile_id,
+                Task.last_session_id == session_id,
+                Task.status.in_(("claimed", "running", "review")),
+                or_(
+                    and_(Task.owner_type == actor_type, Task.owner_ref == actor_ref),
+                    and_(
+                        Task.claim_owner_type == actor_type,
+                        Task.claim_owner_ref == actor_ref,
+                    ),
+                    and_(
+                        Task.status == "review",
+                        Task.reviewer_type == actor_type,
+                        Task.reviewer_ref == actor_ref,
+                    ),
+                ),
+            )
+            .limit(1)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def get_active_task_by_session(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+    ) -> Task | None:
+        """Return one active task that already owns a live session."""
+
+        statement: Select[tuple[Task]] = (
+            select(Task)
+            .where(
+                Task.profile_id == profile_id,
+                Task.last_session_id == session_id,
+                Task.status.in_(("claimed", "running", "review")),
+            )
+            .limit(1)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
     async def delete_task(self, *, profile_id: str, task_id: str) -> bool:
         """Delete one task row when present."""
 
@@ -546,7 +601,16 @@ class TaskFlowRepository:
         assigned_owner_candidate = and_(
             Task.owner_type == owner_type,
             Task.owner_ref == owner_ref,
-            Task.status.in_(("todo", "blocked", "review", "claimed", "running")),
+            or_(
+                Task.status.in_(("todo", "review", "claimed", "running")),
+                and_(
+                    Task.status == "blocked",
+                    or_(
+                        Task.blocked_reason_code.is_(None),
+                        Task.blocked_reason_code.not_in(tuple(_MANAGER_ESCALATION_BLOCKER_CODES)),
+                    ),
+                ),
+            ),
         )
         review_candidate = and_(
             Task.status == "review",
