@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.11] - 2026-06-02
+
+### Fixed
+
+- Task Flow now wakes the responsible employee manager when a blocked employee
+  task explicitly needs manager reassignment or reports a `task_owner_forbidden`
+  handoff, making stuck reassignment blockers visible in manager feeds without
+  automatically changing task ownership.
+- Release metadata and lockfile package metadata are aligned to `1.9.11`.
+
 ## [1.9.10] - 2026-06-01
 
 ### Added

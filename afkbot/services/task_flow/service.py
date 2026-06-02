@@ -101,6 +101,17 @@ _HUMAN_INBOX_NOTIFICATION_EVENT_TYPES = {
     "dependencies_satisfied",
 }
 _TASK_COMMENT_EVENT_TYPE = "comment_added"
+_MANAGER_ESCALATION_BLOCKER_CODES = {
+    "manager_reassignment_required",
+    "orchestrator_handoff_required",
+}
+_MANAGER_ESCALATION_TEXT_MARKERS = (
+    "task_owner_forbidden",
+    "manager handoff",
+    "managerial handoff",
+    "orchestrator handoff",
+    "менеджерский",
+)
 _TASK_DOCUMENT_SCOPE_FLOW = "flow"
 _TASK_DOCUMENT_SCOPE_TASK = "task"
 _DEFAULT_FLOW_DOCUMENTS: tuple[tuple[str, str, str], ...] = (
@@ -2269,6 +2280,15 @@ class TaskFlowService:
                     actor_ref=normalized_actor_ref,
                     message="Review changes requested; AI owner should resume this task.",
                 )
+                await _record_manager_escalation_if_needed(
+                    repo=repo,
+                    settings=self._settings,
+                    task=updated,
+                    reason_code=normalized_reason_code,
+                    reason_text=normalized_reason_text,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
             return await _build_task_metadata(repo, updated, settings=self._settings)
 
         return await self._with_repo(_op)
@@ -3206,6 +3226,16 @@ class TaskFlowService:
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
                     message="Task has a scheduled AI wake.",
+                )
+            if is_ai_executor_owner_type(row.owner_type) and row.status == "blocked":
+                await _record_manager_escalation_if_needed(
+                    repo=repo,
+                    settings=self._settings,
+                    task=row,
+                    reason_code=row.blocked_reason_code,
+                    reason_text=row.blocked_reason_text,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
                 )
             refresh_schema_invariants = (
                 is_ai_executor_owner_type(before.owner_type)
@@ -5246,6 +5276,65 @@ async def _record_task_wake_requested(
                 **(details or {}),
             }
         ),
+    )
+
+
+async def _record_manager_escalation_if_needed(
+    *,
+    repo: TaskFlowRepository,
+    settings: Settings | None,
+    task: Task,
+    reason_code: str | None,
+    reason_text: str | None,
+    actor_type: str | None = None,
+    actor_ref: str | None = None,
+) -> None:
+    """Wake an employee manager when a blocked task explicitly needs reassignment."""
+
+    if task.owner_type != EMPLOYEE_OWNER_TYPE or not task.owner_ref:
+        return
+    normalized_reason_code = str(reason_code or "").strip().lower()
+    normalized_reason_text = str(reason_text or "").strip()
+    reason_text_lower = normalized_reason_text.lower()
+    if normalized_reason_code not in _MANAGER_ESCALATION_BLOCKER_CODES and not any(
+        marker in reason_text_lower for marker in _MANAGER_ESCALATION_TEXT_MARKERS
+    ):
+        return
+    try:
+        employee = await EmployeeService(settings or get_settings()).get_employee(
+            profile_id=task.profile_id,
+            employee_id=task.owner_ref,
+        )
+    except EmployeeServiceError:
+        return
+    manager_id = str(employee.manager_id or "").strip()
+    if not manager_id:
+        return
+    try:
+        manager = await EmployeeService(settings or get_settings()).get_employee(
+            profile_id=task.profile_id,
+            employee_id=manager_id,
+        )
+    except EmployeeServiceError:
+        return
+    if manager.status != "active":
+        return
+    await _record_task_wake_requested(
+        repo=repo,
+        task=task,
+        reason_code=normalized_reason_code or "manager_reassignment_required",
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        message=f"Manager escalation requested for {task.owner_type}:{task.owner_ref}.",
+        details={
+            "owner_type": EMPLOYEE_OWNER_TYPE,
+            "owner_ref": manager.id,
+            "source_owner_type": task.owner_type,
+            "source_owner_ref": task.owner_ref,
+            "escalation_type": "manager_reassignment",
+            "blocked_reason_code": normalized_reason_code or None,
+            "blocked_reason_text": normalized_reason_text or None,
+        },
     )
 
 

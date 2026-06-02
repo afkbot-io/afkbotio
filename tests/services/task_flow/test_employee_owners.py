@@ -324,6 +324,42 @@ async def test_manager_employee_can_comment_on_direct_report_task(tmp_path: Path
     assert comment.message == "I reviewed the blocker."
 
 
+async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Path) -> None:
+    service = await _service(tmp_path, "employee_manager_escalation.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="qa", reports=("qa-reviewer",))
+    _write_employee(tmp_path, profile_id="default", employee_id="qa-reviewer", manager_id="qa")
+    task = await service.create_task(
+        profile_id="default",
+        title="QA blocked backend remediation",
+        description="A reviewer needs a manager to reassign implementation work.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="qa-reviewer",
+    )
+
+    blocked = await service.block_task(
+        profile_id="default",
+        task_id=task.id,
+        reason_code="manager_reassignment_required",
+        reason_text="Needs manager handoff after task_owner_forbidden.",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
+
+    assert blocked.status == "blocked"
+    assert blocked.owner_ref == "qa-reviewer"
+    manager_feed = await service.build_agent_inbox(
+        profile_id="default",
+        owner_type="employee",
+        owner_ref="qa",
+    )
+    assert manager_feed.recent_events
+    assert manager_feed.recent_events[0].event_type == "wake_requested"
+    assert manager_feed.recent_events[0].details["escalation_type"] == "manager_reassignment"
+    assert manager_feed.recent_events[0].details["source_owner_ref"] == "qa-reviewer"
+
+
 async def test_task_comment_ignores_invalid_or_inactive_employee_mentions(
     tmp_path: Path,
 ) -> None:
