@@ -621,7 +621,7 @@ def test_run_update_upgrades_uv_tool_install(
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.resolve_install_source_target",
-        lambda install_source: "1.2.3",
+        lambda install_source: "99.0.0",
     )
     monkeypatch.setattr(
         "afkbot.services.update_runtime.setup_is_complete",
@@ -649,7 +649,7 @@ def test_run_update_upgrades_uv_tool_install(
     assert bootstrap_args == ("setup", "--bootstrap-only", "--yes", "--lang", "en")
     assert bootstrap_env["AFKBOT_INSTALL_SOURCE_MODE"] == "package"
     assert bootstrap_env["AFKBOT_INSTALL_SOURCE_SPEC"] == "afkbotio"
-    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET"] == "1.2.3"
+    assert bootstrap_env["AFKBOT_INSTALL_SOURCE_RESOLVED_TARGET"] == "99.0.0"
     assert [str(afk_executable), "upgrade", "apply", "--quiet"] in commands
     assert [
         str(afk_executable),
@@ -658,6 +658,133 @@ def test_run_update_upgrades_uv_tool_install(
         "--no-upgrades",
         "--no-daemon",
     ] in commands
+
+
+def test_run_update_recovers_uv_tool_source_from_receipt(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """GitHub uv-tool installs without runtime metadata should replay the receipt source."""
+
+    settings = _prepare_settings(tmp_path / "runtime", monkeypatch)
+    tool_root = tmp_path / "tools"
+    receipt_dir = tool_root / "afkbotio"
+    receipt_dir.mkdir(parents=True)
+    (receipt_dir / "uv-receipt.toml").write_text(
+        """
+[tool]
+requirements = [{ name = "afkbotio", git = "https://github.com/afkbot-io/afkbotio.git?rev=v1.9.11" }]
+""".strip(),
+        encoding="utf-8",
+    )
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    afk_executable = tool_bin / ("afk.exe" if os.name == "nt" else "afk")
+    afk_executable.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+    bootstrap_calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
+
+    def _fake_run_checked(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        error_code: str,
+        fallback: str,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, error_code, fallback, timeout_sec, env
+        commands.append(command)
+        if command == [str(uv_executable), "tool", "dir"]:
+            return subprocess.CompletedProcess(command, 0, stdout=f"{tool_root}\n", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
+        lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_command",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._run_afk_executable_with_env",
+        lambda *, executable, settings, args, env: bootstrap_calls.append((args, dict(env))),
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._restart_managed_host_runtime_service", lambda: False
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.setup_is_complete",
+        lambda settings: False,
+    )
+
+    result = run_update(settings)
+
+    source_spec = "git+https://github.com/afkbot-io/afkbotio.git@v1.9.11"
+    assert result.install_mode == "uv-tool"
+    assert [
+        str(uv_executable),
+        "tool",
+        "install",
+        "--python",
+        "3.12",
+        "--reinstall",
+        source_spec,
+    ] in commands
+    assert bootstrap_calls[0][1]["AFKBOT_INSTALL_SOURCE_MODE"] == "archive"
+    assert bootstrap_calls[0][1]["AFKBOT_INSTALL_SOURCE_SPEC"] == source_spec
+
+
+def test_run_update_rejects_package_source_downgrade(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Package fallback must not downgrade an already newer AFKBOT install."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir(parents=True)
+    uv_executable = tool_bin / ("uv.exe" if os.name == "nt" else "uv")
+    uv_executable.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path / "installed-tool"
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._resolve_uv_executable", lambda: uv_executable
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._read_uv_tool_receipt_install_source",
+        lambda *, uv_executable: None,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.resolve_install_source_target",
+        lambda install_source: "1.9.7",
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime.load_cli_version_info",
+        lambda root_dir=None: type(
+            "_Version",
+            (),
+            {
+                "version": "1.9.11",
+                "git_sha": None,
+                "render": lambda self: "afk 1.9.11",
+            },
+        )(),
+    )
+
+    with pytest.raises(UpdateRuntimeError, match="refusing to downgrade"):
+        run_update(settings)
 
 
 def test_run_update_prefers_saved_installer_source_over_git_checkout(
@@ -734,6 +861,10 @@ def test_run_update_prefers_saved_installer_source_over_git_checkout(
     monkeypatch.setattr(
         "afkbot.services.update_runtime._resolve_uv_tool_afk_executable",
         lambda *, uv_executable: afk_executable,
+    )
+    monkeypatch.setattr(
+        "afkbot.services.update_runtime._read_uv_tool_receipt_install_source",
+        lambda *, uv_executable: None,
     )
     monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
     monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)

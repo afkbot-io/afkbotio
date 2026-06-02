@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -234,7 +235,10 @@ def _inspect_uv_tool_update(*, runtime_config: dict[str, object]) -> UpdateAvail
 
     install_source = read_install_source_from_runtime_config(runtime_config)
     if install_source is None:
-        install_source = default_package_install_source()
+        install_source = (
+            _read_uv_tool_receipt_install_source(uv_executable=_resolve_uv_executable())
+            or default_package_install_source()
+        )
     return _inspect_installer_source_update(
         install_source=install_source,
         runtime_config=runtime_config,
@@ -414,8 +418,13 @@ def _run_uv_tool_update(*, settings: Settings, runtime_config: dict[str, object]
     """Update one uv-installed AFKBOT tool environment and apply maintenance in a new process."""
 
     install_source = read_install_source_from_runtime_config(runtime_config)
+    uv_executable = _resolve_uv_executable()
     if install_source is None:
-        install_source = default_package_install_source()
+        install_source = (
+            _read_uv_tool_receipt_install_source(uv_executable=uv_executable)
+            or default_package_install_source()
+        )
+    _assert_installer_source_not_downgrade(install_source=install_source)
     return _run_installer_source_update(
         settings=settings,
         install_source=install_source,
@@ -638,6 +647,64 @@ def _resolve_uv_tool_bin_dir(*, uv_executable: Path) -> Path:
     return Path(output).resolve(strict=False)
 
 
+def _resolve_uv_tool_dir(*, uv_executable: Path) -> Path:
+    """Return uv's managed tool environment directory."""
+
+    output = _run_checked(
+        [str(uv_executable), "tool", "dir"],
+        error_code="update_failed",
+        fallback="failed to locate uv tool directory",
+    ).stdout.strip()
+    if not output:
+        raise UpdateRuntimeError(
+            error_code="update_failed",
+            reason="uv did not report a tool directory",
+        )
+    return Path(output).resolve(strict=False)
+
+
+def _read_uv_tool_receipt_install_source(*, uv_executable: Path) -> InstallSource | None:
+    """Recover the current uv-tool install source when runtime metadata is missing."""
+
+    try:
+        tool_dir = _resolve_uv_tool_dir(uv_executable=uv_executable)
+    except UpdateRuntimeError:
+        return None
+    receipt_path = tool_dir / "afkbotio" / "uv-receipt.toml"
+    try:
+        payload = tomllib.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    tool_payload = payload.get("tool")
+    if not isinstance(tool_payload, dict):
+        return None
+    requirements = tool_payload.get("requirements")
+    if not isinstance(requirements, list):
+        return None
+    for requirement in requirements:
+        if not isinstance(requirement, dict) or str(requirement.get("name") or "") != "afkbotio":
+            continue
+        git_url = str(requirement.get("git") or "").strip()
+        if git_url:
+            return InstallSource(mode="archive", spec=_uv_receipt_git_url_to_source_spec(git_url))
+        return default_package_install_source()
+    return None
+
+
+def _uv_receipt_git_url_to_source_spec(git_url: str) -> str:
+    """Convert uv receipt git URLs into a replayable uv install source."""
+
+    parsed = urlparse(git_url)
+    base = git_url.split("?", 1)[0]
+    ref = ""
+    if parsed.query:
+        query_items = dict(item.split("=", 1) for item in parsed.query.split("&") if "=" in item)
+        ref = str(query_items.get("rev") or "").strip()
+    if base.startswith("git+"):
+        return f"{base}@{ref}" if ref else base
+    return f"git+{base}@{ref}" if ref else f"git+{base}"
+
+
 def _resolve_uv_tool_afk_executable(*, uv_executable: Path) -> Path:
     """Return the installed AFKBOT executable inside the uv tool bin directory."""
 
@@ -754,6 +821,24 @@ def _git_is_ancestor(project_root: Path, *, ancestor: str, descendant: str) -> b
         cwd=project_root,
     )
     return result.returncode == 0
+
+
+def _assert_installer_source_not_downgrade(*, install_source: InstallSource) -> None:
+    """Refuse package-source updates that would install an older AFKBOT version."""
+
+    if install_source.mode != "package":
+        return
+    current_version = str(load_cli_version_info().version or "").strip()
+    target_version = str(resolve_install_source_target(install_source) or "").strip()
+    if current_version and target_version and _version_is_newer(current_version, target_version):
+        raise UpdateRuntimeError(
+            error_code="update_prereq_failed",
+            reason=(
+                "refusing to downgrade AFKBOT from "
+                f"{current_version} to package source {install_source.spec} {target_version}; "
+                "reinstall from an explicit GitHub release or update the package source first"
+            ),
+        )
 
 
 def _run_afk_subcommand(*, settings: Settings, args: tuple[str, ...]) -> None:

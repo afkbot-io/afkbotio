@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.12] - 2026-06-02
+
+### Fixed
+
+- `afk update` now recovers the current uv-tool GitHub/archive source from
+  `uv-receipt.toml` when runtime install-source metadata is missing, so
+  GitHub release installs continue updating from the same source instead of
+  falling back to the package channel.
+- Package-source updates now refuse to downgrade an already newer AFKBOT
+  install when the package channel lags behind the current runtime version.
+- Release metadata and lockfile package metadata are aligned to `1.9.12`.
+
 ## [1.9.11] - 2026-06-02
 
 ### Fixed
