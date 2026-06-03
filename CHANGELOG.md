@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.16] - 2026-06-03
+
+### Security
+
+- Task Flow public task/flow delete operations now require an explicit validated
+  actor identity and run the same principal/manager authorization checks as
+  other durable mutations.
+- Public employee actors now require live runtime session proof before they can
+  mutate Task Flow state, preventing browser/API callers from spoofing an
+  employee by sending only `actor_type=employee` and an employee ref.
+- Public human/API callers can no longer bind arbitrary `session_id` or
+  `session_profile_id` values to Task Flow tasks; session binding is reserved
+  for live employee runtime sessions.
+
+### Fixed
+
+- Release metadata and lockfile package metadata are aligned to `1.9.16`.
+
 ## [1.9.15] - 2026-06-02
 
 ### Fixed

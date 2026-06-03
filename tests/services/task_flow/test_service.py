@@ -2455,6 +2455,183 @@ async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
         await engine.dispose()
 
 
+async def test_task_flow_service_requires_actor_identity_for_public_deletes(
+    tmp_path: Path,
+) -> None:
+    """Public delete operations should require the same principal proof as other mutations."""
+
+    db_name = "task_flow_public_delete_actor_required.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Delete guard flow",
+            description="Flow delete should require an operator actor.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Delete guard task",
+            description="Task delete should require an operator actor.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as task_delete_exc:
+            await service.delete_task(profile_id="default", task_id=task.id)
+        assert task_delete_exc.value.error_code == "task_actor_required"
+
+        with pytest.raises(TaskFlowServiceError) as flow_delete_exc:
+            await service.delete_flow(profile_id="default", flow_id=flow.id)
+        assert flow_delete_exc.value.error_code == "task_actor_required"
+
+        await service.delete_task(
+            profile_id="default",
+            task_id=task.id,
+            actor_type="human",
+            actor_ref="cli",
+        )
+        await service.delete_flow(
+            profile_id="default",
+            flow_id=flow.id,
+            actor_type="human",
+            actor_ref="cli",
+        )
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_public_human_session_binding(
+    tmp_path: Path,
+) -> None:
+    """Human/API callers must not attach arbitrary chat sessions to public tasks."""
+
+    db_name = "task_flow_public_human_session_binding.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default", "other"),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        with pytest.raises(TaskFlowServiceError) as create_exc:
+            await service.create_task(
+                profile_id="default",
+                title="Spoof session on create",
+                description="Creation must not bind a human supplied session.",
+                created_by_type="human",
+                created_by_ref="cli",
+                owner_type="human",
+                owner_ref="cli",
+                session_id="borrowed-session",
+                session_profile_id="other",
+            )
+        assert create_exc.value.error_code == "task_session_binding_forbidden"
+
+        task = await service.create_task(
+            profile_id="default",
+            title="Spoof session on update",
+            description="Update must not bind a human supplied session.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="human",
+            owner_ref="cli",
+        )
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="running",
+                actor_type="human",
+                actor_ref="cli",
+                session_id="borrowed-session",
+                session_profile_id="other",
+            )
+        assert update_exc.value.error_code == "task_session_binding_forbidden"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_public_employee_actor_without_live_session(
+    tmp_path: Path,
+) -> None:
+    """Employee public actors should require a live session instead of trusting actor_ref."""
+
+    db_name = "task_flow_public_employee_session_required.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Employee spoof target",
+            description="A plain employee ref must not be enough to mutate.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+            reviewer_type="employee",
+            reviewer_ref="default",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as update_exc:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="blocked",
+                actor_type="employee",
+                actor_ref="default",
+                blocked_reason_code="spoof",
+                blocked_reason_text="No live session proof.",
+            )
+        assert update_exc.value.error_code == "task_actor_required"
+
+        await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="review",
+            actor_type="human",
+            actor_ref="cli",
+        )
+        with pytest.raises(TaskFlowServiceError) as approve_exc:
+            await service.approve_review_task(
+                profile_id="default",
+                task_id=task.id,
+                actor_type="employee",
+                actor_ref="default",
+            )
+        assert approve_exc.value.error_code == "task_review_actor_required"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_allows_automation_creator_on_matching_backlog_under_public_principal(
     tmp_path: Path,
 ) -> None:

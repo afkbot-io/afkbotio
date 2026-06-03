@@ -53,7 +53,7 @@ def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
     if detached_actor is not None:
         return detached_actor
 
-    return TaskToolActorIdentity(actor_type="human", actor_ref="web-user", actor_session_id=ctx.session_id)
+    return TaskToolActorIdentity(actor_type="human", actor_ref="web-user", actor_session_id=None)
 
 
 async def restrict_employee_read_owner_scope(

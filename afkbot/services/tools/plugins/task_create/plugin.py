@@ -99,7 +99,7 @@ class TaskCreateTool(ToolBase):
                 payload.session_profile_id if session_profile_id_explicit else None
             )
             if (
-                actor.actor_type != "automation"
+                actor.actor_type == "employee"
                 and effective_session_id is None
                 and not session_id_explicit
             ):

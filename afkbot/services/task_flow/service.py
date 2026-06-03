@@ -956,10 +956,39 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
-    async def delete_flow(self, *, profile_id: str, flow_id: str) -> None:
+    async def delete_flow(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
+        actor_session_id: str | None | object = _TASK_FIELD_UNSET,
+    ) -> None:
         """Hard-delete one flow and all tasks inside it when no active execution is running."""
 
         normalized_flow_id = _normalize_required_text(flow_id, field_name="flow_id")
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        normalized_actor_session_id = (
+            _normalize_optional_text(cast(str | None, actor_session_id))
+            if actor_session_id is not _TASK_FIELD_UNSET
+            else None
+        )
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_actor_required",
+            reason="Task flow deletion requires an explicit actor identity",
+        )
 
         async def _op(repo: TaskFlowRepository) -> None:
             await _ensure_profile_exists(repo, profile_id)
@@ -973,6 +1002,30 @@ class TaskFlowService:
                 raise TaskFlowServiceError(
                     error_code="task_flow_delete_active_conflict",
                     reason="Claimed or running tasks must finish before deleting the flow",
+                )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                task_profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_actor_required",
+                reason="Task flow deletion requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            if normalized_actor_type is not None or normalized_actor_ref is not None:
+                await _ensure_flow_actor_can_manage(
+                    settings=self._settings,
+                    profile_id=profile_id,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
                 )
             flow_task_ids = {task.id for task in flow_tasks}
             for task in flow_tasks:
@@ -1147,6 +1200,15 @@ class TaskFlowService:
                         error_code="task_session_binding_forbidden",
                         reason="AI actor can bind only its current session",
                     )
+                _ensure_public_session_binding_allowed(
+                    settings=self._settings,
+                    task_profile_id=profile_id,
+                    actor_type=normalized_created_by_type,
+                    actor_ref=normalized_created_by_ref,
+                    actor_session_id=normalized_actor_session_id,
+                    session_id=normalized_session_id,
+                    session_profile_id=resolved_session_profile_id,
+                )
 
             if normalized_requested_status is None:
                 resolved_status = "blocked" if normalized_depends_on else "todo"
@@ -1495,10 +1557,39 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
-    async def delete_task(self, *, profile_id: str, task_id: str) -> None:
+    async def delete_task(
+        self,
+        *,
+        profile_id: str,
+        task_id: str,
+        actor_type: str | None = None,
+        actor_ref: str | None = None,
+        actor_session_id: str | None | object = _TASK_FIELD_UNSET,
+    ) -> None:
         """Hard-delete one task after validating it is not actively executing."""
 
         normalized_task_id = _normalize_required_text(task_id, field_name="task_id")
+        normalized_actor_type = _normalize_optional_text(actor_type)
+        normalized_actor_ref = _normalize_optional_text(actor_ref)
+        normalized_actor_session_id = (
+            _normalize_optional_text(cast(str | None, actor_session_id))
+            if actor_session_id is not _TASK_FIELD_UNSET
+            else None
+        )
+        if normalized_actor_type is not None or normalized_actor_ref is not None:
+            _validate_actor_pair(
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                allow_missing=False,
+            )
+        _ensure_public_principal_identity(
+            settings=self._settings,
+            actor_type=normalized_actor_type,
+            actor_ref=normalized_actor_ref,
+            actor_session_id=normalized_actor_session_id,
+            error_code="task_actor_required",
+            reason="Task deletion requires an explicit actor identity",
+        )
 
         async def _op(repo: TaskFlowRepository) -> None:
             row = await _require_task(repo, profile_id=profile_id, task_id=normalized_task_id)
@@ -1506,6 +1597,31 @@ class TaskFlowService:
                 raise TaskFlowServiceError(
                     error_code="task_delete_active_conflict",
                     reason="Claimed or running task cannot be deleted",
+                )
+            await _ensure_public_ai_principal_session(
+                repo,
+                settings=self._settings,
+                task_profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                actor_session_id=normalized_actor_session_id,
+                error_code="task_actor_required",
+                reason="Task deletion requires an explicit actor identity",
+            )
+            await _ensure_principal_exists(
+                repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            if normalized_actor_type is not None or normalized_actor_ref is not None:
+                await _ensure_task_actor_can_manage(
+                    row=row,
+                    settings=self._settings,
+                    task_profile_id=profile_id,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
                 )
             await _delete_task_row(repo=repo, row=row)
 
@@ -3214,7 +3330,8 @@ class TaskFlowService:
                     effective_session_profile_id = requested_session_profile_id
                 if effective_session_profile_id is not None:
                     await _ensure_profile_exists(repo, cast(str, effective_session_profile_id))
-                _ensure_ai_actor_session_binding_allowed(
+                _ensure_public_session_binding_allowed(
+                    settings=self._settings,
                     task_profile_id=profile_id,
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
@@ -3885,15 +4002,10 @@ async def _ensure_public_ai_principal_session(
         if actor_session_id is not _TASK_FIELD_UNSET
         else None
     )
-    actor_profile_id = (
-        task_profile_id
-        if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_ref is not None
-        else _task_executor_profile_id(
-            actor_type=normalized_actor_type,
-            actor_ref=normalized_actor_ref,
-        )
-    )
-    if actor_profile_id is None or normalized_actor_session_id is None:
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
+        return
+    actor_profile_id = task_profile_id
+    if normalized_actor_session_id is None:
         return
     session_row = await ChatSessionRepository(repo._session).get(normalized_actor_session_id)
     if session_row is None or session_row.profile_id != actor_profile_id:
@@ -3949,6 +4061,8 @@ def _ensure_public_principal_identity(
     if normalized_actor_type == "human" and normalized_actor_ref != resolve_local_human_ref(
         settings
     ):
+        raise TaskFlowServiceError(error_code=error_code, reason=reason)
+    if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_session_id is None:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
     if is_ai_executor_owner_type(normalized_actor_type) and normalized_actor_session_id is None:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
@@ -4205,10 +4319,6 @@ def _validate_actor_pair(
         )
 
 
-def _task_executor_profile_id(*, actor_type: str | None, actor_ref: str | None) -> str | None:
-    return None
-
-
 async def _task_actor_has_manager_scope(
     *,
     row: Task,
@@ -4264,6 +4374,8 @@ async def _ensure_task_actor_can_manage(
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
     if normalized_actor_type is None and normalized_actor_ref is None:
+        return
+    if normalized_actor_type == "human" and normalized_actor_ref is not None:
         return
     if await _task_actor_has_manager_scope(
         row=row,
@@ -4443,16 +4555,9 @@ def _ensure_ai_actor_session_binding_allowed(
 
     normalized_actor_type = _normalize_optional_text(actor_type)
     normalized_actor_ref = _normalize_optional_text(actor_ref)
-    actor_profile_id = (
-        task_profile_id
-        if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_ref is not None
-        else _task_executor_profile_id(
-            actor_type=normalized_actor_type,
-            actor_ref=normalized_actor_ref,
-        )
-    )
-    if actor_profile_id is None:
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
         return
+    actor_profile_id = task_profile_id
     if actor_session_id is _TASK_FIELD_UNSET or session_id is _TASK_FIELD_UNSET:
         return
     normalized_actor_session_id = _normalize_optional_text(cast(str | None, actor_session_id))
@@ -4473,6 +4578,42 @@ def _ensure_ai_actor_session_binding_allowed(
             error_code="task_session_binding_forbidden",
             reason="AI actor cannot bind its current session to another profile",
         )
+
+
+def _ensure_public_session_binding_allowed(
+    *,
+    settings: Settings | None,
+    task_profile_id: str,
+    actor_type: str | None,
+    actor_ref: str | None,
+    actor_session_id: str | None | object,
+    session_id: str | None | object,
+    session_profile_id: str | None | object,
+) -> None:
+    """Prevent public callers from attaching arbitrary sessions to Task Flow tasks."""
+
+    if settings is None or not bool(settings.taskflow_public_principal_required):
+        return
+    if session_id is _TASK_FIELD_UNSET and session_profile_id is _TASK_FIELD_UNSET:
+        return
+    if session_id is not _TASK_FIELD_UNSET and _normalize_optional_text(
+        cast(str | None, session_id)
+    ) is None:
+        return
+    normalized_actor_type = _normalize_optional_text(actor_type)
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or _normalize_optional_text(actor_ref) is None:
+        raise TaskFlowServiceError(
+            error_code="task_session_binding_forbidden",
+            reason="Only a live employee runtime actor can bind task sessions",
+        )
+    _ensure_ai_actor_session_binding_allowed(
+        task_profile_id=task_profile_id,
+        actor_type=actor_type,
+        actor_ref=actor_ref,
+        actor_session_id=actor_session_id,
+        session_id=session_id,
+        session_profile_id=session_profile_id,
+    )
 
 
 def _new_identifier(prefix: str) -> str:

@@ -136,7 +136,7 @@ class TaskUpdateTool(ToolBase):
             except TaskTimingInputError as exc:
                 return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
             if (
-                actor.actor_type != "automation"
+                actor.actor_type == "employee"
                 and effective_session_id is None
                 and payload.status in {"claimed", "running"}
             ):
@@ -144,7 +144,7 @@ class TaskUpdateTool(ToolBase):
                 if not session_profile_id_explicit:
                     effective_session_profile_id = ctx.profile_id
             elif (
-                actor.actor_type != "automation"
+                actor.actor_type == "employee"
                 and effective_session_id is not None
                 and effective_session_id == ctx.session_id
                 and effective_session_profile_id is None

@@ -26,7 +26,7 @@ def test_resolve_task_tool_actor_ignores_untrusted_taskflow_employee_spoof() -> 
 
     assert identity.actor_type == "human"
     assert identity.actor_ref == "web-user"
-    assert identity.actor_session_id == "taskflow:task-1"
+    assert identity.actor_session_id is None
 
 
 def test_resolve_task_tool_actor_uses_trusted_detached_employee_context() -> None:
@@ -72,4 +72,4 @@ def test_resolve_task_tool_actor_rejects_invalid_trusted_employee_ref() -> None:
 
     assert identity.actor_type == "human"
     assert identity.actor_ref == "web-user"
-    assert identity.actor_session_id == "taskflow:task-3"
+    assert identity.actor_session_id is None
