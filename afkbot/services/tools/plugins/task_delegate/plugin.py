@@ -37,7 +37,7 @@ class TaskDelegateParams(ToolParameters):
 
 
 class TaskDelegateTool(ToolBase):
-    """Delegate one task to another AI-owned task."""
+    """Delegate one task to another employee-owned task."""
 
     name = "task.delegate"
     description = "Delegate work from one task to another AI executor task."

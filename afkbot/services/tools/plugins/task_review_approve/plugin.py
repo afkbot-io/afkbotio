@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
-from afkbot.services.task_flow.ai_executors import normalize_task_owner_type
+from afkbot.services.task_flow_principals import normalize_task_owner_type
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor

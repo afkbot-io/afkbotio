@@ -36,7 +36,7 @@ from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
 from afkbot.models.task_notification_cursor import TaskNotificationCursor
 from afkbot.models.task_run import TaskRun
-from afkbot.services.task_flow.ai_executors import AI_EXECUTOR_OWNER_TYPES
+from afkbot.services.task_flow_principals import EMPLOYEE_EXECUTOR_OWNER_TYPES
 
 _UNSET = object()
 _NO_FLOW_BUCKET = "__taskflow_no_flow__"
@@ -573,7 +573,7 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
-    async def list_agent_inbox_tasks(
+    async def list_employee_inbox_tasks(
         self,
         *,
         profile_id: str,
@@ -581,7 +581,7 @@ class TaskFlowRepository:
         owner_ref: str,
         limit: int | None = None,
     ) -> list[Task]:
-        """Return tasks visible in one AI executor inbox.
+        """Return tasks visible in one employee inbox.
 
         This mirrors claim ownership: regular work belongs to task owner, review
         work belongs to reviewer when set, and active claimed/running work
@@ -670,7 +670,7 @@ class TaskFlowRepository:
         owner_ref: str,
         exclude_task_id: str | None = None,
     ) -> bool:
-        """Return whether the selected AI owner already has another active task."""
+        """Return whether the selected employee owner already has another active task."""
 
         conditions = [
             Task.profile_id == profile_id,
@@ -1096,7 +1096,7 @@ class TaskFlowRepository:
         owner_ref: str,
         limit: int | None = None,
     ) -> list[TaskEvent]:
-        """Return recent feed events whose details reference one AI owner.
+        """Return recent feed events whose details reference one employee owner.
 
         The JSON details payload is intentionally queried with portable LIKE
         predicates so SQLite local runtimes and managed databases share the same
@@ -1347,7 +1347,7 @@ class TaskFlowRepository:
         profile_id: str | None = None,
         owner_ref: str | None = None,
     ) -> Task | None:
-        """Atomically claim one runnable AI-owned task."""
+        """Atomically claim one runnable employee-owned task."""
 
         active_task = aliased(Task)
         review_owner_type_expr = func.coalesce(func.nullif(Task.reviewer_type, ""), Task.owner_type)
@@ -1400,13 +1400,13 @@ class TaskFlowRepository:
             ),
         )
         owner_work_candidate = and_(
-            Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
+            Task.owner_type.in_(tuple(EMPLOYEE_EXECUTOR_OWNER_TYPES)),
             Task.owner_ref != "",
             or_(todo_candidate, blocked_candidate),
         )
         review_candidate = and_(
             Task.status == "review",
-            claim_owner_type_expr.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
+            claim_owner_type_expr.in_(tuple(EMPLOYEE_EXECUTOR_OWNER_TYPES)),
             claim_owner_ref_expr != "",
         )
         runnable_candidates = (
@@ -1448,7 +1448,7 @@ class TaskFlowRepository:
             )
             .where(
                 Task.profile_id == profile_id if profile_id is not None else true(),
-                task_claim_owner_type_expr.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
+                task_claim_owner_type_expr.in_(tuple(EMPLOYEE_EXECUTOR_OWNER_TYPES)),
                 Task.status.in_(("claimed", "running")),
             )
             .group_by(Task.profile_id, func.coalesce(Task.flow_id, literal(_NO_FLOW_BUCKET)))
@@ -1574,11 +1574,11 @@ class TaskFlowRepository:
         owner_ref: str | None = None,
         limit: int | None = None,
     ) -> list[Task]:
-        """Return AI-owned claimed/running tasks whose lease has expired."""
+        """Return employee-owned claimed/running tasks whose lease has expired."""
 
         conditions = [
             func.coalesce(func.nullif(Task.claim_owner_type, ""), Task.owner_type).in_(
-                tuple(AI_EXECUTOR_OWNER_TYPES)
+                tuple(EMPLOYEE_EXECUTOR_OWNER_TYPES)
             ),
             Task.status.in_(("claimed", "running")),
             Task.claim_token.is_not(None),
@@ -1595,30 +1595,6 @@ class TaskFlowRepository:
             select(Task)
             .where(*conditions)
             .order_by(Task.lease_until.asc(), Task.updated_at.asc(), Task.created_at.asc())
-        )
-        if limit is not None:
-            statement = statement.limit(limit)
-        return list((await self._session.execute(statement)).scalars().all())
-
-    async def list_ai_plan_tasks(
-        self,
-        *,
-        profile_id: str | None = None,
-        owner_ref: str | None = None,
-        limit: int | None = None,
-    ) -> list[Task]:
-        """Return AI-owned PLAN tasks, optionally scoped to one backlog profile or owner."""
-
-        conditions = [
-            Task.owner_type.in_(tuple(AI_EXECUTOR_OWNER_TYPES)),
-            Task.status == "plan",
-        ]
-        if profile_id is not None:
-            conditions.append(Task.profile_id == profile_id)
-        if owner_ref is not None:
-            conditions.append(Task.owner_ref == owner_ref)
-        statement: Select[tuple[Task]] = (
-            select(Task).where(*conditions).order_by(Task.updated_at.asc(), Task.created_at.asc())
         )
         if limit is not None:
             statement = statement.limit(limit)

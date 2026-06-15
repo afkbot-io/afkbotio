@@ -11,8 +11,6 @@ from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.channel_endpoint import ChannelEndpoint
 from afkbot.models.profile import Profile
 from afkbot.models.profile_policy import ProfilePolicy
-from afkbot.models.task import Task
-from afkbot.models.task_flow import TaskFlow
 from afkbot.services.profile_runtime.runtime_secrets import get_profile_runtime_secrets_service
 from afkbot.services.upgrade import UpgradeService
 from afkbot.settings import Settings
@@ -312,71 +310,6 @@ async def test_upgrade_service_canonicalizes_channel_endpoint_rows(tmp_path: Pat
         assert row.credential_profile_key == "tg-user"
         assert row.account_id == "personal-user"
         assert json.loads(row.config_json)["reply_allowed_chat_patterns"] == ["andrey"]
-    await engine.dispose()
-
-
-async def test_upgrade_service_blocks_legacy_taskflow_ai_rows(
-    tmp_path: Path,
-) -> None:
-    """Upgrade runner should make old AI profile/subagent rows explicit and inert."""
-
-    settings = Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
-    engine = create_engine(settings)
-    await create_schema(engine)
-    session_factory = create_session_factory(engine)
-    async with session_scope(session_factory) as session:
-        session.add(Profile(id="default", name="Default", is_default=True, status="active"))
-        session.add(Profile(id="analyst", name="Analyst", is_default=False, status="active"))
-        session.add(Profile(id="qa", name="QA", is_default=False, status="active"))
-        await session.flush()
-        session.add(
-            TaskFlow(
-                id="flow_legacy",
-                profile_id="default",
-                title="Legacy flow",
-                description="Existing flow routes work to another profile.",
-                status="active",
-                created_by_type="human",
-                created_by_ref="cli",
-                default_owner_type="ai_profile",
-                default_owner_ref="analyst",
-            )
-        )
-        await session.flush()
-        session.add(
-            Task(
-                id="task_legacy",
-                profile_id="default",
-                flow_id="flow_legacy",
-                title="Legacy task",
-                description="Existing task is owned by a teammate subagent.",
-                status="todo",
-                owner_type="ai_subagent",
-                owner_ref="qa:reviewer",
-                created_by_type="human",
-                created_by_ref="cli",
-            )
-        )
-
-    service = UpgradeService(settings)
-    try:
-        report = await service.apply()
-    finally:
-        await service.shutdown()
-
-    step = next(item for item in report.steps if item.name == "taskflow_legacy_ai_rows")
-    assert step.changed is True
-    async with session_scope(session_factory) as session:
-        task = await session.get(Task, "task_legacy")
-        flow = await session.get(TaskFlow, "flow_legacy")
-        assert task is not None
-        assert task.status == "blocked"
-        assert task.blocked_reason_code == "legacy_ai_principal"
-        assert task.owner_type == "human"
-        assert task.owner_ref == "legacy-taskflow-upgrade"
-        assert flow is not None
-        assert flow.default_owner_type is None
-        assert flow.default_owner_ref is None
     await engine.dispose()
 
 

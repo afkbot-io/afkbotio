@@ -73,7 +73,6 @@ _ALLOWED_TOOL_NAMES_BY_PROFILE: dict[ChannelToolProfile, tuple[str, ...] | None]
         "task.flow.get",
         "task.flow.list",
         "task.get",
-        "task.inbox",
         "task.list",
         "task.review.approve",
         "task.review.list",

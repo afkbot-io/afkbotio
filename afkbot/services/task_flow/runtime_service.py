@@ -1,4 +1,4 @@
-"""Detached execution runtime for AI-owned Task Flow tasks."""
+"""Detached execution runtime for employee-owned Task Flow tasks."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.employees import EmployeeService, EmployeeServiceError
 from afkbot.services.employees.prompts import build_employee_prompt_overlay
 from afkbot.services.session_events import build_runlog_event_store
-from afkbot.services.task_flow.ai_executors import (
+from afkbot.services.task_flow_principals import (
     EMPLOYEE_OWNER_TYPE,
-    resolve_ai_executor_profile_id,
+    resolve_employee_execution_profile_id,
 )
 from afkbot.services.task_flow.event_log import record_task_event
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
@@ -49,10 +49,6 @@ _LOGGER = logging.getLogger(__name__)
 _RUNTIME_UNSET = object()
 _LEASE_EXPIRED_ERROR_CODE = "task_lease_expired"
 _LEASE_EXPIRED_ERROR_TEXT = "Task claim lease expired before execution completed."
-_PLAN_AI_OWNER_BLOCKED_REASON_CODE = "invalid_plan_status"
-_PLAN_AI_OWNER_BLOCKED_REASON_TEXT = (
-    "Task assigned to AI was left in PLAN; moved to Blocked so it is visible and can be fixed"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +141,7 @@ class TaskFlowRuntimeService:
         self._engine = None
 
     async def execute_next_claimable_task(self, *, worker_id: str) -> bool:
-        """Claim and execute one runnable AI-owned task, returning whether work was found."""
+        """Claim and execute one runnable employee-owned task, returning whether work was found."""
 
         await self._ensure_started()
         await self._maybe_run_maintenance(worker_id=worker_id)
@@ -315,65 +311,6 @@ class TaskFlowRuntimeService:
                 result.runlog_event_count,
             )
 
-    async def _guard_ai_owned_plan_tasks(
-        self,
-        *,
-        repo: TaskFlowRepository,
-        worker_id: str,
-        profile_id: str | None,
-        owner_ref: str | None,
-        limit: int,
-    ) -> int:
-        """Move AI-owned PLAN tasks to blocked so they are visible to operators."""
-
-        moved_count = 0
-        rows = await repo.list_ai_plan_tasks(
-            profile_id=profile_id,
-            owner_ref=owner_ref,
-            limit=max(1, limit),
-        )
-        for row in rows:
-            updated = await repo.update_task(
-                profile_id=row.profile_id,
-                task_id=row.id,
-                status="blocked",
-                blocked_reason_code=_PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                blocked_reason_text=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                ready_at=None,
-            )
-            if updated is None:
-                continue
-            await record_task_event(
-                repo=repo,
-                task_id=row.id,
-                event_type="blocked",
-                actor_type="runtime",
-                actor_ref=worker_id,
-                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                from_status="plan",
-                to_status="blocked",
-                details={
-                    "reason_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                },
-            )
-            await record_task_event(
-                repo=repo,
-                task_id=row.id,
-                event_type="runtime_claim_rejected",
-                actor_type="runtime",
-                actor_ref=worker_id,
-                message=_PLAN_AI_OWNER_BLOCKED_REASON_TEXT,
-                from_status="plan",
-                to_status="blocked",
-                details={
-                    "error_code": _PLAN_AI_OWNER_BLOCKED_REASON_CODE,
-                    "owner_type": row.owner_type,
-                    "owner_ref": row.owner_ref,
-                },
-            )
-            moved_count += 1
-        return moved_count
-
     async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
         session_factory = self._require_session_factory()
         claim_ttl = _claim_ttl(self._settings)
@@ -385,13 +322,6 @@ class TaskFlowRuntimeService:
             try:
                 async with session_scope(session_factory) as session:
                     repo = TaskFlowRepository(session)
-                    await self._guard_ai_owned_plan_tasks(
-                        repo=repo,
-                        worker_id=worker_id,
-                        profile_id=profile_id,
-                        owner_ref=owner_ref,
-                        limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
-                    )
                     row = await repo.claim_next_runnable_task(
                         now_utc=now_utc,
                         lease_until=now_utc + claim_ttl,
@@ -680,14 +610,46 @@ class TaskFlowRuntimeService:
         lines = ["Task Flow Context Bundle:"]
         if context.flow is not None:
             lines.append(f"- flow: {context.flow.title} ({context.flow.id})")
+        if context.knowledge_packet is not None:
+            packet = context.knowledge_packet
+            lines.append(
+                f"- knowledge packet: {len(packet.documents)} docs, "
+                f"budget {packet.context_budget_chars} chars, "
+                f"health {packet.health_status}"
+            )
+            if not packet.ready_for_delegation:
+                lines.append("- delegation gate: not ready")
+            if not packet.ready_for_execution:
+                lines.append("- execution gate: not ready")
+            if packet.blocking_reasons:
+                lines.append("- knowledge blockers: " + "; ".join(packet.blocking_reasons))
+            if packet.missing_flow_document_keys:
+                lines.append(
+                    "- missing spine docs: "
+                    + ", ".join(packet.missing_flow_document_keys)
+                )
+            if packet.unconfirmed_flow_document_keys:
+                lines.append(
+                    "- unconfirmed spine docs: "
+                    + ", ".join(packet.unconfirmed_flow_document_keys)
+                )
+            for packet_doc in packet.documents[:8]:
+                prefix = "flow" if packet_doc.scope_type == "flow" else "task"
+                excerpt = packet_doc.excerpt.replace("\n", " ").strip()
+                if len(excerpt) > 360:
+                    excerpt = f"{excerpt[:357].rstrip()}..."
+                lines.append(
+                    f"  - {prefix}.{packet_doc.document_key} r{packet_doc.revision} "
+                    f"[{packet_doc.confirmation_status}] {packet_doc.title}: {excerpt}"
+                )
         if context.flow_documents:
             lines.append("- flow docs:")
-            for document in context.flow_documents[:5]:
-                lines.append(f"  - {document.document_key} r{document.revision}: {document.title}")
+            for flow_doc in context.flow_documents[:5]:
+                lines.append(f"  - {flow_doc.document_key} r{flow_doc.revision}: {flow_doc.title}")
         if context.task_documents:
             lines.append("- task docs:")
-            for document in context.task_documents[:5]:
-                lines.append(f"  - {document.document_key} r{document.revision}: {document.title}")
+            for task_doc in context.task_documents[:5]:
+                lines.append(f"  - {task_doc.document_key} r{task_doc.revision}: {task_doc.title}")
         if context.dependencies:
             lines.append("- dependencies:")
             for dependency in context.dependencies[:10]:
@@ -707,7 +669,7 @@ class TaskFlowRuntimeService:
                     message = f"{message[:177].rstrip()}..."
                 lines.append(f"  - {comment.comment_type}: {message}")
         lines.append(
-            "Use task.context.get for full context before changing docs, blockers, delegation, or review state."
+            "Use the Project Knowledge Packet first. Call task.context.get for full context before changing docs, blockers, delegation, or review state."
         )
         return "\n".join(lines)
 
@@ -1151,7 +1113,7 @@ def _default_session_runner_factory(
 
 
 def _resolve_execution_profile_id(row: object) -> str:
-    return resolve_ai_executor_profile_id(
+    return resolve_employee_execution_profile_id(
         owner_type=str(
             getattr(row, "claim_owner_type", None) or getattr(row, "owner_type", "") or ""
         )

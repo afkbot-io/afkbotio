@@ -13,6 +13,7 @@ from afkbot.services.task_flow.contracts import (
     TaskDocumentRevisionMetadata,
 )
 from afkbot.services.task_flow.errors import TaskFlowServiceError
+from afkbot.settings import get_settings
 from tests.api.chat_api._harness import auth_headers, patch_valid_chat_access_token
 
 
@@ -94,6 +95,8 @@ def test_task_documents_route_lists_documents_with_filters(monkeypatch: MonkeyPa
 def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: MonkeyPatch) -> None:
     """Document routes should share one service contract for detail, history, and confirmation."""
 
+    monkeypatch.setenv("AFKBOT_CHAT_HUMAN_OWNER_REF", "web-user")
+    get_settings.cache_clear()
     patch_valid_chat_access_token(monkeypatch, session_id="ui-session")
     calls: dict[str, object] = {}
 
@@ -141,7 +144,7 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
     assert calls["get"] == {"document_id": "doc_1", "profile_id": "default"}
     assert calls["revisions"] == {"document_id": "doc_1", "limit": 3, "profile_id": "default"}
     assert calls["confirm"] == {
-        "actor_ref": "api:ui-session",
+        "actor_ref": "web-user",
         "actor_session_id": "ui-session",
         "actor_type": "human",
         "document_id": "doc_1",
@@ -149,13 +152,14 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
         "profile_id": "default",
     }
     assert calls["delete"] == {
-        "actor_ref": "api:ui-session",
+        "actor_ref": "web-user",
         "actor_session_id": "ui-session",
         "actor_type": "human",
         "document_id": "doc_1",
         "expected_revision": 2,
         "profile_id": "default",
     }
+    get_settings.cache_clear()
 
 
 def test_task_documents_route_maps_service_errors(monkeypatch: MonkeyPatch) -> None:

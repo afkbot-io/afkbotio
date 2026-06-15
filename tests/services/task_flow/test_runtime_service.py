@@ -148,7 +148,7 @@ class _FakeLoop:
                 run_id=run.id,
                 session_id=session_id,
                 event_type="turn.ask_question",
-                payload={"assistant_message": "Need human approval"},
+                payload={"assistant_message": "Need operator approval"},
             )
             return TurnResult(
                 run_id=run.id,
@@ -156,20 +156,20 @@ class _FakeLoop:
                 profile_id=profile_id,
                 envelope=ActionEnvelope(
                     action="ask_question",
-                    message="Need human approval",
+                    message="Need operator approval",
                     question_id="q-review",
                 ),
             )
-        if self._behavior == "handoff_human":
+        if self._behavior == "handoff_employee":
             assert isinstance(taskflow_payload, dict)
             updated = await TaskFlowRepository(self._session).update_task(
                 profile_id=str(taskflow_payload.get("task_profile_id") or ""),
                 task_id=str(taskflow_payload.get("task_id") or ""),
-                owner_type="human",
-                owner_ref="cli_user:alice",
+                owner_type="employee",
+                owner_ref="reviewer",
                 status="review",
-                blocked_reason_code="awaiting_human_review",
-                blocked_reason_text="Ready for human review.",
+                blocked_reason_code="awaiting_employee_review",
+                blocked_reason_text="Ready for employee review.",
             )
             assert updated is not None
             await runlog.create_event(
@@ -300,10 +300,10 @@ class _FakeSessionRunner:
             )
 
 
-async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
+async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_dependents(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime should complete AI-owned work and unblock dependent tasks."""
+    """Detached runtime should complete employee-owned work and unblock dependent tasks."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -346,8 +346,8 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         await service.put_task_document(
             profile_id="default",
             task_id=first.id,
-            document_key="plan",
-            title="Analysis plan",
+            document_key="handoff",
+            title="Analysis handoff",
             body="Read tickets, group themes, and report blockers.",
             actor_type="human",
             actor_ref="cli",
@@ -359,8 +359,8 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
             description="Send the triage summary after analysis is ready.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             depends_on_task_ids=(first.id,),
         )
 
@@ -412,8 +412,10 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
         assert "task.update" in observed.prompt_overlay
         assert "Task Flow Context Bundle:" in observed.message
         assert "flow: Support operations" in observed.message
+        assert "knowledge packet:" in observed.message
+        assert "task.handoff r1 [draft] Analysis handoff" in observed.message
         assert "task docs:" in observed.message
-        assert "plan r1: Analysis plan" in observed.message
+        assert "handoff r1: Analysis handoff" in observed.message
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -422,7 +424,7 @@ async def test_taskflow_runtime_executes_ai_owned_task_and_unblocks_dependents(
 async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_question(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime should mark tasks blocked when the agent requires human input."""
+    """Detached runtime should mark tasks blocked when the agent requires operator input."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -457,18 +459,18 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         updated = await service.get_task(profile_id="default", task_id=task.id)
         assert updated.status == "blocked"
         assert updated.blocked_reason_code == "task_action_ask_question"
-        assert updated.blocked_reason_text == "Need human approval"
+        assert updated.blocked_reason_text == "Need operator approval"
         assert updated.ready_at is None
         listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
         blocked_event = next(
             item for item in listed_events if item.event_type == "execution_blocked"
         )
-        assert blocked_event.message == "Need human approval"
+        assert blocked_event.message == "Need operator approval"
         assert blocked_event.details["blocked_reason_code"] == "task_action_ask_question"
         fallback_comment = next(
             item for item in listed_events if item.event_type == "comment_added"
         )
-        assert fallback_comment.message == "Blocked: Need human approval"
+        assert fallback_comment.message == "Blocked: Need operator approval"
 
         async with session_scope(factory) as session:
             repo = TaskFlowRepository(session)
@@ -484,10 +486,10 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
         await engine.dispose()
 
 
-async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
+async def test_taskflow_runtime_preserves_employee_handoff_from_running_task(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime should not overwrite a durable human handoff made during the task run."""
+    """Detached runtime should not overwrite a durable employee handoff made during the task run."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -498,11 +500,12 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
         settings=Settings(
             root_dir=tmp_path,
             db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_handoff.db'}",
+            taskflow_runtime_owner_ref="analyst",
         ),
         session_factory=factory,
         session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
             session,
-            behavior="handoff_human",
+            behavior="handoff_employee",
             observed_calls=[],
         ),
     )
@@ -511,7 +514,7 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
         task = await service.create_task(
             profile_id="default",
             title="Escalate incident summary",
-            description="Prepare the incident summary and route it to the on-call human reviewer.",
+            description="Prepare the incident summary and route it to the reviewer employee.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
@@ -523,8 +526,8 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
             description="Send the incident outcome after the Employee task fully completes.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:bob",
+            owner_type="employee",
+            owner_ref="default",
             depends_on_task_ids=(task.id,),
         )
 
@@ -533,16 +536,16 @@ async def test_taskflow_runtime_preserves_human_handoff_from_running_task(
         assert processed is True
         updated = await service.get_task(profile_id="default", task_id=task.id)
         assert updated.status == "review"
-        assert updated.owner_type == "human"
-        assert updated.owner_ref == "cli_user:alice"
-        assert updated.blocked_reason_code == "awaiting_human_review"
-        assert updated.blocked_reason_text == "Ready for human review."
+        assert updated.owner_type == "employee"
+        assert updated.owner_ref == "reviewer"
+        assert updated.blocked_reason_code == "awaiting_employee_review"
+        assert updated.blocked_reason_text == "Ready for employee review."
         assert updated.last_run_id is not None
         async with session_scope(factory) as session:
             task_run = await session.get(TaskRun, updated.last_run_id)
         assert task_run is not None
         assert task_run.status == "review"
-        assert task_run.error_code == "awaiting_human_review"
+        assert task_run.error_code == "awaiting_employee_review"
 
         dependent_after = await service.get_task(profile_id="default", task_id=dependent.id)
         assert dependent_after.status == "blocked"
@@ -1625,12 +1628,12 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Review human-owned draft",
+            title="Review employee-owned draft",
             description="Approve or request changes as the reviewer subagent.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1649,8 +1652,8 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
 
         updated = await service.get_task(profile_id="default", task_id=task.id)
         assert updated.status == "completed"
-        assert updated.owner_type == "human"
-        assert updated.owner_ref == "cli_user:alice"
+        assert updated.owner_type == "employee"
+        assert updated.owner_ref == "default"
 
         async with session_scope(factory) as session:
             repo = TaskFlowRepository(session)
@@ -1699,8 +1702,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             description="This reviewer should claim first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             priority=90,
@@ -1711,8 +1714,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             description="This should wait for the same reviewer.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             priority=80,
@@ -1723,8 +1726,8 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             description="This can claim while reviewer is busy.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="auditor",
             priority=70,
@@ -2381,7 +2384,7 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
 async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
     tmp_path: Path,
 ) -> None:
-    """Detached runtime should auto-block misassigned PLAN tasks and continue with runnable work."""
+    """Detached runtime should leave employee PLAN tasks untouched and run runnable work."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -2403,22 +2406,13 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         planned = await service.create_task(
             profile_id="default",
             title="Draft the task before Employee starts",
-            description="Stay in PLAN until a human finishes the brief.",
+            description="Stay in PLAN until the responsible employee finishes the brief.",
             status="plan",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="operator",
+            owner_type="employee",
+            owner_ref="researcher",
         )
-        async with session_scope(factory) as session:
-            await session.execute(
-                text(
-                    "UPDATE task SET status = 'plan', owner_type = 'employee', owner_ref = 'researcher' "
-                    "WHERE profile_id = :profile_id AND id = :task_id"
-                ),
-                {"profile_id": "default", "task_id": planned.id},
-            )
-            await session.commit()
         runnable = await service.create_task(
             profile_id="default",
             title="Run once planning is complete",
@@ -2447,10 +2441,9 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
         planned_after = await service.get_task(profile_id="default", task_id=planned.id)
         runnable_after = await service.get_task(profile_id="default", task_id=runnable.id)
         untouched_after = await service.get_task(profile_id="default", task_id=untouched.id)
-        assert planned_after.status == "blocked"
-        assert planned_after.blocked_reason_code == "invalid_plan_status"
-        assert planned_after.blocked_reason_text is not None
-        assert "PLAN" in planned_after.blocked_reason_text
+        assert planned_after.status == "plan"
+        assert planned_after.blocked_reason_code is None
+        assert planned_after.blocked_reason_text is None
         assert planned_after.last_error_code is None
         assert planned_after.last_error_text is None
         assert runnable_after.status == "completed"
@@ -2459,8 +2452,8 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
 
         events = await service.list_task_events(profile_id="default", task_id=planned.id)
         event_types = [event.event_type for event in events]
-        assert event_types[0] == "runtime_claim_rejected"
-        assert "blocked" in event_types
+        assert "runtime_claim_rejected" not in event_types
+        assert "blocked" not in event_types
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -2520,7 +2513,7 @@ async def test_taskflow_runtime_includes_task_attachments_in_execution_message(
 
 
 def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
-    """Task Flow prompt overlay should teach decomposition and human handoff rules."""
+    """Task Flow prompt overlay should teach decomposition and employee handoff rules."""
 
     overrides = build_task_flow_context_overrides(
         task_id="task_demo",

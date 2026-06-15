@@ -12,6 +12,7 @@ from afkbot.services.task_flow.contracts import (
     TaskDocumentMetadata,
     TaskDocumentRevisionMetadata,
 )
+from afkbot.services.task_flow.human_ref import resolve_local_human_ref
 from afkbot.settings import get_settings
 
 router = APIRouter(prefix="/v1/task-documents", tags=["task-documents"])
@@ -161,13 +162,14 @@ async def post_task_document_confirm(
         session_proof=x_afk_session_proof,
         profile_id=profile_id,
     )
-    service = get_task_flow_service(get_settings())
+    settings = get_settings()
+    service = get_task_flow_service(settings)
     try:
         document = await service.confirm_document(
             profile_id=auth_context.profile_id,
             document_id=document_id,
             actor_type="human",
-            actor_ref=f"api:{auth_context.session_id}",
+            actor_ref=resolve_local_human_ref(settings),
             actor_session_id=auth_context.session_id,
             expected_revision=request.expected_revision,
         )
@@ -191,13 +193,14 @@ async def delete_task_document(
         session_proof=x_afk_session_proof,
         profile_id=profile_id,
     )
-    service = get_task_flow_service(get_settings())
+    settings = get_settings()
+    service = get_task_flow_service(settings)
     try:
         document = await service.delete_document(
             profile_id=auth_context.profile_id,
             document_id=document_id,
             actor_type="human",
-            actor_ref=f"api:{auth_context.session_id}",
+            actor_ref=resolve_local_human_ref(settings),
             actor_session_id=auth_context.session_id,
             expected_revision=request.expected_revision if request else None,
         )

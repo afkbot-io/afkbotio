@@ -29,11 +29,11 @@ class TaskFeedListParams(ToolParameters):
 
 
 class TaskFeedListTool(ToolBase):
-    """Return an AI Task Flow feed for assignments and lifecycle signals."""
+    """Return an employee Task Flow feed for assignments and lifecycle signals."""
 
     name = "task.feed.list"
     description = (
-        "List AI Task Flow assignments plus explicit mention, wake, recovery, and reject events."
+        "List employee Task Flow assignments plus explicit mention, wake, recovery, and reject events."
     )
     parameters_model = TaskFeedListParams
 
@@ -79,7 +79,7 @@ class TaskFeedListTool(ToolBase):
                     )
                 owner_type = actor.actor_type
                 owner_ref = actor.actor_ref
-            feed = await service.build_agent_inbox(
+            feed = await service.build_employee_inbox(
                 profile_id=target_profile_id,
                 owner_type=owner_type or "",
                 owner_ref=owner_ref or "",

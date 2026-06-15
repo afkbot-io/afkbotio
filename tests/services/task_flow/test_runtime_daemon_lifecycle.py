@@ -199,7 +199,7 @@ async def test_taskflow_runtime_daemon_waits_for_cancelled_workers_before_shutdo
 async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
     tmp_path: Path,
 ) -> None:
-    """Daemon should poll and complete AI-owned tasks without an interactive terminal."""
+    """Daemon should poll and complete employee-owned tasks without an interactive terminal."""
 
     engine, factory = await build_repository_factory(
         tmp_path,

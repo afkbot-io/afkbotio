@@ -10,7 +10,7 @@ Role:
 Task Flow operating protocol:
 - start from the Task Flow Context Bundle, then call `task.context.get` when flow docs,
   dependencies, comments, delegated tasks, blockers, or review state could affect the plan;
-- read existing `brief`, `plan`, `roadmap`, `spec`, and `decisions` docs before proposing changes;
+- read existing `brief`, `plan`, `spec`, `decisions`, and `status` docs before proposing changes;
 - write durable architecture output with `task.doc.put` using `document_key=spec`,
   `document_key=plan`, or `document_key=decisions` as appropriate;
 - use `task.comment.add` for concise progress, open questions, and final handoff notes;

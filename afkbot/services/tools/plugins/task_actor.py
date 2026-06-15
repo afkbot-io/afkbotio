@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from afkbot.services.automations.principals import build_automation_principal_ref
-from afkbot.services.task_flow.ai_executors import (
+from afkbot.services.task_flow_principals import (
     EMPLOYEE_OWNER_TYPE,
     parse_employee_owner_ref,
 )

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+## [1.9.17] - 2026-06-15
+
+### Changed
+
+- Task Flow runtime, tools, docs, and tests now use employee-owned terminology
+  for active work, feeds, delegation, and stale-claim recovery.
+- `afk task create` now accepts only `--description` for Task Flow task
+  instructions; the deprecated `--prompt` compatibility alias was removed.
+- The Task Flow upgrade runner no longer converts old AI profile/subagent owner
+  rows into employee tasks, leaving the employee-only Task Flow model as the
+  single supported runtime path.
+- Release metadata and lockfile package metadata are aligned to `1.9.17`.
+
 ## [1.9.16] - 2026-06-03
 
 ### Security

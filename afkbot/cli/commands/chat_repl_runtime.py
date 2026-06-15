@@ -14,11 +14,6 @@ from afkbot.cli.commands.chat_fullscreen_runtime import (
     run_fullscreen_chat_workspace_session,
 )
 from afkbot.cli.commands.chat_startup_notices import render_startup_assistant_message
-from afkbot.cli.commands.chat_task_startup_digest import (
-    _DIGEST_TIMEOUT_SEC,
-    compose_human_task_startup_message,
-    render_human_task_startup_summary,
-)
 from afkbot.cli.commands.chat_repl_input import consume_chat_repl_input
 from afkbot.cli.presentation.chat_interactive import InteractiveChatUX
 from afkbot.cli.presentation.chat_workspace.runtime import (
@@ -38,8 +33,6 @@ from afkbot.services.chat_session.repl_queue import ChatReplTurnQueue
 from afkbot.services.chat_session.session_state import ChatReplSessionState
 from afkbot.services.chat_session.turn_flow import ChatTurnInteractiveOptions, ChatTurnOutcome
 from afkbot.services.llm.reasoning import ThinkingLevel
-from afkbot.services.task_flow import get_task_flow_service
-from afkbot.services.task_flow.human_ref import resolve_local_human_ref
 from afkbot.settings import Settings
 
 RunReplTurnFn = Callable[
@@ -94,12 +87,7 @@ def run_repl_transport(
             await catalog_refresher()
             repl_state.latest_catalog = catalog_store.current()
 
-        startup_assistant_message = runner.run(
-            _load_task_startup_assistant_message(
-                settings=settings,
-                profile_id=profile_id,
-            )
-        )
+        startup_assistant_message = None
 
         try:
             if not supports_interactive_tty():
@@ -361,50 +349,3 @@ def _render_repl_session_banner(
     if normalized_label and normalized_label != normalized_session_id:
         return f"Session: {normalized_label} · id={normalized_session_id}"
     return f"Session: {normalized_session_id}"
-
-
-async def _load_task_startup_assistant_message(
-    *,
-    settings: Settings,
-    profile_id: str,
-) -> str | None:
-    """Build one assistant-style startup message for the current human task inbox, failing open."""
-
-    owner_ref = _resolve_chat_human_owner_ref(settings)
-    try:
-        async with asyncio.timeout(2.0):
-            service = get_task_flow_service(settings)
-            summary = await service.summarize_human_tasks(
-                profile_id=profile_id,
-                owner_ref=owner_ref,
-            )
-            inbox = await service.build_human_inbox(
-                profile_id=profile_id,
-                owner_ref=owner_ref,
-                task_limit=5,
-                event_limit=3,
-                channel="chat_startup",
-                mark_seen=True,
-            )
-    except Exception:
-        return None
-    fallback_message = render_human_task_startup_summary(summary, settings=settings, inbox=inbox)
-    if fallback_message is None:
-        return None
-    try:
-        async with asyncio.timeout(_DIGEST_TIMEOUT_SEC):
-            rendered = await compose_human_task_startup_message(
-                settings=settings,
-                profile_id=profile_id,
-                summary=summary,
-                inbox=inbox,
-            )
-    except Exception:
-        return fallback_message
-    return rendered or fallback_message
-
-
-def _resolve_chat_human_owner_ref(settings: Settings) -> str:
-    """Resolve the current local human owner reference for chat startup lookups."""
-
-    return resolve_local_human_ref(settings)

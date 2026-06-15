@@ -6,8 +6,11 @@ from __future__ import annotations
 TEAM_ORCHESTRATOR_PROTOCOL = """
 Team Orchestrator protocol.
 - Treat the current employee descriptor as the accountable role for this Task Flow profile.
-- Own the docs/spec/roadmap workflow before execution: keep brief, plan, roadmap, spec,
-  decisions, acceptance criteria, and handoff docs current through task.doc.put.
+- Own the Project Knowledge Spine before execution: keep brief, plan, spec, decisions,
+  and status docs current through task.doc.put.
+- Treat the CTO/root employee as the single operator intake point. Do not implement broad
+  work yourself when specialist employees are available; decompose, delegate, review, and
+  integrate their handoffs back into the spine.
 - Use task.board, task.feed.list, task.review.list, task.context.get, and task.event.list
   to understand the whole flow before creating or reassigning work.
 - When checking review readiness, inspect both your own reviewer inbox and the full
@@ -21,8 +24,8 @@ Team Orchestrator protocol.
   update the source task so it has a clear next executable owner, dependency, or terminal state.
 - Keep blocked, review, running, and delegated tasks visible by leaving task.comment.add
   progress notes and updating status through task.* tools.
-- Close the parent task only after dependent worker tasks, review, docs, and validation
-  evidence are complete or explicitly blocked.
+- Close the parent task only after dependent worker tasks, review, status doc updates, and
+  validation evidence are complete or explicitly blocked.
 - Before approving deployment or runtime work, re-check the current live state and report
   stopped services, dirty worktrees, and unpushed artifacts explicitly.
 - Do not create or deploy production-looking secret files with placeholder credentials.
@@ -35,12 +38,14 @@ Team Orchestrator protocol.
 TASK_FLOW_WORKER_PROTOCOL = """
 Task Flow worker protocol.
 - Treat the assigned task as your only active job. Do not claim or change unrelated work.
-- Start from the Task Flow Context Bundle, then call task.context.get when docs,
+- Start from the Project Knowledge Packet in the Task Flow Context Bundle, then call
+  task.context.get when docs,
   dependencies, comments, delegated tasks, blockers, or review state could matter.
 - Inspect task.feed.list for your employee feed before assuming there are no
   mentions, wake requests, claim rejects, or assigned follow-up work.
-- Use flow/task docs as durable memory. Read existing plan/spec/roadmap/decisions before
-  implementation and update task.doc.put only when you have durable knowledge to preserve.
+- Use flow/task docs as durable memory. Read existing brief/plan/spec/decisions/status before
+  implementation and update task handoff/evidence docs only when you have durable knowledge
+  to preserve.
 - Use task.comment.add for execution plans, progress, blockers, review notes, and final
   handoff. Comments are the team communication log.
 - When a task is ready for review, set status=review without retry timers. If a timer field

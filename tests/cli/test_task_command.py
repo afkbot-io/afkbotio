@@ -18,8 +18,8 @@ def _strip_ansi(value: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", value)
 
 
-def test_task_create_help_mentions_prompt_alias(monkeypatch) -> None:
-    """Help output should document the transitional --prompt alias."""
+def test_task_create_help_mentions_description_only(monkeypatch) -> None:
+    """Help output should document the current description field only."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -30,11 +30,11 @@ def test_task_create_help_mentions_prompt_alias(monkeypatch) -> None:
     assert result.exit_code == 0
     output = _strip_ansi(result.stdout)
     assert "--description" in output
-    assert "--prompt" in output
+    assert "--prompt" not in output
 
 
-def test_task_create_requires_description_or_prompt(monkeypatch) -> None:
-    """Create should fail early when neither --description nor --prompt is provided."""
+def test_task_create_requires_description(monkeypatch) -> None:
+    """Create should fail early when --description is not provided."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -45,39 +45,28 @@ def test_task_create_requires_description_or_prompt(monkeypatch) -> None:
     assert result.exit_code != 0
     output = _strip_ansi(result.stdout + (result.stderr or ""))
     assert "--description" in output
+    assert "--prompt" not in output
+
+
+def test_task_create_rejects_removed_prompt_flag(monkeypatch) -> None:
+    """The removed --prompt alias should fail instead of reaching the payload layer."""
+
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    get_settings.cache_clear()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["task", "create", "--title", "Removed", "--prompt", "Use old flag"],
+    )
+
+    assert result.exit_code != 0
+    output = _strip_ansi(result.stdout + (result.stderr or ""))
     assert "--prompt" in output
 
 
-def test_task_create_accepts_legacy_prompt_flag(monkeypatch) -> None:
-    """Legacy --prompt should still map to description for compatibility."""
-
-    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
-    get_settings.cache_clear()
-
-    from afkbot.cli.commands import task as module
-
-    captured: dict[str, object] = {}
-
-    async def _fake_create_task_payload(**kwargs):
-        captured.update(kwargs)
-        return '{"task":{"id":"task_1"}}'
-
-    monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
-    monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["task", "create", "--title", "Legacy", "--prompt", "Use old flag"],
-    )
-
-    assert result.exit_code == 0
-    assert captured["description"] == "Use old flag"
-    assert captured["status"] == "todo"
-
-
-def test_task_create_prefers_description_over_prompt(monkeypatch) -> None:
-    """Preferred --description should win deterministically over legacy --prompt."""
+def test_task_create_supports_employee_owner_and_reviewer_inputs(monkeypatch) -> None:
+    """Create should normalize employee owner and reviewer inputs."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -100,45 +89,9 @@ def test_task_create_prefers_description_over_prompt(monkeypatch) -> None:
             "task",
             "create",
             "--title",
-            "Preferred",
+            "Employee routed",
             "--description",
-            "Preferred text",
-            "--prompt",
-            "Legacy text",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert captured["description"] == "Preferred text"
-
-
-def test_task_create_supports_structured_owner_and_reviewer_inputs(monkeypatch) -> None:
-    """Create should normalize structured profile/subagent selectors for owners and reviewers."""
-
-    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
-    get_settings.cache_clear()
-
-    from afkbot.cli.commands import task as module
-
-    captured: dict[str, object] = {}
-
-    async def _fake_create_task_payload(**kwargs):
-        captured.update(kwargs)
-        return '{"task":{"id":"task_1"}}'
-
-    monkeypatch.setattr(module, "create_task_payload", _fake_create_task_payload)
-    monkeypatch.setattr(module, "resolve_local_human_ref", lambda _settings: "cli_user:test")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        [
-            "task",
-            "create",
-            "--title",
-            "Structured",
-            "--description",
-            "Route work through structured selectors.",
+            "Route work through employees.",
             "--owner-ref",
                 "researcher",
             "--reviewer-type",
@@ -155,8 +108,8 @@ def test_task_create_supports_structured_owner_and_reviewer_inputs(monkeypatch) 
     assert captured["reviewer_ref"] == "analyst"
 
 
-def test_task_create_accepts_equivalent_raw_and_structured_owner_inputs(monkeypatch) -> None:
-    """Create should accept migration-period duplicate owner selectors when equivalent."""
+def test_task_create_accepts_equivalent_employee_owner_inputs(monkeypatch) -> None:
+    """Create should accept equivalent employee owner inputs."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()
@@ -192,8 +145,8 @@ def test_task_create_accepts_equivalent_raw_and_structured_owner_inputs(monkeypa
     assert result.exit_code == 0
     assert captured["owner_type"] == "employee"
     assert captured["owner_ref"] == "reviewer"
-def test_task_update_supports_structured_owner_and_reviewer_inputs(monkeypatch) -> None:
-    """Update should normalize structured profile/subagent selectors for owners and reviewers."""
+def test_task_update_supports_employee_owner_and_reviewer_inputs(monkeypatch) -> None:
+    """Update should normalize employee owner and reviewer inputs."""
 
     monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
     get_settings.cache_clear()

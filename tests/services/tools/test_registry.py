@@ -87,7 +87,6 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
         "task.flow.get",
         "task.flow.list",
         "task.get",
-        "task.inbox",
         "task.list",
         "task.review.approve",
         "task.review.list",
@@ -128,7 +127,6 @@ def test_registry_from_settings_loads_default_plugin(tmp_path: Path) -> None:
     assert registry.get("task.review.list") is not None
     assert registry.get("task.review.approve") is not None
     assert registry.get("task.flow.create") is not None
-    assert registry.get("task.inbox") is not None
     assert registry.get("task.stale.list") is not None
     assert registry.get("task.stale.sweep") is not None
     assert registry.get("task.run.list") is not None

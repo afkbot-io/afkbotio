@@ -118,7 +118,7 @@ def test_task_help_exposes_dependency_and_run_management() -> None:
     assert "board" in output
     assert "comment-add" in output
     assert "comment-list" in output
-    assert "inbox" in output
+    assert "feed" in output
     assert "dependency-add" in output
     assert "dependency-list" in output
     assert "dependency-remove" in output

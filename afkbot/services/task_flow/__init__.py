@@ -1,10 +1,8 @@
 """Task Flow service exports."""
 
 from afkbot.services.task_flow.contracts import (
-    AgentTaskInboxMetadata,
-    HumanTaskInboxEventMetadata,
-    HumanTaskInboxMetadata,
-    HumanTaskStartupSummary,
+    EmployeeTaskInboxEventMetadata,
+    EmployeeTaskInboxMetadata,
     StaleTaskClaimMetadata,
     TaskAttachmentContent,
     TaskAttachmentCreate,
@@ -35,16 +33,14 @@ from afkbot.services.task_flow.service import (
 )
 
 __all__ = [
-    "AgentTaskInboxMetadata",
-    "HumanTaskStartupSummary",
+    "EmployeeTaskInboxMetadata",
+    "EmployeeTaskInboxEventMetadata",
     "StaleTaskClaimMetadata",
     "TaskAttachmentContent",
     "TaskAttachmentCreate",
     "TaskAttachmentMetadata",
     "TaskMaintenanceSweepMetadata",
     "TaskBlockStateMetadata",
-    "HumanTaskInboxEventMetadata",
-    "HumanTaskInboxMetadata",
     "TaskCommentMetadata",
     "TaskContextMetadata",
     "TaskDocumentMetadata",

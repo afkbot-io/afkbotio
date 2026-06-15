@@ -24,6 +24,7 @@ from afkbot.services.session_orchestration import SessionOrchestrator
 from afkbot.services.session_orchestration.service import _session_queue_poll_delay
 from afkbot.services.task_flow.service import TaskFlowService
 from afkbot.settings import Settings
+from tests.repositories._harness import _write_test_employees
 from tests.services.agent_loop._loop_harness import create_test_db
 
 
@@ -149,6 +150,7 @@ class _TaskCreatingRunner:
         )
         await self._session.commit()
 
+        _write_test_employees(settings=self._settings, profile_id=profile_id)
         await TaskFlowService(self._session_factory, settings=self._settings).create_task(
             profile_id=profile_id,
             title=f"Task from {message}",
@@ -157,8 +159,8 @@ class _TaskCreatingRunner:
             created_by_ref="cli",
             session_id=session_id,
             session_profile_id=profile_id,
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
             source_type="chat",
             source_ref=f"run:{run.id}",
         )

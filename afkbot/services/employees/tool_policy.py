@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from afkbot.services.employees import EmployeeService, EmployeeServiceError
-from afkbot.services.task_flow.ai_executors import EMPLOYEE_OWNER_TYPE, parse_employee_owner_ref
+from afkbot.services.task_flow_principals import EMPLOYEE_OWNER_TYPE, parse_employee_owner_ref
 from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 

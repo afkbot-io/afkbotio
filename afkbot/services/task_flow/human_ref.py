@@ -1,4 +1,4 @@
-"""Shared helpers for resolving the local human owner/reviewer reference."""
+"""Shared helpers for resolving the local human audit principal reference."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from afkbot.settings import Settings
 
 
 def resolve_local_human_ref(settings: Settings) -> str:
-    """Resolve the local human owner/reviewer reference used by CLI/chat flows."""
+    """Resolve the local human actor reference used by CLI/chat flows."""
 
     explicit_ref = str(settings.chat_human_owner_ref or "").strip()
     if explicit_ref:

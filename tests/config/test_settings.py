@@ -72,7 +72,6 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         "task_list",
         "task_maintenance_sweep",
         "task_get",
-        "task_inbox",
         "task_review_list",
         "task_review_approve",
         "task_review_request_changes",

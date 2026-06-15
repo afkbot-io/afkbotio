@@ -89,6 +89,15 @@ async def _prepare(
                 source="pytest",
                 client_msg_id=None,
             )
+        await ProfileRepository(session).get_or_create_default("papercliper")
+        await sessions.create(session_id="taskflow:papercliper-root-demo", profile_id="papercliper")
+        await queue_repo.enqueue(
+            profile_id="papercliper",
+            session_id="taskflow:papercliper-root-demo",
+            owner_token="pytest:papercliper:taskflow:papercliper-root-demo",
+            source="pytest",
+            client_msg_id=None,
+        )
 
     return settings, engine, ToolRegistry.from_settings(settings)
 
@@ -109,6 +118,36 @@ def _employee_trusted_context(employee_id: str) -> dict[str, object]:
             "owner_ref": employee_id,
         }
     }
+
+
+def _root_employee_context(
+    *,
+    profile_id: str = "default",
+    session_id: str | None = None,
+    run_id: int = 1,
+) -> ToolContext:
+    """Return a trusted root employee runtime context for manager-created setup tasks."""
+
+    resolved_session_id = (
+        session_id
+        if session_id is not None
+        else ("session-live-42" if profile_id == "default" else f"taskflow:{profile_id}-root-demo")
+    )
+    return ToolContext(
+        profile_id=profile_id,
+        session_id=resolved_session_id,
+        run_id=run_id,
+        runtime_metadata={
+            "transport": "taskflow",
+            "taskflow": {
+                "task_profile_id": profile_id,
+                "task_id": "task_demo",
+                "owner_type": "employee",
+                "owner_ref": "default",
+            },
+        },
+        trusted_runtime_context=_employee_trusted_context("default"),
+    )
 
 
 async def _create_chat_session(
@@ -165,8 +204,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
                 "description": "Compile the weekly report and store the summary.",
                 "priority": 80,
                 "labels": ["ops", "weekly"],
-                "owner_type": "human",
-                "owner_ref": "cli_user:alice",
+                "owner_type": "employee",
+                "owner_ref": "default",
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
@@ -176,48 +215,33 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         task = create_result.payload["task"]
         assert isinstance(task, dict)
         assert task["status"] == "todo"
-        assert task["owner_type"] == "human"
-        assert task["owner_ref"] == "cli_user:alice"
+        assert task["owner_type"] == "employee"
+        assert task["owner_ref"] == "default"
         task_id = str(task["id"])
 
-        inbox_tool = registry.get("task.inbox")
+        feed_tool = registry.get("task.feed.list")
         comment_add_tool = registry.get("task.comment.add")
         comment_list_tool = registry.get("task.comment.list")
-        assert inbox_tool is not None
+        assert feed_tool is not None
         assert comment_add_tool is not None
         assert comment_list_tool is not None
-        inbox_result = await inbox_tool.execute(
+        feed_result = await feed_tool.execute(
             ctx,
-            inbox_tool.parse_params(
-                {"profile_key": "default", "owner_ref": "cli_user:alice"},
+            feed_tool.parse_params(
+                {"profile_key": "default", "owner_type": "employee", "owner_ref": "default"},
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
             ),
         )
-        assert inbox_result.ok is True
-        inbox = inbox_result.payload["inbox"]
-        assert isinstance(inbox, dict)
-        assert inbox["total_count"] == 1
-        assert inbox["todo_count"] == 1
-        assert inbox["overdue_count"] == 0
-        assert inbox["unseen_event_count"] == 1
-        assert inbox["recent_events"][0]["event_type"] == "created"
-
-        inbox_mark_seen_result = await inbox_tool.execute(
-            ctx,
-            inbox_tool.parse_params(
-                {
-                    "profile_key": "default",
-                    "owner_ref": "cli_user:alice",
-                    "channel": "chat_startup",
-                    "mark_seen": True,
-                },
-                default_timeout_sec=settings.tool_timeout_default_sec,
-                max_timeout_sec=settings.tool_timeout_max_sec,
-            ),
-        )
-        assert inbox_mark_seen_result.ok is False
-        assert inbox_mark_seen_result.error_code == "task_inbox_mark_seen_not_allowed"
+        assert feed_result.ok is True
+        feed = feed_result.payload["feed"]
+        assert isinstance(feed, dict)
+        assert feed["owner_type"] == "employee"
+        assert feed["owner_ref"] == "default"
+        assert feed["total_count"] == 1
+        assert feed["todo_count"] == 1
+        assert feed["mention_event_count"] == 0
+        assert {event["event_type"] for event in feed["recent_events"]} >= {"wake_requested"}
 
         comment_add_result = await comment_add_tool.execute(
             ctx,
@@ -256,7 +280,7 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         list_tool = registry.get("task.list")
         assert list_tool is not None
         list_params = list_tool.parse_params(
-            {"profile_key": "default", "owner_type": "human", "owner_ref": "cli_user:alice"},
+            {"profile_key": "default", "owner_type": "employee", "owner_ref": "default"},
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
         )
@@ -427,8 +451,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
             task_board_tool.parse_params(
                 {
                     "profile_key": "default",
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
                     "labels": ["weekly"],
                     "limit_per_column": 1,
                 },
@@ -454,8 +478,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
             task_run = await task_runs.create_task_run(
                 task_id=task_id,
                 attempt=1,
-                owner_type="human",
-                owner_ref="cli_user:alice",
+                owner_type="employee",
+                owner_ref="default",
                 execution_mode="detached",
                 status="review",
                 session_id="taskflow:manual-demo",
@@ -524,8 +548,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
                 "profile_key": "default",
                 "title": "Weekly operations",
                 "description": "Flow for the weekly ops routine.",
-                "default_owner_type": "human",
-                "default_owner_ref": "cli_user:alice",
+                "default_owner_type": "employee",
+                "default_owner_ref": "default",
             },
             default_timeout_sec=settings.tool_timeout_default_sec,
             max_timeout_sec=settings.tool_timeout_max_sec,
@@ -597,7 +621,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
                 {
                     "profile_key": "default",
                     "title": "Agent project memory",
-                    "description": "Persist plans, specs, and roadmap docs for Employee work.",
+                    "description": "Persist plans, specs, and status docs for Employee work.",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -632,9 +656,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
             ),
         )
         assert list_result.ok is True
-        assert any(
-            document["document_key"] == "roadmap" for document in list_result.payload["documents"]
-        )
+        assert any(document["document_key"] == "status" for document in list_result.payload["documents"])
 
         put_result = await doc_put_tool.execute(
             ctx,
@@ -643,8 +665,8 @@ async def test_task_plugins_docs_context_and_agent_feed(
                     "profile_key": "default",
                     "scope_type": "task",
                     "scope_id": task_id,
-                    "document_key": "plan",
-                    "title": "Task execution plan",
+                    "document_key": "handoff",
+                    "title": "Task handoff",
                     "body": "1. Read docs.\n2. Update task.\n3. Verify behavior.",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -677,7 +699,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
                 {
                     "profile_key": "default",
                     "task_id": task_id,
-                    "message": "@default please continue from the plan document.",
+                    "message": "@default please continue from the handoff document.",
                     "comment_type": "note",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
@@ -697,7 +719,7 @@ async def test_task_plugins_docs_context_and_agent_feed(
         assert context_result.ok is True
         bundle = context_result.payload["task_context"]
         assert bundle["task"]["id"] == task_id
-        assert any(document["document_key"] == "plan" for document in bundle["task_documents"])
+        assert any(document["document_key"] == "handoff" for document in bundle["task_documents"])
 
         feed_result = await feed_tool.execute(
             ctx,
@@ -726,7 +748,7 @@ async def test_employee_runtime_read_tools_are_scoped_to_self_or_reports(
 
     settings, engine, registry = await _prepare(tmp_path, monkeypatch)
     try:
-        operator_ctx = ToolContext(profile_id="default", session_id="s-task", run_id=1)
+        operator_ctx = _root_employee_context(run_id=1)
         create_tool = registry.get("task.create")
         get_tool = registry.get("task.get")
         list_tool = registry.get("task.list")
@@ -1753,10 +1775,10 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
             ctx,
             create_tool.parse_params(
                 {
-                    "title": "Runtime backlog note",
-                    "description": "Keep backlog changes in manager profile.",
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
+                        "title": "Runtime backlog note",
+                        "description": "Keep backlog changes in manager profile.",
+                        "owner_type": "employee",
+                        "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2154,6 +2176,7 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
                     "owner_ref": "analyst",
                 },
             },
+            trusted_runtime_context=_employee_trusted_context("analyst"),
         )
         create_tool = registry.get("task.create")
         assert create_tool is not None
@@ -2167,8 +2190,8 @@ async def test_task_plugins_runtime_profile_scope_ignores_explicit_profile_targe
                         **explicit_target,
                         "title": f"Runtime backlog note #{index}",
                         "description": "Keep backlog changes in manager profile.",
-                        "owner_type": "human",
-                        "owner_ref": "cli_user:alice",
+                        "owner_type": "employee",
+                        "owner_ref": "reviewer",
                     },
                     default_timeout_sec=settings.tool_timeout_default_sec,
                     max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2223,8 +2246,8 @@ async def test_task_plugins_runtime_profile_scope_ignores_env_override_in_taskfl
                     "profile_id": "analyst",
                     "title": "Runtime override note",
                     "description": "Keep trusted runtime scope even when env override is set.",
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2324,7 +2347,7 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
         assert delegate_tool is not None
         assert get_tool is not None
 
-        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=11)
+        operator_ctx = _root_employee_context(session_id="task-seed", run_id=11)
         parent_result = await create_tool.execute(
             operator_ctx,
             create_tool.parse_params(
@@ -2427,7 +2450,7 @@ async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_employee(
         assert create_tool is not None
         assert delegate_tool is not None
 
-        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=21)
+        operator_ctx = _root_employee_context(session_id="task-seed", run_id=21)
         parent_result = await create_tool.execute(
             operator_ctx,
             create_tool.parse_params(
@@ -2516,7 +2539,7 @@ async def test_task_create_plugin_infers_employee_owner_from_owner_ref(
         assert create_tool is not None
 
         result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="s-task", run_id=31),
+            _root_employee_context(run_id=31),
             create_tool.parse_params(
                 {
                     "title": "Employee assignment",
@@ -2558,7 +2581,7 @@ async def test_task_create_plugin_infers_employee_owner_and_reviewer_from_refs(
         assert create_tool is not None
 
         result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="s-task", run_id=31),
+            _root_employee_context(run_id=31),
             create_tool.parse_params(
                 {
                     "title": "Employee owner and reviewer",
@@ -2673,7 +2696,7 @@ async def test_task_delegate_plugin_supports_structured_employee_assignment(
         assert delegate_tool is not None
 
         parent_result = await create_tool.execute(
-            ToolContext(profile_id="default", session_id="task-seed", run_id=34),
+            _root_employee_context(session_id="task-seed", run_id=34),
             create_tool.parse_params(
                 {
                     "title": "Parent task",
@@ -2829,7 +2852,7 @@ async def test_task_update_plugin_rejects_coworker_task_mutation(
         assert create_tool is not None
         assert update_tool is not None
 
-        operator_ctx = ToolContext(profile_id="default", session_id="task-seed", run_id=21)
+        operator_ctx = _root_employee_context(session_id="task-seed", run_id=21)
         create_result = await create_tool.execute(
             operator_ctx,
             create_tool.parse_params(
@@ -3040,7 +3063,7 @@ async def test_task_stale_plugins_support_structured_owner_filter(
             markdown="# Reviewer\nFocus on stale review work.",
         )
 
-        ctx = ToolContext(profile_id="default", session_id="s-task-maint-filtered", run_id=10)
+        ctx = _root_employee_context(run_id=10)
         create_tool = registry.get("task.create")
         stale_list_tool = registry.get("task.stale.list")
         maintenance_tool = registry.get("task.stale.sweep")
@@ -3345,8 +3368,8 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
                     "profile_key": "default",
                     "title": "Return for changes",
                     "description": "Send this task back with review feedback.",
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
                     "reviewer_type": "employee",
                     "reviewer_ref": "default",
                 },
@@ -3484,8 +3507,8 @@ async def test_task_review_request_changes_supports_structured_employee_owner(
                 {
                     "title": "Structured changes request",
                     "description": "Return this review task to one subagent.",
-                    "owner_type": "human",
-                    "owner_ref": "cli_user:alice",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
                     "reviewer_type": "employee",
                     "reviewer_ref": "default",
                 },
@@ -3548,6 +3571,7 @@ async def test_task_review_list_supports_structured_employee_actor(
             markdown="# Reviewer\n\nReview specialist.",
         )
         ctx = ToolContext(profile_id="papercliper", session_id="s-review-structured", run_id=2)
+        setup_ctx = _root_employee_context(profile_id="papercliper", run_id=2)
 
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
@@ -3557,7 +3581,7 @@ async def test_task_review_list_supports_structured_employee_actor(
         assert review_list_tool is not None
 
         task_result = await create_tool.execute(
-            ctx,
+            setup_ctx,
             create_tool.parse_params(
                 {
                     "profile_key": "papercliper",
@@ -3656,6 +3680,7 @@ async def test_task_list_and_board_support_employee_owner_filters(
         )
 
         ctx = ToolContext(profile_id="papercliper", session_id="s-list-board-structured", run_id=3)
+        setup_ctx = _root_employee_context(profile_id="papercliper", run_id=3)
         create_tool = registry.get("task.create")
         list_tool = registry.get("task.list")
         board_tool = registry.get("task.board")
@@ -3664,7 +3689,7 @@ async def test_task_list_and_board_support_employee_owner_filters(
         assert board_tool is not None
 
         reviewer_task_result = await create_tool.execute(
-            ctx,
+            setup_ctx,
             create_tool.parse_params(
                 {
                     "profile_key": "papercliper",
@@ -3682,7 +3707,7 @@ async def test_task_list_and_board_support_employee_owner_filters(
         assert isinstance(reviewer_task, dict)
 
         orchestrator_task_result = await create_tool.execute(
-            ctx,
+            setup_ctx,
             create_tool.parse_params(
                 {
                     "profile_key": "papercliper",

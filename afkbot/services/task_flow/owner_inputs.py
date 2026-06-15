@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from afkbot.services.task_flow.ai_executors import normalize_task_owner_type
+from afkbot.services.task_flow_principals import normalize_task_owner_type
 
 
 class TaskOwnerInputError(ValueError):

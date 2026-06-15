@@ -30,7 +30,7 @@ class TaskFlowRuntimeExecutor(Protocol):
 
 
 class TaskFlowRuntimeDaemon:
-    """Long-running worker pool for AI-owned Task Flow tasks."""
+    """Long-running worker pool for employee-owned Task Flow tasks."""
 
     def __init__(
         self,

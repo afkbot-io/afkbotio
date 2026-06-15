@@ -670,6 +670,7 @@ async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_
 
     await create_schema(engine)
     factory = create_session_factory(engine)
+    _write_test_employees(settings=settings, profile_id="default")
     async with session_scope(factory) as session:
         repo = ProfileRepository(session)
         await repo.get_or_create_default("default")
@@ -771,7 +772,8 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
-    service = TaskFlowService(factory)
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(factory, settings=settings)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     old_time = cutoff - timedelta(days=3)
     recent_time = cutoff + timedelta(days=1)
@@ -785,8 +787,8 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
         description="Retain the run because it still has a surviving task event.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="default",
     )
     orphan_task = await service.create_task(
         profile_id="default",
@@ -794,8 +796,8 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
         description="Allow pruning once the old runtime rows are detached.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="default",
     )
     kept_run_id = 0
     orphan_run_id = 0
@@ -810,8 +812,8 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
         kept_run = TaskRun(
             task_id=kept_task.id,
             attempt=1,
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
             execution_mode="detached",
             status="completed",
             session_id="taskflow:kept",
@@ -825,8 +827,8 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
         orphan_run = TaskRun(
             task_id=orphan_task.id,
             attempt=1,
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
             execution_mode="detached",
             status="completed",
             session_id="taskflow:orphan",
@@ -913,11 +915,12 @@ async def test_prune_runtime_history_removes_only_old_safe_rows(tmp_path: Path) 
         kept_run_exists = await session.get(TaskRun, kept_run_id)
         orphan_run_exists = await session.get(TaskRun, orphan_run_id)
 
-    assert int(remaining_task_events) == 3
+    assert int(remaining_task_events) == 5
     assert int(remaining_task_runs) == 1
     assert int(remaining_runlog_events) == 1
     assert list(remaining_task_event_types).count("comment_added") == 1
     assert list(remaining_task_event_types).count("created") == 2
+    assert list(remaining_task_event_types).count("wake_requested") == 2
     assert kept_run_exists is not None
     assert orphan_run_exists is None
     await engine.dispose()
@@ -933,7 +936,8 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
-    service = TaskFlowService(factory)
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(factory, settings=settings)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     old_time = cutoff - timedelta(days=3)
     recent_time = cutoff + timedelta(days=1)
@@ -947,8 +951,8 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
         description="Preserve old task run rows while newer task events still reference them.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="default",
     )
 
     referenced_run_id = 0
@@ -956,8 +960,8 @@ async def test_prune_runtime_history_keeps_old_task_run_with_newer_task_event_re
         referenced_run = TaskRun(
             task_id=task.id,
             attempt=1,
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
             execution_mode="detached",
             status="completed",
             session_id="taskflow:referenced",
@@ -1039,7 +1043,8 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
     engine = create_engine(settings)
     await create_schema(engine)
     factory = create_session_factory(engine)
-    service = TaskFlowService(factory)
+    _write_test_employees(settings=settings, profile_id="default")
+    service = TaskFlowService(factory, settings=settings)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     old_time = cutoff - timedelta(days=3)
     async with session_scope(factory) as session:
@@ -1051,8 +1056,8 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
         description="Do not prune the last_run_id reference automatically.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="default",
     )
     protected_run_id = 0
     async with session_scope(factory) as session:
@@ -1060,8 +1065,8 @@ async def test_prune_runtime_history_keeps_task_last_run_reference(tmp_path: Pat
         protected_run = TaskRun(
             task_id=task.id,
             attempt=1,
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
             execution_mode="detached",
             status="completed",
             session_id="taskflow:protected",
@@ -1559,7 +1564,7 @@ async def test_task_runtime_schema_upkeep_migrates_legacy_prompt_to_description(
 
 
 async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_path: Path) -> None:
-    """Legacy task tables should raise one structured compatibility error instead of raw DB failure."""
+    """Outdated task tables should raise one structured schema error instead of raw DB failure."""
 
     db_path = tmp_path / "legacy_task_schema_mismatch.db"
     settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
@@ -1658,7 +1663,7 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
         await service.create_task(
             profile_id="default",
             title="Legacy task schema mismatch",
-            description="This should surface a compatibility error.",
+            description="This should surface a structured schema error.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
@@ -1675,7 +1680,7 @@ async def test_task_flow_create_task_reports_legacy_task_schema_mismatch(tmp_pat
 async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
     tmp_path: Path,
 ) -> None:
-    """Legacy task_event tables should raise one structured compatibility error instead of raw DB failure."""
+    """Outdated task_event tables should raise one structured schema error instead of raw DB failure."""
 
     db_path = tmp_path / "legacy_task_event_schema_mismatch.db"
     settings = Settings(db_url=f"sqlite+aiosqlite:///{db_path}", root_dir=tmp_path, taskflow_public_principal_required=False)
@@ -1774,7 +1779,7 @@ async def test_task_flow_create_task_reports_legacy_task_event_schema_mismatch(
         await service.create_task(
             profile_id="default",
             title="Legacy task_event schema mismatch",
-            description="This should surface a compatibility error.",
+            description="This should surface a structured schema error.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",

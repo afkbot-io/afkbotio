@@ -236,39 +236,6 @@ async def build_board_payload(
         await engine.dispose()
 
 
-async def build_human_inbox_payload(
-    *,
-    profile_id: str,
-    owner_ref: str,
-    task_limit: int = 5,
-    event_limit: int = 5,
-    channel: str | None = None,
-    mark_seen: bool = False,
-) -> str:
-    """Build one notification-ready human inbox payload."""
-
-    settings = get_settings()
-    engine = create_engine(settings)
-    session_factory = create_session_factory(engine)
-    await create_schema(engine)
-    try:
-        await _ensure_profile_exists(session_factory, profile_id)
-        service = get_task_flow_service(settings)
-        inbox = await service.build_human_inbox(
-            profile_id=profile_id,
-            owner_ref=owner_ref,
-            task_limit=task_limit,
-            event_limit=event_limit,
-            channel=channel,
-            mark_seen=mark_seen,
-        )
-        return json.dumps({"inbox": inbox.model_dump(mode="json")}, ensure_ascii=True)
-    except TaskFlowServiceError as exc:
-        return _error_json(error_code=exc.error_code, reason=exc.reason)
-    finally:
-        await engine.dispose()
-
-
 async def build_agent_feed_payload(
     *,
     profile_id: str,
@@ -277,7 +244,7 @@ async def build_agent_feed_payload(
     task_limit: int = 10,
     event_limit: int = 10,
 ) -> str:
-    """Build one AI assignment/mention feed payload."""
+    """Build one employee assignment, mention, and wake feed payload."""
 
     settings = get_settings()
     engine = create_engine(settings)
@@ -286,7 +253,7 @@ async def build_agent_feed_payload(
     try:
         await _ensure_profile_exists(session_factory, profile_id)
         service = get_task_flow_service(settings)
-        feed = await service.build_agent_inbox(
+        feed = await service.build_employee_inbox(
             profile_id=profile_id,
             owner_type=owner_type,
             owner_ref=owner_ref,

@@ -337,7 +337,7 @@ async def test_task_comment_wakes_responsible_employee_feed(tmp_path: Path) -> N
         message="Please react to this update.",
     )
 
-    feed = await service.build_agent_inbox(
+    feed = await service.build_employee_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="cto",
@@ -418,7 +418,7 @@ async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Pat
     assert escalation_task.status == "todo"
     assert escalation_task.source_ref == task.id
     assert "task_owner_forbidden" in escalation_task.description
-    manager_feed = await service.build_agent_inbox(
+    manager_feed = await service.build_employee_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="qa",
@@ -431,7 +431,7 @@ async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Pat
         and event.details["source_owner_ref"] == "qa-reviewer"
         for event in manager_feed.recent_events
     )
-    worker_feed = await service.build_agent_inbox(
+    worker_feed = await service.build_employee_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="qa-reviewer",
@@ -518,7 +518,7 @@ async def test_orchestrator_handoff_blocker_parks_source_task(tmp_path: Path) ->
 
     assert blocked.ready_at is None
     assert blocked.blocked_reason_code == "manager_reassignment_required"
-    worker_feed = await service.build_agent_inbox(
+    worker_feed = await service.build_employee_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="qa-reviewer",
@@ -553,8 +553,8 @@ async def test_review_changes_manager_handoff_creates_escalation_without_source_
         description="Review changes can require manager routing.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="qa",
         reviewer_type="employee",
         reviewer_ref="qa-reviewer",
     )
@@ -886,12 +886,12 @@ async def test_task_comment_ignores_invalid_or_inactive_employee_mentions(
     _write_employee(tmp_path, profile_id="default", employee_id="qa", status="disabled")
     task = await service.create_task(
         profile_id="default",
-        title="Human-owned work",
+        title="Employee-owned work",
         description="Mentions should only wake active employees in this profile.",
         created_by_type="human",
         created_by_ref="cli",
-        owner_type="human",
-        owner_ref="cli",
+        owner_type="employee",
+        owner_ref="cto",
     )
 
     await service.add_task_comment(
@@ -902,12 +902,13 @@ async def test_task_comment_ignores_invalid_or_inactive_employee_mentions(
         message="@ghost @qa please check this.",
     )
 
-    feed = await service.build_agent_inbox(
+    feed = await service.build_employee_inbox(
         profile_id="default",
         owner_type="employee",
         owner_ref="cto",
     )
-    assert feed.recent_events == ()
+    assert feed.mention_event_count == 0
+    assert all(event.event_type != "mention_created" for event in feed.recent_events)
 
 
 async def test_taskflow_runtime_executes_employee_with_employee_overlay(

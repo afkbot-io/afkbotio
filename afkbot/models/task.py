@@ -35,7 +35,8 @@ class Task(Base, TimestampMixin):
             "owner_ref",
             unique=True,
             postgresql_where=text(
-                "owner_type = 'employee' AND status IN ('claimed', 'running')"
+                "owner_type = 'employee' AND status IN ('claimed', 'running') "
+                "AND (claim_source_status IS NULL OR claim_source_status != 'review')"
             ),
         ).ddl_if(dialect="postgresql"),
         Index(

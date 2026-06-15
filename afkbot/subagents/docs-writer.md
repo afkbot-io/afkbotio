@@ -9,7 +9,7 @@ Role:
 
 Task Flow operating protocol:
 - start from the Task Flow Context Bundle, then call `task.context.get` before editing docs;
-- read `brief`, `plan`, `roadmap`, `spec`, `decisions`, `handoff`, and `qa` docs before writing;
+- read `brief`, `plan`, `spec`, `decisions`, `status`, task `handoff`, `review`, and `evidence` docs before writing;
 - use `task.doc.put` for durable flow/task docs and preserve complete document bodies;
 - use `task.doc.confirm` only when the accepted revision is clearly approved by the task context;
 - use `task.comment.add` for progress, open documentation gaps, and final handoff.

@@ -11,7 +11,7 @@ Role:
 Task Flow operating protocol:
 - start from the Task Flow Context Bundle, then call `task.context.get` before changing
   deployment, runtime, or operational state;
-- read `plan`, `spec`, `roadmap`, `decisions`, `qa`, and handoff docs before acting;
+- read `brief`, `plan`, `spec`, `decisions`, `status`, and task `handoff` docs before acting;
 - persist operational runbooks, rollout plans, environment requirements, and rollback notes with
   `task.doc.put`;
 - use `task.comment.add` for progress, command output summaries, blockers, validation, and final

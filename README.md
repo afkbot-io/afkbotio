@@ -171,36 +171,32 @@ or go through review.
 
 ```bash
 afk task flow-create --profile default --title "Website launch"
-afk task create --profile default --title "Draft landing copy" --prompt "Write first landing page draft"
+afk task create --profile default --title "Draft landing copy" --description "Write first landing page draft"
 afk task board --profile default
 ```
 
 Task Flow also exposes agent-facing `task.*` tools for autonomous work. Flows
-carry default editable docs for `brief`, `plan`, `roadmap`, `spec`, and
-`decisions`; tasks can add their own docs such as `plan`, `spec`, `handoff`, or
-`qa`. Cloud UI can rename and edit flow metadata without changing the `flow_id`,
-so related tasks and docs stay attached to the same project. Agents should inspect
-`task.context.get` before changing a task, update
+carry the Project Knowledge Spine docs `brief`, `plan`, `spec`, `decisions`,
+and `status`; tasks can add focused working docs such as `handoff`, `notes`,
+`review`, and `evidence`. Cloud UI can rename and edit flow metadata without
+changing the `flow_id`, so related tasks and docs stay attached to the same
+project. Agents should inspect `task.context.get` before changing a task, update
 durable docs with `task.doc.put`, confirm accepted revisions with
-`task.doc.confirm`, and use `task.feed.list` to see AI assignments plus
-explicit `@profile` / `@profile:subagent` mentions, wake requests, stale-claim
-recovery actions, and runtime claim rejects. For raw append-only audit history,
-use `task.event.list` or `afk task event-list`. Agent feeds use the same claim
+`task.doc.confirm`, and use `task.feed.list` to see employee assignments,
+explicit `@employee_id` mentions, wake requests, stale-claim recovery actions,
+and runtime claim rejects. For raw append-only audit history, use
+`task.event.list` or `afk task event-list`. Employee feeds use the same claim
 ownership model as the detached runtime: normal work is assigned by task owner,
 review work is assigned by reviewer when present, and active claimed/running work
 stays visible to the persisted claim owner.
 
-For AI-team operation, the profile AI executor acts as the Team Orchestrator for
-that profile backlog. The orchestrator owns decomposition, project documents,
-dependencies, assignments, review routing, and final flow readiness checks.
-Packaged starter subagents such as `backend-engineer`, `frontend-engineer`,
-`qa-engineer`, `reviewer`, `docs-writer`, and `devops` act as focused employees
-that claim only their assigned Task Flow work and leave durable handoff notes.
-By default a profile backlog only accepts AI profile ownership for its own
-orchestrator. Add teammate profile ids through the Task Flow team roster config
-when this orchestrator is allowed to delegate work to other AI profiles. Upgrade
-checks materialize rosters from existing cross-profile Task Flow rows before the
-strict roster enforcement takes effect.
+For employee-team operation, the profile is the organization boundary and a flow
+is one project for that organization. New work enters through the active root
+employee, usually `cto`; managers decompose work, update the Project Knowledge
+Spine, assign employee-owned tasks, route review, and integrate handoffs back
+into `status` and `decisions`. CLI subagents remain a tool capability that an
+employee may invoke from its own session when policy allows it, but subagents and
+profiles are not Task Flow owners or reviewers.
 
 ### Create an automation
 

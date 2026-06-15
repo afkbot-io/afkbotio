@@ -16,8 +16,6 @@ from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.models.channel_endpoint import ChannelEndpoint
 from afkbot.models.profile_policy import ProfilePolicy
-from afkbot.models.task import Task
-from afkbot.models.task_flow import TaskFlow
 from afkbot.services.channels.endpoint_contracts import (
     deserialize_endpoint_config,
     serialize_endpoint_storage_payload,
@@ -55,7 +53,6 @@ from afkbot.services.profile_runtime.runtime_secrets import (
     PROFILE_RUNTIME_SECRETS_VERSION,
     get_profile_runtime_secrets_service,
 )
-from afkbot.services.profile_id import InvalidProfileIdError, validate_profile_id
 from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.upgrade.contracts import UpgradeApplyReport, UpgradeStepReport
 from afkbot.services.wizard.profile_catalog import infer_profile_scenario_id
@@ -118,12 +115,6 @@ class UpgradeService:
             )
             steps.append(
                 await self._upgrade_taskflow_team_rosters(
-                    session,
-                    apply_changes=apply_changes,
-                )
-            )
-            steps.append(
-                await self._upgrade_legacy_taskflow_ai_rows(
                     session,
                     apply_changes=apply_changes,
                 )
@@ -364,12 +355,10 @@ class UpgradeService:
             )
             if not isinstance(raw_config, dict):
                 continue
-            legacy_taskflow_team = raw_config.pop("taskflow_team_profile_ids", None)
             config = ProfileRuntimeConfig.model_validate(raw_config)
             canonical_config = config.model_dump(mode="json", exclude_none=True)
             if (
-                legacy_taskflow_team is None
-                and payload.get("version") == PROFILE_RUNTIME_CONFIG_VERSION
+                payload.get("version") == PROFILE_RUNTIME_CONFIG_VERSION
                 and payload.get("config") == canonical_config
             ):
                 continue
@@ -439,26 +428,7 @@ class UpgradeService:
         roster_paths = sorted(
             self._settings.profiles_dir.glob("*/.system/taskflow_team.json")
         )
-        legacy_runtime_configs: list[str] = []
-        if self._settings.profiles_dir.exists():
-            for profile_root in sorted(self._settings.profiles_dir.iterdir()):
-                if not profile_root.is_dir():
-                    continue
-                try:
-                    profile_id = validate_profile_id(profile_root.name)
-                except InvalidProfileIdError:
-                    continue
-                config_path = self._runtime_configs.config_path(profile_id)
-                payload = self._read_json_object(config_path)
-                raw_config = (
-                    payload.get("config") if isinstance(payload.get("config"), dict) else payload
-                )
-                if (
-                    isinstance(raw_config, dict)
-                    and raw_config.get("taskflow_team_profile_ids")
-                ):
-                    legacy_runtime_configs.append(profile_id)
-        changed = len(roster_paths) + len(legacy_runtime_configs)
+        changed = len(roster_paths)
         if apply_changes:
             for path in roster_paths:
                 path.unlink(missing_ok=True)
@@ -470,84 +440,13 @@ class UpgradeService:
                 f"removed {len(roster_paths)} obsolete Task Flow roster file(s)"
                 if apply_changes and changed
                 else (
-                    f"{changed} obsolete Task Flow roster/config reference(s) need removal"
+                    f"{changed} obsolete Task Flow roster file(s) need removal"
                     if changed
                     else "no obsolete Task Flow profile-team rosters"
                 )
             ),
         )
 
-    async def _upgrade_legacy_taskflow_ai_rows(
-        self,
-        session: AsyncSession,
-        *,
-        apply_changes: bool,
-    ) -> UpgradeStepReport:
-        legacy_types = {"ai_profile", "ai_subagent", "subagent"}
-        task_rows = list((await session.execute(select(Task))).scalars().all())
-        legacy_tasks: list[Task] = [
-            row
-            for row in task_rows
-            if row.owner_type in legacy_types
-            or row.reviewer_type in legacy_types
-            or row.created_by_type in legacy_types
-            or row.claim_owner_type in legacy_types
-        ]
-        flow_rows = list((await session.execute(select(TaskFlow))).scalars().all())
-        legacy_flows: list[TaskFlow] = [
-            row
-            for row in flow_rows
-            if row.created_by_type in legacy_types or row.default_owner_type in legacy_types
-        ]
-        if apply_changes:
-            for task_row in legacy_tasks:
-                if task_row.status not in {"completed", "failed", "cancelled"}:
-                    task_row.status = "blocked"
-                    task_row.blocked_reason_code = "legacy_ai_principal"
-                    task_row.blocked_reason_text = (
-                        "Blocked during Employees v2 upgrade because this task used a "
-                        "legacy AI profile/subagent principal. Reassign it to an employee."
-                    )
-                task_row.owner_type = (
-                    "human" if task_row.owner_type in legacy_types else task_row.owner_type
-                )
-                task_row.owner_ref = (
-                    "legacy-taskflow-upgrade"
-                    if task_row.owner_ref and task_row.owner_type == "human"
-                    else task_row.owner_ref
-                )
-                if task_row.reviewer_type in legacy_types:
-                    task_row.reviewer_type = None
-                    task_row.reviewer_ref = None
-                if task_row.created_by_type in legacy_types:
-                    task_row.created_by_type = "human"
-                    task_row.created_by_ref = "legacy-taskflow-upgrade"
-                if task_row.claim_owner_type in legacy_types:
-                    task_row.claim_owner_type = None
-                    task_row.claim_owner_ref = None
-                    task_row.claim_token = None
-                    task_row.lease_until = None
-            for flow_row in legacy_flows:
-                if flow_row.created_by_type in legacy_types:
-                    flow_row.created_by_type = "human"
-                    flow_row.created_by_ref = "legacy-taskflow-upgrade"
-                if flow_row.default_owner_type in legacy_types:
-                    flow_row.default_owner_type = None
-                    flow_row.default_owner_ref = None
-        changed = len(legacy_tasks) + len(legacy_flows)
-        return UpgradeStepReport(
-            name="taskflow_legacy_ai_rows",
-            changed=changed > 0,
-            details=(
-                f"converted {len(legacy_tasks)} legacy task row(s) and {len(legacy_flows)} flow row(s)"
-                if apply_changes and changed
-                else (
-                    f"{changed} legacy Task Flow row(s) need employee cutover"
-                    if changed
-                    else "no legacy Task Flow AI principals"
-                )
-            ),
-        )
     async def _upgrade_profile_policy_workspace_scope(
         self,
         session: AsyncSession,

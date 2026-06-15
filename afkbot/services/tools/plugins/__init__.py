@@ -127,7 +127,6 @@ from afkbot.services.tools.plugins.task_flow_create import (
 from afkbot.services.tools.plugins.task_flow_get import create_tool as create_task_flow_get_tool
 from afkbot.services.tools.plugins.task_flow_list import create_tool as create_task_flow_list_tool
 from afkbot.services.tools.plugins.task_get import create_tool as create_task_get_tool
-from afkbot.services.tools.plugins.task_inbox import create_tool as create_task_inbox_tool
 from afkbot.services.tools.plugins.task_list import create_tool as create_task_list_tool
 from afkbot.services.tools.plugins.task_maintenance_sweep import (
     create_tool as create_task_maintenance_sweep_tool,
@@ -264,7 +263,6 @@ _PLUGIN_FACTORIES: dict[str, Callable[[Settings], ToolBase]] = {
     "task_flow_get": create_task_flow_get_tool,
     "task_flow_list": create_task_flow_list_tool,
     "task_get": create_task_get_tool,
-    "task_inbox": create_task_inbox_tool,
     "task_list": create_task_list_tool,
     "task_maintenance_sweep": create_task_maintenance_sweep_tool,
     "task_review_approve": create_task_review_approve_tool,

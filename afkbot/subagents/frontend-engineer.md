@@ -9,7 +9,7 @@ Role:
 
 Task Flow operating protocol:
 - start from the Task Flow Context Bundle, then call `task.context.get` before implementation;
-- read `brief`, `plan`, `spec`, `roadmap`, `decisions`, and task handoff docs before editing;
+- read `brief`, `plan`, `spec`, `decisions`, `status`, and task handoff docs before editing;
 - persist durable UI requirements, interaction decisions, and QA notes with `task.doc.put` when
   they should survive across agents;
 - use `task.comment.add` for plan, progress, blocked state, browser QA results, and final handoff;

@@ -7,7 +7,7 @@ import binascii
 import hashlib
 import json
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, TypeVar, cast, overload
@@ -37,20 +37,17 @@ from afkbot.services.automations.principals import (
     parse_automation_principal_ref,
 )
 from afkbot.services.employees import EmployeeMetadata, EmployeeService, EmployeeServiceError
-from afkbot.services.task_flow.ai_executors import (
+from afkbot.services.task_flow_principals import (
     EMPLOYEE_OWNER_TYPE,
-    is_ai_executor_owner_type,
-    LEGACY_AI_EXECUTOR_OWNER_TYPES,
+    is_employee_executor_owner_type,
     normalize_task_owner_type,
     parse_employee_owner_ref,
-    resolve_ai_executor_profile_id,
+    resolve_employee_execution_profile_id,
 )
 from afkbot.services.session_orchestration.service import session_turn_queue_stale_cutoff
 from afkbot.services.task_flow.contracts import (
-    AgentTaskInboxMetadata,
-    HumanTaskInboxEventMetadata,
-    HumanTaskInboxMetadata,
-    HumanTaskStartupSummary,
+    EmployeeTaskInboxEventMetadata,
+    EmployeeTaskInboxMetadata,
     StaleTaskClaimMetadata,
     TaskAttachmentContent,
     TaskAttachmentCreate,
@@ -66,6 +63,8 @@ from afkbot.services.task_flow.contracts import (
     TaskDependencyMetadata,
     TaskEventMetadata,
     TaskFlowMetadata,
+    TaskKnowledgePacketDocumentMetadata,
+    TaskKnowledgePacketMetadata,
     TaskMetadata,
     TaskRunMetadata,
     TaskSessionActivityMetadata,
@@ -73,11 +72,22 @@ from afkbot.services.task_flow.contracts import (
 from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.human_ref import resolve_local_human_ref
+from afkbot.services.task_flow.knowledge_spine import (
+    CANONICAL_FLOW_DOCUMENTS,
+    CANONICAL_FLOW_DOCUMENT_KEYS,
+    KnowledgePacket,
+    TASK_WORKING_DOCUMENT_KEYS,
+    build_knowledge_packet,
+    default_flow_document_body,
+    select_canonical_flow_documents,
+    select_task_working_documents,
+)
 from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
-_VALID_OWNER_TYPES = {EMPLOYEE_OWNER_TYPE, "human"}
-_VALID_ACTOR_TYPES = _VALID_OWNER_TYPES | {"automation"}
+_VALID_OWNER_TYPES = {EMPLOYEE_OWNER_TYPE}
+_VALID_ACTOR_TYPES = _VALID_OWNER_TYPES | {"automation", "human"}
+_HUMAN_INTAKE_SOURCE_TYPES = {"manual", "ui_task_flow"}
 _VALID_TASK_STATUSES = {
     "plan",
     "todo",
@@ -90,16 +100,6 @@ _VALID_TASK_STATUSES = {
     "cancelled",
 }
 _VALID_FLOW_STATUSES = {"active", "completed", "cancelled", "archived"}
-_VISIBLE_HUMAN_STATUSES = ("todo", "blocked", "review")
-_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES = {
-    "comment_added",
-    "created",
-    "updated",
-    "review_changes_requested",
-    "execution_review_ready",
-    "execution_blocked",
-    "dependencies_satisfied",
-}
 _TASK_COMMENT_EVENT_TYPE = "comment_added"
 _MANAGER_ESCALATION_BLOCKER_CODES = {
     "manager_reassignment_required",
@@ -117,33 +117,7 @@ _MANAGER_ESCALATION_TYPE = "manager_reassignment"
 _TASK_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _TASK_DOCUMENT_SCOPE_FLOW = "flow"
 _TASK_DOCUMENT_SCOPE_TASK = "task"
-_DEFAULT_FLOW_DOCUMENTS: tuple[tuple[str, str, str], ...] = (
-    (
-        "brief",
-        "Project brief",
-        "## Brief\n\nSummarize the goal, users, constraints, and success criteria for this flow.\n",
-    ),
-    (
-        "plan",
-        "Execution plan",
-        "## Plan\n\nCapture the approved task plan, sequencing, dependencies, and validation path.\n",
-    ),
-    (
-        "roadmap",
-        "Roadmap",
-        "## Roadmap\n\nTrack milestones, phases, delivery order, and known follow-up work.\n",
-    ),
-    (
-        "spec",
-        "Specification",
-        "## Specification\n\nRecord behavior, contracts, architecture notes, and acceptance criteria.\n",
-    ),
-    (
-        "decisions",
-        "Decisions",
-        "## Decisions\n\nLog durable design and implementation decisions with dates and rationale.\n",
-    ),
-)
+_DEFAULT_FLOW_DOCUMENTS = CANONICAL_FLOW_DOCUMENTS
 _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("plan", "PLAN", ("plan",)),
     ("todo", "Todo", ("todo",)),
@@ -154,14 +128,12 @@ _TASK_BOARD_COLUMNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("failed", "Failed", ("failed",)),
     ("cancelled", "Cancelled", ("cancelled",)),
 )
-_PLAN_AI_OWNER_ERROR_CODE = "task_plan_requires_human_owner"
-_PLAN_AI_OWNER_REASON = "PLAN status is human-only; assign a human owner or move task to Todo"
 _MAX_TASK_ATTACHMENT_BYTES = 10 * 1024 * 1024
 _MAX_TASK_ATTACHMENT_BASE64_BYTES = ((_MAX_TASK_ATTACHMENT_BYTES + 2) // 3) * 4
-_TASK_FLOW_MIN_COMPATIBLE_VERSION = "1.4.2"
+_TASK_FLOW_MIN_SCHEMA_VERSION = "1.4.2"
 _TASK_FLOW_SCHEMA_INCOMPATIBLE_REASON = (
     "Task Flow schema/runtime is incompatible with this request. "
-    f"AFKBOT >= {_TASK_FLOW_MIN_COMPATIBLE_VERSION} and `afk upgrade apply` are required."
+    f"AFKBOT >= {_TASK_FLOW_MIN_SCHEMA_VERSION} and `afk upgrade apply` are required."
 )
 TValue = TypeVar("TValue")
 _TASK_FIELD_UNSET = object()
@@ -524,6 +496,7 @@ class TaskFlowService:
                 scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
                 scope_id=flow.id,
             )
+            rows = list(select_canonical_flow_documents(rows))
             return [_to_task_document_metadata(row) for row in rows]
 
         return await self._with_repo(_op)
@@ -566,6 +539,7 @@ class TaskFlowService:
                 limit=normalized_limit,
                 offset=normalized_offset,
             )
+            rows = list(_filter_current_contract_documents(rows))
             return [_to_task_document_metadata(row) for row in rows]
 
         return await self._with_repo(_op)
@@ -590,6 +564,7 @@ class TaskFlowService:
                     error_code="task_document_not_found",
                     reason="Task Flow document not found",
                 )
+            _ensure_document_uses_current_contract(document)
             return _to_task_document_metadata(document)
 
         return await self._with_repo(_op)
@@ -673,6 +648,7 @@ class TaskFlowService:
                     error_code="task_document_not_found",
                     reason="Task Flow document not found",
                 )
+            _ensure_document_uses_current_contract(document)
             rows = await repo.list_task_document_revisions(document_id=document.id, limit=limit)
             return [_to_task_document_revision_metadata(row) for row in rows]
 
@@ -723,6 +699,7 @@ class TaskFlowService:
                     error_code="task_document_not_found",
                     reason="Task Flow document not found",
                 )
+            _ensure_document_uses_current_contract(document)
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
@@ -737,6 +714,15 @@ class TaskFlowService:
                 repo,
                 settings=self._settings,
                 profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            await _ensure_document_actor_can_manage(
+                repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                scope_type=document.scope_type,
+                scope_id=document.scope_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -806,6 +792,7 @@ class TaskFlowService:
                     error_code="task_document_not_found",
                     reason="Task Flow document not found",
                 )
+            _ensure_document_uses_current_contract(document)
             await _ensure_public_ai_principal_session(
                 repo,
                 settings=self._settings,
@@ -820,6 +807,15 @@ class TaskFlowService:
                 repo,
                 settings=self._settings,
                 profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            await _ensure_document_actor_can_manage(
+                repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                scope_type=document.scope_type,
+                scope_id=document.scope_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -859,6 +855,10 @@ class TaskFlowService:
         normalized_scope_type = _normalize_document_scope_type(scope_type)
         normalized_scope_id = _normalize_required_text(scope_id, field_name="scope_id")
         normalized_document_key = _normalize_document_key(document_key)
+        _ensure_canonical_document_key(
+            scope_type=normalized_scope_type,
+            document_key=normalized_document_key,
+        )
         normalized_title = _normalize_required_text(title, field_name="title")
         normalized_body = _normalize_document_body(body)
         normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
@@ -904,6 +904,15 @@ class TaskFlowService:
                 repo,
                 settings=self._settings,
                 profile_id=profile_id,
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+            )
+            await _ensure_document_actor_can_manage(
+                repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                scope_type=normalized_scope_type,
+                scope_id=normalized_scope_id,
                 actor_type=normalized_actor_type,
                 actor_ref=normalized_actor_ref,
             )
@@ -1181,6 +1190,14 @@ class TaskFlowService:
                 owner_type=resolved_owner_type,
                 owner_ref=resolved_owner_ref,
             )
+            await _ensure_human_intake_targets_root_employee(
+                settings=self._settings,
+                profile_id=profile_id,
+                source_type=normalized_source_type,
+                actor_type=normalized_created_by_type,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+            )
             resolved_session_profile_id = normalized_session_profile_id
             if normalized_session_id is not None:
                 if resolved_session_profile_id is None:
@@ -1192,7 +1209,7 @@ class TaskFlowService:
                 if resolved_session_profile_id is not None:
                     await _ensure_profile_exists(repo, resolved_session_profile_id)
                 if (
-                    is_ai_executor_owner_type(normalized_created_by_type)
+                    is_employee_executor_owner_type(normalized_created_by_type)
                     and normalized_actor_session_id is not None
                     and normalized_session_id != normalized_actor_session_id
                 ):
@@ -1214,10 +1231,6 @@ class TaskFlowService:
                 resolved_status = "blocked" if normalized_depends_on else "todo"
             else:
                 resolved_status = normalized_requested_status
-            _ensure_plan_status_owner_is_human(
-                status=resolved_status,
-                owner_type=resolved_owner_type,
-            )
             blocked_reason_code = (
                 "dependency_wait"
                 if normalized_depends_on and resolved_status == "blocked"
@@ -1293,14 +1306,14 @@ class TaskFlowService:
                     "attachment_count": len(normalized_attachments),
                 },
             )
-            if is_ai_executor_owner_type(row.owner_type) and row.status == "todo":
+            if is_employee_executor_owner_type(row.owner_type) and row.status == "todo":
                 await _record_task_wake_requested(
                     repo=repo,
                     task=row,
                     reason_code="task_created",
                     actor_type=normalized_created_by_type,
                     actor_ref=normalized_created_by_ref,
-                    message="AI-owned task created and ready for execution.",
+                    message="Employee-owned task created and ready for execution.",
                 )
             return await _build_task_metadata(repo, row, settings=self._settings)
 
@@ -1310,16 +1323,16 @@ class TaskFlowService:
             if _is_active_ai_owner_integrity_error(exc):
                 raise TaskFlowServiceError(
                     error_code="task_owner_conflict",
-                    reason="Only one active AI-owned task may exist for the same owner in a profile",
+                    reason="Only one active employee-owned task may exist for the same owner in a profile",
                 ) from exc
-            compatibility_error = _build_task_flow_schema_compatibility_error(exc)
-            if compatibility_error is not None:
-                raise compatibility_error from exc
+            schema_error = _build_task_flow_schema_error(exc)
+            if schema_error is not None:
+                raise schema_error from exc
             raise
         except (OperationalError, ProgrammingError) as exc:
-            compatibility_error = _build_task_flow_schema_compatibility_error(exc)
-            if compatibility_error is not None:
-                raise compatibility_error from exc
+            schema_error = _build_task_flow_schema_error(exc)
+            if schema_error is not None:
+                raise schema_error from exc
             raise
 
     async def get_task(self, *, profile_id: str, task_id: str) -> TaskMetadata:
@@ -1745,7 +1758,7 @@ class TaskFlowService:
         owner_ref: str | None = None,
         limit: int | None = None,
     ) -> tuple[StaleTaskClaimMetadata, ...]:
-        """List stale AI-owned claimed/running tasks whose lease already expired."""
+        """List stale employee-owned claimed/running tasks whose lease already expired."""
 
         async def _op(repo: TaskFlowRepository) -> tuple[StaleTaskClaimMetadata, ...]:
             await _ensure_profile_exists(repo, profile_id)
@@ -1891,13 +1904,13 @@ class TaskFlowService:
                 message=normalized_message,
                 comment_type=normalized_comment_type,
             )
+            responsible_employee = _task_responsible_employee(task)
             if (
-                task.owner_type == EMPLOYEE_OWNER_TYPE
-                and task.owner_ref
+                responsible_employee is not None
                 and task.status not in {"completed", "failed", "cancelled"}
                 and not (
                     normalized_actor_type == EMPLOYEE_OWNER_TYPE
-                    and normalized_actor_ref == task.owner_ref
+                    and normalized_actor_ref == responsible_employee[1]
                 )
             ):
                 await _record_task_wake_requested(
@@ -1923,7 +1936,7 @@ class TaskFlowService:
 
         return await self._with_repo(_op)
 
-    async def build_agent_inbox(
+    async def build_employee_inbox(
         self,
         *,
         profile_id: str,
@@ -1931,8 +1944,8 @@ class TaskFlowService:
         owner_ref: str,
         task_limit: int = 10,
         event_limit: int = 10,
-    ) -> AgentTaskInboxMetadata:
-        """Build an inbox for one AI executor from assignments and mentions."""
+    ) -> EmployeeTaskInboxMetadata:
+        """Build an inbox for one employee from assignments and mentions."""
 
         normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
@@ -1946,13 +1959,13 @@ class TaskFlowService:
                 error_code="invalid_owner_ref",
                 reason="Employee inbox owner is required",
             )
-        if not is_ai_executor_owner_type(normalized_owner_type):
+        if not is_employee_executor_owner_type(normalized_owner_type):
             raise TaskFlowServiceError(
-                error_code="task_agent_inbox_owner_required",
+                error_code="task_employee_inbox_owner_required",
                 reason="Task Flow inbox requires an employee owner",
             )
 
-        async def _op(repo: TaskFlowRepository) -> AgentTaskInboxMetadata:
+        async def _op(repo: TaskFlowRepository) -> EmployeeTaskInboxMetadata:
             await _ensure_profile_exists(repo, profile_id)
             await _ensure_actor_refs_exist(
                 repo,
@@ -1963,7 +1976,7 @@ class TaskFlowService:
                 reviewer_type=None,
                 reviewer_ref=None,
             )
-            actionable = await repo.list_agent_inbox_tasks(
+            actionable = await repo.list_employee_inbox_tasks(
                 profile_id=profile_id,
                 owner_type=normalized_owner_type,
                 owner_ref=normalized_owner_ref,
@@ -1981,7 +1994,7 @@ class TaskFlowService:
                     continue
                 row = await repo.get_task(profile_id=profile_id, task_id=event.task_id)
                 title_by_task_id[event.task_id] = row.title if row is not None else event.task_id
-            return AgentTaskInboxMetadata(
+            return EmployeeTaskInboxMetadata(
                 owner_type=normalized_owner_type,
                 owner_ref=normalized_owner_ref,
                 total_count=len(actionable),
@@ -2000,7 +2013,7 @@ class TaskFlowService:
                     )
                 ),
                 recent_events=tuple(
-                    _to_human_inbox_event_metadata(
+                    _to_employee_task_inbox_event_metadata(
                         row,
                         task_title=title_by_task_id.get(row.task_id, row.task_id),
                     )
@@ -2018,7 +2031,7 @@ class TaskFlowService:
         event_limit: int = 20,
         comment_limit: int = 10,
     ) -> TaskContextMetadata:
-        """Build a Paperclip-style context bundle for one task execution."""
+        """Build an AFKBOT Knowledge Packet context bundle for one task execution."""
 
         normalized_task_id = _normalize_required_text(task_id, field_name="task_id")
 
@@ -2040,11 +2053,13 @@ class TaskFlowService:
                         scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
                         scope_id=flow.id,
                     )
+                    flow_documents = list(select_canonical_flow_documents(flow_documents))
             task_documents = await repo.list_task_documents(
                 profile_id=profile_id,
                 scope_type=_TASK_DOCUMENT_SCOPE_TASK,
                 scope_id=task.id,
             )
+            task_documents = list(select_task_working_documents(task_documents))
             dependencies = await repo.list_dependencies(task_id=task.id)
             dependency_rows: list[Task] = []
             for edge in dependencies:
@@ -2072,10 +2087,18 @@ class TaskFlowService:
                 for row in event_rows
                 if str(row.event_type or "").strip() == _TASK_COMMENT_EVENT_TYPE
             ][: max(comment_limit, 1)]
+            knowledge_packet = build_knowledge_packet(
+                profile_id=profile_id,
+                flow_id=task.flow_id,
+                task_id=task.id,
+                flow_documents=flow_documents,
+                task_documents=task_documents,
+            )
             return TaskContextMetadata(
                 generated_at=datetime.now(timezone.utc),
                 task=await _build_task_metadata(repo, task, settings=self._settings),
                 flow=_to_flow_metadata(flow) if flow is not None else None,
+                knowledge_packet=_to_knowledge_packet_metadata(knowledge_packet),
                 flow_documents=tuple(_to_task_document_metadata(row) for row in flow_documents),
                 task_documents=tuple(_to_task_document_metadata(row) for row in task_documents),
                 dependencies=tuple(_to_dependency_metadata(row) for row in dependencies),
@@ -2341,7 +2364,7 @@ class TaskFlowService:
                 and normalized_owner_ref is None
                 and normalized_actor_type is not None
                 and normalized_actor_ref is not None
-                and is_ai_executor_owner_type(normalized_actor_type)
+                and is_employee_executor_owner_type(normalized_actor_type)
                 and _task_matches_review_inbox(
                     row=row,
                     actor_type=normalized_actor_type,
@@ -2383,7 +2406,7 @@ class TaskFlowService:
                 owner_ref=effective_owner_ref,
                 ready_at=(
                     datetime.now(timezone.utc)
-                    if is_ai_executor_owner_type(effective_owner_type)
+                    if is_employee_executor_owner_type(effective_owner_type)
                     and normalized_reason_code != "dependency_wait"
                     and not manager_escalation_blocker
                     else None
@@ -2409,16 +2432,16 @@ class TaskFlowService:
                     "owner_ref": updated.owner_ref,
                 },
             )
-            if is_ai_executor_owner_type(updated.owner_type) and not manager_escalation_blocker:
+            if is_employee_executor_owner_type(updated.owner_type) and not manager_escalation_blocker:
                 await _record_task_wake_requested(
                     repo=repo,
                     task=updated,
                     reason_code=normalized_reason_code,
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
-                    message="Review changes requested; AI owner should resume this task.",
+                    message="Review changes requested; employee owner should resume this task.",
                 )
-            if is_ai_executor_owner_type(updated.owner_type):
+            if is_employee_executor_owner_type(updated.owner_type):
                 await _record_manager_escalation_if_needed(
                     repo=repo,
                     settings=self._settings,
@@ -2641,7 +2664,7 @@ class TaskFlowService:
         wait_for_delegated_task: bool = True,
         handoff_note: str | None = None,
     ) -> TaskDelegationMetadata:
-        """Create one delegated AI-owned task and optionally block the source task on it."""
+        """Create one delegated employee-owned task and optionally block the source task on it."""
 
         normalized_source_task_id = _normalize_required_text(
             source_task_id, field_name="source_task_id"
@@ -3271,10 +3294,6 @@ class TaskFlowService:
                         "a manager escalation blocker"
                     ),
                 )
-            _ensure_plan_status_owner_is_human(
-                status=effective_status_after_update,
-                owner_type=effective_owner_type,
-            )
             effective_session_id = (
                 requested_session_id
                 if requested_session_id is not _TASK_FIELD_UNSET
@@ -3294,7 +3313,7 @@ class TaskFlowService:
                     reason="Automation actors cannot move tasks into claimed/running state",
                 )
             if (
-                is_ai_executor_owner_type(effective_owner_type)
+                is_employee_executor_owner_type(effective_owner_type)
                 and effective_status_after_update in {"claimed", "running"}
                 and not effective_session_id_text
             ):
@@ -3303,7 +3322,7 @@ class TaskFlowService:
                     reason="Active AI tasks require a bound session_id",
                 )
             if (
-                is_ai_executor_owner_type(effective_owner_type)
+                is_employee_executor_owner_type(effective_owner_type)
                 and effective_status in {"claimed", "running"}
                 and await repo.has_active_ai_task(
                     profile_id=profile_id,
@@ -3314,7 +3333,7 @@ class TaskFlowService:
             ):
                 raise TaskFlowServiceError(
                     error_code="task_owner_active_conflict",
-                    reason="AI owner already has another active task",
+                    reason="Employee owner already has another active task",
                 )
             effective_session_profile_id: str | None | object = _TASK_FIELD_UNSET
             if requested_session_id is not _TASK_FIELD_UNSET:
@@ -3394,7 +3413,7 @@ class TaskFlowService:
                 if _is_active_ai_owner_integrity_error(exc):
                     raise TaskFlowServiceError(
                         error_code="task_owner_active_conflict",
-                        reason="AI owner already has another active task",
+                        reason="Employee owner already has another active task",
                     ) from exc
                 raise
             if row is None:
@@ -3437,7 +3456,7 @@ class TaskFlowService:
                     details=update_details,
                 )
             if (
-                is_ai_executor_owner_type(row.owner_type)
+                _task_responsible_employee(row) is not None
                 and row.status in {"todo", "blocked", "review"}
                 and row.ready_at is not None
                 and (before.ready_at != row.ready_at or before.status != row.status)
@@ -3450,7 +3469,7 @@ class TaskFlowService:
                     actor_ref=normalized_actor_ref,
                     message="Task has a scheduled AI wake.",
                 )
-            if is_ai_executor_owner_type(row.owner_type) and row.status == "blocked":
+            if is_employee_executor_owner_type(row.owner_type) and row.status == "blocked":
                 await _record_manager_escalation_if_needed(
                     repo=repo,
                     settings=self._settings,
@@ -3461,10 +3480,10 @@ class TaskFlowService:
                     actor_ref=normalized_actor_ref,
                 )
             refresh_schema_invariants = (
-                is_ai_executor_owner_type(before.owner_type)
+                is_employee_executor_owner_type(before.owner_type)
                 and before.status in {"claimed", "running"}
             ) or (
-                is_ai_executor_owner_type(row.owner_type) and row.status in {"claimed", "running"}
+                is_employee_executor_owner_type(row.owner_type) and row.status in {"claimed", "running"}
             )
             return (
                 await _build_task_metadata(repo, row, settings=self._settings),
@@ -3550,144 +3569,6 @@ class TaskFlowService:
             )
 
         await self._with_repo(_op)
-
-    async def build_human_inbox(
-        self,
-        *,
-        profile_id: str,
-        owner_ref: str,
-        task_limit: int = 5,
-        event_limit: int = 5,
-        channel: str | None = None,
-        mark_seen: bool = False,
-    ) -> HumanTaskInboxMetadata:
-        """Build one notification-ready human inbox summary."""
-
-        normalized_owner_ref = _normalize_required_text(owner_ref, field_name="owner_ref")
-        normalized_channel = _normalize_optional_text(channel)
-
-        async def _op(repo: TaskFlowRepository) -> HumanTaskInboxMetadata:
-            (
-                filtered_rows,
-                metadata_rows,
-                status_counts,
-                overdue_count,
-            ) = await _build_human_task_summary(
-                repo=repo,
-                profile_id=profile_id,
-                owner_ref=normalized_owner_ref,
-                limit=max(task_limit, 1),
-                settings=self._settings,
-            )
-            recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
-            unseen_event_count = 0
-            if filtered_rows:
-                task_ids = tuple(row.id for row in filtered_rows)
-                title_by_task_id = {row.id: row.title for row in filtered_rows}
-                cursor = None
-                if normalized_channel is not None:
-                    cursor = await repo.get_task_notification_cursor(
-                        profile_id=profile_id,
-                        actor_type="human",
-                        actor_ref=normalized_owner_ref,
-                        channel=normalized_channel,
-                    )
-                last_seen_event_id = cursor.last_seen_event_id if cursor is not None else None
-                acknowledge_event_id = await repo.get_latest_task_event_id_for_tasks(
-                    task_ids=task_ids,
-                    after_event_id=last_seen_event_id,
-                )
-                should_suppress_initial_preview = normalized_channel is not None and cursor is None
-                relevant_rows = []
-                if not should_suppress_initial_preview:
-                    relevant_rows = await repo.list_filtered_task_events_for_tasks(
-                        task_ids=task_ids,
-                        after_event_id=last_seen_event_id,
-                        event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
-                        updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
-                        updated_detail_keys=("owner", "reviewer", "blocked_reason"),
-                        limit=max(event_limit, 1),
-                    )
-                recent_events = tuple(
-                    _to_human_inbox_event_metadata(
-                        row,
-                        task_title=title_by_task_id.get(row.task_id, row.task_id),
-                    )
-                    for row in relevant_rows
-                )
-                unseen_event_count = (
-                    0
-                    if should_suppress_initial_preview
-                    else await repo.count_filtered_task_events_for_tasks(
-                        task_ids=task_ids,
-                        after_event_id=last_seen_event_id,
-                        event_types=tuple(_HUMAN_INBOX_NOTIFICATION_EVENT_TYPES),
-                        updated_visible_statuses=_VISIBLE_HUMAN_STATUSES,
-                        updated_detail_keys=("owner", "reviewer", "blocked_reason"),
-                    )
-                )
-                if (
-                    normalized_channel is not None
-                    and mark_seen
-                    and acknowledge_event_id is not None
-                ):
-                    await repo.upsert_task_notification_cursor(
-                        profile_id=profile_id,
-                        actor_type="human",
-                        actor_ref=normalized_owner_ref,
-                        channel=normalized_channel,
-                        last_seen_event_id=acknowledge_event_id,
-                    )
-            return HumanTaskInboxMetadata(
-                owner_ref=normalized_owner_ref,
-                channel=normalized_channel,
-                total_count=len(filtered_rows),
-                todo_count=status_counts.get("todo", 0),
-                blocked_count=status_counts.get("blocked", 0),
-                review_count=status_counts.get("review", 0),
-                overdue_count=overdue_count,
-                unseen_event_count=unseen_event_count,
-                tasks=metadata_rows,
-                recent_events=recent_events,
-            )
-
-        return await self._with_repo(_op)
-
-    async def summarize_human_tasks(
-        self,
-        *,
-        profile_id: str,
-        owner_ref: str,
-        limit: int = 5,
-    ) -> HumanTaskStartupSummary:
-        """Return one startup summary for a human inbox across assignee and review work."""
-
-        normalized_owner_ref = _normalize_required_text(owner_ref, field_name="owner_ref")
-
-        async def _op(repo: TaskFlowRepository) -> HumanTaskStartupSummary:
-            (
-                filtered_rows,
-                metadata_rows,
-                status_counts,
-                overdue_count,
-            ) = await _build_human_task_summary(
-                repo=repo,
-                profile_id=profile_id,
-                owner_ref=normalized_owner_ref,
-                limit=max(limit, 1),
-                settings=self._settings,
-            )
-            return HumanTaskStartupSummary(
-                owner_ref=normalized_owner_ref,
-                total_count=len(filtered_rows),
-                todo_count=status_counts.get("todo", 0),
-                blocked_count=status_counts.get("blocked", 0),
-                review_count=status_counts.get("review", 0),
-                overdue_count=overdue_count,
-                tasks=metadata_rows,
-            )
-
-        return await self._with_repo(_op)
 
     async def _with_repo(
         self,
@@ -3793,6 +3674,43 @@ async def _ensure_document_scope_exists(
     )
 
 
+async def _ensure_document_actor_can_manage(
+    *,
+    repo: TaskFlowRepository,
+    settings: Settings | None,
+    profile_id: str,
+    scope_type: str,
+    scope_id: str,
+    actor_type: str | None,
+    actor_ref: str | None,
+) -> None:
+    """Apply the same ownership boundary to document writes as task/flow writes."""
+
+    if scope_type == _TASK_DOCUMENT_SCOPE_FLOW:
+        await _require_flow(repo, profile_id=profile_id, flow_id=scope_id)
+        await _ensure_flow_actor_can_manage(
+            settings=settings,
+            profile_id=profile_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+        )
+        return
+    if scope_type == _TASK_DOCUMENT_SCOPE_TASK:
+        task = await _require_task(repo, profile_id=profile_id, task_id=scope_id)
+        await _ensure_task_actor_can_manage(
+            row=task,
+            settings=settings,
+            task_profile_id=profile_id,
+            actor_type=actor_type,
+            actor_ref=actor_ref,
+        )
+        return
+    raise TaskFlowServiceError(
+        error_code="invalid_task_document_scope",
+        reason=f"Unsupported Task Flow document scope: {scope_type}",
+    )
+
+
 async def _ensure_default_flow_documents(
     *,
     repo: TaskFlowRepository,
@@ -3818,7 +3736,7 @@ async def _ensure_default_flow_documents(
             scope_id=flow.id,
             document_key=document_key,
             title=title,
-            body=_default_flow_document_body(
+            body=default_flow_document_body(
                 flow=flow, document_key=document_key, template=template
             ),
             created_by_type=actor_type,
@@ -3826,13 +3744,22 @@ async def _ensure_default_flow_documents(
         )
 
 
-def _default_flow_document_body(*, flow: TaskFlow, document_key: str, template: str) -> str:
-    """Build a lightweight seed document for new flows."""
+def _filter_current_contract_documents(rows: Iterable[TaskDocument]) -> tuple[TaskDocument, ...]:
+    """Return all documents exposed by the current Task Flow document contract."""
 
-    if document_key == "brief":
-        description = str(flow.description or "").strip() or "No description captured yet."
-        return f"## Brief\n\n# {flow.title}\n\n{description}\n"
-    return template
+    allowed: list[TaskDocument] = []
+    for row in rows:
+        if (
+            row.scope_type == _TASK_DOCUMENT_SCOPE_FLOW
+            and row.document_key in CANONICAL_FLOW_DOCUMENT_KEYS
+        ):
+            allowed.append(row)
+        elif (
+            row.scope_type == _TASK_DOCUMENT_SCOPE_TASK
+            and row.document_key in TASK_WORKING_DOCUMENT_KEYS
+        ):
+            allowed.append(row)
+    return tuple(allowed)
 
 
 async def _ensure_actor_refs_exist(
@@ -3972,11 +3899,6 @@ async def _ensure_task_principal_ref_exists(
                 reason=f"Employee {employee_id} is {employee.status} and cannot be used",
             )
         return
-    if normalized_type in LEGACY_AI_EXECUTOR_OWNER_TYPES:
-        raise TaskFlowServiceError(
-            error_code=invalid_error_code,
-            reason="Legacy Task Flow AI principals are no longer supported; use employee",
-        )
     return
 
 
@@ -3991,7 +3913,7 @@ async def _ensure_public_ai_principal_session(
     error_code: str,
     reason: str,
 ) -> None:
-    """Validate that one public AI actor really owns the supplied live chat session."""
+    """Validate that one public employee actor really owns the supplied live chat session."""
 
     if settings is None or not bool(settings.taskflow_public_principal_required):
         return
@@ -4063,8 +3985,6 @@ def _ensure_public_principal_identity(
     ):
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
     if normalized_actor_type == EMPLOYEE_OWNER_TYPE and normalized_actor_session_id is None:
-        raise TaskFlowServiceError(error_code=error_code, reason=reason)
-    if is_ai_executor_owner_type(normalized_actor_type) and normalized_actor_session_id is None:
         raise TaskFlowServiceError(error_code=error_code, reason=reason)
 
 
@@ -4166,6 +4086,31 @@ def _normalize_document_key(document_key: str) -> str:
     return normalized
 
 
+def _ensure_canonical_document_key(*, scope_type: str, document_key: str) -> None:
+    if scope_type == _TASK_DOCUMENT_SCOPE_FLOW:
+        allowed_keys = CANONICAL_FLOW_DOCUMENT_KEYS
+    elif scope_type == _TASK_DOCUMENT_SCOPE_TASK:
+        allowed_keys = TASK_WORKING_DOCUMENT_KEYS
+    else:
+        return
+    if document_key in allowed_keys:
+        return
+    allowed = ", ".join(allowed_keys)
+    raise TaskFlowServiceError(
+        error_code="invalid_task_document_key",
+        reason=f"{scope_type} document_key must be one of: {allowed}",
+    )
+
+
+def _ensure_document_uses_current_contract(document: TaskDocument) -> None:
+    """Reject legacy TaskDocument rows on id-based current runtime/API surfaces."""
+
+    _ensure_canonical_document_key(
+        scope_type=document.scope_type,
+        document_key=document.document_key,
+    )
+
+
 def _normalize_document_body(body: str | None) -> str:
     normalized = str(body or "").strip()
     if not normalized:
@@ -4185,19 +4130,6 @@ def _normalize_create_task_status(status: str | None) -> str | None:
     raise TaskFlowServiceError(
         error_code="invalid_status",
         reason="New tasks may start only in PLAN or Todo",
-    )
-
-
-def _ensure_plan_status_owner_is_human(*, status: str | None, owner_type: str) -> None:
-    """Reject PLAN assignments for AI-owned tasks so work cannot silently stall."""
-
-    if status != "plan":
-        return
-    if owner_type == "human":
-        return
-    raise TaskFlowServiceError(
-        error_code=_PLAN_AI_OWNER_ERROR_CODE,
-        reason=_PLAN_AI_OWNER_REASON,
     )
 
 
@@ -4275,7 +4207,7 @@ def _validate_owner_pair(
     if normalized_type not in _VALID_OWNER_TYPES:
         raise TaskFlowServiceError(
             error_code="invalid_owner_type",
-            reason=f"Unsupported owner type: {normalized_type}",
+            reason="Task Flow owner/reviewer principals must be employees",
         )
     if (
         normalized_type == EMPLOYEE_OWNER_TYPE
@@ -4518,6 +4450,44 @@ async def _ensure_ai_owner_assignment_allowed(
     raise TaskFlowServiceError(
         error_code="task_owner_forbidden",
         reason="Employee actor is not allowed to assign tasks to this employee",
+    )
+
+
+async def _ensure_human_intake_targets_root_employee(
+    *,
+    settings: Settings | None,
+    profile_id: str,
+    source_type: str | None,
+    actor_type: str | None,
+    owner_type: str | None,
+    owner_ref: str | None,
+) -> None:
+    """Require public human intake to enter through the active root employee."""
+
+    if settings is None or not bool(settings.taskflow_public_principal_required):
+        return
+    normalized_actor_type = _normalize_optional_text(actor_type)
+    if normalized_actor_type != "human":
+        return
+    normalized_source_type = (_normalize_optional_text(source_type) or "").lower()
+    if normalized_source_type not in _HUMAN_INTAKE_SOURCE_TYPES:
+        return
+    normalized_owner_type = normalize_task_owner_type(owner_type)
+    normalized_owner_ref = _normalize_optional_text(owner_ref)
+    if normalized_owner_type != EMPLOYEE_OWNER_TYPE or normalized_owner_ref is None:
+        raise TaskFlowServiceError(
+            error_code="task_intake_root_required",
+            reason="Human Task Flow intake must target the active root employee",
+        )
+    root_owner_ref = await _resolve_default_employee_owner_ref(
+        settings=settings,
+        profile_id=profile_id,
+    )
+    if normalized_owner_ref == root_owner_ref:
+        return
+    raise TaskFlowServiceError(
+        error_code="task_intake_root_required",
+        reason="Human Task Flow intake must target the active root employee",
     )
 
 
@@ -4850,12 +4820,8 @@ def _build_task_block_state(
         return None
     depends_on = tuple(str(item).strip() for item in depends_on_task_ids if str(item).strip())
     reason_code = str(row.blocked_reason_code or "").strip().lower()
-    owner_type = str(row.owner_type or "").strip().lower()
-    reviewer_type = str(row.reviewer_type or "").strip().lower()
     waiting_for_human = (
-        owner_type == "human"
-        or reviewer_type == "human"
-        or reason_code.startswith("awaiting_human")
+        reason_code.startswith("awaiting_human")
         or reason_code in {"awaiting_input", "approval_required", "review_changes_requested"}
     )
     if status == "review":
@@ -4931,10 +4897,10 @@ def _is_active_ai_owner_integrity_error(exc: IntegrityError) -> bool:
     )
 
 
-def _build_task_flow_schema_compatibility_error(
+def _build_task_flow_schema_error(
     exc: IntegrityError | OperationalError | ProgrammingError,
 ) -> TaskFlowServiceError | None:
-    """Return one structured compatibility error for legacy Task Flow schemas."""
+    """Return one structured service error for incompatible Task Flow schemas."""
 
     message = _task_flow_storage_error_message(exc)
     schema_markers = (
@@ -5001,6 +4967,34 @@ def _to_task_event_metadata(row: TaskEvent) -> TaskEventMetadata:
     )
 
 
+def _to_knowledge_packet_metadata(packet: KnowledgePacket) -> TaskKnowledgePacketMetadata:
+    return TaskKnowledgePacketMetadata(
+        profile_id=packet.profile_id,
+        flow_id=packet.flow_id,
+        task_id=packet.task_id,
+        context_budget_chars=packet.context_budget_chars,
+        documents=tuple(
+            TaskKnowledgePacketDocumentMetadata(
+                scope_type=document.scope_type,
+                scope_id=document.scope_id,
+                document_key=document.document_key,
+                title=document.title,
+                revision=document.revision,
+                confirmation_status=document.confirmation_status,
+                excerpt=document.excerpt,
+            )
+            for document in packet.documents
+        ),
+        missing_flow_document_keys=packet.missing_flow_document_keys,
+        unconfirmed_flow_document_keys=packet.unconfirmed_flow_document_keys,
+        health_status=packet.health_status,
+        ready_for_delegation=packet.ready_for_delegation,
+        ready_for_execution=packet.ready_for_execution,
+        blocking_reasons=packet.blocking_reasons,
+        required_flow_document_keys=packet.required_flow_document_keys,
+    )
+
+
 def _to_task_document_metadata(row: TaskDocument) -> TaskDocumentMetadata:
     return TaskDocumentMetadata(
         id=row.id,
@@ -5041,12 +5035,12 @@ def _to_task_document_revision_metadata(
     )
 
 
-def _to_human_inbox_event_metadata(
+def _to_employee_task_inbox_event_metadata(
     row: TaskEvent,
     *,
     task_title: str,
-) -> HumanTaskInboxEventMetadata:
-    return HumanTaskInboxEventMetadata(
+) -> EmployeeTaskInboxEventMetadata:
+    return EmployeeTaskInboxEventMetadata(
         id=row.id,
         task_id=row.task_id,
         task_title=task_title,
@@ -5232,7 +5226,7 @@ def _resolve_task_session_profile_id_values(
     fallback = str(fallback_session_profile_id or "").strip()
     if fallback:
         return fallback
-    return resolve_ai_executor_profile_id(
+    return resolve_employee_execution_profile_id(
         owner_type=owner_type,
         owner_ref=owner_ref,
         task_profile_id=profile_id,
@@ -5258,16 +5252,6 @@ def _is_task_overdue(*, row: Task, now_utc: datetime) -> bool:
     return due_at < now_utc
 
 
-def _task_matches_human_inbox(*, row: Task, owner_ref: str) -> bool:
-    if row.status in {"todo", "blocked"}:
-        return row.owner_type == "human" and row.owner_ref == owner_ref
-    if row.status == "review":
-        return (row.owner_type == "human" and row.owner_ref == owner_ref) or (
-            row.reviewer_type == "human" and row.reviewer_ref == owner_ref
-        )
-    return False
-
-
 def _task_matches_review_inbox(*, row: Task, actor_type: str, actor_ref: str) -> bool:
     if not _task_is_review_actionable(row):
         return False
@@ -5291,40 +5275,6 @@ def _ensure_review_actor_matches_task(*, row: Task, actor_type: str, actor_ref: 
         error_code="task_review_actor_mismatch",
         reason="Task review is not assigned to the selected actor",
     )
-
-
-async def _build_human_task_summary(
-    *,
-    repo: TaskFlowRepository,
-    profile_id: str,
-    owner_ref: str,
-    limit: int,
-    settings: Settings | None = None,
-) -> tuple[list[Task], tuple[TaskMetadata, ...], dict[str, int], int]:
-    await _ensure_profile_exists(repo, profile_id)
-    all_rows = await repo.list_tasks(
-        profile_id=profile_id,
-        statuses=_VISIBLE_HUMAN_STATUSES,
-    )
-    filtered_rows = [
-        row for row in all_rows if _task_matches_human_inbox(row=row, owner_ref=owner_ref)
-    ]
-    now_utc = datetime.now(timezone.utc)
-    preview_rows = filtered_rows[:limit]
-    metadata_rows = tuple(
-        await _build_task_metadata_many(
-            repo,
-            preview_rows,
-            settings=settings,
-        )
-    )
-    status_counts = {status_name: 0 for status_name in _VISIBLE_HUMAN_STATUSES}
-    overdue_count = 0
-    for row in filtered_rows:
-        status_counts[row.status] = status_counts.get(row.status, 0) + 1
-        if _is_task_overdue(row=row, now_utc=now_utc):
-            overdue_count += 1
-    return filtered_rows, metadata_rows, status_counts, overdue_count
 
 
 async def _reconcile_dependent_tasks(
@@ -5379,7 +5329,7 @@ async def _reconcile_task_readiness(
             from_status=before_status,
             to_status=promoted.status,
         )
-        if is_ai_executor_owner_type(promoted.owner_type):
+        if is_employee_executor_owner_type(promoted.owner_type):
             await _record_task_wake_requested(
                 repo=repo,
                 task=promoted,
@@ -5415,7 +5365,7 @@ async def _reconcile_task_readiness_after_dependency_change(
                     from_status=before_status,
                     to_status=promoted.status,
                 )
-                if is_ai_executor_owner_type(promoted.owner_type):
+                if is_employee_executor_owner_type(promoted.owner_type):
                     await _record_task_wake_requested(
                         repo=repo,
                         task=promoted,
@@ -5536,8 +5486,9 @@ async def _record_task_wake_requested(
     message: str | None = None,
     details: dict[str, object] | None = None,
 ) -> None:
-    """Record a visible wake signal for AI-owned runnable or soon-runnable work."""
+    """Record a visible wake signal for employee-owned runnable or soon-runnable work."""
 
+    owner_type, owner_ref = _task_responsible_employee(task) or (task.owner_type, task.owner_ref)
     await repo.create_task_event(
         task_id=task.id,
         event_type="wake_requested",
@@ -5547,8 +5498,8 @@ async def _record_task_wake_requested(
         details_json=encode_task_event_details(
             {
                 "reason_code": reason_code,
-                "owner_type": task.owner_type,
-                "owner_ref": task.owner_ref,
+                "owner_type": owner_type,
+                "owner_ref": owner_ref,
                 "reviewer_type": task.reviewer_type,
                 "reviewer_ref": task.reviewer_ref,
                 "status": task.status,
@@ -5557,6 +5508,16 @@ async def _record_task_wake_requested(
             }
         ),
     )
+
+
+def _task_responsible_employee(task: Task) -> tuple[str, str] | None:
+    """Return the employee that should receive work/feed signals for a task."""
+
+    if task.status == "review" and task.reviewer_type == EMPLOYEE_OWNER_TYPE and task.reviewer_ref:
+        return EMPLOYEE_OWNER_TYPE, task.reviewer_ref
+    if task.owner_type == EMPLOYEE_OWNER_TYPE and task.owner_ref:
+        return EMPLOYEE_OWNER_TYPE, task.owner_ref
+    return None
 
 
 async def _record_manager_escalation_if_needed(

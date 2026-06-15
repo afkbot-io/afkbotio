@@ -238,8 +238,8 @@ def _legacy_task_select_expression(*, column_name: str, legacy_columns: set[str]
     default_by_column = {
         "status": "'todo'",
         "priority": "50",
-        "owner_type": "'human'",
-        "owner_ref": "''",
+        "owner_type": "'employee'",
+        "owner_ref": "'cto'",
         "source_type": "'manual'",
         "created_by_type": "'human'",
         "created_by_ref": "''",
@@ -312,7 +312,10 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_ai_claim_owner"))
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_employee_owner"))
     conn.execute(text("DROP INDEX IF EXISTS ux_task_active_employee_claim_owner"))
-    predicate = "owner_type = 'employee' AND status IN ('claimed', 'running')"
+    predicate = (
+        "owner_type = 'employee' AND status IN ('claimed', 'running') "
+        "AND (claim_source_status IS NULL OR claim_source_status != 'review')"
+    )
     if duplicate_owner_scopes:
         excluded_owner_scopes = " AND ".join(
             "NOT (profile_id = "
@@ -398,6 +401,7 @@ def _list_duplicate_active_employee_owner_scopes(
             "SELECT profile_id, owner_type, owner_ref "
             "FROM task "
             "WHERE owner_type = 'employee' AND status IN ('claimed', 'running') "
+            "AND (claim_source_status IS NULL OR claim_source_status != 'review') "
             "GROUP BY profile_id, owner_type, owner_ref "
             "HAVING COUNT(*) > 1 "
             "ORDER BY profile_id ASC, owner_type ASC, owner_ref ASC"

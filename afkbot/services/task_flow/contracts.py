@@ -244,8 +244,8 @@ class TaskEventMetadata(BaseModel):
     created_at: datetime
 
 
-class HumanTaskInboxEventMetadata(BaseModel):
-    """Notification-ready event summary for one human inbox item."""
+class EmployeeTaskInboxEventMetadata(BaseModel):
+    """Notification-ready event summary for one employee inbox item."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -288,8 +288,41 @@ class TaskDependencyMetadata(BaseModel):
     created_at: datetime
 
 
+class TaskKnowledgePacketDocumentMetadata(BaseModel):
+    """One bounded document excerpt selected for a Task Flow knowledge packet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: str
+    scope_id: str
+    document_key: str
+    title: str
+    revision: int = Field(ge=1)
+    confirmation_status: str = "draft"
+    excerpt: str
+
+
+class TaskKnowledgePacketMetadata(BaseModel):
+    """Compact project knowledge packet assembled for one task runtime."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    flow_id: str | None = None
+    task_id: str
+    context_budget_chars: int = Field(ge=1)
+    documents: tuple[TaskKnowledgePacketDocumentMetadata, ...] = ()
+    missing_flow_document_keys: tuple[str, ...] = ()
+    unconfirmed_flow_document_keys: tuple[str, ...] = ()
+    health_status: str = "needs_attention"
+    ready_for_delegation: bool = False
+    ready_for_execution: bool = False
+    blocking_reasons: tuple[str, ...] = ()
+    required_flow_document_keys: tuple[str, ...] = ()
+
+
 class TaskDelegationMetadata(BaseModel):
-    """Structured result for delegating one task to another AI owner."""
+    """Structured result for delegating one task to another employee owner."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -331,38 +364,7 @@ class TaskBoardMetadata(BaseModel):
     columns: tuple[TaskBoardColumnMetadata, ...] = ()
 
 
-class HumanTaskStartupSummary(BaseModel):
-    """Summary of open human-owned tasks for chat startup notices."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    owner_ref: str
-    total_count: int = Field(ge=0)
-    todo_count: int = Field(ge=0)
-    blocked_count: int = Field(ge=0)
-    review_count: int = Field(ge=0)
-    overdue_count: int = Field(ge=0)
-    tasks: tuple[TaskMetadata, ...] = ()
-
-
-class HumanTaskInboxMetadata(BaseModel):
-    """Notification-ready summary for one human Task Flow inbox."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    owner_ref: str
-    channel: str | None = None
-    total_count: int = Field(ge=0)
-    todo_count: int = Field(ge=0)
-    blocked_count: int = Field(ge=0)
-    review_count: int = Field(ge=0)
-    overdue_count: int = Field(ge=0)
-    unseen_event_count: int = Field(ge=0)
-    tasks: tuple[TaskMetadata, ...] = ()
-    recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
-
-
-class AgentTaskInboxMetadata(BaseModel):
+class EmployeeTaskInboxMetadata(BaseModel):
     """Notification-ready Task Flow inbox for an employee."""
 
     model_config = ConfigDict(extra="forbid")
@@ -376,7 +378,7 @@ class AgentTaskInboxMetadata(BaseModel):
     running_count: int = Field(ge=0)
     mention_event_count: int = Field(ge=0)
     tasks: tuple[TaskMetadata, ...] = ()
-    recent_events: tuple[HumanTaskInboxEventMetadata, ...] = ()
+    recent_events: tuple[EmployeeTaskInboxEventMetadata, ...] = ()
 
 
 class TaskContextMetadata(BaseModel):
@@ -387,6 +389,7 @@ class TaskContextMetadata(BaseModel):
     generated_at: datetime
     task: TaskMetadata
     flow: TaskFlowMetadata | None = None
+    knowledge_packet: TaskKnowledgePacketMetadata | None = None
     flow_documents: tuple[TaskDocumentMetadata, ...] = ()
     task_documents: tuple[TaskDocumentMetadata, ...] = ()
     dependencies: tuple[TaskDependencyMetadata, ...] = ()

@@ -12,12 +12,14 @@ from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory
 from afkbot.db.session import session_scope
+from afkbot.models.task_document import TaskDocument
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.task_flow import TaskFlowServiceError
+from afkbot.services.task_flow.knowledge_spine import build_knowledge_packet
 from afkbot.services.task_flow.service import TaskFlowService, _MAX_TASK_ATTACHMENT_BASE64_BYTES
 from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory, _write_test_employees
@@ -165,12 +167,12 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             description="Prepare the launch backlog",
             created_by_type="human",
             created_by_ref="cli",
-            default_owner_type="human",
-            default_owner_ref="cli_user:alice",
+            default_owner_type="employee",
+            default_owner_ref="default",
             labels=("launch",),
         )
-        assert flow.default_owner_type == "human"
-        assert flow.default_owner_ref == "cli_user:alice"
+        assert flow.default_owner_type == "employee"
+        assert flow.default_owner_ref == "default"
 
         first_task = await service.create_task(
             profile_id="default",
@@ -181,8 +183,8 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             created_by_ref="cli",
         )
         assert first_task.flow_id == flow.id
-        assert first_task.owner_type == "human"
-        assert first_task.owner_ref == "cli_user:alice"
+        assert first_task.owner_type == "employee"
+        assert first_task.owner_ref == "default"
         assert first_task.status == "todo"
 
         dependent_task = await service.create_task(
@@ -194,7 +196,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             created_by_ref="cli",
             depends_on_task_ids=(first_task.id,),
         )
-        assert dependent_task.owner_ref == "cli_user:alice"
+        assert dependent_task.owner_ref == "default"
         assert dependent_task.status == "blocked"
         assert dependent_task.blocked_reason_code == "dependency_wait"
         assert dependent_task.depends_on_task_ids == (first_task.id,)
@@ -211,8 +213,8 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
 
         listed = await service.list_tasks(
             profile_id="default",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
         assert {item.id for item in listed} == {first_task.id, dependent_task.id}
         listed_by_id = {item.id: item for item in listed}
@@ -238,8 +240,8 @@ async def test_task_flow_service_updates_flow_metadata_without_changing_identity
             description="Old project scope",
             created_by_type="human",
             created_by_ref="cli",
-            default_owner_type="human",
-            default_owner_ref="alice",
+            default_owner_type="employee",
+            default_owner_ref="default",
             labels=("old",),
         )
         task = await service.create_task(
@@ -285,7 +287,7 @@ async def test_task_flow_service_updates_flow_metadata_without_changing_identity
 async def test_task_flow_service_creates_default_flow_documents_and_revisions(
     tmp_path: Path,
 ) -> None:
-    """Flows should carry editable project docs without changing legacy flow fields."""
+    """Flows should carry canonical project docs for employee-owned execution."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -296,7 +298,7 @@ async def test_task_flow_service_creates_default_flow_documents_and_revisions(
         flow = await service.create_flow(
             profile_id="default",
             title="Agent operating model",
-            description="Coordinate profile agents and subagents.",
+            description="Coordinate an employee-led Task Flow project.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -306,11 +308,13 @@ async def test_task_flow_service_creates_default_flow_documents_and_revisions(
             flow_id=flow.id,
         )
         by_key = {document.document_key: document for document in documents}
-        assert {"brief", "plan", "roadmap", "spec", "decisions"}.issubset(by_key)
+        assert {"brief", "plan", "spec", "decisions", "status"}.issubset(by_key)
+        assert "roadmap" not in by_key
         assert by_key["brief"].revision == 1
         assert by_key["brief"].scope_type == "flow"
         assert by_key["brief"].scope_id == flow.id
         assert "Agent operating model" in by_key["brief"].body
+        assert "Project Status" in by_key["status"].body
 
         updated = await service.put_flow_document(
             profile_id="default",
@@ -333,6 +337,313 @@ async def test_task_flow_service_creates_default_flow_documents_and_revisions(
         assert [revision.revision for revision in revisions] == [2, 1]
     finally:
         await engine.dispose()
+
+
+async def test_task_flow_service_rejects_non_canonical_document_keys(
+    tmp_path: Path,
+) -> None:
+    """New Task Flow docs should stay inside the canonical Knowledge Spine keys."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_document_key_contract.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Canonical docs",
+            description="Keep project memory constrained.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Canonical task docs",
+            description="Task documents should be working artifacts only.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as flow_exc:
+            await service.put_flow_document(
+                profile_id="default",
+                flow_id=flow.id,
+                document_key="roadmap",
+                title="Legacy roadmap",
+                body="This key should not be accepted in the new model.",
+                actor_type="human",
+                actor_ref="cli",
+            )
+        assert flow_exc.value.error_code == "invalid_task_document_key"
+
+        with pytest.raises(TaskFlowServiceError) as task_exc:
+            await service.put_task_document(
+                profile_id="default",
+                task_id=task.id,
+                document_key="spec",
+                title="Task spec",
+                body="Specs belong to the flow-level spine.",
+                actor_type="human",
+                actor_ref="cli",
+            )
+        assert task_exc.value.error_code == "invalid_task_document_key"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_rejects_legacy_document_ids_on_current_surfaces(
+    tmp_path: Path,
+) -> None:
+    """Legacy document rows must not remain active through direct id APIs."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_legacy_document_id_rejected.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Legacy direct ids",
+            description="Keep old rows out of current document surfaces.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            legacy = await repo.create_task_document(
+                document_id="doc-legacy-roadmap-direct",
+                profile_id="default",
+                scope_type="flow",
+                scope_id=flow.id,
+                document_key="roadmap",
+                title="Legacy roadmap",
+                body="This old key should not be exposed by id.",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+
+        for operation in (
+            lambda: service.get_document(profile_id="default", document_id=legacy.id),
+            lambda: service.list_document_revisions(profile_id="default", document_id=legacy.id),
+            lambda: service.confirm_document(
+                profile_id="default",
+                document_id=legacy.id,
+                actor_type="human",
+                actor_ref="cli",
+            ),
+            lambda: service.delete_document(
+                profile_id="default",
+                document_id=legacy.id,
+                actor_type="human",
+                actor_ref="cli",
+            ),
+        ):
+            with pytest.raises(TaskFlowServiceError) as excinfo:
+                await operation()
+            assert excinfo.value.error_code == "invalid_task_document_key"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_confirms_documents_with_public_local_human_principal(
+    tmp_path: Path,
+) -> None:
+    """Public document confirmation should accept the validated local human principal."""
+
+    db_name = "task_flow_public_document_local_human.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Public document confirmation",
+            description="Confirm docs from an authenticated UI route.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        document = next(
+            item
+            for item in await service.list_flow_documents(profile_id="default", flow_id=flow.id)
+            if item.document_key == "plan"
+        )
+
+        confirmed = await service.confirm_document(
+            profile_id="default",
+            document_id=document.id,
+            actor_type="human",
+            actor_ref="cli",
+            actor_session_id="ui-session",
+            expected_revision=document.revision,
+        )
+        deleted = await service.delete_document(
+            profile_id="default",
+            document_id=confirmed.id,
+            actor_type="human",
+            actor_ref="cli",
+            actor_session_id="ui-session",
+            expected_revision=confirmed.revision,
+        )
+
+        assert confirmed.confirmation_status == "confirmed"
+        assert deleted.id == document.id
+    finally:
+        await engine.dispose()
+
+
+def test_knowledge_packet_excludes_legacy_document_keys() -> None:
+    """Legacy rows should not shape runtime context after the Spine contract."""
+
+    packet = build_knowledge_packet(
+        profile_id="default",
+        flow_id="flow-1",
+        task_id="task-1",
+        flow_documents=(
+            TaskDocument(
+                id="doc-brief",
+                profile_id="default",
+                scope_type="flow",
+                scope_id="flow-1",
+                document_key="brief",
+                title="Brief",
+                body="Project brief body",
+                created_by_type="human",
+                created_by_ref="cli",
+                updated_by_type="human",
+                updated_by_ref="cli",
+            ),
+            TaskDocument(
+                id="doc-roadmap",
+                profile_id="default",
+                scope_type="flow",
+                scope_id="flow-1",
+                document_key="roadmap",
+                title="Legacy roadmap",
+                body="This legacy content must not enter the runtime packet.",
+                created_by_type="human",
+                created_by_ref="cli",
+                updated_by_type="human",
+                updated_by_ref="cli",
+            ),
+        ),
+        task_documents=(
+            TaskDocument(
+                id="doc-handoff",
+                profile_id="default",
+                scope_type="task",
+                scope_id="task-1",
+                document_key="handoff",
+                title="Handoff",
+                body="Task handoff body",
+                created_by_type="employee",
+                created_by_ref="default",
+                updated_by_type="employee",
+                updated_by_ref="default",
+            ),
+            TaskDocument(
+                id="doc-task-spec",
+                profile_id="default",
+                scope_type="task",
+                scope_id="task-1",
+                document_key="spec",
+                title="Legacy task spec",
+                body="This old task spec must not enter the runtime packet.",
+                created_by_type="employee",
+                created_by_ref="default",
+                updated_by_type="employee",
+                updated_by_ref="default",
+            ),
+        ),
+    )
+
+    assert [document.document_key for document in packet.documents] == ["brief", "handoff"]
+    assert "roadmap" not in {document.document_key for document in packet.documents}
+    assert "spec" not in {document.document_key for document in packet.documents}
+    assert packet.unconfirmed_flow_document_keys == ("brief",)
+    assert packet.health_status == "needs_attention"
+    assert packet.ready_for_delegation is False
+    assert packet.ready_for_execution is False
+    assert packet.blocking_reasons == (
+        "missing_planning_docs:plan,spec",
+        "unconfirmed_planning_docs:brief",
+    )
+    assert packet.required_flow_document_keys == ("brief", "plan", "spec")
+
+
+def test_knowledge_packet_reports_unconfirmed_canonical_flow_documents() -> None:
+    """Runtime should know when project knowledge exists but still needs approval."""
+
+    packet = build_knowledge_packet(
+        profile_id="default",
+        flow_id="flow-1",
+        task_id="task-1",
+        flow_documents=(
+            TaskDocument(
+                id="doc-brief",
+                profile_id="default",
+                scope_type="flow",
+                scope_id="flow-1",
+                document_key="brief",
+                title="Brief",
+                body="Confirmed brief.",
+                revision=2,
+                confirmation_status="confirmed",
+                confirmed_revision=2,
+                created_by_type="human",
+                created_by_ref="cli",
+                updated_by_type="human",
+                updated_by_ref="cli",
+            ),
+            TaskDocument(
+                id="doc-plan",
+                profile_id="default",
+                scope_type="flow",
+                scope_id="flow-1",
+                document_key="plan",
+                title="Plan",
+                body="Draft plan.",
+                revision=3,
+                confirmation_status="draft",
+                confirmed_revision=None,
+                created_by_type="employee",
+                created_by_ref="cto",
+                updated_by_type="employee",
+                updated_by_ref="cto",
+            ),
+            TaskDocument(
+                id="doc-spec",
+                profile_id="default",
+                scope_type="flow",
+                scope_id="flow-1",
+                document_key="spec",
+                title="Spec",
+                body="Stale confirmed revision.",
+                revision=4,
+                confirmation_status="confirmed",
+                confirmed_revision=3,
+                created_by_type="employee",
+                created_by_ref="cto",
+                updated_by_type="employee",
+                updated_by_ref="cto",
+            ),
+        ),
+        task_documents=(),
+    )
+
+    assert packet.unconfirmed_flow_document_keys == ("plan", "spec")
+    assert packet.health_status == "needs_attention"
+    assert packet.ready_for_delegation is False
+    assert packet.blocking_reasons == ("unconfirmed_planning_docs:plan,spec",)
 
 
 async def test_task_flow_service_lists_documents_across_scopes_with_filters(
@@ -358,6 +669,13 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
             profile_id="other",
             title="Other profile",
             description="Must not leak into default profile queries.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        second_flow = await service.create_flow(
+            profile_id="default",
+            title="Mobile release",
+            description="A second project should keep its own spine docs.",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -399,6 +717,13 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
         assert found[0].scope_id == task.id
         assert found[0].title == "Launch handoff"
 
+        flow_briefs = await service.list_documents(
+            profile_id="default",
+            scope_type="flow",
+            document_key="brief",
+        )
+        assert {document.scope_id for document in flow_briefs} == {flow.id, second_flow.id}
+
         limited = await service.list_documents(profile_id="default", limit=1)
         assert len(limited) == 1
 
@@ -429,6 +754,131 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
                 document_id=found[0].id,
             )
         assert deleted_excinfo.value.error_code == "task_document_not_found"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_scopes_document_mutations_to_owner_or_manager(
+    tmp_path: Path,
+) -> None:
+    """Document writes should follow the same employee boundary as task mutations."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_document_actor_scope.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Scoped documentation",
+            description="Keep project memory within the responsible employee chain.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        task = await service.create_task(
+            profile_id="default",
+            flow_id=flow.id,
+            title="Analyst-owned package",
+            description="Only the owner, a manager, or a human can mutate docs.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="analyst",
+        )
+
+        owner_doc = await service.put_task_document(
+            profile_id="default",
+            task_id=task.id,
+            document_key="handoff",
+            title="Analyst handoff",
+            body="The analyst owns this task-level handoff.",
+            actor_type="employee",
+            actor_ref="analyst",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as task_write_exc:
+            await service.put_task_document(
+                profile_id="default",
+                task_id=task.id,
+                document_key="notes",
+                title="Unscoped notes",
+                body="A sibling employee must not write here.",
+                actor_type="employee",
+                actor_ref="auditor",
+            )
+        assert task_write_exc.value.error_code == "task_actor_forbidden"
+
+        with pytest.raises(TaskFlowServiceError) as confirm_exc:
+            await service.confirm_document(
+                profile_id="default",
+                document_id=owner_doc.id,
+                actor_type="employee",
+                actor_ref="auditor",
+                expected_revision=owner_doc.revision,
+            )
+        assert confirm_exc.value.error_code == "task_actor_forbidden"
+
+        confirmed = await service.confirm_document(
+            profile_id="default",
+            document_id=owner_doc.id,
+            actor_type="employee",
+            actor_ref="default",
+            expected_revision=owner_doc.revision,
+        )
+        assert confirmed.confirmation_status == "confirmed"
+        assert confirmed.confirmed_by_ref == "default"
+
+        with pytest.raises(TaskFlowServiceError) as delete_exc:
+            await service.delete_document(
+                profile_id="default",
+                document_id=owner_doc.id,
+                actor_type="employee",
+                actor_ref="auditor",
+                expected_revision=owner_doc.revision,
+            )
+        assert delete_exc.value.error_code == "task_actor_forbidden"
+
+        manager_doc = await service.put_task_document(
+            profile_id="default",
+            task_id=task.id,
+            document_key="evidence",
+            title="Manager evidence",
+            body="A manager can add task evidence for a direct report chain.",
+            actor_type="employee",
+            actor_ref="default",
+        )
+        deleted = await service.delete_document(
+            profile_id="default",
+            document_id=manager_doc.id,
+            actor_type="employee",
+            actor_ref="default",
+            expected_revision=manager_doc.revision,
+        )
+        assert deleted.id == manager_doc.id
+
+        with pytest.raises(TaskFlowServiceError) as flow_write_exc:
+            await service.put_flow_document(
+                profile_id="default",
+                flow_id=flow.id,
+                document_key="status",
+                title="Project Status",
+                body="A non-manager employee cannot mutate project-level memory.",
+                actor_type="employee",
+                actor_ref="auditor",
+            )
+        assert flow_write_exc.value.error_code == "task_actor_forbidden"
+
+        flow_doc = await service.put_flow_document(
+            profile_id="default",
+            flow_id=flow.id,
+            document_key="status",
+            title="Project Status",
+            body="Manager-owned project status update.",
+            actor_type="employee",
+            actor_ref="default",
+        )
+        assert flow_doc.updated_by_ref == "default"
     finally:
         await engine.dispose()
 
@@ -481,12 +931,36 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
         task_doc = await service.put_task_document(
             profile_id="default",
             task_id=parent.id,
-            document_key="spec",
-            title="Task spec",
+            document_key="handoff",
+            title="Task handoff",
             body="Agents must receive docs, blockers, comments, and delegated work.",
             actor_type="employee",
             actor_ref="default",
         )
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            await repo.create_task_document(
+                document_id="doc-legacy-roadmap",
+                profile_id="default",
+                scope_type="flow",
+                scope_id=flow.id,
+                document_key="roadmap",
+                title="Legacy roadmap",
+                body="This old flow doc must not enter task context.",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
+            await repo.create_task_document(
+                document_id="doc-legacy-task-spec",
+                profile_id="default",
+                scope_type="task",
+                scope_id=parent.id,
+                document_key="spec",
+                title="Legacy task spec",
+                body="This old task doc must not enter task context.",
+                created_by_type="human",
+                created_by_ref="cli",
+            )
 
         context = await service.build_task_context(
             profile_id="default",
@@ -498,8 +972,26 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
         assert context.task.id == parent.id
         assert context.flow is not None
         assert context.flow.id == flow.id
+        assert context.knowledge_packet is not None
+        assert context.knowledge_packet.missing_flow_document_keys == ()
+        assert [document.document_key for document in context.knowledge_packet.documents[:5]] == [
+            "brief",
+            "plan",
+            "spec",
+            "decisions",
+            "status",
+        ]
         assert any(document.document_key == "plan" for document in context.flow_documents)
+        assert "roadmap" not in {document.document_key for document in context.flow_documents}
         assert context.task_documents == (task_doc,)
+        assert "spec" not in {document.document_key for document in context.task_documents}
+        assert "roadmap" not in {
+            document.document_key for document in context.knowledge_packet.documents
+        }
+        assert not any(
+            document.scope_type == "task" and document.document_key == "spec"
+            for document in context.knowledge_packet.documents
+        )
         assert context.recent_comments[0].comment_type == "plan"
         assert context.delegated_tasks[0].id == delegated.delegated_task.id
         assert context.dependencies[0].depends_on_task_id == delegated.delegated_task.id
@@ -507,21 +999,15 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
         await engine.dispose()
 
 
-async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path) -> None:
-    """Task comments should turn @profile:subagent references into actionable Employee inbox events."""
+async def test_task_flow_service_mentions_show_up_in_employee_inbox(tmp_path: Path) -> None:
+    """Task comments should turn @employee_id references into actionable employee inbox events."""
 
     db_name = "task_flow_agent_mentions.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
-    _write_profile_subagent(
-        settings=settings,
-        profile_id="analyst",
-        subagent_name="researcher",
-        markdown="# Researcher\nInvestigate delegated work and answer mentions.",
-    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
-        profile_ids=("default", "analyst"),
+        profile_ids=("default",),
     )
     service = TaskFlowService(factory, settings=settings)
     try:
@@ -543,7 +1029,7 @@ async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path)
             comment_type="question",
         )
 
-        inbox = await service.build_agent_inbox(
+        inbox = await service.build_employee_inbox(
             profile_id="default",
             owner_type="employee",
             owner_ref="researcher",
@@ -576,7 +1062,7 @@ async def test_task_flow_service_mentions_show_up_in_agent_inbox(tmp_path: Path)
         await engine.dispose()
 
 
-async def test_task_flow_service_agent_inbox_includes_review_assignments_by_reviewer(
+async def test_task_flow_service_employee_inbox_includes_review_assignments_by_reviewer(
     tmp_path: Path,
 ) -> None:
     """Employee inbox should match runtime claim ownership for review assignments."""
@@ -598,18 +1084,18 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
     try:
         review_task = await service.create_task(
             profile_id="default",
-            title="Review human-owned implementation",
-            description="Review this task even though the task owner is human.",
+            title="Review employee-owned implementation",
+            description="Review this task as the assigned employee reviewer.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=review_task.id, status="review")
 
-        inbox = await service.build_agent_inbox(
+        inbox = await service.build_employee_inbox(
             profile_id="default",
             owner_type="employee",
             owner_ref="reviewer",
@@ -631,7 +1117,7 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
         assert claimed.claim_owner_type == "employee"
         assert claimed.claim_owner_ref == "reviewer"
 
-        active_inbox = await service.build_agent_inbox(
+        active_inbox = await service.build_employee_inbox(
             profile_id="default",
             owner_type="employee",
             owner_ref="reviewer",
@@ -647,6 +1133,62 @@ async def test_task_flow_service_agent_inbox_includes_review_assignments_by_revi
         )
         assert [item.id for item in review_inbox] == [review_task.id]
         assert review_inbox[0].review_actionable is True
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_comment_on_review_task_wakes_reviewer_feed(
+    tmp_path: Path,
+) -> None:
+    """Comments on review work should wake the reviewer, not just the task owner."""
+
+    db_name = "task_flow_review_comment_wakes_reviewer.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review implementation notes",
+            description="Review the completed implementation notes.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=task.id, status="review")
+
+        comment = await service.add_task_comment(
+            profile_id="default",
+            task_id=task.id,
+            message="Please check the final evidence before approval.",
+            actor_type="human",
+            actor_ref="cli",
+            comment_type="review_feedback",
+        )
+
+        inbox = await service.build_employee_inbox(
+            profile_id="default",
+            owner_type="employee",
+            owner_ref="reviewer",
+            event_limit=10,
+        )
+
+        wake_event = next(
+            event
+            for event in inbox.recent_events
+            if event.event_type == "wake_requested"
+            and event.details.get("reason_code") == "comment_added"
+        )
+        assert wake_event.task_id == task.id
+        assert wake_event.details["owner_type"] == "employee"
+        assert wake_event.details["owner_ref"] == "reviewer"
+        assert wake_event.details["comment_id"] == comment.id
     finally:
         await engine.dispose()
 
@@ -678,7 +1220,7 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
             owner_type="employee",
             owner_ref="default",
             reviewer_type="employee",
-            reviewer_ref="reviewer",
+            reviewer_ref="default",
         )
 
         updated = await service.update_task(
@@ -697,7 +1239,7 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
         assert review_task.reviewer_type is None
         assert review_task.reviewer_ref is None
 
-        stale_reviewer_inbox = await service.build_agent_inbox(
+        stale_reviewer_inbox = await service.build_employee_inbox(
             profile_id="default",
             owner_type="employee",
             owner_ref="reviewer",
@@ -731,10 +1273,10 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
         await engine.dispose()
 
 
-async def test_task_flow_service_records_wake_events_for_ai_dependency_unblocks(
+async def test_task_flow_service_records_wake_events_for_employee_dependency_unblocks(
     tmp_path: Path,
 ) -> None:
-    """AI-owned dependency-wait tasks should emit visible wake events when ready."""
+    """Employee-owned dependency-wait tasks should emit visible wake events when ready."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -819,10 +1361,10 @@ async def test_task_flow_service_allows_assigning_task_to_employee(tmp_path: Pat
         await engine.dispose()
 
 
-async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: Path) -> None:
-    """Public owner_type=subagent should persist as canonical employee ownership."""
+async def test_task_flow_service_accepts_employee_owner_for_profile_local_role(tmp_path: Path) -> None:
+    """Public owner_type=employee should persist canonical employee ownership."""
 
-    db_name = "task_flow_subagent_owner_alias.db"
+    db_name = "task_flow_employee_owner.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
     _write_profile_subagent(
         settings=settings,
@@ -844,8 +1386,8 @@ async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: 
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Subagent alias task",
-            description="Assign this through the user-facing subagent alias.",
+            title="Employee-owned task",
+            description="Assign this through the employee owner contract.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
@@ -854,191 +1396,6 @@ async def test_task_flow_service_normalizes_subagent_owner_type_alias(tmp_path: 
 
         assert task.owner_type == "employee"
         assert task.owner_ref == "researcher"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_summarizes_human_owned_tasks(tmp_path: Path) -> None:
-    """Startup summaries should count visible human task states and cap the preview list."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_summary.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        review_task = await service.create_task(
-            profile_id="default",
-            title="Review landing page",
-            description="Review final copy and approve publishing.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-            due_at=datetime.now(timezone.utc) - timedelta(hours=1),
-        )
-        await service.update_task(
-            profile_id="default",
-            task_id=review_task.id,
-            status="review",
-        )
-
-        blocked_task = await service.create_task(
-            profile_id="default",
-            title="Wait for assets",
-            description="Collect final media files.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-            depends_on_task_ids=(review_task.id,),
-        )
-        todo_task = await service.create_task(
-            profile_id="default",
-            title="Send newsletter",
-            description="Send the launch newsletter.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-
-        summary = await service.summarize_human_tasks(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            limit=2,
-        )
-
-        assert summary.total_count == 3
-        assert summary.todo_count == 1
-        assert summary.blocked_count == 1
-        assert summary.review_count == 1
-        assert summary.overdue_count == 1
-        assert len(summary.tasks) == 2
-        assert {item.id for item in summary.tasks} <= {
-            review_task.id,
-            blocked_task.id,
-            todo_task.id,
-        }
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_summarizes_human_review_inbox_items(tmp_path: Path) -> None:
-    """Human startup summaries should include review tasks routed via reviewer fields."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_review_inbox.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        review_task = await service.create_task(
-            profile_id="default",
-            title="Review Employee analysis",
-            description="Review the Employee draft and approve or request changes.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="employee",
-            owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
-        )
-        await service.update_task(
-            profile_id="default",
-            task_id=review_task.id,
-            status="review",
-        )
-        todo_task = await service.create_task(
-            profile_id="default",
-            title="Follow up with user",
-            description="Send the final follow-up after review.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-
-        summary = await service.summarize_human_tasks(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            limit=5,
-        )
-
-        assert summary.total_count == 2
-        assert summary.todo_count == 1
-        assert summary.blocked_count == 0
-        assert summary.review_count == 1
-        assert summary.overdue_count == 0
-        assert {item.id for item in summary.tasks} == {review_task.id, todo_task.id}
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_builds_notification_ready_human_inbox(tmp_path: Path) -> None:
-    """Human inbox should expose counts, recent events, and channel-based dedupe cursors."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_human_inbox.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        task = await service.create_task(
-            profile_id="default",
-            title="Review Employee draft",
-            description="Review the AI-produced answer.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-
-        inbox = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            task_limit=5,
-            event_limit=5,
-        )
-        assert inbox.total_count == 1
-        assert inbox.todo_count == 1
-        assert inbox.unseen_event_count == 1
-        assert inbox.recent_events[0].task_id == task.id
-        assert inbox.recent_events[0].event_type == "created"
-
-        primed = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            task_limit=5,
-            event_limit=5,
-            channel="chat",
-            mark_seen=True,
-        )
-        assert primed.channel == "chat"
-        assert primed.unseen_event_count == 0
-        assert primed.recent_events == ()
-
-        await service.update_task(
-            profile_id="default",
-            task_id=task.id,
-            status="blocked",
-            blocked_reason_code="awaiting_input",
-            blocked_reason_text="Waiting for operator input.",
-            actor_type="human",
-            actor_ref="cli_user:bob",
-        )
-
-        notified = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            task_limit=5,
-            event_limit=5,
-            channel="chat",
-        )
-        assert notified.unseen_event_count == 1
-        assert notified.recent_events[0].event_type == "updated"
-        assert notified.recent_events[0].actor_ref == "cli_user:bob"
-        assert notified.recent_events[0].to_status == "blocked"
     finally:
         await engine.dispose()
 
@@ -1238,8 +1595,8 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
+            reviewer_type="employee",
+            reviewer_ref="default",
             labels=("review",),
         )
         await service.update_task(
@@ -1249,11 +1606,11 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         owner_fallback = await service.create_task(
             profile_id="default",
             title="Owner fallback review",
-            description="Review directly as the human owner.",
+            description="Review directly as the employee owner.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             labels=("review",),
         )
         await service.update_task(profile_id="default", task_id=owner_fallback.id, status="review")
@@ -1261,21 +1618,21 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         other_reviewer = await service.create_task(
             profile_id="default",
             title="Other reviewer task",
-            description="Should not appear in Alice inbox.",
+            description="Should not appear in the reviewer inbox.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:bob",
+            reviewer_type="employee",
+            reviewer_ref="auditor",
             labels=("review",),
         )
         await service.update_task(profile_id="default", task_id=other_reviewer.id, status="review")
 
         inbox = await service.list_review_tasks(
             profile_id="default",
-            actor_type="human",
-            actor_ref="cli_user:alice",
+            actor_type="employee",
+            actor_ref="default",
             labels=("review",),
         )
 
@@ -1306,19 +1663,21 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             labels=("review",),
         )
         await service.update_task(profile_id="default", task_id=ai_review.id, status="review")
-        human_review = await service.create_task(
+        reviewer_review = await service.create_task(
             profile_id="default",
-            title="Human review",
-            description="Review by a human operator.",
+            title="Specialist review",
+            description="Review by a second employee reviewer.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
             labels=("review",),
         )
-        await service.update_task(profile_id="default", task_id=human_review.id, status="review")
+        await service.update_task(
+            profile_id="default", task_id=reviewer_review.id, status="review"
+        )
         running_work = await service.create_task(
             profile_id="default",
             title="Active implementation",
@@ -1346,7 +1705,7 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             labels=("review",),
         )
 
-        assert {item.id for item in all_review} == {ai_review.id, human_review.id}
+        assert {item.id for item in all_review} == {ai_review.id, reviewer_review.id}
         assert [item.id for item in ai_inbox] == [ai_review.id]
     finally:
         await engine.dispose()
@@ -1422,8 +1781,8 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=review_task.id, status="review")
 
@@ -1441,15 +1800,15 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             await service.approve_review_task(
                 profile_id="default",
                 task_id=review_task.id,
-                actor_type="human",
-                actor_ref="cli_user:bob",
+                actor_type="employee",
+                actor_ref="auditor",
             )
 
         approved = await service.approve_review_task(
             profile_id="default",
             task_id=review_task.id,
-            actor_type="human",
-            actor_ref="cli_user:alice",
+            actor_type="employee",
+            actor_ref="reviewer",
         )
         assert approved.status == "completed"
 
@@ -1462,16 +1821,16 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             description="Return this task for changes.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
         await service.update_task(profile_id="default", task_id=second_review.id, status="review")
 
         changed = await service.request_review_changes(
             profile_id="default",
             task_id=second_review.id,
-            actor_type="human",
-            actor_ref="cli_user:alice",
+            actor_type="employee",
+            actor_ref="default",
             owner_type="employee",
             owner_ref="default",
             reason_text="Needs source citations before approval.",
@@ -1485,10 +1844,10 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
         await engine.dispose()
 
 
-async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_path: Path) -> None:
-    """Review inbox, approval, and changes should accept public actor_type=subagent."""
+async def test_task_flow_service_review_actions_accept_employee_actor(tmp_path: Path) -> None:
+    """Review inbox, approval, and changes should accept employee actor identity."""
 
-    db_name = "task_flow_review_subagent_actor_alias.db"
+    db_name = "task_flow_review_employee_actor.db"
     settings = _taskflow_test_settings(tmp_path=tmp_path, db_name=db_name)
     _write_profile_subagent(
         settings=settings,
@@ -1511,7 +1870,7 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
         approval_task = await service.create_task(
             profile_id="default",
             title="Subagent review approval",
-            description="Approve this through the public subagent alias.",
+            description="Approve this through the employee actor contract.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
@@ -1539,11 +1898,11 @@ async def test_task_flow_service_review_actions_accept_subagent_actor_alias(tmp_
         changes_task = await service.create_task(
             profile_id="default",
             title="Subagent review changes",
-            description="Request changes through the public subagent alias.",
+            description="Request changes through the employee actor contract.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1608,8 +1967,8 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
             description="Review and send back if changes are needed.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             reviewer_type="employee",
             reviewer_ref="papercliper",
         )
@@ -1719,8 +2078,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Complete prerequisite work first.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
         todo_task = await service.create_task(
             profile_id="default",
@@ -1728,8 +2087,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Finish the overdue item.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             priority=90,
             due_at=now_utc - timedelta(hours=2),
             labels=("release",),
@@ -1740,8 +2099,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Wait for prerequisite completion.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             depends_on_task_ids=(prereq.id,),
             labels=("release",),
         )
@@ -1753,8 +2112,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
             labels=("release",),
         )
         await service.update_task(profile_id="default", task_id=review_task.id, status="review")
@@ -1764,8 +2123,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Already completed.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             labels=("release",),
         )
         await service.update_task(
@@ -1777,8 +2136,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Already failed.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             labels=("release",),
         )
         await service.update_task(profile_id="default", task_id=failed_task.id, status="failed")
@@ -1788,8 +2147,8 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             description="Already cancelled.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
             labels=("release",),
         )
         await service.update_task(
@@ -1803,7 +2162,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            priority=60,
+            priority=95,
             labels=("release",),
         )
         running_task = await service.create_task(
@@ -2272,8 +2631,6 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             reason_text="Need approval from Alice.",
             actor_type="employee",
             actor_ref="default",
-            owner_type="human",
-            owner_ref="cli_user:alice",
         )
         assert human_wait_task.block_state is not None
         assert human_wait_task.block_state.kind == "human_wait"
@@ -2287,8 +2644,8 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="default",
-            reviewer_type="human",
-            reviewer_ref="cli_user:alice",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
         )
         review_task = await service.update_task(
             profile_id="default",
@@ -2439,8 +2796,8 @@ async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
             description="Create a task for public-principal enforcement checks.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
         )
         with pytest.raises(TaskFlowServiceError) as update_exc:
             await service.update_task(
@@ -2451,6 +2808,73 @@ async def test_task_flow_service_enforces_public_principal_when_flag_enabled(
                 actor_ref="someone_else",
             )
         assert update_exc.value.error_code == "task_actor_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_task_flow_service_requires_public_human_intake_on_root_employee(
+    tmp_path: Path,
+) -> None:
+    """Public human task intake should enter through the root employee only."""
+
+    db_name = "task_flow_public_human_root_intake.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = _taskflow_test_settings(
+        tmp_path=tmp_path,
+        db_name=db_name,
+        taskflow_public_principal_required=True,
+    )
+    service = TaskFlowService(factory, settings=settings)
+    try:
+        with pytest.raises(TaskFlowServiceError) as direct_worker_exc:
+            await service.create_task(
+                profile_id="default",
+                title="Bypass CTO",
+                description="A human should not assign intake directly to a specialist.",
+                created_by_type="human",
+                created_by_ref="cli",
+                owner_type="employee",
+                owner_ref="reviewer",
+            )
+        assert direct_worker_exc.value.error_code == "task_intake_root_required"
+
+        with pytest.raises(TaskFlowServiceError) as human_default_exc:
+            await service.create_flow(
+                profile_id="default",
+                title="Human default owner",
+                description="Flow defaults cannot bypass employee intake.",
+                created_by_type="human",
+                created_by_ref="cli",
+                default_owner_type="human",
+                default_owner_ref="cli",
+            )
+        assert human_default_exc.value.error_code == "invalid_owner_type"
+
+        explicit_root = await service.create_task(
+            profile_id="default",
+            title="Explicit CTO intake",
+            description="Route the human intake to the root employee.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+        )
+        assert explicit_root.owner_type == "employee"
+        assert explicit_root.owner_ref == "default"
+
+        implicit_root = await service.create_task(
+            profile_id="default",
+            title="Implicit CTO intake",
+            description="Default owner resolution should also use the root employee.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        assert implicit_root.owner_type == "employee"
+        assert implicit_root.owner_ref == "default"
     finally:
         await engine.dispose()
 
@@ -2487,8 +2911,8 @@ async def test_task_flow_service_requires_actor_identity_for_public_deletes(
             description="Task delete should require an operator actor.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
         )
 
         with pytest.raises(TaskFlowServiceError) as task_delete_exc:
@@ -2540,8 +2964,8 @@ async def test_task_flow_service_rejects_public_human_session_binding(
                 description="Creation must not bind a human supplied session.",
                 created_by_type="human",
                 created_by_ref="cli",
-                owner_type="human",
-                owner_ref="cli",
+                owner_type="employee",
+                owner_ref="default",
                 session_id="borrowed-session",
                 session_profile_id="other",
             )
@@ -2553,8 +2977,8 @@ async def test_task_flow_service_rejects_public_human_session_binding(
             description="Update must not bind a human supplied session.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
         )
         with pytest.raises(TaskFlowServiceError) as update_exc:
             await service.update_task(
@@ -2770,8 +3194,8 @@ async def test_task_flow_service_rejects_spoofed_automation_actor_on_task_mutati
             description="Used to verify automation mutation anchoring.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
 
         with pytest.raises(TaskFlowServiceError) as update_exc:
@@ -2828,8 +3252,8 @@ async def test_task_flow_service_limits_automation_mutations_to_own_tasks(
             description="Automation should not manage this backlog item.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
 
         with pytest.raises(TaskFlowServiceError) as update_exc:
@@ -2950,8 +3374,9 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
             profile_id="default",
             title="Analyst public mutation target",
             description="A different employee must not reuse another live task session.",
-            created_by_type="human",
-            created_by_ref="cli",
+            created_by_type="employee",
+            created_by_ref="default",
+            actor_session_id="taskflow:default-public",
             owner_type="employee",
             owner_ref="analyst",
         )
@@ -3242,8 +3667,8 @@ async def test_task_flow_service_lists_task_runs_for_task_and_profile(tmp_path: 
             second_run = await repo.create_task_run(
                 task_id=task.id,
                 attempt=2,
-                owner_type="human",
-                owner_ref="cli_user:alice",
+                owner_type="employee",
+                owner_ref="default",
                 execution_mode="manual",
                 status="review",
                 session_id="taskflow:history-2",
@@ -3313,12 +3738,12 @@ async def test_task_flow_service_reassignment_releases_running_claim(tmp_path: P
         updated = await service.update_task(
             profile_id="default",
             task_id=task.id,
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="reviewer",
         )
 
-        assert updated.owner_type == "human"
-        assert updated.owner_ref == "cli_user:alice"
+        assert updated.owner_type == "employee"
+        assert updated.owner_ref == "reviewer"
         assert updated.status == "todo"
 
         async with session_scope(factory) as session:
@@ -3542,242 +3967,10 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
         await engine.dispose()
 
 
-async def test_task_flow_service_builds_human_inbox_and_dedupes_channel_notifications(
-    tmp_path: Path,
-) -> None:
-    """Human inbox should expose recent activity and dedupe startup-channel notifications."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_human_inbox.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        task = await service.create_task(
-            profile_id="default",
-            title="Check release copy",
-            description="Review the release copy before publishing.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-
-        inbox = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-        )
-        assert inbox.total_count == 1
-        assert inbox.todo_count == 1
-        assert inbox.unseen_event_count == 1
-        assert inbox.recent_events[0].event_type == "created"
-        assert inbox.recent_events[0].task_title == "Check release copy"
-
-        first_startup = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
-        )
-        assert first_startup.unseen_event_count == 0
-        assert first_startup.recent_events == ()
-
-        await service.update_task(
-            profile_id="default",
-            task_id=task.id,
-            status="review",
-            actor_type="human",
-            actor_ref="cli_user:alice",
-        )
-
-        second_startup = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
-        )
-        assert second_startup.unseen_event_count == 1
-        assert second_startup.recent_events[0].event_type == "updated"
-        assert second_startup.recent_events[0].to_status == "review"
-
-        third_startup = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
-        )
-        assert third_startup.unseen_event_count == 0
-        assert third_startup.recent_events == ()
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_human_inbox_counts_all_relevant_events_beyond_preview_window(
-    tmp_path: Path,
-) -> None:
-    """Human inbox should not lose older relevant events behind newer irrelevant noise."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_human_inbox_noise.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        task = await service.create_task(
-            profile_id="default",
-            title="Review noisy task",
-            description="Review the task after the runtime finishes unrelated work.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-        await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
-        )
-        await service.update_task(
-            profile_id="default",
-            task_id=task.id,
-            status="review",
-            actor_type="human",
-            actor_ref="cli_user:alice",
-        )
-        async with session_scope(factory) as session:
-            repo = TaskFlowRepository(session)
-            for index in range(24):
-                await repo.create_task_event(
-                    task_id=task.id,
-                    event_type="execution_completed",
-                    actor_type="runtime",
-                    actor_ref="taskflow-runtime:0",
-                    message=f"Irrelevant noise {index}",
-                )
-
-        inbox = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            event_limit=5,
-            mark_seen=False,
-        )
-        assert inbox.unseen_event_count == 1
-        assert len(inbox.recent_events) == 1
-        assert inbox.recent_events[0].event_type == "updated"
-        assert inbox.recent_events[0].to_status == "review"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_human_inbox_avoids_materializing_full_unseen_event_tail(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Human inbox should use filtered count/preview queries instead of bulk event fetches."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_human_inbox_no_bulk_fetch.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        task = await service.create_task(
-            profile_id="default",
-            title="Review optimized inbox",
-            description="Make sure inbox queries stay bounded.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-        await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
-        )
-        await service.update_task(
-            profile_id="default",
-            task_id=task.id,
-            status="review",
-            actor_type="human",
-            actor_ref="cli_user:alice",
-        )
-
-        async def _unexpected_bulk_fetch(*args, **kwargs):
-            raise AssertionError(
-                "build_human_inbox should not materialize the full unseen event tail"
-            )
-
-        monkeypatch.setattr(
-            TaskFlowRepository, "list_task_events_for_tasks", _unexpected_bulk_fetch
-        )
-
-        inbox = await service.build_human_inbox(
-            profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            event_limit=1,
-            mark_seen=False,
-        )
-
-        assert inbox.unseen_event_count == 1
-        assert len(inbox.recent_events) == 1
-        assert inbox.recent_events[0].event_type == "updated"
-        assert inbox.recent_events[0].to_status == "review"
-    finally:
-        await engine.dispose()
-
-
-async def test_task_flow_service_human_inbox_mark_seen_is_concurrency_safe(tmp_path: Path) -> None:
-    """Concurrent inbox mark-seen calls should not race the notification cursor insert."""
-
-    engine, factory = await build_repository_factory(
-        tmp_path,
-        db_name="task_flow_human_inbox_concurrency.db",
-    )
-    service = TaskFlowService(factory)
-    try:
-        await service.create_task(
-            profile_id="default",
-            title="Concurrent inbox task",
-            description="Make sure concurrent inbox reads do not explode.",
-            created_by_type="human",
-            created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
-        )
-
-        inboxes = await asyncio.gather(
-            *(
-                service.build_human_inbox(
-                    profile_id="default",
-                    owner_ref="cli_user:alice",
-                    channel="chat_startup",
-                    mark_seen=True,
-                )
-                for _ in range(2)
-            )
-        )
-        assert all(inbox.channel == "chat_startup" for inbox in inboxes)
-        async with session_scope(factory) as session:
-            cursor = await TaskFlowRepository(session).get_task_notification_cursor(
-                profile_id="default",
-                actor_type="human",
-                actor_ref="cli_user:alice",
-                channel="chat_startup",
-            )
-            assert cursor is not None
-    finally:
-        await engine.dispose()
-
-
 async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_inbox(
     tmp_path: Path,
 ) -> None:
-    """Task comments should be append-only and optionally appear as inbox activity."""
+    """Task comments should be append-only and surface in the employee feed."""
 
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -3791,8 +3984,8 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             description="Review the drafted answer and leave precise notes.",
             created_by_type="human",
             created_by_ref="cli",
-            owner_type="human",
-            owner_ref="cli_user:alice",
+            owner_type="employee",
+            owner_ref="default",
         )
 
         comment = await service.add_task_comment(
@@ -3813,16 +4006,19 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
         assert comments[0].actor_ref == "cli"
 
         events = await service.list_task_events(profile_id="default", task_id=task.id)
-        assert events[0].event_type == "comment_added"
-        assert events[0].details["comment_type"] == "review_feedback"
+        comment_event = next(event for event in events if event.event_type == "comment_added")
+        assert comment_event.details["comment_type"] == "review_feedback"
 
-        startup_inbox = await service.build_human_inbox(
+        feed = await service.build_employee_inbox(
             profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=True,
+            owner_type="employee",
+            owner_ref="default",
         )
-        assert startup_inbox.unseen_event_count == 0
+        assert any(
+            event.event_type == "wake_requested"
+            and event.details.get("reason_code") == "comment_added"
+            for event in feed.recent_events
+        )
 
         await service.add_task_comment(
             profile_id="default",
@@ -3832,15 +4028,14 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             actor_ref="cli_user:alice",
             comment_type="note",
         )
-        fresh_inbox = await service.build_human_inbox(
+        fresh_feed = await service.build_employee_inbox(
             profile_id="default",
-            owner_ref="cli_user:alice",
-            channel="chat_startup",
-            mark_seen=False,
+            owner_type="employee",
+            owner_ref="default",
         )
-        assert fresh_inbox.unseen_event_count == 1
-        assert fresh_inbox.recent_events[0].event_type == "comment_added"
-        assert fresh_inbox.recent_events[0].message == "Human reviewer note."
+        assert fresh_feed.recent_events[0].event_type == "wake_requested"
+        assert fresh_feed.recent_events[0].details["reason_code"] == "comment_added"
+        assert fresh_feed.recent_events[0].message == "Comment added for the responsible employee."
     finally:
         await engine.dispose()
 
@@ -3865,8 +4060,8 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
             title="Prepare implementation draft",
             description="Collect requirements, attach source files, and keep the task in plan.",
             status="plan",
-            owner_type="human",
-            owner_ref="operator",
+            owner_type="employee",
+            owner_ref="default",
             created_by_type="human",
             created_by_ref="cli",
             attachments=(
@@ -3906,38 +4101,38 @@ async def test_task_flow_service_uses_description_plan_and_task_attachments(
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_ai_owned_plan_task_creation(tmp_path: Path) -> None:
-    """AI-owned PLAN tasks must be rejected to prevent silent runtime starvation."""
+async def test_task_flow_service_allows_employee_owned_plan_task_creation(tmp_path: Path) -> None:
+    """Employee-owned PLAN tasks are planning backlog items and are not runtime runnable."""
 
-    db_name = "task_flow_plan_ai_owner_create_rejected.db"
+    db_name = "task_flow_plan_employee_owner_create.db"
     engine, factory = await build_repository_factory(
         tmp_path, db_name=db_name, profile_ids=("default",)
     )
     service = TaskFlowService(factory)
 
     try:
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.create_task(
-                profile_id="default",
-                title="Runtime ticket",
-                description="This should fail because Employee owner in PLAN can stall forever.",
-                status="plan",
-                owner_type="employee",
-                owner_ref="default",
-                created_by_type="human",
-                created_by_ref="cli",
-            )
+        task = await service.create_task(
+            profile_id="default",
+            title="CTO planning ticket",
+            description="Keep this in PLAN while the responsible employee decomposes the work.",
+            status="plan",
+            owner_type="employee",
+            owner_ref="default",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
 
-        assert exc_info.value.error_code == "task_plan_requires_human_owner"
-        assert "human-only" in exc_info.value.reason
+        assert task.status == "plan"
+        assert task.owner_type == "employee"
+        assert task.owner_ref == "default"
     finally:
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path: Path) -> None:
-    """Status updates should block transitions to AI-owned PLAN."""
+async def test_task_flow_service_allows_employee_task_transition_to_plan(tmp_path: Path) -> None:
+    """Managers can move employee-owned work back to PLAN for decomposition."""
 
-    db_name = "task_flow_plan_ai_owner_update_rejected.db"
+    db_name = "task_flow_plan_employee_owner_update.db"
     engine, factory = await build_repository_factory(
         tmp_path, db_name=db_name, profile_ids=("default",)
     )
@@ -3955,26 +4150,27 @@ async def test_task_flow_service_rejects_ai_owner_reassignment_to_plan(tmp_path:
             created_by_ref="cli",
         )
 
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.update_task(
-                profile_id="default",
-                task_id=task.id,
-                status="plan",
-                actor_type="employee",
-                actor_ref="default",
-            )
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="plan",
+            actor_type="employee",
+            actor_ref="default",
+        )
 
-        assert exc_info.value.error_code == "task_plan_requires_human_owner"
+        assert updated.status == "plan"
+        assert updated.owner_type == "employee"
+        assert updated.owner_ref == "default"
     finally:
         await engine.dispose()
 
 
-async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
+async def test_task_flow_service_allows_employee_owner_swap_on_existing_plan_task(
     tmp_path: Path,
 ) -> None:
-    """Owner reassignment must not move PLAN tasks under Employee ownership."""
+    """PLAN tasks can be reassigned between employees without falling back to human owners."""
 
-    db_name = "task_flow_plan_ai_owner_reassign_rejected.db"
+    db_name = "task_flow_plan_employee_owner_reassign.db"
     engine, factory = await build_repository_factory(
         tmp_path, db_name=db_name, profile_ids=("default",)
     )
@@ -3983,26 +4179,27 @@ async def test_task_flow_service_rejects_ai_owner_swap_on_existing_plan_task(
     try:
         task = await service.create_task(
             profile_id="default",
-            title="Manual triage",
-            description="Human-owned plan task.",
+            title="Employee triage",
+            description="Employee-owned plan task.",
             status="plan",
-            owner_type="human",
-            owner_ref="operator",
+            owner_type="employee",
+            owner_ref="default",
             created_by_type="human",
             created_by_ref="cli",
         )
 
-        with pytest.raises(TaskFlowServiceError) as exc_info:
-            await service.update_task(
-                profile_id="default",
-                task_id=task.id,
-                owner_type="employee",
-                owner_ref="default",
-                actor_type="human",
-                actor_ref="cli",
-            )
+        updated = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            owner_type="employee",
+            owner_ref="analyst",
+            actor_type="human",
+            actor_ref="cli",
+        )
 
-        assert exc_info.value.error_code == "task_plan_requires_human_owner"
+        assert updated.status == "plan"
+        assert updated.owner_type == "employee"
+        assert updated.owner_ref == "analyst"
     finally:
         await engine.dispose()
 

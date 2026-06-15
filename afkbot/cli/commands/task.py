@@ -15,7 +15,6 @@ from afkbot.services.task_flow.cli_service import (
     approve_review_task_payload,
     build_agent_feed_payload,
     build_board_payload,
-    build_human_inbox_payload,
     build_task_context_payload,
     confirm_task_document_payload,
     create_flow_payload,
@@ -132,56 +131,6 @@ def register(app: typer.Typer) -> None:
             )
         )
 
-    @task_app.command("inbox")
-    def inbox_command(
-        ctx: typer.Context,
-        profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
-        owner_ref: str | None = typer.Option(
-            None,
-            "--owner-ref",
-            help="Human owner ref. Defaults to the local human ref for CLI use.",
-        ),
-        task_limit: int = typer.Option(5, "--task-limit", min=1, help="Maximum preview tasks."),
-        event_limit: int = typer.Option(
-            5,
-            "--event-limit",
-            min=1,
-            help="Maximum recent inbox events to include.",
-        ),
-        channel: str | None = typer.Option(
-            None,
-            "--channel",
-            help="Optional dedupe channel scope for notification cursors.",
-        ),
-        mark_seen: bool = typer.Option(
-            False,
-            "--mark-seen/--no-mark-seen",
-            help="Advance the dedupe cursor for the selected channel.",
-        ),
-    ) -> None:
-        """Show notification-ready human inbox summary."""
-
-        resolved_owner_ref = owner_ref or resolve_local_human_ref(get_settings())
-        if mark_seen and owner_ref is not None:
-            local_owner_ref = resolve_local_human_ref(get_settings())
-            if resolved_owner_ref != local_owner_ref:
-                raise typer.BadParameter(
-                    "mark_seen can only be used for the local human inbox",
-                    param_hint="--owner-ref",
-                )
-        typer.echo(
-            asyncio.run(
-                build_human_inbox_payload(
-                    profile_id=_resolve_profile(ctx, profile),
-                    owner_ref=resolved_owner_ref,
-                    task_limit=task_limit,
-                    event_limit=event_limit,
-                    channel=channel,
-                    mark_seen=mark_seen,
-                )
-            )
-        )
-
     @task_app.command("feed")
     def feed_command(
         ctx: typer.Context,
@@ -191,7 +140,7 @@ def register(app: typer.Typer) -> None:
         task_limit: int = typer.Option(10, "--task-limit", min=1, help="Maximum preview tasks."),
         event_limit: int = typer.Option(10, "--event-limit", min=1, help="Maximum mention events."),
     ) -> None:
-        """Show AI assignment and mention feed for a profile or subagent."""
+        """Show assignment, mention, and wake feed for one Task Flow employee."""
 
         target_profile_id = _resolve_profile(ctx, profile)
         resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
@@ -258,7 +207,11 @@ def register(app: typer.Typer) -> None:
         ctx: typer.Context,
         scope_type: str = typer.Option(..., "--scope-type", help="Document scope: flow or task."),
         scope_id: str = typer.Option(..., "--scope-id", help="Flow id or task id."),
-        document_key: str = typer.Option(..., "--key", help="Document key, such as plan or spec."),
+        document_key: str = typer.Option(
+            ...,
+            "--key",
+            help="Flow keys: brief/plan/spec/decisions/status; task keys: handoff/notes/review/evidence.",
+        ),
         title: str = typer.Option(..., "--title", help="Document title."),
         body: str = typer.Option(..., "--body", help="Complete document body."),
         profile: str | None = typer.Option(None, "--profile", help="Target profile id."),
@@ -531,17 +484,12 @@ def register(app: typer.Typer) -> None:
         description: str | None = typer.Option(
             None,
             "--description",
-            help="Task description or work instruction. Preferred over --prompt.",
-        ),
-        prompt: str | None = typer.Option(
-            None,
-            "--prompt",
-            help="Deprecated alias for --description (kept for backward compatibility).",
+            help="Task description or work instruction.",
         ),
         status: str = typer.Option(
             "todo",
             "--status",
-            help="Initial task status. Defaults to todo for backward compatibility; use plan for manual prep.",
+            help="Initial task status. Defaults to todo; use plan for manual prep.",
         ),
         flow_id: str | None = typer.Option(None, "--flow-id", help="Optional task flow id."),
         priority: int = typer.Option(50, "--priority", min=0, help="Task priority."),
@@ -572,10 +520,7 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Create one task under the selected profile."""
 
-        resolved_description = _resolve_task_create_description(
-            description=description,
-            prompt=prompt,
-        )
+        resolved_description = _resolve_task_create_description(description=description)
         resolved_owner_type, resolved_owner_ref = _resolve_cli_owner_inputs(
             field_prefix="owner",
             owner_type=owner_type,
@@ -1009,18 +954,12 @@ def _option_was_explicit(ctx: typer.Context, param_name: str) -> bool:
     return source not in (ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP)
 
 
-def _resolve_task_create_description(*, description: str | None, prompt: str | None) -> str:
-    """Resolve required task description across current and legacy flags.
-
-    During the transition period, `--prompt` is accepted as a backward-compatible alias.
-    When both are provided, `--description` wins deterministically.
-    """
+def _resolve_task_create_description(*, description: str | None) -> str:
+    """Resolve the required Task Flow task description."""
 
     if description is not None and description.strip():
         return description
-    if prompt is not None and prompt.strip():
-        return prompt
     raise typer.BadParameter(
-        "task description is required; provide --description (preferred) or legacy --prompt",
+        "task description is required; provide --description",
         param_hint="--description",
     )
