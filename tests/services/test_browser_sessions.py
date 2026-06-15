@@ -647,6 +647,65 @@ async def test_browser_session_manager_recovers_from_invalid_storage_state(tmp_p
     await manager.close_all_for_root(root_dir=tmp_path, clear_persisted_state=True)
 
 
+async def test_browser_session_manager_skips_storage_state_for_lightpanda(tmp_path: Path) -> None:
+    """Lightpanda/CDP sessions should not load or persist Playwright storage state."""
+
+    manager = get_browser_session_manager()
+    await manager.close_all_for_root(root_dir=tmp_path, clear_persisted_state=True)
+    state_path = manager.storage_state_path(
+        root_dir=tmp_path,
+        profile_id="default",
+        session_id="s-lightpanda-state",
+    )
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text('{"cookies":[{"name":"sid"}],"origins":[]}', encoding="utf-8")
+    browser_calls: list[str | None] = []
+    storage_state_writes: list[str] = []
+
+    class _LightpandaContext(_FakeContext):
+        async def storage_state(self, *, path: str) -> None:
+            storage_state_writes.append(path)
+            raise AssertionError("Lightpanda should skip storage_state writes")
+
+    class _LightpandaBrowser(_FakeBrowser):
+        async def new_context(self, *, storage_state: str | None = None) -> _FakeContext:
+            browser_calls.append(storage_state)
+            return _LightpandaContext(self._page)
+
+    async def _start_playwright():  # type: ignore[no-untyped-def]
+        page = _FakePage()
+        browser = _LightpandaBrowser(page)
+        return _FakePlaywright(browser)
+
+    handle, reused = await manager.open_or_reuse(
+        root_dir=tmp_path,
+        profile_id="default",
+        session_id="s-lightpanda-state",
+        headless=True,
+        idle_ttl_sec=600,
+        start_playwright=_start_playwright,
+        backend_name="lightpanda_cdp",
+    )
+    persisted = await manager.persist_session_state(
+        root_dir=tmp_path,
+        profile_id="default",
+        session_id="s-lightpanda-state",
+    )
+    closed = await manager.close_session(
+        root_dir=tmp_path,
+        profile_id="default",
+        session_id="s-lightpanda-state",
+    )
+
+    assert reused is False
+    assert handle.storage_state_loaded is False
+    assert browser_calls == [None]
+    assert persisted is False
+    assert storage_state_writes == []
+    assert closed is True
+    assert state_path.exists()
+
+
 async def test_reset_browser_session_manager_async_replaces_singleton(tmp_path: Path) -> None:
     """Reset hook should close existing sessions and replace the process singleton."""
 

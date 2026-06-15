@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from afkbot.browser_backends import PLAYWRIGHT_CHROMIUM
+from afkbot.browser_backends import LIGHTPANDA_CDP, PLAYWRIGHT_CHROMIUM
 
 
 _SessionKey = tuple[str, str, str]
@@ -116,6 +116,9 @@ class BrowserSessionManager:
                 context, page, storage_state_loaded = await self._open_page_with_context(
                     browser=browser,
                     storage_state_path=storage_state_path,
+                    load_storage_state=self._storage_state_supported(
+                        backend_name=backend_name
+                    ),
                 )
             except Exception:
                 if context is not None:
@@ -301,6 +304,8 @@ class BrowserSessionManager:
         async with lock:
             handle = self._sessions.get(key)
             if handle is None:
+                return False
+            if not self._storage_state_supported(backend_name=handle.backend_name):
                 return False
             return await self._persist_handle_state(handle)
 
@@ -524,10 +529,11 @@ class BrowserSessionManager:
         browser: Any,
         *,
         storage_state_path: Path,
+        load_storage_state: bool = True,
     ) -> tuple[Any | None, Any, bool]:
         new_context = getattr(browser, "new_context", None)
         if callable(new_context):
-            if await asyncio.to_thread(storage_state_path.exists):
+            if load_storage_state and await asyncio.to_thread(storage_state_path.exists):
                 try:
                     context = await new_context(storage_state=str(storage_state_path))
                 except Exception:
@@ -573,7 +579,7 @@ class BrowserSessionManager:
                 BrowserSessionManager._unlink_path_if_exists_sync,
                 handle.storage_state_path,
             )
-        else:
+        elif BrowserSessionManager._storage_state_supported(backend_name=handle.backend_name):
             try:
                 await BrowserSessionManager._persist_handle_state(handle)
             except Exception:
@@ -616,6 +622,10 @@ class BrowserSessionManager:
         await asyncio.to_thread(handle.storage_state_path.parent.mkdir, parents=True, exist_ok=True)
         await storage_state(path=str(handle.storage_state_path))
         return True
+
+    @staticmethod
+    def _storage_state_supported(*, backend_name: str) -> bool:
+        return backend_name != LIGHTPANDA_CDP
 
     @staticmethod
     def _clear_state_root_sync(state_root: Path) -> None:

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 from pytest import MonkeyPatch
 
 from afkbot.services.browser_sessions import get_browser_session_manager
+from afkbot.services.tools.plugins.browser_control import plugin as browser_control_plugin
 from afkbot.services.tools.plugins.web_fetch import plugin as web_fetch_plugin
 from afkbot.services.tools.base import ToolContext
 from afkbot.services.tools.registry import ToolRegistry
@@ -1075,6 +1077,112 @@ async def test_browser_control_persists_state_only_for_stateful_actions(
     assert persisted_actions == ["click"]
 
 
+async def test_browser_control_skips_storage_state_for_lightpanda(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Lightpanda/CDP actions should not write Playwright storage state."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        browser_backend="lightpanda_cdp",
+        browser_cdp_url="http://127.0.0.1:9222",
+    )
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+    ctx = ToolContext(profile_id="default", session_id="s-lightpanda-persist", run_id=1)
+
+    async def _fake_execute_action(*, ctx: ToolContext, payload):  # type: ignore[no-untyped-def]
+        _ = ctx
+        return {"action": payload.action}
+
+    async def _unexpected_persist_session_state(
+        *, root_dir: Path, profile_id: str, session_id: str
+    ) -> bool:
+        _ = root_dir, profile_id, session_id
+        raise AssertionError("Lightpanda must not call storage_state persistence")
+
+    monkeypatch.setattr(tool, "_execute_action", _fake_execute_action)
+    monkeypatch.setattr(tool._sessions, "persist_session_state", _unexpected_persist_session_state)
+
+    result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "click",
+                "selector": "#submit",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.payload == {"action": "click"}
+
+
+async def test_browser_control_soft_fails_storage_state_write(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A storage-state write failure must not turn a successful browser action into failure."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+    ctx = ToolContext(profile_id="default", session_id="s-storage-soft-fail", run_id=1)
+
+    closed_sessions: list[str] = []
+
+    async def _fake_execute_action(*, ctx: ToolContext, payload):  # type: ignore[no-untyped-def]
+        _ = ctx
+        return {"action": payload.action, "url": "https://example.com"}
+
+    async def _fake_persist_session_state(
+        *, root_dir: Path, profile_id: str, session_id: str
+    ) -> bool:
+        _ = root_dir, profile_id, session_id
+        raise RuntimeError("Protocol error (Target.createTarget): TargetAlreadyLoaded")
+
+    async def _fake_close_session(
+        *,
+        root_dir: Path,
+        profile_id: str,
+        session_id: str,
+        clear_persisted_state: bool = False,
+    ) -> bool:
+        _ = root_dir, profile_id, clear_persisted_state
+        closed_sessions.append(session_id)
+        return True
+
+    monkeypatch.setattr(tool, "_execute_action", _fake_execute_action)
+    monkeypatch.setattr(tool._sessions, "persist_session_state", _fake_persist_session_state)
+    monkeypatch.setattr(tool._sessions, "close_session", _fake_close_session)
+
+    result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "navigate",
+                "url": "https://example.com",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.payload["action"] == "navigate"
+    assert result.payload["storage_state_persisted"] is False
+    assert result.payload["storage_state_warning"]["browser_error_class"] == "browser_target_conflict"
+    assert result.payload["storage_state_warning"]["requires_session_reset"] is True
+    assert closed_sessions == ["s-storage-soft-fail"]
+
+
 async def test_browser_control_returns_graceful_errors(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -1135,6 +1243,85 @@ async def test_browser_control_returns_graceful_errors(
     assert open_result.error_code == "browser_unavailable"
     assert "afk browser install" in str(open_result.reason or "")
     assert open_result.metadata["browser_error_class"] == "browser_runtime_missing"
+
+
+async def test_browser_control_retries_playwright_import_after_runtime_install(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Daemon process should recover when Playwright becomes importable after startup."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+    ctx = ToolContext(profile_id="default", session_id="s-lazy-import", run_id=1)
+
+    class _FakePage:
+        url = "about:blank"
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeBrowser:
+        async def new_page(self) -> _FakePage:
+            return _FakePage()
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeChromium:
+        async def launch(self, *, headless: bool) -> _FakeBrowser:
+            _ = headless
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    class _FakePlaywrightManager:
+        async def start(self) -> _FakePlaywright:
+            return _FakePlaywright()
+
+    imports: list[str] = []
+
+    def _fake_import_module(name: str) -> object:
+        imports.append(name)
+        if name != "playwright.async_api":
+            raise ModuleNotFoundError(name)
+        return SimpleNamespace(
+            Error=RuntimeError,
+            TimeoutError=TimeoutError,
+            async_playwright=lambda: _FakePlaywrightManager(),
+        )
+
+    monkeypatch.setattr(browser_control_plugin, "_PLAYWRIGHT_FACTORY", None)
+    monkeypatch.setattr(
+        browser_control_plugin,
+        "_PLAYWRIGHT_IMPORT_ERROR",
+        ModuleNotFoundError("No module named 'playwright'"),
+    )
+    monkeypatch.setattr(browser_control_plugin.importlib, "import_module", _fake_import_module)
+
+    result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "open",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.payload["opened"] is True
+    assert imports == ["playwright.async_api"]
+    assert browser_control_plugin._PLAYWRIGHT_IMPORT_ERROR is None
 
 
 async def test_browser_control_lightpanda_missing_cdp_url_points_to_browser_install(

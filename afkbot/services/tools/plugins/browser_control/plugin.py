@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+import importlib
 import json
 from pathlib import Path
 import re
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from pydantic import Field
@@ -28,20 +29,53 @@ _PLAYWRIGHT_FACTORY: Callable[[], Any] | None
 _PLAYWRIGHT_IMPORT_ERROR: Exception | None
 _BROWSER_TIMEOUT_MS_MAX = 120_000
 
-try:  # pragma: no cover - tested through monkeypatch
-    from playwright.async_api import Error as _ImportedPlaywrightError
-    from playwright.async_api import TimeoutError as _ImportedPlaywrightTimeoutError
-    from playwright.async_api import async_playwright as _imported_playwright_factory
-except Exception as exc:  # pragma: no cover - environment-dependent
-    PlaywrightError = RuntimeError
-    PlaywrightTimeoutError = TimeoutError
-    _PLAYWRIGHT_FACTORY = None
-    _PLAYWRIGHT_IMPORT_ERROR = exc
-else:  # pragma: no cover - environment-dependent
-    PlaywrightError = _ImportedPlaywrightError
-    PlaywrightTimeoutError = _ImportedPlaywrightTimeoutError
-    _PLAYWRIGHT_FACTORY = _imported_playwright_factory
+PlaywrightError = RuntimeError
+PlaywrightTimeoutError = TimeoutError
+_PLAYWRIGHT_FACTORY = None
+_PLAYWRIGHT_IMPORT_ERROR = None
+
+
+def _refresh_playwright_api() -> Callable[[], Any] | None:
+    """Import Playwright lazily so long-running daemons can recover after install."""
+
+    global PlaywrightError, PlaywrightTimeoutError, _PLAYWRIGHT_FACTORY, _PLAYWRIGHT_IMPORT_ERROR
+
+    try:  # pragma: no cover - environment-dependent, tested through monkeypatch
+        module = importlib.import_module("playwright.async_api")
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        PlaywrightError = RuntimeError
+        PlaywrightTimeoutError = TimeoutError
+        _PLAYWRIGHT_FACTORY = None
+        _PLAYWRIGHT_IMPORT_ERROR = exc
+        return None
+
+    factory = getattr(module, "async_playwright", None)
+    if not callable(factory):
+        PlaywrightError = RuntimeError
+        PlaywrightTimeoutError = TimeoutError
+        _PLAYWRIGHT_FACTORY = None
+        _PLAYWRIGHT_IMPORT_ERROR = RuntimeError("playwright.async_api.async_playwright missing")
+        return None
+
+    imported_error = getattr(module, "Error", RuntimeError)
+    imported_timeout_error = getattr(module, "TimeoutError", TimeoutError)
+    if isinstance(imported_error, type) and issubclass(imported_error, BaseException):
+        PlaywrightError = imported_error
+    else:
+        PlaywrightError = RuntimeError
+    if isinstance(imported_timeout_error, type) and issubclass(
+        imported_timeout_error, BaseException
+    ):
+        PlaywrightTimeoutError = imported_timeout_error
+    else:
+        PlaywrightTimeoutError = TimeoutError
+    typed_factory = cast(Callable[[], Any], factory)
+    _PLAYWRIGHT_FACTORY = typed_factory
     _PLAYWRIGHT_IMPORT_ERROR = None
+    return typed_factory
+
+
+_refresh_playwright_api()
 
 
 class BrowserControlParams(RoutedToolParameters):
@@ -155,6 +189,14 @@ def _browser_error_metadata(*, error_code: str, reason: str) -> dict[str, object
             "suggested_next_action": "reopen_session",
             "session_state": "dead",
         }
+    if "targetalreadyloaded" in lowered or "target.createtarget" in lowered:
+        return {
+            "browser_error_class": "browser_target_conflict",
+            "retryable": True,
+            "requires_session_reset": True,
+            "suggested_next_action": "reopen_session",
+            "session_state": "dead",
+        }
     if "timed out" in lowered:
         return {
             "browser_error_class": "browser_action_timeout",
@@ -235,10 +277,9 @@ class BrowserControlTool(ToolBase):
         try:
             result_payload = await self._execute_action(ctx=ctx, payload=payload)
             if self._should_persist_session_state(payload.action):
-                await self._sessions.persist_session_state(
-                    root_dir=self._settings.root_dir,
-                    profile_id=ctx.profile_id,
-                    session_id=ctx.session_id,
+                result_payload = await self._persist_session_state_after_action(
+                    ctx=ctx,
+                    result_payload=result_payload,
                 )
             return ToolResult(ok=True, payload=result_payload)
         except _BrowserSessionNotOpenError as exc:
@@ -278,11 +319,48 @@ class BrowserControlTool(ToolBase):
                 reason=f"{exc.__class__.__name__}: {exc}",
             )
 
-    @staticmethod
-    def _should_persist_session_state(action: str) -> bool:
+    def _should_persist_session_state(self, action: str) -> bool:
         """Persist storage only after browser actions likely to change session/page state."""
 
+        if self._settings.browser_backend == LIGHTPANDA_CDP:
+            return False
         return action in {"open", "navigate", "click", "fill", "press", "select", "check"}
+
+    async def _persist_session_state_after_action(
+        self,
+        *,
+        ctx: ToolContext,
+        result_payload: dict[str, object],
+    ) -> dict[str, object]:
+        """Best-effort storage persistence that cannot fail an already-completed action."""
+
+        try:
+            await self._sessions.persist_session_state(
+                root_dir=self._settings.root_dir,
+                profile_id=ctx.profile_id,
+                session_id=ctx.session_id,
+            )
+        except Exception as exc:
+            reason = f"{exc.__class__.__name__}: {exc}"
+            metadata = _browser_error_metadata(error_code="browser_action_failed", reason=reason)
+            if metadata.get("requires_session_reset") is True:
+                try:
+                    await self._sessions.close_session(
+                        root_dir=self._settings.root_dir,
+                        profile_id=ctx.profile_id,
+                        session_id=ctx.session_id,
+                    )
+                except Exception:
+                    pass
+            return {
+                **result_payload,
+                "storage_state_persisted": False,
+                "storage_state_warning": {
+                    "reason": reason,
+                    **metadata,
+                },
+            }
+        return result_payload
 
     async def _build_error_result(
         self,
@@ -688,12 +766,15 @@ class BrowserControlTool(ToolBase):
         await page.goto(url, timeout=timeout_ms, wait_until=wait_until)
 
     async def _start_playwright(self) -> Any:
-        if _PLAYWRIGHT_FACTORY is None:
+        factory = _PLAYWRIGHT_FACTORY
+        if factory is None:
+            factory = _refresh_playwright_api()
+        if factory is None:
             reason = "Playwright is not installed"
             if _PLAYWRIGHT_IMPORT_ERROR is not None:
                 reason = f"{reason}: {_PLAYWRIGHT_IMPORT_ERROR.__class__.__name__}"
             raise _BrowserUnavailableError(f"{reason}. {_browser_install_hint(self._settings)}")
-        manager = _PLAYWRIGHT_FACTORY()
+        manager = factory()
         if manager is None:
             raise _BrowserUnavailableError(
                 f"Playwright runtime is unavailable. {_browser_install_hint(self._settings)}"

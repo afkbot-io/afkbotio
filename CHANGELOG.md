@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.18] - 2026-06-15
+
+### Fixed
+
+- Browser control now retries the Playwright import in long-running daemons after
+  runtime installation, skips Playwright storage-state persist/load for
+  Lightpanda CDP sessions, and treats CDP target conflicts as resettable browser
+  failures instead of blocking successful actions.
+- Release metadata and lockfile package metadata are aligned to `1.9.18`.
+
 ## [1.9.17] - 2026-06-15
 
 ### Changed
