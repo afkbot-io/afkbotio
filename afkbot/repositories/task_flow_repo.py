@@ -102,6 +102,25 @@ class TaskFlowRepository:
         )
         return list((await self._session.execute(statement)).scalars().all())
 
+    async def list_active_flows(
+        self,
+        *,
+        profile_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[TaskFlow]:
+        """Return active flows for bounded runtime maintenance scans."""
+
+        statement: Select[tuple[TaskFlow]] = (
+            select(TaskFlow)
+            .where(TaskFlow.status == "active")
+            .order_by(TaskFlow.updated_at.asc(), TaskFlow.created_at.asc())
+        )
+        if profile_id is not None:
+            statement = statement.where(TaskFlow.profile_id == profile_id)
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
     async def update_flow(
         self,
         *,

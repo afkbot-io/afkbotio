@@ -63,6 +63,8 @@ from afkbot.services.task_flow.contracts import (
     TaskDependencyMetadata,
     TaskEventMetadata,
     TaskFlowMetadata,
+    TaskKnowledgeMaintenanceFlowMetadata,
+    TaskKnowledgeMaintenanceSweepMetadata,
     TaskKnowledgePacketDocumentMetadata,
     TaskKnowledgePacketMetadata,
     TaskMetadata,
@@ -114,6 +116,8 @@ _MANAGER_ESCALATION_TEXT_MARKERS = (
 )
 _MANAGER_ESCALATION_SOURCE_TYPE = "manager_escalation"
 _MANAGER_ESCALATION_TYPE = "manager_reassignment"
+_KNOWLEDGE_MAINTENANCE_SOURCE_TYPE = "knowledge_maintenance"
+_KNOWLEDGE_MAINTENANCE_LABELS = ("knowledge-maintenance", "autonomous-routing")
 _TASK_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _TASK_DOCUMENT_SCOPE_FLOW = "flow"
 _TASK_DOCUMENT_SCOPE_TASK = "task"
@@ -169,6 +173,16 @@ class _NormalizedTaskAttachment:
     content_bytes: bytes
     byte_size: int
     sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _KnowledgeMaintenanceHealth:
+    health_status: str
+    reasons: tuple[str, ...]
+    missing_flow_document_keys: tuple[str, ...]
+    unconfirmed_flow_document_keys: tuple[str, ...]
+    open_blocked_task_count: int
+    open_review_task_count: int
 
 
 class TaskFlowService:
@@ -1779,6 +1793,238 @@ class TaskFlowService:
                 for row in rows
             ]
             return tuple(items)
+
+        return await self._with_repo(_op)
+
+    async def ensure_knowledge_maintenance_tasks(
+        self,
+        *,
+        profile_id: str | None = None,
+        flow_id: str | None = None,
+        actor_type: str = "runtime",
+        actor_ref: str = "task-flow",
+        limit: int | None = None,
+    ) -> TaskKnowledgeMaintenanceSweepMetadata:
+        """Create or wake CTO tasks that maintain project knowledge for unhealthy flows."""
+
+        normalized_profile_id = _normalize_optional_text(profile_id)
+        normalized_flow_id = _normalize_optional_text(flow_id)
+        normalized_actor_type = _normalize_required_text(actor_type, field_name="actor_type")
+        normalized_actor_ref = _normalize_required_text(actor_ref, field_name="actor_ref")
+        settings = self._settings or get_settings()
+        normalized_limit = (
+            max(1, int(limit))
+            if limit is not None
+            else max(1, int(settings.taskflow_knowledge_maintenance_max_flows_per_sweep))
+        )
+
+        async def _op(repo: TaskFlowRepository) -> TaskKnowledgeMaintenanceSweepMetadata:
+            if normalized_profile_id is not None:
+                await _ensure_profile_exists(repo, normalized_profile_id)
+            if normalized_flow_id is not None and normalized_profile_id is None:
+                raise TaskFlowServiceError(
+                    error_code="task_flow_profile_required",
+                    reason="flow_id maintenance scans require profile_id",
+                )
+            if normalized_flow_id is not None:
+                flow = await _require_flow(
+                    repo,
+                    profile_id=cast(str, normalized_profile_id),
+                    flow_id=normalized_flow_id,
+                )
+                flows = [flow] if flow.status == "active" else []
+            else:
+                flows = await repo.list_active_flows(
+                    profile_id=normalized_profile_id,
+                    limit=normalized_limit,
+                )
+            now_utc = datetime.now(timezone.utc)
+            checked: list[TaskKnowledgeMaintenanceFlowMetadata] = []
+            created_count = 0
+            woken_count = 0
+            skipped_count = 0
+            for flow in flows[:normalized_limit]:
+                health = await _build_knowledge_maintenance_health(repo=repo, flow=flow)
+                if not health.reasons:
+                    skipped_count += 1
+                    checked.append(
+                        TaskKnowledgeMaintenanceFlowMetadata(
+                            profile_id=flow.profile_id,
+                            flow_id=flow.id,
+                            flow_title=flow.title,
+                            health_status=health.health_status,
+                            reasons=health.reasons,
+                            missing_flow_document_keys=health.missing_flow_document_keys,
+                            unconfirmed_flow_document_keys=health.unconfirmed_flow_document_keys,
+                            open_blocked_task_count=health.open_blocked_task_count,
+                            open_review_task_count=health.open_review_task_count,
+                            action="healthy",
+                        )
+                    )
+                    continue
+                source_ref = _knowledge_maintenance_source_ref(flow.id)
+                existing_rows = await repo.list_tasks_by_source(
+                    profile_id=flow.profile_id,
+                    source_type=_KNOWLEDGE_MAINTENANCE_SOURCE_TYPE,
+                    source_ref=source_ref,
+                    limit=10,
+                )
+                open_existing = next(
+                    (
+                        row
+                        for row in existing_rows
+                        if row.status not in _TASK_TERMINAL_STATUSES
+                    ),
+                    None,
+                )
+                if open_existing is not None:
+                    await _record_task_wake_requested(
+                        repo=repo,
+                        task=open_existing,
+                        reason_code="knowledge_maintenance_required",
+                        actor_type=normalized_actor_type,
+                        actor_ref=normalized_actor_ref,
+                        message="Project knowledge maintenance is still required.",
+                        details={
+                            "flow_id": flow.id,
+                            "flow_title": flow.title,
+                            "health_status": health.health_status,
+                            "reasons": list(health.reasons),
+                            "source_type": _KNOWLEDGE_MAINTENANCE_SOURCE_TYPE,
+                            "source_ref": source_ref,
+                        },
+                    )
+                    woken_count += 1
+                    checked.append(
+                        TaskKnowledgeMaintenanceFlowMetadata(
+                            profile_id=flow.profile_id,
+                            flow_id=flow.id,
+                            flow_title=flow.title,
+                            health_status=health.health_status,
+                            reasons=health.reasons,
+                            missing_flow_document_keys=health.missing_flow_document_keys,
+                            unconfirmed_flow_document_keys=health.unconfirmed_flow_document_keys,
+                            open_blocked_task_count=health.open_blocked_task_count,
+                            open_review_task_count=health.open_review_task_count,
+                            task=await _build_task_metadata(
+                                repo,
+                                open_existing,
+                                settings=self._settings,
+                            ),
+                            action="woken",
+                        )
+                    )
+                    continue
+                try:
+                    root_employee_id = await _resolve_default_employee_owner_ref(
+                        settings=settings,
+                        profile_id=flow.profile_id,
+                    )
+                except TaskFlowServiceError as exc:
+                    skipped_count += 1
+                    checked.append(
+                        TaskKnowledgeMaintenanceFlowMetadata(
+                            profile_id=flow.profile_id,
+                            flow_id=flow.id,
+                            flow_title=flow.title,
+                            health_status="unroutable",
+                            reasons=(*health.reasons, exc.error_code),
+                            missing_flow_document_keys=health.missing_flow_document_keys,
+                            unconfirmed_flow_document_keys=health.unconfirmed_flow_document_keys,
+                            open_blocked_task_count=health.open_blocked_task_count,
+                            open_review_task_count=health.open_review_task_count,
+                            action="unroutable",
+                        )
+                    )
+                    continue
+                labels = _normalize_labels(_KNOWLEDGE_MAINTENANCE_LABELS)
+                row = await repo.create_task(
+                    task_id=_new_identifier("task"),
+                    profile_id=flow.profile_id,
+                    flow_id=flow.id,
+                    title=f"Maintain project knowledge for {flow.title}"[:255],
+                    description=_build_knowledge_maintenance_description(
+                        flow=flow,
+                        health=health,
+                    ),
+                    status="todo",
+                    priority=85,
+                    due_at=None,
+                    ready_at=now_utc,
+                    owner_type=EMPLOYEE_OWNER_TYPE,
+                    owner_ref=root_employee_id,
+                    reviewer_type=None,
+                    reviewer_ref=None,
+                    source_type=_KNOWLEDGE_MAINTENANCE_SOURCE_TYPE,
+                    source_ref=source_ref,
+                    created_by_type=normalized_actor_type,
+                    created_by_ref=normalized_actor_ref,
+                    labels_json=json.dumps(labels),
+                    requires_review=False,
+                    blocked_reason_code=None,
+                    blocked_reason_text=None,
+                )
+                await record_task_event(
+                    repo=repo,
+                    task_id=row.id,
+                    event_type="created",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    to_status=row.status,
+                    details={
+                        "flow_id": flow.id,
+                        "flow_title": flow.title,
+                        "owner_type": row.owner_type,
+                        "owner_ref": row.owner_ref,
+                        "priority": row.priority,
+                        "labels": list(labels),
+                        "source_type": row.source_type,
+                        "source_ref": row.source_ref,
+                        "health_status": health.health_status,
+                        "reasons": list(health.reasons),
+                    },
+                )
+                await _record_task_wake_requested(
+                    repo=repo,
+                    task=row,
+                    reason_code="knowledge_maintenance_required",
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                    message="Project knowledge maintenance task created and ready for CTO review.",
+                    details={
+                        "flow_id": flow.id,
+                        "flow_title": flow.title,
+                        "health_status": health.health_status,
+                        "reasons": list(health.reasons),
+                    },
+                )
+                created_count += 1
+                checked.append(
+                    TaskKnowledgeMaintenanceFlowMetadata(
+                        profile_id=flow.profile_id,
+                        flow_id=flow.id,
+                        flow_title=flow.title,
+                        health_status=health.health_status,
+                        reasons=health.reasons,
+                        missing_flow_document_keys=health.missing_flow_document_keys,
+                        unconfirmed_flow_document_keys=health.unconfirmed_flow_document_keys,
+                        open_blocked_task_count=health.open_blocked_task_count,
+                        open_review_task_count=health.open_review_task_count,
+                        task=await _build_task_metadata(repo, row, settings=self._settings),
+                        action="created",
+                    )
+                )
+            return TaskKnowledgeMaintenanceSweepMetadata(
+                generated_at=now_utc,
+                profile_id=normalized_profile_id or "*",
+                actor_type=normalized_actor_type,
+                actor_ref=normalized_actor_ref,
+                checked_flow_count=len(checked),
+                created_task_count=created_count,
+                woken_task_count=woken_count,
+                skipped_flow_count=skipped_count,
+                flows=tuple(checked),
+            )
 
         return await self._with_repo(_op)
 
@@ -5718,6 +5964,103 @@ async def _record_manager_escalation_if_needed(
             "blocked_reason_code": normalized_reason_code or None,
             "blocked_reason_text": normalized_reason_text or None,
         },
+    )
+
+
+def _knowledge_maintenance_source_ref(flow_id: str) -> str:
+    return f"flow:{flow_id}"
+
+
+async def _build_knowledge_maintenance_health(
+    *,
+    repo: TaskFlowRepository,
+    flow: TaskFlow,
+) -> _KnowledgeMaintenanceHealth:
+    """Return bounded reasons that require CTO knowledge maintenance."""
+
+    await _ensure_default_flow_documents(
+        repo=repo,
+        flow=flow,
+        actor_type=flow.created_by_type,
+        actor_ref=flow.created_by_ref,
+    )
+    flow_documents = await repo.list_task_documents(
+        profile_id=flow.profile_id,
+        scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
+        scope_id=flow.id,
+    )
+    packet = build_knowledge_packet(
+        profile_id=flow.profile_id,
+        flow_id=flow.id,
+        task_id=_knowledge_maintenance_source_ref(flow.id),
+        flow_documents=flow_documents,
+        task_documents=(),
+    )
+    blocked_rows = await repo.list_tasks(
+        profile_id=flow.profile_id,
+        statuses=("blocked",),
+        flow_id=flow.id,
+        limit=200,
+    )
+    review_rows = await repo.list_tasks(
+        profile_id=flow.profile_id,
+        statuses=("review",),
+        flow_id=flow.id,
+        limit=200,
+    )
+    blocked_requiring_attention = tuple(
+        row
+        for row in blocked_rows
+        if str(row.blocked_reason_code or "").strip() != "dependency_wait"
+    )
+    human_review_blockers = tuple(
+        row
+        for row in blocked_requiring_attention
+        if str(row.blocked_reason_code or "").strip() == "human_review_required"
+    )
+    reasons: list[str] = []
+    if packet.missing_flow_document_keys:
+        reasons.append("missing_docs:" + ",".join(packet.missing_flow_document_keys))
+    if packet.unconfirmed_flow_document_keys:
+        reasons.append("unconfirmed_docs:" + ",".join(packet.unconfirmed_flow_document_keys))
+    if human_review_blockers:
+        reasons.append(f"human_review_required:{len(human_review_blockers)}")
+    elif blocked_requiring_attention:
+        reasons.append(f"blocked_tasks:{len(blocked_requiring_attention)}")
+    return _KnowledgeMaintenanceHealth(
+        health_status="needs_attention" if reasons else "ready",
+        reasons=tuple(reasons),
+        missing_flow_document_keys=packet.missing_flow_document_keys,
+        unconfirmed_flow_document_keys=packet.unconfirmed_flow_document_keys,
+        open_blocked_task_count=len(blocked_requiring_attention),
+        open_review_task_count=len(review_rows),
+    )
+
+
+def _build_knowledge_maintenance_description(
+    *,
+    flow: TaskFlow,
+    health: _KnowledgeMaintenanceHealth,
+) -> str:
+    reasons = "\n".join(f"- {reason}" for reason in health.reasons) or "- no explicit reason"
+    return (
+        "Autonomous CTO knowledge maintenance task.\n\n"
+        f"Flow: {flow.title} ({flow.id})\n"
+        f"Health: {health.health_status}\n\n"
+        "Reasons:\n"
+        f"{reasons}\n\n"
+        "Work mode: knowledge_maintenance.\n"
+        "Inspect the Project Knowledge Packet, task board, feed, review queue, and current "
+        "flow documents before making changes. Update the canonical flow docs "
+        "`brief`, `plan`, `spec`, `decisions`, and `status` so the project can continue "
+        "from durable knowledge instead of scattered comments.\n\n"
+        "Do not implement specialist work inside this maintenance task. If work is needed, "
+        "delegate focused employee-owned tasks with clear dependencies and review "
+        "expectations. If a human decision or approval is truly required, keep the task "
+        "employee-owned and block it with reason_code `human_review_required`, including "
+        "one precise question and the document/task revision that needs review.\n\n"
+        "Complete this task only after the knowledge state is ready, delegated, or explicitly "
+        "blocked for human review."
     )
 
 

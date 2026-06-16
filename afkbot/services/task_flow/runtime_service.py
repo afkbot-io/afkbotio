@@ -117,6 +117,7 @@ class TaskFlowRuntimeService:
         self._start_lock = asyncio.Lock()
         self._maintenance_lock = asyncio.Lock()
         self._next_maintenance_run_at = 0.0
+        self._next_knowledge_maintenance_run_at = 0.0
         self._next_runtime_history_prune_at = 0.0
         self._session_runner_factory_override = session_runner_factory
         self._session_runner_factory = session_runner_factory or _default_session_runner_factory(
@@ -269,10 +270,20 @@ class TaskFlowRuntimeService:
         """Run bounded runtime maintenance behind one shared throttle/lock."""
 
         now = asyncio.get_running_loop().time()
-        if now < self._next_maintenance_run_at and now < self._next_runtime_history_prune_at:
-            return
         profile_id = _runtime_profile_id(self._settings)
         owner_ref = _runtime_owner_ref(self._settings)
+        knowledge_maintenance_active = (
+            self._settings.taskflow_knowledge_maintenance_enabled and owner_ref is None
+        )
+        if (
+            now < self._next_maintenance_run_at
+            and (
+                not knowledge_maintenance_active
+                or now < self._next_knowledge_maintenance_run_at
+            )
+            and now < self._next_runtime_history_prune_at
+        ):
+            return
         async with self._maintenance_lock:
             now = asyncio.get_running_loop().time()
             if now >= self._next_maintenance_run_at:
@@ -283,9 +294,53 @@ class TaskFlowRuntimeService:
                     owner_ref=owner_ref,
                     limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
                 )
+            if (
+                knowledge_maintenance_active
+                and now >= self._next_knowledge_maintenance_run_at
+            ):
+                self._next_knowledge_maintenance_run_at = (
+                    now + _knowledge_maintenance_interval_sec(self._settings)
+                )
+                await self._ensure_knowledge_maintenance_tasks(
+                    worker_id=worker_id,
+                    profile_id=profile_id,
+                )
             if now >= self._next_runtime_history_prune_at:
                 self._next_runtime_history_prune_at = now + _runtime_history_prune_interval_sec()
                 await self._prune_runtime_history(worker_id=worker_id)
+
+    async def _ensure_knowledge_maintenance_tasks(
+        self,
+        *,
+        worker_id: str,
+        profile_id: str | None,
+    ) -> None:
+        """Create or wake CTO project-knowledge tasks without running an LLM prompt."""
+
+        service = TaskFlowService(self._require_session_factory(), settings=self._settings)
+        try:
+            result = await service.ensure_knowledge_maintenance_tasks(
+                profile_id=profile_id,
+                actor_type="runtime",
+                actor_ref=worker_id,
+                limit=max(self._settings.taskflow_knowledge_maintenance_max_flows_per_sweep, 1),
+            )
+        except Exception:
+            _LOGGER.exception(
+                "taskflow_knowledge_maintenance_failed worker_id=%s profile_id=%s",
+                worker_id,
+                profile_id or "*",
+            )
+            return
+        if result.created_task_count or result.woken_task_count:
+            _LOGGER.info(
+                "taskflow_knowledge_maintenance worker_id=%s profile_id=%s created=%s woken=%s checked=%s",
+                worker_id,
+                profile_id or "*",
+                result.created_task_count,
+                result.woken_task_count,
+                result.checked_flow_count,
+            )
 
     async def _prune_runtime_history(self, *, worker_id: str) -> None:
         """Prune bounded runtime history rows using the runtime engine when available."""
@@ -564,6 +619,10 @@ class TaskFlowRuntimeService:
             flow_id=claimed.flow_id,
             source_type=claimed.source_type,
             source_ref=claimed.source_ref,
+            work_mode=_task_work_mode(
+                source_type=claimed.source_type,
+                labels=claimed.labels,
+            ),
             priority=claimed.priority,
             attempt=claimed.attempt,
             requires_review=claimed.requires_review,
@@ -1130,8 +1189,20 @@ def _claim_ttl(settings: Settings) -> timedelta:
     return timedelta(seconds=max(1, int(settings.taskflow_runtime_claim_ttl_sec)))
 
 
+def _task_work_mode(*, source_type: str, labels: tuple[str, ...]) -> str:
+    normalized_source_type = str(source_type or "").strip().lower()
+    normalized_labels = {str(label).strip().lower() for label in labels if str(label).strip()}
+    if normalized_source_type == "knowledge_maintenance" or "knowledge-maintenance" in normalized_labels:
+        return "knowledge_maintenance"
+    return "execution"
+
+
 def _maintenance_interval_sec(settings: Settings) -> float:
     return max(1.0, float(settings.taskflow_runtime_poll_interval_sec))
+
+
+def _knowledge_maintenance_interval_sec(settings: Settings) -> float:
+    return max(60.0, float(settings.taskflow_knowledge_maintenance_interval_sec))
 
 
 def _runtime_history_prune_interval_sec() -> float:

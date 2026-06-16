@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.19] - 2026-06-16
+
+### Added
+
+- Task Flow runtime now runs an autonomous CTO knowledge-maintenance sweep that
+  creates or wakes one idempotent employee-owned task per unhealthy flow using
+  `source_type=knowledge_maintenance`, `source_ref=flow:<flow_id>`, and
+  `work_mode=knowledge_maintenance`.
+- Knowledge-maintenance tasks now receive explicit runtime prompt guidance and a
+  hard tool-policy gate limited to `task.*`, so CTO review work updates project
+  docs, review queues, routing, and blockers instead of performing specialist
+  implementation inside the maintenance task.
+
+### Fixed
+
+- Task Flow runtime maintenance throttling no longer treats disabled or
+  owner-scoped knowledge maintenance as an always-due timer.
+- Release metadata and lockfile package metadata are aligned to `1.9.19`.
+
 ## [1.9.18] - 2026-06-15
 
 ### Fixed

@@ -283,6 +283,9 @@ class Settings(BaseSettings):
     taskflow_runtime_profile_id: str | None = None
     taskflow_runtime_owner_ref: str | None = None
     taskflow_public_principal_required: bool = True
+    taskflow_knowledge_maintenance_enabled: bool = True
+    taskflow_knowledge_maintenance_interval_sec: int = 1800
+    taskflow_knowledge_maintenance_max_flows_per_sweep: int = 8
     taskflow_blocked_revisit_initial_sec: int = 7200
     taskflow_blocked_revisit_max_sec: int = 86400
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND
@@ -580,6 +583,8 @@ class Settings(BaseSettings):
         "runtime_max_body_bytes",
         "taskflow_runtime_maintenance_batch_size",
         "taskflow_runtime_claim_ttl_sec",
+        "taskflow_knowledge_maintenance_interval_sec",
+        "taskflow_knowledge_maintenance_max_flows_per_sweep",
         "taskflow_blocked_revisit_initial_sec",
         "taskflow_blocked_revisit_max_sec",
         "browser_session_idle_ttl_sec",

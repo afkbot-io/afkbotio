@@ -314,6 +314,7 @@ async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_depend
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_complete.db'}",
+        taskflow_knowledge_maintenance_enabled=False,
     )
     runtime = TaskFlowRuntimeService(
         settings=settings,
@@ -839,6 +840,136 @@ async def test_taskflow_runtime_throttles_background_maintenance_between_claim_a
     assert first is False
     assert second is False
     assert maintenance_calls == ["worker-throttle"]
+
+
+async def test_taskflow_runtime_throttle_ignores_disabled_knowledge_maintenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Disabled knowledge maintenance should not bypass the shared maintenance throttle."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_disabled_knowledge_throttle.db",
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_disabled_knowledge_throttle.db'}",
+        taskflow_runtime_poll_interval_sec=5.0,
+        taskflow_knowledge_maintenance_enabled=False,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+
+    class _CountingMaintenanceLock:
+        entries = 0
+
+        async def __aenter__(self) -> "_CountingMaintenanceLock":
+            self.entries += 1
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: object,
+            exc: object,
+            traceback: object,
+        ) -> None:
+            _ = exc_type, exc, traceback
+
+    lock = _CountingMaintenanceLock()
+
+    async def _fake_sweep(
+        *,
+        worker_id: str,
+        limit: int = 25,
+        profile_id: str | None = None,
+        owner_ref: str | None = None,
+    ) -> int:
+        _ = worker_id, limit, profile_id, owner_ref
+        return 0
+
+    async def _fake_prune(*, worker_id: str) -> None:
+        _ = worker_id
+
+    monkeypatch.setattr(runtime, "_maintenance_lock", lock)
+    monkeypatch.setattr(runtime, "sweep_expired_claims", _fake_sweep)
+    monkeypatch.setattr(runtime, "_prune_runtime_history", _fake_prune)
+
+    try:
+        await runtime._maybe_run_maintenance(worker_id="worker-disabled-knowledge")
+        await runtime._maybe_run_maintenance(worker_id="worker-disabled-knowledge")
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+    assert lock.entries == 1
+
+
+async def test_taskflow_runtime_creates_and_claims_knowledge_maintenance_task(
+    tmp_path: Path,
+) -> None:
+    """Runtime maintenance should create CTO knowledge work without generic automation prompts."""
+
+    db_name = "taskflow_runtime_knowledge_maintenance.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        taskflow_runtime_poll_interval_sec=5.0,
+        taskflow_knowledge_maintenance_interval_sec=60,
+        taskflow_public_principal_required=False,
+    )
+    service = TaskFlowService(factory, settings=settings, engine=engine)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Runtime knowledge maintenance",
+            description="Runtime should create a CTO maintenance task.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-knowledge")
+
+        assert processed is True
+        assert len(observed_calls) == 1
+        assert observed_calls[0].prompt_overlay is not None
+        assert "work_mode: knowledge_maintenance" in observed_calls[0].prompt_overlay
+        assert "Knowledge maintenance work mode." in observed_calls[0].prompt_overlay
+        async with session_scope(factory) as session:
+            tasks = await TaskFlowRepository(session).list_tasks_by_source(
+                profile_id="default",
+                source_type="knowledge_maintenance",
+                source_ref=f"flow:{flow.id}",
+            )
+        assert len(tasks) == 1
+        assert tasks[0].owner_type == "employee"
+        assert tasks[0].owner_ref == "default"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
 
 
 async def test_taskflow_runtime_throttles_runtime_history_pruning_between_claim_attempts(
@@ -2526,6 +2657,7 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
         flow_id="flow_demo",
         source_type="manual",
         source_ref="source_demo",
+        work_mode="execution",
         priority=75,
         attempt=2,
         requires_review=True,
@@ -2537,6 +2669,7 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert isinstance(taskflow_payload, dict)
     assert taskflow_payload["task_id"] == "task_demo"
     assert taskflow_payload["task_profile_id"] == "default"
+    assert taskflow_payload["work_mode"] == "execution"
     assert overrides.execution_planning_mode == "on"
     assert overrides.prompt_overlay is not None
     assert "This runtime is non-interactive." in overrides.prompt_overlay
@@ -2573,6 +2706,7 @@ def test_taskflow_context_overrides_include_worker_guidance_for_employees() -> N
         flow_id="flow_demo",
         source_type="manual",
         source_ref=None,
+        work_mode="execution",
         priority=75,
         attempt=1,
         requires_review=False,
@@ -2601,6 +2735,7 @@ def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers()
         flow_id="flow_demo",
         source_type="manual",
         source_ref=None,
+        work_mode="execution",
         priority=90,
         attempt=1,
         requires_review=True,
@@ -2611,3 +2746,34 @@ def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers()
     assert "Team Orchestrator protocol." in overrides.prompt_overlay
     assert "Task Flow worker protocol." not in overrides.prompt_overlay
     assert "Decompose large work" in overrides.prompt_overlay
+
+
+def test_taskflow_context_overrides_include_knowledge_maintenance_mode() -> None:
+    """CTO maintenance tasks should be explicitly bounded to project knowledge work."""
+
+    overrides = build_task_flow_context_overrides(
+        task_id="task_knowledge",
+        task_profile_id="default",
+        owner_type="employee",
+        owner_ref="cto",
+        executor_type="employee",
+        executor_ref="cto",
+        source_status="todo",
+        flow_id="flow_demo",
+        source_type="knowledge_maintenance",
+        source_ref="flow:flow_demo",
+        work_mode="knowledge_maintenance",
+        priority=85,
+        attempt=1,
+        requires_review=False,
+        executor_is_manager=True,
+    )
+
+    assert isinstance(overrides.runtime_metadata, dict)
+    taskflow_payload = overrides.runtime_metadata.get("taskflow")
+    assert isinstance(taskflow_payload, dict)
+    assert taskflow_payload["work_mode"] == "knowledge_maintenance"
+    assert overrides.prompt_overlay is not None
+    assert "Knowledge maintenance work mode." in overrides.prompt_overlay
+    assert "Do not implement specialist work" in overrides.prompt_overlay
+    assert "human_review_required" in overrides.prompt_overlay

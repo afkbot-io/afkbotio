@@ -176,11 +176,16 @@ def _write_employee_descriptor(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _employee_trusted_context(employee_id: str) -> dict[str, object]:
+def _employee_trusted_context(employee_id: str, *, work_mode: str | None = None) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "owner_type": "employee",
+        "owner_ref": employee_id,
+    }
+    if work_mode is not None:
+        payload["work_mode"] = work_mode
     return {
         "taskflow_detached_runtime": {
-            "owner_type": "employee",
-            "owner_ref": employee_id,
+            **payload,
         }
     }
 
@@ -312,6 +317,58 @@ async def test_execute_requested_tool_calls_accepts_employee_tool_wildcards(
 
     assert len(results) == 1
     assert results[0].ok is True
+
+
+async def test_execute_requested_tool_calls_restricts_knowledge_maintenance_tools(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Knowledge maintenance work mode should narrow broad employee tool grants."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("task.*", "bash.exec"),
+    )
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:knowledge-maintenance",
+        profile_id="default",
+        tool_calls=[ToolCall(name="bash.exec", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context(
+            "cto",
+            work_mode="knowledge_maintenance",
+        ),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "knowledge maintenance mode" in (results[0].reason or "").lower()
 
 
 async def test_execute_requested_tool_calls_rejects_employee_without_allowed_tools(

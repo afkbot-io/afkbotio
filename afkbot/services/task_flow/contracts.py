@@ -226,6 +226,40 @@ class TaskMaintenanceSweepMetadata(BaseModel):
     remaining: tuple[StaleTaskClaimMetadata, ...] = ()
 
 
+class TaskKnowledgeMaintenanceFlowMetadata(BaseModel):
+    """Knowledge-maintenance state for one Task Flow project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    flow_id: str
+    flow_title: str
+    health_status: str
+    reasons: tuple[str, ...] = ()
+    missing_flow_document_keys: tuple[str, ...] = ()
+    unconfirmed_flow_document_keys: tuple[str, ...] = ()
+    open_blocked_task_count: int = Field(default=0, ge=0)
+    open_review_task_count: int = Field(default=0, ge=0)
+    task: TaskMetadata | None = None
+    action: str = "skipped"
+
+
+class TaskKnowledgeMaintenanceSweepMetadata(BaseModel):
+    """Public metadata for one bounded Task Flow knowledge-maintenance sweep."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: datetime
+    profile_id: str
+    actor_type: str
+    actor_ref: str
+    checked_flow_count: int = Field(default=0, ge=0)
+    created_task_count: int = Field(default=0, ge=0)
+    woken_task_count: int = Field(default=0, ge=0)
+    skipped_flow_count: int = Field(default=0, ge=0)
+    flows: tuple[TaskKnowledgeMaintenanceFlowMetadata, ...] = ()
+
+
 class TaskEventMetadata(BaseModel):
     """Public metadata for one append-only task event."""
 

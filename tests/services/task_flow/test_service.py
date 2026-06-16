@@ -19,7 +19,10 @@ from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueu
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.task_flow import TaskFlowServiceError
-from afkbot.services.task_flow.knowledge_spine import build_knowledge_packet
+from afkbot.services.task_flow.knowledge_spine import (
+    CANONICAL_FLOW_DOCUMENT_KEYS,
+    build_knowledge_packet,
+)
 from afkbot.services.task_flow.service import TaskFlowService, _MAX_TASK_ATTACHMENT_BASE64_BYTES
 from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory, _write_test_employees
@@ -497,6 +500,118 @@ async def test_task_flow_service_confirms_documents_with_public_local_human_prin
 
         assert confirmed.confirmation_status == "confirmed"
         assert deleted.id == document.id
+    finally:
+        await engine.dispose()
+
+
+async def test_knowledge_maintenance_creates_root_task_for_unconfirmed_flow_docs(
+    tmp_path: Path,
+) -> None:
+    """Unconfirmed canonical docs should create one root employee maintenance task."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="knowledge_maintenance_create.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Knowledge project",
+            description="Keep docs current.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        sweep = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+
+        assert sweep.checked_flow_count == 1
+        assert sweep.created_task_count == 1
+        assert sweep.woken_task_count == 0
+        item = sweep.flows[0]
+        assert item.action == "created"
+        assert item.flow_id == flow.id
+        assert item.unconfirmed_flow_document_keys == CANONICAL_FLOW_DOCUMENT_KEYS
+        assert item.task is not None
+        assert item.task.owner_type == "employee"
+        assert item.task.owner_ref == "default"
+        assert item.task.source_type == "knowledge_maintenance"
+        assert item.task.source_ref == f"flow:{flow.id}"
+        assert "knowledge-maintenance" in item.task.labels
+        assert "human_review_required" in item.task.description
+    finally:
+        await engine.dispose()
+
+
+async def test_knowledge_maintenance_wakes_existing_task_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    """Repeated maintenance sweeps should wake, not duplicate, open CTO work."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="knowledge_maintenance_idempotent.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Repeated maintenance",
+            description="Repeated sweeps should not duplicate work.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        first = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+        second = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+
+        assert first.created_task_count == 1
+        assert second.created_task_count == 0
+        assert second.woken_task_count == 1
+        async with session_scope(factory) as session:
+            tasks = await TaskFlowRepository(session).list_tasks_by_source(
+                profile_id="default",
+                source_type="knowledge_maintenance",
+                source_ref=f"flow:{flow.id}",
+            )
+        assert len(tasks) == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_knowledge_maintenance_skips_confirmed_healthy_flow(tmp_path: Path) -> None:
+    """Confirmed canonical docs should not create autonomous maintenance work."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="knowledge_maintenance_healthy.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Healthy knowledge",
+            description="All docs confirmed.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        docs = await service.list_flow_documents(profile_id="default", flow_id=flow.id)
+        for document in docs:
+            await service.confirm_document(
+                profile_id="default",
+                document_id=document.id,
+                actor_type="human",
+                actor_ref="cli",
+                expected_revision=document.revision,
+            )
+
+        sweep = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+
+        assert sweep.created_task_count == 0
+        assert sweep.woken_task_count == 0
+        assert sweep.skipped_flow_count == 1
+        assert sweep.flows[0].action == "healthy"
+        assert sweep.flows[0].health_status == "ready"
     finally:
         await engine.dispose()
 

@@ -12,6 +12,8 @@ from afkbot.settings import Settings
 _DETACHED_CONTEXT_KEY = "taskflow_detached_runtime"
 _SUBAGENT_RUN_TOOL = "subagent.run"
 _SESSION_JOB_RUN_TOOL = "session.job.run"
+_KNOWLEDGE_MAINTENANCE_WORK_MODE = "knowledge_maintenance"
+_KNOWLEDGE_MAINTENANCE_ALLOWED_TOOLS = ("task.*",)
 
 
 async def employee_tool_policy_result(
@@ -54,6 +56,18 @@ async def employee_tool_policy_result(
             error_code="employee_tool_forbidden",
             reason=f"Employee {employee.id} is not allowed to call {tool_name}",
         )
+    if _work_mode_from_trusted_context(trusted_runtime_context) == _KNOWLEDGE_MAINTENANCE_WORK_MODE:
+        if not _tool_name_allowed(
+            tool_name=tool_name,
+            allowed_tools=_KNOWLEDGE_MAINTENANCE_ALLOWED_TOOLS,
+        ):
+            return ToolResult.error(
+                error_code="employee_tool_forbidden",
+                reason=(
+                    "Task Flow knowledge maintenance mode may call only task.* tools. "
+                    "Delegate implementation work instead of using execution tools here."
+                ),
+            )
 
     requested_subagents = _requested_subagent_names(tool_name=tool_name, params=params)
     if not requested_subagents:
@@ -101,6 +115,18 @@ def _employee_id_from_trusted_context(
     if owner_type != EMPLOYEE_OWNER_TYPE:
         return None
     return parse_employee_owner_ref(owner_ref)
+
+
+def _work_mode_from_trusted_context(
+    trusted_runtime_context: Mapping[str, object] | None,
+) -> str | None:
+    if not isinstance(trusted_runtime_context, Mapping):
+        return None
+    payload = trusted_runtime_context.get(_DETACHED_CONTEXT_KEY)
+    if not isinstance(payload, Mapping):
+        return None
+    normalized = str(payload.get("work_mode") or "").strip().lower()
+    return normalized or None
 
 
 def _requested_subagent_names(*, tool_name: str, params: Mapping[str, object]) -> tuple[str, ...]:

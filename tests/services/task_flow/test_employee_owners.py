@@ -958,6 +958,7 @@ async def test_taskflow_runtime_executes_employee_with_employee_overlay(
         assert isinstance(detached, dict)
         assert detached["owner_type"] == "employee"
         assert detached["owner_ref"] == "cto"
+        assert detached["work_mode"] == "execution"
         prompt_overlay = call["prompt_overlay"]
         assert isinstance(prompt_overlay, str)
         assert "Task Flow execution context." in prompt_overlay

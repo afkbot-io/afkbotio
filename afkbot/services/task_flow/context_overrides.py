@@ -20,6 +20,7 @@ def build_task_flow_context_overrides(
     flow_id: str | None,
     source_type: str,
     source_ref: str | None,
+    work_mode: str,
     priority: int,
     attempt: int,
     requires_review: bool,
@@ -37,6 +38,7 @@ def build_task_flow_context_overrides(
         "executor_ref": executor_ref,
         "source_status": source_status,
         "source_type": source_type,
+        "work_mode": work_mode,
         "priority": priority,
         "attempt": attempt,
         "requires_review": requires_review,
@@ -53,6 +55,7 @@ def build_task_flow_context_overrides(
             "taskflow_detached_runtime": {
                 "owner_type": executor_type,
                 "owner_ref": executor_ref,
+                "work_mode": work_mode,
             }
         },
         execution_planning_mode="on",
@@ -64,6 +67,7 @@ def build_task_flow_context_overrides(
             executor_type=executor_type,
             executor_ref=executor_ref,
             source_status=source_status,
+            work_mode=work_mode,
             attempt=attempt,
             requires_review=requires_review,
             executor_is_manager=executor_is_manager,
@@ -80,6 +84,7 @@ def _build_task_flow_prompt_overlay(
     executor_type: str,
     executor_ref: str,
     source_status: str,
+    work_mode: str,
     attempt: int,
     requires_review: bool,
     executor_is_manager: bool = False,
@@ -91,6 +96,7 @@ def _build_task_flow_prompt_overlay(
         f"- owner: {owner_type}:{owner_ref}",
         f"- executor: {executor_type}:{executor_ref}",
         f"- source_status: {source_status}",
+        f"- work_mode: {work_mode}",
         f"- attempt: {attempt}",
         f"- requires_review: {str(requires_review).lower()}",
         "Team model:",
@@ -100,6 +106,7 @@ def _build_task_flow_prompt_overlay(
         "- Focused employees own implementation or review for their assigned task and leave durable handoff notes.",
         "Treat the incoming user message as the detached task description.",
         "This runtime is non-interactive. Do not ask the user follow-up questions inside this run.",
+        _work_mode_protocol(work_mode=work_mode),
         task_flow_team_protocol_for_executor(
             executor_type=executor_type,
             executor_is_manager=executor_is_manager,
@@ -132,3 +139,19 @@ def _build_task_flow_prompt_overlay(
         "If you cannot proceed without a human answer or approval, clearly explain the blocker and update the task state accordingly.",
     ]
     return "\n".join(lines)
+
+
+def _work_mode_protocol(*, work_mode: str) -> str:
+    if work_mode == "knowledge_maintenance":
+        return "\n".join(
+            [
+                "Knowledge maintenance work mode.",
+                "- Your primary job is to keep flow knowledge accurate and actionable.",
+                "- Read the Knowledge Packet, current flow docs, board, feed, blocked tasks, and review queue before changing state.",
+                "- Update canonical flow docs instead of scattering project memory across comments.",
+                "- Do not implement specialist work in this task; delegate focused employee-owned work when execution is needed.",
+                "- Confirm only document revisions you can validate from the available evidence.",
+                "- If operator approval is required, block the responsible employee task with reason_code=human_review_required and one precise question.",
+            ]
+        )
+    return "Execution work mode."
