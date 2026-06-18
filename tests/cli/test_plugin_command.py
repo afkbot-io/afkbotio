@@ -263,6 +263,50 @@ def test_plugin_config_get_renders_human_readable_output(tmp_path, monkeypatch) 
     assert "default_profile_id: default" in result.stdout
 
 
+def test_plugin_update_supports_explicit_reinstall_and_renders_open_url(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Plugin update should keep exact-source reinstall available as an explicit mode."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    captured: dict[str, object] = {}
+
+    class _FakePluginService:
+        def update(
+            self,
+            *,
+            plugin_id: str,
+            enable: bool | None,
+            force: bool,
+            reinstall: bool,
+        ) -> InstalledPluginRecord:
+            captured["plugin_id"] = plugin_id
+            captured["enable"] = enable
+            captured["force"] = force
+            captured["reinstall"] = reinstall
+            return _plugin_record(plugin_id=plugin_id)
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.plugin.get_plugin_service",
+        lambda _settings: _FakePluginService(),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["plugin", "update", "afkbotui", "--reinstall"])
+
+    assert result.exit_code == 0
+    assert "Plugin updated: afkbotui" in result.stdout
+    assert "open_url: http://127.0.0.1:46340/plugins/afkbotui/" in result.stdout
+    assert captured == {
+        "plugin_id": "afkbotui",
+        "enable": None,
+        "force": False,
+        "reinstall": True,
+    }
+
+
 def test_plugin_install_prompt_text_includes_installed_summary() -> None:
     """Install wizard text should show how many plugins are already installed."""
 

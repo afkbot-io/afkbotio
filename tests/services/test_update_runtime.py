@@ -26,6 +26,7 @@ from afkbot.services.update_runtime import (
     _build_noninteractive_git_env,
     _run_afk_executable_with_env,
     _resolve_uv_tool_afk_executable,
+    _run_starter_plugin_updates,
     _wait_for_local_health,
     format_update_success_for_language,
     inspect_available_update,
@@ -344,6 +345,19 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        commands.append(command)
+        if command[-3:] == ["inspect", "afkbotui", "--json"]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
     monkeypatch.setattr(
         "afkbot.services.update_runtime.stage_source_snapshot", lambda context: staged_source
     )
@@ -356,6 +370,7 @@ def test_run_update_reinstalls_managed_snapshot_without_git(
         lambda: tmp_path / ("uv.exe" if os.name == "nt" else "uv"),
     )
     monkeypatch.setattr("afkbot.services.update_runtime._run_checked", _fake_run_checked)
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
     monkeypatch.setattr(
         "afkbot.services.update_runtime._run_afk_subcommand",
         lambda *, settings, args: afk_calls.append(args),  # type: ignore[no-untyped-call]
@@ -1464,6 +1479,35 @@ def test_inspect_available_update_ignores_uv_tool_http_404(
     )
 
     assert inspect_available_update(settings) is None
+
+
+def test_run_starter_plugin_updates_refreshes_installed_catalog_plugin(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Core update should refresh installed starter plugins without touching unknown plugins."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    commands: list[list[str]] = []
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout='{"plugin": {}}\n', stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+
+    details = _run_starter_plugin_updates(settings=settings)
+
+    assert details == ("Starter plugin afkbotui: updated",)
+    assert [sys.executable, "-m", "afkbot.cli.main", "plugin", "inspect", "afkbotui", "--json"] in commands
+    assert [sys.executable, "-m", "afkbot.cli.main", "plugin", "update", "afkbotui"] in commands
 
 
 def test_format_update_success_for_language_renders_russian_copy() -> None:

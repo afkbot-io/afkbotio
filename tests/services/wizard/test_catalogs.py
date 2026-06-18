@@ -82,13 +82,21 @@ def test_channel_plans_contain_shared_and_transport_specific_branches() -> None:
             "group_access",
             "outbound_send_targets",
             "ingress_batch",
+            "ingress_debounce",
+            "ingress_cooldown",
+            "ingress_max_batch_size",
+            "ingress_max_buffer_chars",
         }.issubset(ids)
 
     assert "telegram_group_trigger" in telegram
+    assert "humanize_replies" in telegram
     assert "telethon_reply_mode" in telethon
+    assert "telethon_mark_read_before_reply" in telethon
     assert "telethon_watcher_digest" in telethon
+    assert "telethon_watcher_delivery_peer_id" in telethon
     assert "partyflow_trigger_mode" in partyflow
     assert "partyflow_bot_token" in partyflow
+    assert "humanize_replies" not in partyflow
 
 
 def test_channel_scenario_catalog_covers_each_transport_mode() -> None:
@@ -137,6 +145,9 @@ def test_wizard_plans_expose_branch_graphs() -> None:
         "access_allowlists",
         "ingress_batch",
     }
+    assert "reply_humanization" in {branch.id for branch in channel_plan("telegram").branches}
+    assert "telethon_watcher" in {branch.id for branch in channel_plan("telethon").branches}
+    assert "telethon_watcher" not in {branch.id for branch in partyflow.branches}
     trusted_admin = next(branch for branch in partyflow.branches if branch.id == "trusted_admin")
     assert "trusted_admin" in trusted_admin.condition
     assert "channel_scenario" == partyflow.questions[0].id

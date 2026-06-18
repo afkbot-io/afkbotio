@@ -20,7 +20,7 @@ from afkbot.services.wizard.profile_intent_catalog import (
 
 def prompt_profile_intent_depth(
     *,
-    default: str = "guided",
+    default: str = "quick",
     lang: PromptLanguage = PromptLanguage.EN,
 ) -> str:
     """Prompt how detailed the setup/profile security flow should be."""
@@ -32,16 +32,16 @@ def prompt_profile_intent_depth(
         text=msg(
             lang,
             en=(
-                "Choose how to configure this profile. You can change these settings later with "
+                "Choose a fast sandbox profile or configure every permission manually. You can change these settings later with "
                 "`afk setup` or `afk profile update`."
             ),
             ru=(
-                "Выберите, как настроить этот профиль. Всё можно изменить позже через "
+                "Выберите быстрый sandbox-профиль или настройте каждое право вручную. Всё можно изменить позже через "
                 "`afk setup` или `afk profile update`."
             ),
         ),
         options=[(choice.id, choice.label(lang=lang)) for choice in choices],
-        default=default if default in values else "guided",
+        default=default if default in values else "quick",
         lang=lang,
     )
 

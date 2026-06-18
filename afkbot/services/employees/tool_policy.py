@@ -95,6 +95,8 @@ def _tool_name_allowed(*, tool_name: str, allowed_tools: tuple[str, ...]) -> boo
         allowed = str(item or "").strip()
         if not allowed:
             continue
+        if allowed == "*":
+            return True
         if allowed == normalized_tool_name:
             return True
         if allowed.endswith(".*") and normalized_tool_name.startswith(allowed[:-1]):

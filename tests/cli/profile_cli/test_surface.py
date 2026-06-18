@@ -161,6 +161,25 @@ def test_profile_add_can_enable_chat_secret_guard(tmp_path: Path, monkeypatch: M
     assert show_payload["profile"]["runtime_config"]["chat_secret_guard_enabled"] is True
 
 
+def test_profile_add_and_update_expose_same_secret_update_options(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Create/edit profile surfaces should not diverge for profile-scoped secrets."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    add_help = runner.invoke(app, ["profile", "add", "--help"])
+    update_help = runner.invoke(app, ["profile", "update", "--help"])
+
+    assert add_help.exit_code == 0
+    assert update_help.exit_code == 0
+    for option in ("--provider-api-key", "--llm-api-key", "--llm-api-key-file", "--brave-api-key"):
+        assert option in add_help.stdout
+        assert option in update_help.stdout
+
+
 def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """Profile inspection should include linked channel summaries and narrowing details."""
 

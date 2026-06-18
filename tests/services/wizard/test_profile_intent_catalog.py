@@ -42,7 +42,7 @@ def test_intent_wizard_ru_labels_are_product_language_not_internal_jargon() -> N
     assert "Автоматизации" in text
     assert "Создавать и обновлять задачи" in text
     assert "Только личная папка профиля" in text
-    assert "Вручную" in text
+    assert "Ручная настройка" in text
     for forbidden in (
         "Task Flow from a channel",
         "Trusted admin",
@@ -113,6 +113,32 @@ def test_intent_mapper_keeps_channel_task_profile_without_files_or_shell() -> No
     assert resolved.shell_sandbox_mode == "disabled"
     assert resolved.shell_allowed_commands == ()
     assert resolved.network_mode == "recommended"
+
+
+def test_intent_mapper_quick_depth_is_full_profile_sandbox() -> None:
+    """Quick setup should enable autonomous work while staying inside profile sandbox."""
+
+    resolved = map_profile_intent_to_policy(
+        ProfileIntentSelection(
+            depth="quick",
+            work_contexts=("channels", "project", "automations", "sandbox"),
+            actions=("taskflow", "memory", "project_write", "shell_allowlist", "browser"),
+            isolation="profile_shell",
+            confirmation="fast",
+            network="unrestricted",
+        )
+    )
+
+    assert resolved.preset == "simple"
+    assert {"files", "shell", "taskflow", "browser", "skills", "mcp"}.issubset(
+        set(resolved.capabilities)
+    )
+    assert "debug" not in resolved.capabilities
+    assert resolved.file_access_mode == "read_write"
+    assert resolved.workspace_scope_mode == "profile_only"
+    assert resolved.shell_sandbox_mode == "required"
+    assert resolved.shell_allowed_commands == ()
+    assert resolved.network_mode == "unrestricted"
 
 
 def test_intent_mapper_deny_all_removes_external_service_capabilities() -> None:

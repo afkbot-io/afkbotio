@@ -10,9 +10,9 @@ from afkbot.cli.commands.channel_prompt_support import (
 )
 from afkbot.cli.commands.channel_shared import (
     collect_channel_access_policy_inputs,
+    collect_channel_update_base_inputs,
     merge_ingress_batch_config,
     merge_reply_humanization_config,
-    normalize_channel_tool_profile,
 )
 from afkbot.cli.commands.channel_telethon_commands.common import (
     TELETHON_GROUP_INVOCATION_MODES,
@@ -57,15 +57,13 @@ from afkbot.services.channels.endpoint_contracts import (
     TELETHON_WATCHER_REFRESH_INTERVAL_SEC_MIN,
     TelethonUserEndpointConfig,
 )
-from afkbot.services.channels.tool_profiles import CHANNEL_TOOL_PROFILE_VALUES
-
-
 def update_telethon_channel(
     *,
     channel_id: str,
     profile_id: str | None,
     credential_profile_key: str | None,
     account_id: str | None,
+    enabled: bool | None,
     reply_mode: str | None,
     private_policy: str | None,
     allow_from: str | None,
@@ -126,6 +124,7 @@ def update_telethon_channel(
             profile_id,
             credential_profile_key,
             account_id,
+            enabled,
             reply_mode,
             private_policy,
             allow_from,
@@ -171,6 +170,21 @@ def update_telethon_channel(
     current = context.current
     interactive = context.interactive
     prompt_language = context.prompt_language
+    base_inputs = collect_channel_update_base_inputs(
+        settings=settings,
+        interactive=interactive,
+        lang=prompt_language,
+        profile_id=profile_id,
+        current_profile_id=current.profile_id,
+        credential_profile_key=credential_profile_key,
+        current_credential_profile_key=current.credential_profile_key or current.endpoint_id,
+        account_id=account_id,
+        current_account_id=current.account_id,
+        enabled=enabled,
+        current_enabled=current.enabled,
+        tool_profile=tool_profile,
+        current_tool_profile=current.tool_profile,
+    )
     resolved_reply_mode = (
         normalize_telethon_reply_mode(
             resolve_channel_choice(
@@ -195,29 +209,6 @@ def update_telethon_channel(
         if interactive
         else normalize_telethon_reply_mode(reply_mode or current.reply_mode)
     )
-    resolved_tool_profile = (
-        normalize_channel_tool_profile(
-            resolve_channel_choice(
-                value=None,
-                interactive=True,
-                prompt_en="Channel tool profile",
-                prompt_ru="Профиль инструментов канала",
-                default=current.tool_profile,
-                allowed=CHANNEL_TOOL_PROFILE_VALUES,
-                lang=prompt_language,
-                detail_en=(
-                    "Choose the tool set visible from this channel. This cannot grant more than the profile "
-                    "allows; it only narrows the profile ceiling."
-                ),
-                detail_ru=(
-                    "Выберите набор инструментов, видимый из этого канала. Это не может дать больше прав, "
-                    "чем разрешает профиль; настройка только сужает потолок профиля."
-                ),
-            )
-        )
-        if interactive
-        else normalize_channel_tool_profile(tool_profile or current.tool_profile)
-    )
     resolved_access_policy = collect_channel_access_policy_inputs(
         interactive=interactive,
         lang=prompt_language,
@@ -227,7 +218,7 @@ def update_telethon_channel(
         groups=groups,
         group_allow_from=group_allow_from,
         outbound_allow_to=outbound_allow_to,
-        tool_profile=resolved_tool_profile,
+        tool_profile=base_inputs.tool_profile,
         private_policy_default=current.access_policy.private_policy,
         allow_from_default=current.access_policy.allow_from,
         group_policy_default=current.access_policy.group_policy,
@@ -663,11 +654,12 @@ def update_telethon_channel(
     return save_updated_telethon_channel(
         settings=settings,
         current=current,
-        profile_id=context.resolved_profile_id,
-        credential_profile_key=credential_profile_key,
-        account_id=account_id,
+        profile_id=base_inputs.profile_id,
+        credential_profile_key=base_inputs.credential_profile_key,
+        account_id=base_inputs.account_id,
+        enabled=base_inputs.enabled,
         reply_mode=resolved_reply_mode,
-        tool_profile=resolved_tool_profile,
+        tool_profile=base_inputs.tool_profile,
         access_policy=resolved_access_policy,
         reply_blocked_chat_patterns=reply_blocked_chat_patterns,
         reply_allowed_chat_patterns=reply_allowed_chat_patterns,

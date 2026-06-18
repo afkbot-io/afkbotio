@@ -25,6 +25,7 @@ def format_plugin_list(items: tuple[InstalledPluginRecord, ...]) -> str:
 def format_plugin_record(
     item: InstalledPluginRecord,
     *,
+    public_base_url: str | None = None,
     heading: str,
 ) -> str:
     """Render one installed plugin record for human inspection."""
@@ -56,6 +57,9 @@ def format_plugin_record(
         f"- mounts.web_prefix: {manifest.mounts.web_prefix or '-'}",
         f"- config_fields: {config_fields}",
     ]
+    open_url = _plugin_open_url(item, public_base_url=public_base_url)
+    if open_url:
+        lines.append(f"- open_url: {open_url}")
     return "\n".join(lines)
 
 
@@ -105,6 +109,17 @@ def _render_value(value: object) -> str:
     if isinstance(value, Path):
         return str(value)
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _plugin_open_url(item: InstalledPluginRecord, *, public_base_url: str | None) -> str:
+    web_prefix = item.manifest.mounts.web_prefix
+    if not web_prefix:
+        return ""
+    normalized_base = str(public_base_url or "").strip().rstrip("/")
+    if not normalized_base:
+        return ""
+    normalized_prefix = web_prefix if web_prefix.startswith("/") else f"/{web_prefix}"
+    return f"{normalized_base}{normalized_prefix.rstrip('/')}/"
 
 
 __all__ = [

@@ -46,13 +46,13 @@ class ProfileIntentPolicy:
 
 
 def quick_safe_profile_intent_selection() -> ProfileIntentSelection:
-    """Return the quick-safe intent selection used by recommended setup."""
+    """Return the quick sandbox intent selection used by recommended setup."""
 
     defaults = quick_safe_profile_intent_defaults()
     work_contexts = defaults["work_contexts"]
     actions = defaults["actions"]
     if not isinstance(work_contexts, tuple) or not isinstance(actions, tuple):
-        raise TypeError("quick-safe intent defaults must use tuple values")
+        raise TypeError("quick sandbox intent defaults must use tuple values")
     return ProfileIntentSelection(
         depth=str(defaults["depth"]),
         work_contexts=tuple(str(item) for item in work_contexts),
@@ -73,6 +73,33 @@ def map_profile_intent_to_policy(selection: ProfileIntentSelection) -> ProfileIn
     )
     action_set = set(actions)
     isolation = selection.isolation.strip().lower()
+    if depth == "quick":
+        return ProfileIntentPolicy(
+            enabled=True,
+            preset="simple",
+            capabilities=_ordered_capabilities(
+                [
+                    "files",
+                    "shell",
+                    "memory",
+                    "credentials",
+                    "subagents",
+                    "automation",
+                    "taskflow",
+                    "http",
+                    "web",
+                    "browser",
+                    "skills",
+                    "apps",
+                    "mcp",
+                ]
+            ),
+            file_access_mode="read_write",
+            workspace_scope_mode="profile_only",
+            shell_sandbox_mode="required",
+            shell_allowed_commands=(),
+            network_mode="unrestricted",
+        )
     if isolation not in {
         "no_files",
         "profile_only",

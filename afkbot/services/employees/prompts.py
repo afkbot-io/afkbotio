@@ -26,6 +26,7 @@ def build_employee_prompt_overlay(employee: EmployeeMetadata) -> str:
         lines.append(f"- can_delegate_to: {', '.join(employee.can_delegate_to)}")
     if employee.allowed_tools:
         lines.append(f"- allowed_tools: {', '.join(employee.allowed_tools)}")
+        lines.append("- allowed_tools are a hard runtime gate; delegate work instead of calling tools outside this list.")
     lines.append(f"- can_use_subagents: {str(employee.can_use_subagents).lower()}")
     if employee.subagent_allowlist:
         lines.append(f"- subagent_allowlist: {', '.join(employee.subagent_allowlist)}")

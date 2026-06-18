@@ -148,6 +148,14 @@ def register(registry: PluginRuntimeRegistry) -> None:
     )
 
 
+def _update_demo_manifest(root: Path, *, version: str, afkbot_version: str = "*") -> None:
+    manifest_path = root / ".afkbot-plugin/plugin.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["version"] = version
+    payload["afkbot_version"] = afkbot_version
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
+
 def _write_channel_plugin(
     root: Path,
     *,
@@ -689,6 +697,179 @@ def test_plugin_service_installs_from_github_archive_source(tmp_path: Path, monk
     assert (settings.root_dir / installed.install_path / ".afkbot-plugin/plugin.json").exists()
     assert not source_temp_root.exists()
     assert not stage_temp_root.exists()
+
+
+def test_plugin_service_update_uses_latest_compatible_github_release(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current_root = tmp_path / "demo-plugin-v1.0.14"
+    latest_root = tmp_path / "demo-plugin-v1.0.16"
+    incompatible_root = tmp_path / "demo-plugin-v1.0.17"
+    for root, version, body in (
+        (current_root, "1.0.14", "current"),
+        (latest_root, "1.0.16", "latest compatible"),
+        (incompatible_root, "1.0.17", "incompatible"),
+    ):
+        _write_demo_plugin(root)
+        _update_demo_manifest(
+            root,
+            version=version,
+            afkbot_version=">=99.0.0" if version == "1.0.17" else "*",
+        )
+        (root / "web/dist/index.html").write_text(
+            f"<html><body>{body}</body></html>\n",
+            encoding="utf-8",
+        )
+    archives = {
+        "https://github.com/acme/demo-plugin/archive/v1.0.14.tar.gz": _build_plugin_archive(
+            root=current_root,
+            archive_root_name="demo-plugin-v1.0.14",
+        ),
+        "https://github.com/acme/demo-plugin/archive/v1.0.16.tar.gz": _build_plugin_archive(
+            root=latest_root,
+            archive_root_name="demo-plugin-v1.0.16",
+        ),
+        "https://github.com/acme/demo-plugin/archive/v1.0.17.tar.gz": _build_plugin_archive(
+            root=incompatible_root,
+            archive_root_name="demo-plugin-v1.0.17",
+        ),
+    }
+    releases_payload = json.dumps(
+        [
+            {"draft": False, "prerelease": False, "tag_name": "v1.0.17"},
+            {"draft": False, "prerelease": False, "tag_name": "v1.0.16"},
+            {"draft": False, "prerelease": False, "tag_name": "v1.0.14"},
+        ],
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+            return False
+
+    def _fake_urlopen(url: str, timeout: int = 30):
+        _ = timeout
+        if url == "https://api.github.com/repos/acme/demo-plugin/releases?per_page=50":
+            return _Response(releases_payload)
+        return _Response(archives[url])
+
+    monkeypatch.setattr(plugin_service_module, "urlopen", _fake_urlopen)
+    service = get_plugin_service(Settings(root_dir=tmp_path))
+    installed = service.install(source="github:acme/demo-plugin@v1.0.14")
+
+    updated = service.update(plugin_id="demo")
+
+    assert installed.source_ref == "github:acme/demo-plugin@v1.0.14"
+    assert updated.version == "1.0.16"
+    assert updated.source_ref == "github:acme/demo-plugin@v1.0.16"
+    assert "latest compatible" in (
+        tmp_path / updated.install_path / "web/dist/index.html"
+    ).read_text(encoding="utf-8")
+
+
+def test_plugin_service_update_moves_github_main_source_to_latest_release(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    main_root = tmp_path / "demo-plugin-main"
+    latest_root = tmp_path / "demo-plugin-v1.0.16"
+    for root, version, body in (
+        (main_root, "1.0.14", "main snapshot"),
+        (latest_root, "1.0.16", "latest release"),
+    ):
+        _write_demo_plugin(root)
+        _update_demo_manifest(root, version=version)
+        (root / "web/dist/index.html").write_text(
+            f"<html><body>{body}</body></html>\n",
+            encoding="utf-8",
+        )
+    archives = {
+        "https://github.com/acme/demo-plugin/archive/main.tar.gz": _build_plugin_archive(
+            root=main_root,
+            archive_root_name="demo-plugin-main",
+        ),
+        "https://github.com/acme/demo-plugin/archive/v1.0.16.tar.gz": _build_plugin_archive(
+            root=latest_root,
+            archive_root_name="demo-plugin-v1.0.16",
+        ),
+    }
+    releases_payload = json.dumps(
+        [{"draft": False, "prerelease": False, "tag_name": "v1.0.16"}],
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+            return False
+
+    def _fake_urlopen(url: str, timeout: int = 30):
+        _ = timeout
+        if url == "https://api.github.com/repos/acme/demo-plugin/releases?per_page=50":
+            return _Response(releases_payload)
+        return _Response(archives[url])
+
+    monkeypatch.setattr(plugin_service_module, "urlopen", _fake_urlopen)
+    service = get_plugin_service(Settings(root_dir=tmp_path))
+    installed = service.install(source="github:acme/demo-plugin@main")
+
+    updated = service.update(plugin_id="demo")
+
+    assert installed.source_ref == "github:acme/demo-plugin@main"
+    assert updated.version == "1.0.16"
+    assert updated.source_ref == "github:acme/demo-plugin@v1.0.16"
+    assert "latest release" in (
+        tmp_path / updated.install_path / "web/dist/index.html"
+    ).read_text(encoding="utf-8")
+
+
+def test_plugin_service_install_latest_resolves_compatible_release(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    latest_root = tmp_path / "demo-plugin-v1.0.16"
+    _write_demo_plugin(latest_root)
+    _update_demo_manifest(latest_root, version="1.0.16")
+    archive_bytes = _build_plugin_archive(
+        root=latest_root,
+        archive_root_name="demo-plugin-v1.0.16",
+    )
+    releases_payload = json.dumps(
+        [{"draft": False, "prerelease": False, "tag_name": "v1.0.16"}],
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.close()
+            return False
+
+    def _fake_urlopen(url: str, timeout: int = 30):
+        _ = timeout
+        if url == "https://api.github.com/repos/acme/demo-plugin/releases?per_page=50":
+            return _Response(releases_payload)
+        assert url == "https://github.com/acme/demo-plugin/archive/v1.0.16.tar.gz"
+        return _Response(archive_bytes)
+
+    monkeypatch.setattr(plugin_service_module, "urlopen", _fake_urlopen)
+
+    installed = get_plugin_service(Settings(root_dir=tmp_path)).install(
+        source="github:acme/demo-plugin@latest"
+    )
+
+    assert installed.version == "1.0.16"
+    assert installed.source_ref == "github:acme/demo-plugin@v1.0.16"
 
 
 def _build_plugin_archive(*, root: Path, archive_root_name: str) -> bytes:

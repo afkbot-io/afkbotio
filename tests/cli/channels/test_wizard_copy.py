@@ -10,6 +10,7 @@ from afkbot.cli.commands.channel_prompt_support import (
     resolve_channel_setup_scenario,
 )
 from afkbot.cli.commands.channel_shared import collect_channel_access_policy_inputs
+from afkbot.cli.commands.channel_shared import resolve_channel_tool_profile_value
 from afkbot.cli.commands.channel_telethon_commands.common import (
     TELETHON_REPLY_MODE_LABEL_OVERRIDES,
 )
@@ -138,6 +139,31 @@ def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(
     assert access.outbound_allow_to == ("12345",)
     assert bool_prompts == ["Limit proactive channel.send targets?"]
     assert text_prompts == ["Allowed outbound chat/user ids"]
+
+
+def test_channel_tool_profile_prompt_is_shared_and_explains_permission_ceiling(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Channel add/update flows should use one permission-narrowing prompt."""
+
+    prompts: list[dict[str, object]] = []
+
+    def _fake_choice(**kwargs: object) -> str:
+        prompts.append(dict(kwargs))
+        return "support_readonly"
+
+    monkeypatch.setattr(channel_shared, "resolve_channel_choice", _fake_choice)
+
+    resolved = resolve_channel_tool_profile_value(
+        value=None,
+        interactive=True,
+        default="messaging_safe",
+        lang=PromptLanguage.EN,
+    )
+
+    assert resolved == "support_readonly"
+    assert prompts[0]["prompt_en"] == "What can the agent do from this channel?"
+    assert "profile remains the maximum permission ceiling" in str(prompts[0]["detail_en"])
 
 
 def test_partyflow_credentials_wizard_only_prompts_for_bot_token(

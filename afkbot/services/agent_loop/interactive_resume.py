@@ -60,6 +60,12 @@ def extract_resume_tool_call(envelope: ActionEnvelope) -> ToolCall | None:
     return ToolCall(name=tool_name, params=params, call_id=call_id)
 
 
+def is_secure_resume_helper_tool(tool_call: ToolCall | None) -> bool:
+    """Return true when replaying the call would only replay credential recovery."""
+
+    return tool_call is not None and tool_call.name == "credentials.request"
+
+
 def apply_profile_name_to_resume_call(*, tool_call: ToolCall, profile_name: str) -> ToolCall:
     """Inject selected credential profile into replay-safe tool call payload."""
 

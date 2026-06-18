@@ -196,6 +196,7 @@ def test_settings_paths(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
     assert settings.taskflow_knowledge_maintenance_enabled is True
     assert settings.taskflow_knowledge_maintenance_interval_sec == 1800
     assert settings.taskflow_knowledge_maintenance_max_flows_per_sweep == 8
+    assert settings.taskflow_knowledge_maintenance_terminal_cooldown_sec == 86400
     assert settings.browser_headless is True
     assert settings.diffs_artifact_ttl_sec == 86400
     assert settings.nginx_enabled is False
@@ -303,6 +304,8 @@ def test_settings_runtime_limits_validation() -> None:
         Settings(taskflow_knowledge_maintenance_interval_sec=0)
     with pytest.raises(ValueError):
         Settings(taskflow_knowledge_maintenance_max_flows_per_sweep=0)
+    with pytest.raises(ValueError):
+        Settings(taskflow_knowledge_maintenance_terminal_cooldown_sec=0)
     with pytest.raises(ValueError):
         Settings(llm_request_timeout_sec=0.0)
     with pytest.raises(ValueError):

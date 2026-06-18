@@ -231,6 +231,11 @@ def register_telegram_command_tree(
             "--account-id",
             help="Channel account id used by bindings and routing telemetry.",
         ),
+        enabled: bool | None = typer.Option(
+            None,
+            "--enabled/--disabled",
+            help="Enable or disable this endpoint.",
+        ),
         group_trigger_mode: str | None = typer.Option(
             None,
             "--group-trigger-mode",
@@ -362,6 +367,7 @@ def register_telegram_command_tree(
             profile_id=profile_id,
             credential_profile_key=credential_profile_key,
             account_id=account_id,
+            enabled=enabled,
             group_trigger_mode=group_trigger_mode,
             private_policy=private_policy,
             allow_from=allow_from,

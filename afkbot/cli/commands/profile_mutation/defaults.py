@@ -5,17 +5,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from afkbot.services.policy import PolicyPresetLevel, infer_workspace_scope_mode
+from afkbot.services.policy import infer_workspace_scope_mode
 from afkbot.services.profile_runtime import ProfileDetails, ProfileRuntimeConfig
 from afkbot.services.setup.contracts import (
-    PolicyFileAccessMode,
     PolicyNetworkMode,
     PolicySetupMode,
 )
-from afkbot.services.setup.defaults import recommended_policy_capabilities
 from afkbot.services.setup.policy_inputs import (
     default_policy_network_mode,
     recommended_policy_network_hosts,
+)
+from afkbot.services.wizard.profile_intent_mapper import (
+    map_profile_intent_to_policy,
+    quick_safe_profile_intent_selection,
 )
 
 
@@ -51,21 +53,29 @@ def build_policy_defaults_from_details(
 ) -> dict[str, str]:
     """Build policy-default map from one persisted profile for interactive update."""
 
+    quick_selection = quick_safe_profile_intent_selection()
+    quick_policy = map_profile_intent_to_policy(quick_selection)
+    quick_network_allowlist = (
+        ("*",)
+        if quick_policy.network_mode == PolicyNetworkMode.UNRESTRICTED.value
+        else recommended_policy_network_hosts(capabilities=quick_policy.capabilities)
+    )
+    workspace_scope_mode = infer_workspace_scope_mode(
+        root_dir=root_dir,
+        profile_root=Path(details.profile_root),
+        allowed_directories=details.policy.allowed_directories,
+    )
     policy_setup_mode = (
         PolicySetupMode.RECOMMENDED.value
         if (
             details.policy.enabled is True
-            and details.policy.preset == PolicyPresetLevel.MEDIUM.value
-            and details.policy.capabilities == recommended_policy_capabilities()
-            and details.policy.network_allowlist
-            == recommended_policy_network_hosts(capabilities=details.policy.capabilities)
-            and details.policy.file_access_mode == PolicyFileAccessMode.NONE.value
-            and infer_workspace_scope_mode(
-                root_dir=root_dir,
-                profile_root=Path(details.profile_root),
-                allowed_directories=details.policy.allowed_directories,
-            )
-            == "profile_only"
+            and details.policy.preset == quick_policy.preset
+            and details.policy.capabilities == quick_policy.capabilities
+            and details.policy.network_allowlist == quick_network_allowlist
+            and details.policy.file_access_mode == quick_policy.file_access_mode
+            and workspace_scope_mode == quick_policy.workspace_scope_mode
+            and details.policy.shell_sandbox_mode == quick_policy.shell_sandbox_mode
+            and details.policy.shell_allowed_commands == quick_policy.shell_allowed_commands
         )
         else PolicySetupMode.CUSTOM.value
     )
@@ -75,11 +85,7 @@ def build_policy_defaults_from_details(
         "AFKBOT_POLICY_SETUP_MODE": policy_setup_mode,
         "AFKBOT_POLICY_CAPABILITIES": ",".join(details.policy.capabilities),
         "AFKBOT_POLICY_FILE_ACCESS_MODE": details.policy.file_access_mode,
-        "AFKBOT_POLICY_WORKSPACE_SCOPE": infer_workspace_scope_mode(
-            root_dir=root_dir,
-            profile_root=Path(details.profile_root),
-            allowed_directories=details.policy.allowed_directories,
-        ),
+        "AFKBOT_POLICY_WORKSPACE_SCOPE": workspace_scope_mode,
         "AFKBOT_POLICY_SHELL_SANDBOX_MODE": details.policy.shell_sandbox_mode,
         "AFKBOT_POLICY_SHELL_ALLOWED_COMMANDS": ",".join(details.policy.shell_allowed_commands),
         "AFKBOT_POLICY_NETWORK_ALLOWLIST": ",".join(details.policy.network_allowlist),
@@ -103,13 +109,15 @@ def build_policy_defaults_from_details(
     if policy_setup_mode == PolicySetupMode.RECOMMENDED.value and defaults[
         "AFKBOT_WIZARD_SETUP_DEPTH"
     ] in {"", "legacy"}:
-        defaults["AFKBOT_WIZARD_SETUP_DEPTH"] = "quick"
-        defaults["AFKBOT_WIZARD_WORK_CONTEXTS"] = "channels"
-        defaults["AFKBOT_WIZARD_ACTIONS"] = "reply,channel_history,taskflow,memory"
-        defaults["AFKBOT_WIZARD_ISOLATION"] = "no_files"
-        defaults["AFKBOT_WIZARD_CONFIRMATION"] = "balanced"
-        defaults["AFKBOT_WIZARD_NETWORK"] = PolicyNetworkMode.RECOMMENDED.value
-        defaults["AFKBOT_WIZARD_NETWORK_ALLOWLIST"] = ""
+        defaults["AFKBOT_WIZARD_SETUP_DEPTH"] = quick_selection.depth
+        defaults["AFKBOT_WIZARD_WORK_CONTEXTS"] = ",".join(quick_selection.work_contexts)
+        defaults["AFKBOT_WIZARD_ACTIONS"] = ",".join(quick_selection.actions)
+        defaults["AFKBOT_WIZARD_ISOLATION"] = quick_selection.isolation
+        defaults["AFKBOT_WIZARD_CONFIRMATION"] = quick_selection.confirmation
+        defaults["AFKBOT_WIZARD_NETWORK"] = quick_selection.network
+        defaults["AFKBOT_WIZARD_NETWORK_ALLOWLIST"] = ",".join(
+            quick_selection.network_allowlist
+        )
     return defaults
 
 

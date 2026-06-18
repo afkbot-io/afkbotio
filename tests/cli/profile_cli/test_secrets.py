@@ -114,6 +114,62 @@ def test_profile_add_and_profile_secrets_commands_manage_local_provider_keys(
     assert clear_all_payload["runtime_secrets"]["has_profile_secrets"] is False
 
 
+def test_profile_update_can_store_brave_api_key(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Profile edit should support the same Brave Search secret as profile creation."""
+
+    _prepare_env(tmp_path, monkeypatch)
+    runner = CliRunner()
+
+    add_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "add",
+            "--yes",
+            "--id",
+            "ops",
+            "--name",
+            "Ops",
+            "--llm-provider",
+            "openai",
+            "--chat-model",
+            "gpt-4o-mini",
+            "--provider-api-key",
+            "openai-profile-key",
+            "--skip-llm-token-verify",
+        ],
+    )
+    update_result = runner.invoke(
+        app,
+        [
+            "profile",
+            "update",
+            "ops",
+            "--yes",
+            "--brave-api-key",
+            "brave-profile-key",
+            "--skip-llm-token-verify",
+        ],
+    )
+    show_result = runner.invoke(app, ["profile", "show", "ops", "--json"])
+
+    assert add_result.exit_code == 0
+    assert update_result.exit_code == 0
+    update_payload = json.loads(update_result.stdout)
+    assert update_payload["profile"]["effective_runtime"]["brave_api_key_configured"] is True
+    assert "brave-profile-key" not in update_result.stdout
+
+    assert show_result.exit_code == 0
+    show_payload = json.loads(show_result.stdout)
+    assert show_payload["profile"]["runtime_secrets"]["configured_fields"] == [
+        "brave_api_key",
+        "openai_api_key",
+    ]
+
+
 def test_profile_codex_provider_secret_uses_secret_source_and_clears_file_metadata(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

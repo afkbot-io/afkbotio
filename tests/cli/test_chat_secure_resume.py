@@ -102,6 +102,83 @@ async def test_secure_flow_resumes_with_planned_tool_call(monkeypatch: MonkeyPat
     assert calls[0][1] is None
 
 
+async def test_secure_flow_continues_llm_after_credentials_request_helper(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Credential helper recovery should not replay credentials.request as completed work."""
+
+    calls: list[tuple[str, list[ToolCall] | None]] = []
+
+    async def _fake_run_once_result(
+        *,
+        message: str,
+        profile_id: str,  # noqa: ARG001
+        session_id: str,  # noqa: ARG001
+        planned_tool_calls: list[ToolCall] | None = None,
+        progress_sink: Callable[[object], None] | None = None,  # noqa: ARG001
+    ) -> TurnResult:
+        calls.append((message, planned_tool_calls))
+        if len(calls) == 1:
+            return TurnResult(
+                run_id=1,
+                session_id="s",
+                profile_id="default",
+                envelope=ActionEnvelope(
+                    action="request_secure_field",
+                    message="secure",
+                    question_id="q-credentials",
+                    secure_field="pat",
+                    spec_patch={
+                        "tool_name": "credentials.request",
+                        "tool_params": {
+                            "app_name": "gitlab",
+                            "credential_slug": "pat",
+                            "profile_name": "default",
+                        },
+                        "integration_name": "gitlab",
+                        "credential_name": "pat",
+                        "credential_profile_key": "default",
+                        "secure_nonce": "nonce-credentials",
+                    },
+                ),
+            )
+        assert message.startswith("secure_resume: a required credential was captured")
+        assert planned_tool_calls is None
+        return TurnResult(
+            run_id=2,
+            session_id="s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    async def _fake_submit_secure_field(
+        *,
+        profile_id: str,  # noqa: ARG001
+        envelope: ActionEnvelope,  # noqa: ARG001
+        secret_value: str,  # noqa: ARG001
+        session_id: str | None = None,  # noqa: ARG001
+    ) -> tuple[bool, str]:
+        return True, "ok"
+
+    monkeypatch.setattr(
+        "afkbot.cli.commands.chat_secure_flow.typer.prompt", lambda *args, **kwargs: "secret"
+    )
+
+    result = await run_turn_with_secure_resolution(
+        message="clone repo",
+        profile_id="default",
+        session_id="s",
+        progress_sink=None,
+        allow_secure_prompt=True,
+        run_once_result_fn=_fake_run_once_result,
+        submit_secure_field_fn=_fake_submit_secure_field,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert len(calls) == 2
+    assert calls[1][1] is None
+
+
 async def test_secure_flow_preserves_secret_whitespace(monkeypatch: MonkeyPatch) -> None:
     """Secure prompt should submit exact secret value without trimming."""
 

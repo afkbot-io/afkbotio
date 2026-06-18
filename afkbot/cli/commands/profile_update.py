@@ -107,6 +107,12 @@ def register_update(profile_app: typer.Typer) -> None:
             help="Optional provider-specific credential (API key or OAuth token) stored only for this profile.",
             hide_input=True,
         ),
+        brave_api_key: str | None = typer.Option(
+            None,
+            "--brave-api-key",
+            help="Optional Brave Search API key stored only for this profile.",
+            hide_input=True,
+        ),
         skip_llm_token_verify: bool = typer.Option(
             False,
             "--skip-llm-token-verify",
@@ -342,6 +348,10 @@ def register_update(profile_app: typer.Typer) -> None:
 
             effective_runtime_secrets = dict(existing_runtime_secrets)
             effective_runtime_secrets.update(mutation_inputs.runtime_secrets_update)
+            brave_secret = (brave_api_key or "").strip()
+            if brave_secret:
+                effective_runtime_secrets["brave_api_key"] = brave_secret
+                mutation_inputs.runtime_secrets_update["brave_api_key"] = brave_secret
             verify_profile_provider_token(
                 provider_id=mutation_inputs.runtime_core.provider_id,
                 model=mutation_inputs.runtime_core.llm_model,

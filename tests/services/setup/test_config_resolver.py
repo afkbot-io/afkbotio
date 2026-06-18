@@ -21,7 +21,7 @@ from afkbot.settings import Settings
 def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     tmp_path: Path,
 ) -> None:
-    """Recommended setup should keep quick-safe no-file/no-shell policy and local runtime."""
+    """Recommended setup should create a quick sandbox profile with full autonomous surfaces."""
 
     # Arrange
     settings = Settings(
@@ -72,18 +72,25 @@ def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     )
 
     # Assert
-    expected_capabilities = (PolicyCapabilityId.MEMORY.value, PolicyCapabilityId.TASKFLOW.value)
     assert config.db_url == f"sqlite+aiosqlite:///{tmp_path / 'configured.db'}"
     assert config.policy_setup_mode == "recommended"
-    assert config.policy_preset == "medium"
-    assert config.policy_capabilities == expected_capabilities
+    assert config.policy_preset == "simple"
     assert config.policy_capabilities == recommended_policy_capabilities()
-    assert config.policy_file_access_mode == "none"
+    assert PolicyCapabilityId.FILES.value in config.policy_capabilities
+    assert PolicyCapabilityId.SHELL.value in config.policy_capabilities
+    assert PolicyCapabilityId.BROWSER.value in config.policy_capabilities
+    assert PolicyCapabilityId.CREDENTIALS.value in config.policy_capabilities
+    assert PolicyCapabilityId.DEBUG.value not in config.policy_capabilities
+    assert config.policy_file_access_mode == "read_write"
     assert config.policy_workspace_scope_mode == "profile_only"
-    assert config.policy_network_mode == "recommended"
+    assert config.policy_shell_sandbox_mode == "required"
+    assert config.policy_shell_allowed_commands == ()
+    assert config.policy_network_mode == "unrestricted"
+    assert config.policy_network_allowlist == ("*",)
     assert config.wizard_setup_depth == "quick"
-    assert config.wizard_work_contexts == ("channels",)
-    assert config.wizard_actions == ("reply", "channel_history", "taskflow", "memory")
+    assert "project" in config.wizard_work_contexts
+    assert "project_write" in config.wizard_actions
+    assert "browser" in config.wizard_actions
     assert config.llm_thinking_level == "medium"
     assert config.default_profile_runtime_config.llm_provider == "openrouter"
     assert config.default_profile_runtime_config.llm_model == "minimax/minimax-m2.5"
@@ -95,21 +102,19 @@ def test_collect_setup_config_recommended_mode_uses_recommended_capabilities(
     assert config.auto_install_deps is True
 
 
-def test_recommended_policy_capabilities_are_quick_safe() -> None:
-    """Recommended capability helper should exclude broad tools until the user chooses them."""
-
-    # Arrange
-    expected_capabilities = (PolicyCapabilityId.MEMORY.value, PolicyCapabilityId.TASKFLOW.value)
+def test_recommended_policy_capabilities_are_quick_sandbox() -> None:
+    """Recommended capability helper should match quick sandbox setup."""
 
     # Act
     capabilities = recommended_policy_capabilities()
 
     # Assert
-    assert capabilities == expected_capabilities
-    assert PolicyCapabilityId.FILES.value not in capabilities
-    assert PolicyCapabilityId.SHELL.value not in capabilities
-    assert PolicyCapabilityId.BROWSER.value not in capabilities
-    assert PolicyCapabilityId.CREDENTIALS.value not in capabilities
+    assert PolicyCapabilityId.FILES.value in capabilities
+    assert PolicyCapabilityId.SHELL.value in capabilities
+    assert PolicyCapabilityId.BROWSER.value in capabilities
+    assert PolicyCapabilityId.CREDENTIALS.value in capabilities
+    assert PolicyCapabilityId.TASKFLOW.value in capabilities
+    assert PolicyCapabilityId.MCP.value in capabilities
     assert PolicyCapabilityId.DEBUG.value not in capabilities
 
 

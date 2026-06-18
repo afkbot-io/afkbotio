@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import importlib
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tarfile
@@ -49,6 +50,10 @@ if TYPE_CHECKING:
 
 _SERVICES_BY_ROOT: dict[str, "PluginService"] = {}
 _SERVICES_LOCK = threading.Lock()
+_GITHUB_RELEASE_LOOKUP_LIMIT = 50
+_GITHUB_LATEST_REF = "latest"
+_GITHUB_RELEASE_TRACKING_REFS = frozenset({"latest", "main", "master"})
+_SEMVER_RELEASE_RE = re.compile(r"^[vV]?\d+(?:\.\d+){1,3}$")
 _COPY_IGNORE = shutil.ignore_patterns(
     ".git",
     ".idea",
@@ -180,15 +185,22 @@ class PluginService:
         plugin_id: str,
         enable: bool | None = None,
         force: bool = False,
+        reinstall: bool = False,
     ) -> InstalledPluginRecord:
-        """Reinstall one plugin from its persisted source reference."""
+        """Update one plugin to the latest compatible release or reinstall the saved source."""
 
         current = self.inspect(plugin_id=plugin_id)
+        update_source = (
+            current.source_ref if reinstall else self._resolve_update_source(record=current)
+        )
         if not force:
-            self._validate_channel_update_compatibility(record=current)
+            self._validate_channel_update_compatibility_for_source(
+                record=current,
+                source=update_source,
+            )
         next_enabled = current.enabled if enable is None else enable
         updated = self.install(
-            source=current.source_ref,
+            source=update_source,
             enable=next_enabled,
             overwrite=True,
         )
@@ -197,6 +209,68 @@ class PluginService:
         if previous_path != current_path and previous_path.exists():
             shutil.rmtree(previous_path, ignore_errors=True)
         return updated
+
+    def _resolve_update_source(self, *, record: InstalledPluginRecord) -> str:
+        """Return the source that normal plugin update should install."""
+
+        descriptor = self._resolve_source(record.source_ref)
+        parsed = _parse_github_descriptor_source_ref(descriptor)
+        if parsed is None:
+            return record.source_ref
+        normalized_ref = parsed.ref.strip().lower()
+        if not _is_semver_release_ref(parsed.ref) and normalized_ref not in _GITHUB_RELEASE_TRACKING_REFS:
+            return record.source_ref
+        fallback_source = (
+            record.source_ref
+            if normalized_ref in {"main", "master"} or _is_semver_release_ref(parsed.ref)
+            else None
+        )
+        return self._resolve_latest_compatible_github_release_source(
+            owner=parsed.owner,
+            repo=parsed.repo,
+            expected_plugin_id=record.plugin_id,
+            fallback_source=fallback_source,
+        )
+
+    def _resolve_latest_compatible_github_release_source(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        expected_plugin_id: str | None = None,
+        fallback_source: str | None = None,
+    ) -> str:
+        candidates = _fetch_github_release_sources(owner=owner, repo=repo)
+        if not candidates and fallback_source:
+            return fallback_source
+        first_incompatible_reason = ""
+        for source_ref in candidates:
+            candidate_descriptor = _parse_github_source(source_ref)
+            if candidate_descriptor is None:
+                continue
+            source_path, cleanup_root = self._stage_source(candidate_descriptor)
+            try:
+                manifest = self._load_manifest(source_path)
+                if expected_plugin_id is not None and manifest.plugin_id != expected_plugin_id:
+                    continue
+                self._validate_manifest_compatibility(manifest)
+                return source_ref
+            except PluginServiceError as exc:
+                if exc.error_code == "plugin_incompatible":
+                    first_incompatible_reason = first_incompatible_reason or exc.reason
+                    continue
+                raise
+            finally:
+                if cleanup_root is not None:
+                    shutil.rmtree(cleanup_root, ignore_errors=True)
+        expected_text = f" for plugin {expected_plugin_id}" if expected_plugin_id else ""
+        raise PluginServiceError(
+            error_code="plugin_update_no_compatible_release",
+            reason=(
+                f"No compatible GitHub release found{expected_text} from github:{owner}/{repo}. "
+                f"{first_incompatible_reason or 'Update AFKBOT core or install an explicit plugin source.'}"
+            ),
+        )
 
     def enable(self, *, plugin_id: str) -> InstalledPluginRecord:
         """Enable one installed plugin."""
@@ -374,11 +448,22 @@ class PluginService:
         )
 
     def _validate_channel_update_compatibility(self, *, record: InstalledPluginRecord) -> None:
+        self._validate_channel_update_compatibility_for_source(
+            record=record,
+            source=record.source_ref,
+        )
+
+    def _validate_channel_update_compatibility_for_source(
+        self,
+        *,
+        record: InstalledPluginRecord,
+        source: str,
+    ) -> None:
         endpoints = self._channel_endpoint_usages_for_record(record=record)
         if not endpoints:
             return
         existing_keys = {(endpoint.transport, endpoint.adapter_kind) for endpoint in endpoints}
-        next_keys = set(self._channel_adapter_keys_for_source(source=record.source_ref))
+        next_keys = set(self._channel_adapter_keys_for_source(source=source))
         missing = sorted(existing_keys - next_keys)
         if not missing:
             return
@@ -560,6 +645,15 @@ class PluginService:
             )
         github = _parse_github_source(normalized)
         if github is not None:
+            parsed = _parse_github_descriptor_source_ref(github)
+            if parsed is not None and parsed.ref.strip().lower() == _GITHUB_LATEST_REF:
+                latest_source = self._resolve_latest_compatible_github_release_source(
+                    owner=parsed.owner,
+                    repo=parsed.repo,
+                )
+                resolved = _parse_github_source(latest_source)
+                if resolved is not None:
+                    return resolved
             return github
         raise PluginServiceError(
             error_code="plugin_source_not_found",
@@ -727,6 +821,13 @@ class _PluginSourceDescriptor:
         self.archive_url = archive_url
 
 
+class _GithubSourceRef:
+    def __init__(self, *, owner: str, repo: str, ref: str) -> None:
+        self.owner = owner
+        self.repo = repo
+        self.ref = ref
+
+
 def _try_resolve_existing_local_path(source: str) -> Path | None:
     path = Path(source).expanduser()
     if not path.is_absolute():
@@ -776,6 +877,72 @@ def _parse_github_source(source: str) -> _PluginSourceDescriptor | None:
         source_ref=f"github:{owner}/{repo}@{branch}",
         archive_url=archive_url,
     )
+
+
+def _parse_github_descriptor_source_ref(
+    descriptor: _PluginSourceDescriptor,
+) -> _GithubSourceRef | None:
+    if descriptor.kind != "github_archive" or not descriptor.source_ref.startswith("github:"):
+        return None
+    raw_repo = descriptor.source_ref.removeprefix("github:")
+    repo_spec, _, ref = raw_repo.partition("@")
+    owner, _, repo = repo_spec.partition("/")
+    normalized_ref = ref.strip() or "main"
+    if not owner or not repo or not normalized_ref:
+        return None
+    return _GithubSourceRef(owner=owner, repo=repo, ref=normalized_ref)
+
+
+def _is_semver_release_ref(ref: str) -> bool:
+    return bool(_SEMVER_RELEASE_RE.fullmatch(ref.strip()))
+
+
+def _normalize_release_version(ref: str) -> str:
+    normalized = ref.strip()
+    if normalized.startswith(("v", "V")):
+        return normalized[1:]
+    return normalized
+
+
+def _fetch_github_release_sources(*, owner: str, repo: str) -> tuple[str, ...]:
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}/releases"
+        f"?per_page={_GITHUB_RELEASE_LOOKUP_LIMIT}"
+    )
+    try:
+        with urlopen(url, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise PluginServiceError(
+            error_code="plugin_release_lookup_failed",
+            reason=f"Failed to inspect GitHub releases for {owner}/{repo}: {exc}",
+        ) from exc
+    if not isinstance(payload, list):
+        raise PluginServiceError(
+            error_code="plugin_release_lookup_failed",
+            reason=f"GitHub releases response for {owner}/{repo} was not a list",
+        )
+    refs: set[str] = set()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        if item.get("draft") or item.get("prerelease"):
+            continue
+        tag_name = str(item.get("tag_name") or "").strip()
+        if not tag_name or not _is_semver_release_ref(tag_name):
+            continue
+        refs.add(tag_name)
+    return tuple(
+        f"github:{owner}/{repo}@{tag}"
+        for tag in sorted(refs, key=_release_sort_key, reverse=True)
+    )
+
+
+def _release_sort_key(ref: str) -> tuple[int, int, int, int]:
+    version = _normalize_release_version(ref)
+    parts = [int(part) for part in version.split(".") if part.isdigit()]
+    padded = (parts + [0, 0, 0, 0])[:4]
+    return (padded[0], padded[1], padded[2], padded[3])
 
 
 def _stage_remote_archive(archive_url: str) -> tuple[Path, Path]:

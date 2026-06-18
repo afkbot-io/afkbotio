@@ -114,6 +114,7 @@ def _build_task_flow_prompt_overlay(
         "Use task.* tools to manage backlog items in task_profile_id. When you need to touch the backlog, prefer passing profile_id=task_profile_id explicitly.",
         "Start by using the Project Knowledge Packet inside the provided Task Flow Context Bundle. If you need more detail, call task.context.get for the current task_id before changing docs, blockers, delegation, or review state.",
         "Use task.doc.list/task.doc.put for the Project Knowledge Spine: flow docs brief, plan, spec, decisions, and status; task docs handoff, notes, review, and evidence. Confirm an agreed revision with task.doc.confirm before decomposing or executing work that depends on approval.",
+        "When you generate or receive small task-specific artifacts, attach them with task.create/task.update attachments so future employee runs receive the file content. Use task docs for durable project memory; do not bury canonical decisions only in attached files.",
         "Use task.feed.list to inspect employee assignments, @mentions, wake requests, recovery actions, and runtime claim rejects for this profile. Treat task comments and docs as the team communication log.",
         "When assigning work with task.* tools, use owner_type=employee and owner_ref=<employee_id>.",
         "When filtering backlog views with task.list, task.board, task.stale.list, or task.stale.sweep, filter by owner_type=employee and owner_ref=<employee_id> when needed.",

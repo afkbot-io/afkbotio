@@ -22,6 +22,9 @@ Read this file before changing AFKBOT internals. Then read the focused files:
   `afk skill ...`, and plugin-provided through plugin skill dirs.
 - Subagents: bundled in `afkbot/subagents/*.md`, profile-managed through
   `afk subagent ...`.
+- Task Flow employees: profile-managed markdown descriptors under
+  `profiles/<profile_id>/employees/*.md`; these are the durable organization
+  roles used by Task Flow, distinct from CLI subagents.
 - Tool plugins exposed to the agent: `afkbot/services/tools/plugins/*`.
 - Embedded platform plugins: `afkbot/services/plugins/*`.
 - Channels and external ingress: `afkbot/services/channels/*` and

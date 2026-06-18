@@ -579,6 +579,56 @@ async def test_knowledge_maintenance_wakes_existing_task_without_duplicates(
         await engine.dispose()
 
 
+async def test_knowledge_maintenance_skips_recent_terminal_task_without_duplicates(
+    tmp_path: Path,
+) -> None:
+    """Recently closed maintenance work should not immediately create another duplicate."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="knowledge_maintenance_terminal_cooldown.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Cooldown maintenance",
+            description="Closed work should not duplicate on the next sweep.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        first = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+        assert first.created_task_count == 1
+        task = first.flows[0].task
+        assert task is not None
+
+        async with session_scope(factory) as session:
+            await TaskFlowRepository(session).update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="completed",
+            )
+
+        second = await service.ensure_knowledge_maintenance_tasks(profile_id="default")
+
+        assert second.created_task_count == 0
+        assert second.woken_task_count == 0
+        assert second.skipped_flow_count == 1
+        assert second.flows[0].action == "cooldown"
+        assert second.flows[0].task is not None
+        assert second.flows[0].task.id == task.id
+        async with session_scope(factory) as session:
+            tasks = await TaskFlowRepository(session).list_tasks_by_source(
+                profile_id="default",
+                source_type="knowledge_maintenance",
+                source_ref=f"flow:{flow.id}",
+            )
+        assert len(tasks) == 1
+    finally:
+        await engine.dispose()
+
+
 async def test_knowledge_maintenance_skips_confirmed_healthy_flow(tmp_path: Path) -> None:
     """Confirmed canonical docs should not create autonomous maintenance work."""
 

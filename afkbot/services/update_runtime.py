@@ -27,6 +27,7 @@ from afkbot.services.install_source import (
     read_install_source_from_runtime_config,
     read_install_source_resolved_target_from_runtime_config,
 )
+from afkbot.services.plugins.catalog import list_known_plugins
 from afkbot.services.managed_runtime_service import ensure_managed_runtime_service
 from afkbot.services.managed_install import (
     ManagedInstallContext,
@@ -325,11 +326,13 @@ def _run_host_update(*, settings: Settings) -> UpdateResult:
         args=("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
     )
     _run_afk_subcommand(settings=settings, args=("upgrade", "apply", "--quiet"))
+    starter_plugin_details = _run_starter_plugin_updates(settings=settings)
 
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
         f"Git branch: {branch}",
         (f"Git source reset to origin/{branch} after history rewrite" if history_rewritten else ""),
+        *starter_plugin_details,
         (
             "Runtime health: ok"
             if (runtime_restarted and _wait_for_local_health(settings=settings))
@@ -390,11 +393,13 @@ def _run_managed_update(*, settings: Settings, context: ManagedInstallContext) -
         args=("doctor", "--no-integrations", "--no-upgrades", "--no-daemon"),
     )
     _run_afk_subcommand(settings=settings, args=("upgrade", "apply", "--quiet"))
+    starter_plugin_details = _run_starter_plugin_updates(settings=settings)
 
     runtime_restarted = _restart_managed_host_runtime_service()
     details = [
         f"Managed source ref: {context.source_ref}",
         f"Managed source dir: {next_app_dir}",
+        *starter_plugin_details,
         (
             "Runtime health: ok"
             if (runtime_restarted and _wait_for_local_health(settings=settings))
@@ -461,6 +466,10 @@ def _run_installer_source_update(
         settings=settings,
         args=("upgrade", "apply", "--quiet"),
     )
+    starter_plugin_details = _run_starter_plugin_updates(
+        settings=settings,
+        executable=afk_executable,
+    )
     doctor_ran = False
     if setup_is_complete(settings):
         _run_afk_executable(
@@ -477,6 +486,7 @@ def _run_installer_source_update(
         f"Tool executable: {afk_executable}",
         ("Shell integration: refreshed" if shell_updated else "Shell integration: unchanged"),
         "Bootstrap setup: refreshed",
+        *starter_plugin_details,
         "Doctor: skipped until `afk setup` completes" if not doctor_ran else "",
         (
             "Runtime health: ok"
@@ -916,6 +926,36 @@ def _run_afk_executable_with_env(
     )
 
 
+def _run_starter_plugin_updates(
+    *,
+    settings: Settings,
+    executable: Path | None = None,
+) -> tuple[str, ...]:
+    """Refresh installed built-in starter plugins after a core update."""
+
+    prefix = (
+        [str(executable)]
+        if executable is not None
+        else [sys.executable, "-m", "afkbot.cli.main"]
+    )
+    cwd = _ensure_runtime_command_cwd(settings.root_dir)
+    details: list[str] = []
+    for plugin in list_known_plugins():
+        inspect_command = [*prefix, "plugin", "inspect", plugin.plugin_id, "--json"]
+        inspect_result = _run_command(inspect_command, cwd=cwd)
+        if inspect_result.returncode != 0:
+            details.append(f"Starter plugin {plugin.plugin_id}: not installed; skipped")
+            continue
+        _run_checked(
+            [*prefix, "plugin", "update", plugin.plugin_id],
+            cwd=cwd,
+            error_code="update_failed",
+            fallback=f"failed to update starter plugin {plugin.plugin_id}",
+        )
+        details.append(f"Starter plugin {plugin.plugin_id}: updated")
+    return tuple(details)
+
+
 def _ensure_runtime_command_cwd(root_dir: Path) -> Path:
     """Create the runtime working directory on demand before spawning AFKBOT subprocesses."""
 
@@ -1118,6 +1158,14 @@ def _localize_update_detail(detail: str, *, lang: str) -> str:
         return "Интеграция shell: без изменений"
     if detail == "Bootstrap setup: refreshed":
         return "Bootstrap-настройка: обновлена"
+    if detail.startswith("Starter plugin ") and detail.endswith(": updated"):
+        plugin_id = detail.removeprefix("Starter plugin ").removesuffix(": updated")
+        return f"Стартовый плагин {plugin_id}: обновлён"
+    if detail.startswith("Starter plugin ") and detail.endswith(": not installed; skipped"):
+        plugin_id = detail.removeprefix("Starter plugin ").removesuffix(
+            ": not installed; skipped"
+        )
+        return f"Стартовый плагин {plugin_id}: не установлен, пропущен"
     return detail
 
 

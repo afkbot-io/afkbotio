@@ -47,11 +47,17 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
                     content={
                         "ok": False,
                         "error_code": "ui_auth_not_configured",
-                        "reason": "Operator authentication is required but is not configured.",
+                        "reason": (
+                            "Operator authentication is required for this UI, but it is not "
+                            "configured. Run `afk auth setup` on the server, then sign in again."
+                        ),
                     },
                 )
             return Response(
-                content="Operator authentication is required but is not configured.",
+                content=(
+                    "Operator authentication is required for this UI, but it is not configured. "
+                    "Run `afk auth setup` on the server, then sign in again."
+                ),
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 media_type="text/plain",
             )
@@ -64,7 +70,10 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
                     content={
                         "ok": False,
                         "error_code": "ui_auth_required",
-                        "reason": "Authentication is required for this plugin API surface.",
+                        "reason": (
+                            "Your AFKBOT UI session is missing or expired. Open the sign-in "
+                            "page, authenticate as an operator, then retry this action."
+                        ),
                     },
                 )
             return RedirectResponse(

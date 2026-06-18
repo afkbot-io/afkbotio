@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.20] - 2026-06-18
+
+### Added
+
+- `afk update` now refreshes installed starter plugins such as `afkbotui` to the
+  latest compatible release alongside the core runtime update, while non-starter
+  plugins remain manually controlled through `afk plugin update`.
+- Task Flow employees now receive stronger runtime guidance for inspecting
+  project docs, using available tools, creating profile-local skills/subagents
+  or employee descriptors when a role needs them, and respecting their explicit
+  tool allowlist.
+- Task Flow knowledge-maintenance sweeps now enforce a terminal-task cooldown per
+  flow/source reference so autonomous CTO health checks do not create duplicate
+  maintenance tasks after a recent completed or blocked sweep.
+
+### Changed
+
+- `afk setup`, `afk profile add`, and `afk profile update` now share the same
+  quick/manual setup model. Quick setup enables practical file/network/tool
+  access while keeping shell execution sandboxed by default.
+- Channel add/update prompts now use shared wizard catalog copy so equivalent
+  setup questions are phrased consistently across Telegram, Telethon, and
+  Partyflow channels.
+- Plugin install/update output now shows the full plugin URL and clearer
+  authentication guidance, including Russian-localized setup text where the CLI
+  already exposes Russian prompts.
+
+### Security
+
+- Employee session tool execution now applies the employee descriptor's
+  `allowed_tools` as a hard runtime gate, including exact tool names,
+  `prefix.*` groups, and the explicit `*` wildcard.
+- Default seeded CTO descriptors are constrained to Task Flow, memory, read-only
+  file, web, HTTP, and browser tools instead of broad subagent/runtime access.
+
+### Fixed
+
+- Secure credential resume now continues the interrupted LLM turn after
+  `credentials.request` completes instead of stopping at the helper tool result.
+- Task Flow operator-facing comment and document actions now consistently send a
+  validated human actor identity through the plugin API path.
+- Release metadata and lockfile package metadata are aligned to `1.9.20`.
+
 ## [1.9.19] - 2026-06-16
 
 ### Added

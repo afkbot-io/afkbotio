@@ -9,7 +9,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, TypeVar, cast, overload
 from uuid import uuid4
 
@@ -1912,6 +1912,42 @@ class TaskFlowService:
                                 settings=self._settings,
                             ),
                             action="woken",
+                        )
+                    )
+                    continue
+                cooldown_sec = max(
+                    1,
+                    int(settings.taskflow_knowledge_maintenance_terminal_cooldown_sec),
+                )
+                cooldown_started_at = now_utc - timedelta(seconds=cooldown_sec)
+                recent_terminal = next(
+                    (
+                        row
+                        for row in existing_rows
+                        if row.status in _TASK_TERMINAL_STATUSES
+                        and _task_recent_activity_at(row) >= cooldown_started_at
+                    ),
+                    None,
+                )
+                if recent_terminal is not None:
+                    skipped_count += 1
+                    checked.append(
+                        TaskKnowledgeMaintenanceFlowMetadata(
+                            profile_id=flow.profile_id,
+                            flow_id=flow.id,
+                            flow_title=flow.title,
+                            health_status=health.health_status,
+                            reasons=health.reasons,
+                            missing_flow_document_keys=health.missing_flow_document_keys,
+                            unconfirmed_flow_document_keys=health.unconfirmed_flow_document_keys,
+                            open_blocked_task_count=health.open_blocked_task_count,
+                            open_review_task_count=health.open_review_task_count,
+                            task=await _build_task_metadata(
+                                repo,
+                                recent_terminal,
+                                settings=self._settings,
+                            ),
+                            action="cooldown",
                         )
                     )
                     continue
@@ -5969,6 +6005,13 @@ async def _record_manager_escalation_if_needed(
 
 def _knowledge_maintenance_source_ref(flow_id: str) -> str:
     return f"flow:{flow_id}"
+
+
+def _task_recent_activity_at(row: Task) -> datetime:
+    timestamp = row.finished_at or row.updated_at or row.created_at
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)
 
 
 async def _build_knowledge_maintenance_health(

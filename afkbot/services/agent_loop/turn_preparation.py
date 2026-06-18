@@ -32,6 +32,8 @@ from afkbot.services.agent_loop.turn_preparation_support import (
     explicit_skill_unavailable_message as _explicit_skill_unavailable_message,
     explicit_subagent_invocations,
     has_automation_intent,
+)
+from afkbot.services.agent_loop.turn_planning_artifacts import (
     planned_tools_final_message as _planned_tools_final_message,
     turn_plan_payload as _turn_plan_payload,
 )

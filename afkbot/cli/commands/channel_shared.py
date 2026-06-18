@@ -62,7 +62,34 @@ class ResolvedBindingUpdateInputs:
     prompt_overlay: str | None
 
 
+@dataclass(frozen=True)
+class CollectedChannelUpdateBaseInputs:
+    """Shared base inputs collected by one channel update flow."""
+
+    profile_id: str
+    credential_profile_key: str
+    account_id: str
+    enabled: bool
+    tool_profile: ChannelToolProfile
+
+
 CHANNEL_ACCESS_MODES: tuple[str, ...] = ("open", "allowlist", "disabled")
+CHANNEL_TOOL_PROFILE_PROMPT_EN = "What can the agent do from this channel?"
+CHANNEL_TOOL_PROFILE_PROMPT_RU = "Что агент может делать из этого канала?"
+CHANNEL_TOOL_PROFILE_DETAIL_EN = (
+    "Choose the tools visible during turns started by this channel. The profile remains the "
+    "maximum permission ceiling; this setting mostly narrows it. Fixed current-channel tools "
+    "such as PartyFlow history can still be exposed for the active endpoint without opening "
+    "generic app.run, shell, or filesystem access. For private admin support use "
+    "`support_readonly`. Use `inherit` only for a fully trusted channel."
+)
+CHANNEL_TOOL_PROFILE_DETAIL_RU = (
+    "Выберите инструменты, видимые в диалогах, запущенных из этого канала. Профиль остаётся "
+    "максимальным потолком прав; эта настройка в основном сужает его. Фиксированные инструменты "
+    "текущего канала, например история PartyFlow, могут быть доступны только для активного endpoint "
+    "без открытия общего app.run, shell или файловой системы. Для личного support/admin-бота обычно "
+    "подходит `support_readonly`. `inherit` выбирайте только для полностью доверенного канала."
+)
 
 
 def should_collect_channel_add_interactively(
@@ -86,6 +113,30 @@ def should_collect_channel_update_interactively(
     """Return whether one channel update should prompt using current defaults."""
 
     return not yes and not sync_binding and all(value is None for value in values)
+
+
+def resolve_channel_tool_profile_value(
+    *,
+    value: str | None,
+    interactive: bool,
+    default: ChannelToolProfile,
+    lang: PromptLanguage,
+) -> ChannelToolProfile:
+    """Resolve the channel tool profile using one shared add/update prompt."""
+
+    return normalize_channel_tool_profile(
+        resolve_channel_choice(
+            value=value,
+            interactive=interactive,
+            prompt_en=CHANNEL_TOOL_PROFILE_PROMPT_EN,
+            prompt_ru=CHANNEL_TOOL_PROFILE_PROMPT_RU,
+            default=default,
+            allowed=CHANNEL_TOOL_PROFILE_VALUES,
+            lang=lang,
+            detail_en=CHANNEL_TOOL_PROFILE_DETAIL_EN,
+            detail_ru=CHANNEL_TOOL_PROFILE_DETAIL_RU,
+        )
+    )
 
 
 def build_generated_channel_id(*, transport: str) -> str:
@@ -262,30 +313,11 @@ def collect_channel_add_base_inputs(
             "и опрашивать, пока вы снова не включите канал."
         ),
     )
-    resolved_tool_profile = normalize_channel_tool_profile(
-        resolve_channel_choice(
-            value=tool_profile,
-            interactive=interactive,
-            prompt_en="What can the agent do from this channel?",
-            prompt_ru="Что агент может делать из этого канала?",
-            default=default_tool_profile,
-            allowed=CHANNEL_TOOL_PROFILE_VALUES,
-            lang=lang,
-            detail_en=(
-                "Choose the tools visible during turns started by this channel. The profile remains the "
-                "maximum permission ceiling; this setting mostly narrows it. Fixed current-channel tools "
-                "such as PartyFlow history can still be exposed for the active endpoint without opening "
-                "generic app.run, shell, or filesystem access. For private admin support use "
-                "`support_readonly`. Use `inherit` only for a fully trusted channel."
-            ),
-            detail_ru=(
-                "Выберите инструменты, видимые в диалогах, запущенных из этого канала. Профиль остаётся "
-                "максимальным потолком прав; эта настройка в основном сужает его. Фиксированные инструменты "
-                "текущего канала, например история PartyFlow, могут быть доступны только для активного endpoint "
-                "без открытия общего app.run, shell или файловой системы. Для личного support/admin-бота обычно "
-                "подходит `support_readonly`. `inherit` выбирайте только для полностью доверенного канала."
-            ),
-        )
+    resolved_tool_profile = resolve_channel_tool_profile_value(
+        value=tool_profile,
+        interactive=interactive,
+        default=default_tool_profile,
+        lang=lang,
     )
     resolved_create_binding = resolve_channel_bool(
         value=create_binding,
@@ -339,6 +371,88 @@ def collect_channel_add_base_inputs(
         tool_profile=resolved_tool_profile,
         create_binding=resolved_create_binding,
         session_policy=resolved_session_policy,
+    )
+
+
+def collect_channel_update_base_inputs(
+    *,
+    settings: Settings,
+    interactive: bool,
+    lang: PromptLanguage,
+    profile_id: str | None,
+    current_profile_id: str,
+    credential_profile_key: str | None,
+    current_credential_profile_key: str,
+    account_id: str | None,
+    current_account_id: str,
+    enabled: bool | None,
+    current_enabled: bool,
+    tool_profile: str | None,
+    current_tool_profile: ChannelToolProfile,
+) -> CollectedChannelUpdateBaseInputs:
+    """Collect shared update fields so channel add/edit expose the same core controls."""
+
+    resolved_profile_id = resolve_channel_profile_id(
+        settings=settings,
+        profile_id=profile_id if not interactive else None,
+        interactive=interactive,
+        default=current_profile_id,
+        lang=lang,
+    )
+    load_channel_profile(settings=settings, profile_id=resolved_profile_id)
+    resolved_credential_profile_key = resolve_channel_text(
+        value=None if interactive else credential_profile_key,
+        interactive=interactive,
+        prompt_en="Credential profile",
+        prompt_ru="Профиль учётных данных",
+        default=current_credential_profile_key,
+        lang=lang,
+        normalize_lower=True,
+        detail_en=(
+            "Credential profile key used by this endpoint. Keep the current value unless you are moving "
+            "the channel to another saved credential set."
+        ),
+        detail_ru=(
+            "Ключ профиля учётных данных для этого endpoint. Оставьте текущее значение, если не переносите "
+            "канал на другой сохранённый набор credentials."
+        ),
+    )
+    resolved_account_id = resolve_channel_text(
+        value=None if interactive else account_id,
+        interactive=interactive,
+        prompt_en="Account id",
+        prompt_ru="ID аккаунта",
+        default=current_account_id,
+        lang=lang,
+        normalize_lower=True,
+        detail_en="Local account id used in routing and channel-scoped tool context.",
+        detail_ru="Локальный id аккаунта, используемый в маршрутизации и контексте channel-scoped tools.",
+    )
+    resolved_enabled = resolve_channel_bool(
+        value=None if interactive else enabled,
+        interactive=interactive,
+        prompt_en="Enable channel?",
+        prompt_ru="Включить канал?",
+        default=current_enabled,
+        lang=lang,
+        detail_en="Disabled channels stay saved in config, but AFKBOT will not start or poll them until enabled.",
+        detail_ru=(
+            "Отключённый канал останется в конфиге, но AFKBOT не будет его запускать "
+            "и опрашивать, пока вы снова не включите канал."
+        ),
+    )
+    resolved_tool_profile = resolve_channel_tool_profile_value(
+        value=None if interactive else tool_profile or current_tool_profile,
+        interactive=interactive,
+        default=current_tool_profile,
+        lang=lang,
+    )
+    return CollectedChannelUpdateBaseInputs(
+        profile_id=resolved_profile_id,
+        credential_profile_key=resolved_credential_profile_key,
+        account_id=resolved_account_id,
+        enabled=resolved_enabled,
+        tool_profile=resolved_tool_profile,
     )
 
 

@@ -51,22 +51,72 @@ _PROFILE_BOOTSTRAP_STARTERS: dict[str, str] = {
 _GENERIC_PROFILE_BOOTSTRAP_STARTER = (
     "No profile-specific instructions in this bootstrap file. Use the global defaults."
 )
-_DEFAULT_CTO_EMPLOYEE_MARKDOWN = """---
+_DEFAULT_EMPLOYEE_MARKDOWN_BY_ID: dict[str, str] = {
+    "cto": """---
 id: cto
 name: "CTO"
 title: "Technical Director"
 role: executive_orchestrator
 status: active
-can_delegate_to: []
-allowed_tools: ["task.*", "memory.*", "file.read", "diffs.render", "web.*", "http.request", "file.*", "bash.exec", "browser.*", "session.job.run", "subagent.run"]
-can_use_subagents: true
+can_delegate_to: ["product-lead", "engineering-lead", "qa-lead"]
+allowed_tools: ["task.*", "memory.*", "file.read", "file.list", "file.search", "web.*", "http.request", "browser.*"]
+can_use_subagents: false
 max_active_tasks: 1
 ---
 
 # CTO
 
-Default Task Flow employee for this profile. Owns decomposition, routing, dependency control, review escalation, and creation of the first discipline-specific employees.
-"""
+Root Task Flow intake employee for this profile. Turns a user request into a plan, reads project knowledge, delegates implementation to the right lead, keeps dependencies coherent, handles blocked escalations, and sends human-facing review only when the organization cannot safely decide alone. It should not implement code directly when a specialist employee can own the work.
+""",
+    "product-lead": """---
+id: product-lead
+name: "Product Lead"
+title: "Product Lead"
+role: product_strategy
+status: active
+manager_id: cto
+allowed_tools: ["task.*", "memory.*", "file.read", "web.*", "http.request"]
+can_use_subagents: false
+max_active_tasks: 1
+---
+
+# Product Lead
+
+Clarifies product intent, acceptance criteria, user impact, scope boundaries, and release readiness. Produces durable Task Flow comments and documentation updates for product decisions instead of implementing code.
+""",
+    "engineering-lead": """---
+id: engineering-lead
+name: "Engineering Lead"
+title: "Engineering Lead"
+role: engineering_execution
+status: active
+manager_id: cto
+allowed_tools: ["task.*", "memory.*", "file.read", "file.*", "diffs.render", "bash.exec", "browser.*", "session.job.run", "subagent.run"]
+can_use_subagents: true
+max_active_tasks: 1
+---
+
+# Engineering Lead
+
+Owns implementation planning, code changes, verification, and handoff notes. Delegates specialist analysis through visible subagents/tools only when it reduces risk or context cost.
+""",
+    "qa-lead": """---
+id: qa-lead
+name: "QA Lead"
+title: "QA Lead"
+role: quality_assurance
+status: active
+manager_id: cto
+allowed_tools: ["task.*", "memory.*", "file.read", "diffs.render", "browser.*", "web.*", "http.request", "session.job.run", "subagent.run"]
+can_use_subagents: true
+max_active_tasks: 1
+---
+
+# QA Lead
+
+Validates behavior against acceptance criteria, checks regressions and security-sensitive paths, records evidence, and routes unresolved issues back to the responsible lead instead of silently passing weak work.
+""",
+}
 
 
 class ProfileServiceError(ValueError):
@@ -189,7 +239,7 @@ class ProfileService:
                     created=created_bootstrap_files,
                 )
                 await asyncio.to_thread(
-                    self._seed_default_cto_employee,
+                    self._seed_default_employees,
                     profile_id=profile_id,
                     created=created_employee_files,
                 )
@@ -274,7 +324,7 @@ class ProfileService:
                 else:
                     await asyncio.to_thread(self._runtime_secrets.remove, "default")
                 await asyncio.to_thread(self._seed_missing_bootstrap_files, profile_id="default")
-                await asyncio.to_thread(self._seed_default_cto_employee, profile_id="default")
+                await asyncio.to_thread(self._seed_default_employees, profile_id="default")
             await session.flush()
             return await self._build_details(row=row, session=session)
 
@@ -541,21 +591,25 @@ class ProfileService:
             created_paths.append(path)
         return tuple(created_paths)
 
-    def _seed_default_cto_employee(
+    def _seed_default_employees(
         self,
         *,
         profile_id: str,
         created: MutableSequence[Path] | None = None,
-    ) -> Path | None:
-        """Create a default Task Flow CTO employee when a profile has no CTO descriptor."""
+    ) -> tuple[Path, ...]:
+        """Create default Task Flow employee descriptors when they are missing."""
 
-        path = self._settings.profiles_dir / profile_id / "employees" / "cto.md"
-        if path.exists():
-            return None
-        atomic_text_write(path, _DEFAULT_CTO_EMPLOYEE_MARKDOWN, mode=0o600)
-        if created is not None:
-            created.append(path)
-        return path
+        created_paths: list[Path] = []
+        employees_root = self._settings.profiles_dir / profile_id / "employees"
+        for employee_id, markdown in _DEFAULT_EMPLOYEE_MARKDOWN_BY_ID.items():
+            path = employees_root / f"{employee_id}.md"
+            if path.exists():
+                continue
+            atomic_text_write(path, markdown, mode=0o600)
+            created_paths.append(path)
+            if created is not None:
+                created.append(path)
+        return tuple(created_paths)
 
     async def shutdown(self) -> None:
         """Dispose owned database engine."""

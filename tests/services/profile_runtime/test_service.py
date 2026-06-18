@@ -73,6 +73,9 @@ async def test_profile_service_creates_profile_with_config_and_policy(tmp_path: 
         assert cto_path.is_file()
         assert "id: cto" in cto_path.read_text(encoding="utf-8")
         assert "role: executive_orchestrator" in cto_path.read_text(encoding="utf-8")
+        assert (tmp_path / "profiles/analyst/employees/product-lead.md").is_file()
+        assert (tmp_path / "profiles/analyst/employees/engineering-lead.md").is_file()
+        assert (tmp_path / "profiles/analyst/employees/qa-lead.md").is_file()
         assert (tmp_path / "profiles/analyst/bootstrap/AGENTS.md").read_text(encoding="utf-8") == (
             "No profile-specific role instructions. Follow the global bootstrap and the current user request.\n"
         )
@@ -134,6 +137,9 @@ def test_run_profile_service_sync_creates_and_reads_default_profile(tmp_path: Pa
     assert created.id == "default"
     assert loaded.id == "default"
     assert (tmp_path / "profiles/default/employees/cto.md").is_file()
+    assert (tmp_path / "profiles/default/employees/product-lead.md").is_file()
+    assert (tmp_path / "profiles/default/employees/engineering-lead.md").is_file()
+    assert (tmp_path / "profiles/default/employees/qa-lead.md").is_file()
 
 
 def test_run_profile_service_sync_keeps_existing_default_bootstrap_files(tmp_path: Path) -> None:

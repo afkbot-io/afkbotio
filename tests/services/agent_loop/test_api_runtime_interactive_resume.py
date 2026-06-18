@@ -329,6 +329,62 @@ async def test_resume_chat_after_secure_submit_replays_pending_tool(monkeypatch)
     assert captured["message"] == "secure_resume:app.run"
 
 
+async def test_resume_chat_after_secure_submit_credentials_request_uses_synthetic_resume(
+    monkeypatch,
+) -> None:
+    """Helper-originated credential recovery should continue planning, not replay helper success."""
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        captured.update(kwargs)
+        return TurnResult(
+            run_id=4,
+            session_id="api-s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    envelope = ActionEnvelope(
+        action="request_secure_field",
+        message="secure",
+        question_id="secure-credentials-request",
+        secure_field="pat",
+        spec_patch={
+            "tool_name": "credentials.request",
+            "tool_params": {
+                "app_name": "gitlab",
+                "credential_slug": "pat",
+                "profile_name": "default",
+            },
+            "integration_name": "gitlab",
+            "credential_name": "pat",
+            "credential_profile_key": "default",
+            "secure_nonce": "nonce-credentials-request",
+        },
+    )
+
+    async def _resolve_trusted(**_: object) -> ActionEnvelope:
+        return envelope
+
+    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
+        _resolve_trusted,
+    )
+
+    result = await resume_chat_after_secure_submit(
+        envelope=envelope,
+        profile_id="default",
+        session_id="api-s",
+    )
+
+    assert result.envelope.action == "finalize"
+    assert isinstance(captured["message"], str)
+    assert str(captured["message"]).startswith("secure_resume: a required credential was captured")
+    assert captured["planned_tool_calls"] is None
+
+
 async def test_resume_chat_after_secure_submit_without_tool_uses_synthetic_resume(
     monkeypatch,
 ) -> None:

@@ -19,6 +19,7 @@ from afkbot.services.agent_loop.interactive_resume import (
     build_secure_resume_message,
     extract_resume_tool_call,
     is_credential_profile_question,
+    is_secure_resume_helper_tool,
     is_tool_not_allowed_question,
 )
 from afkbot.services.agent_loop.pending_envelopes import TOOL_NOT_ALLOWED_QUESTION_KIND
@@ -168,7 +169,7 @@ async def run_turn_with_secure_resolution(
                 )
             interaction_steps += 1
             resume_call = extract_resume_tool_call(result.envelope)
-            if resume_call is None:
+            if resume_call is None or is_secure_resume_helper_tool(resume_call):
                 current_message = build_secure_resume_message(result.envelope)
                 planned_tool_calls = None
                 continue

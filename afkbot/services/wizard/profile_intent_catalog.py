@@ -63,25 +63,17 @@ class ProfileIntentChoice:
 _DEPTHS: tuple[ProfileIntentChoice, ...] = (
     ProfileIntentChoice(
         id="quick",
-        label_en="Quick safe setup",
-        label_ru="Быстрая безопасная настройка",
-        description_en="AFKBOT answers chats/channels and can keep task memory; no files or shell",
-        description_ru="бот отвечает в чатах/каналах и ведёт задачи; без файлов и терминала",
-    ),
-    ProfileIntentChoice(
-        id="guided",
-        label_en="Guided scenario setup",
-        label_ru="Настройка по сценариям",
-        description_en="choose where the bot works, what it may do, and its isolation level",
-        description_ru="выбрать, где бот работает, что ему можно делать и как его изолировать",
+        label_en="Quick sandbox setup",
+        label_ru="Быстрая настройка в sandbox",
+        description_en="enable files, network, browser, skills, Task Flow, and tools inside the profile sandbox",
+        description_ru="включить файлы, сеть, браузер, скиллы, Task Flow и инструменты внутри sandbox профиля",
     ),
     ProfileIntentChoice(
         id="expert",
-        label_en="Detailed manual setup",
-        label_ru="Вручную: детальная настройка",
+        label_en="Manual setup",
+        label_ru="Ручная настройка",
         description_en="review every low-level capability, file, terminal, and network permission",
         description_ru="проверить каждую возможность, файлы, терминал и сеть отдельно",
-        expert_only=True,
     ),
 )
 
@@ -454,15 +446,32 @@ def profile_intent_action_choices_for_contexts(
 
 
 def quick_safe_profile_intent_defaults() -> dict[str, object]:
-    """Return the no-files/no-shell default used by recommended setup."""
+    """Return the quick sandbox default used by recommended setup."""
 
     return {
         "depth": "quick",
-        "work_contexts": ("channels",),
-        "actions": ("reply", "channel_history", "taskflow", "memory"),
-        "isolation": "no_files",
-        "confirmation": "balanced",
-        "network": "recommended",
+        "work_contexts": ("channels", "project", "automations", "sandbox"),
+        "actions": (
+            "reply",
+            "channel_history",
+            "channel_send",
+            "taskflow",
+            "automation",
+            "project_read",
+            "project_write",
+            "sandbox_write",
+            "shell_allowlist",
+            "internet_docs",
+            "browser",
+            "external_services",
+            "memory",
+            "subagents",
+            "credentials",
+            "afkbot_admin",
+        ),
+        "isolation": "profile_shell",
+        "confirmation": "fast",
+        "network": "unrestricted",
     }
 
 

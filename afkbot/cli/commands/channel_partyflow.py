@@ -22,12 +22,10 @@ from afkbot.cli.commands.channel_shared import (
     build_ingress_batch_config,
     collect_channel_access_policy_inputs,
     collect_channel_add_base_inputs,
-    load_channel_profile,
+    collect_channel_update_base_inputs,
     merge_ingress_batch_config,
-    normalize_channel_tool_profile,
     put_access_policy_bindings,
     resolve_binding_update_inputs,
-    resolve_channel_update_profile_id,
     render_channel_add_intro,
     render_ingress_batch_summary,
     should_collect_channel_add_interactively,
@@ -77,7 +75,6 @@ from afkbot.services.channels.endpoint_service import (
 from afkbot.services.channels.partyflow_polling import PartyFlowPollingService
 from afkbot.services.channels.tool_profiles import (
     CHANNEL_TOOL_PROFILE_HELP,
-    CHANNEL_TOOL_PROFILE_VALUES,
 )
 from afkbot.services.credentials import CredentialsServiceError, get_credentials_service
 from afkbot.services.profile_runtime import ProfileDetails, run_profile_service_sync
@@ -426,6 +423,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
         profile_id: str | None = typer.Option(None, "--profile"),
         credential_profile_key: str | None = typer.Option(None, "--credential-profile"),
         account_id: str | None = typer.Option(None, "--account-id"),
+        enabled: bool | None = typer.Option(None, "--enabled/--disabled"),
         trigger_mode: str | None = typer.Option(None, "--trigger-mode"),
         trigger_keywords: str | None = typer.Option(None, "--trigger-keywords"),
         private_policy: str | None = typer.Option(None, "--private-policy", case_sensitive=False),
@@ -465,6 +463,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     profile_id,
                     credential_profile_key,
                     account_id,
+                    enabled,
                     trigger_mode,
                     trigger_keywords,
                     private_policy,
@@ -482,56 +481,35 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                     ingress_max_buffer_chars,
                 ),
             )
-            resolved_profile_id = resolve_channel_update_profile_id(
+            base_inputs = collect_channel_update_base_inputs(
+                settings=settings,
+                interactive=interactive,
+                lang=prompt_language,
                 profile_id=profile_id,
                 current_profile_id=current.profile_id,
+                credential_profile_key=credential_profile_key,
+                current_credential_profile_key=current.credential_profile_key,
+                account_id=account_id,
+                current_account_id=current.account_id,
+                enabled=enabled,
+                current_enabled=current.enabled,
+                tool_profile=tool_profile,
+                current_tool_profile=current.tool_profile,
             )
-            load_channel_profile(settings=settings, profile_id=resolved_profile_id)
             resolved_trigger_mode = _resolve_trigger_mode(
                 value=None if interactive else trigger_mode,
                 interactive=interactive,
                 lang=prompt_language,
                 default=current.trigger_mode,
             )
-            resolved_tool_profile = (
-                normalize_channel_tool_profile(
-                    resolve_channel_choice(
-                        value=None,
-                        interactive=True,
-                        prompt_en="Channel tool profile",
-                        prompt_ru="Профиль инструментов канала",
-                        default=current.tool_profile,
-                        allowed=CHANNEL_TOOL_PROFILE_VALUES,
-                        lang=prompt_language,
-                    )
-                )
-                if interactive
-                else normalize_channel_tool_profile(tool_profile or current.tool_profile)
-            )
             saved = _update_partyflow_endpoint(
                 settings=settings,
                 endpoint=PartyFlowPollingEndpointConfig(
                     endpoint_id=current.endpoint_id,
-                    profile_id=resolved_profile_id,
-                    credential_profile_key=resolve_channel_text(
-                        value=credential_profile_key,
-                        interactive=False,
-                        prompt_en="Credential profile",
-                        prompt_ru="Credential profile",
-                        default=current.credential_profile_key,
-                        lang=prompt_language,
-                        normalize_lower=True,
-                    ),
-                    account_id=resolve_channel_text(
-                        value=account_id,
-                        interactive=False,
-                        prompt_en="Account id",
-                        prompt_ru="Account id",
-                        default=current.account_id,
-                        lang=prompt_language,
-                        normalize_lower=True,
-                    ),
-                    enabled=current.enabled,
+                    profile_id=base_inputs.profile_id,
+                    credential_profile_key=base_inputs.credential_profile_key,
+                    account_id=base_inputs.account_id,
+                    enabled=base_inputs.enabled,
                     trigger_mode=resolved_trigger_mode,  # type: ignore[arg-type]
                     trigger_keywords=_resolve_trigger_keywords(
                         interactive=interactive,
@@ -550,7 +528,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         allowed=_PARTYFLOW_REPLY_MODES,
                         lang=prompt_language,
                     ),  # type: ignore[arg-type]
-                    tool_profile=resolved_tool_profile,
+                    tool_profile=base_inputs.tool_profile,
                     access_policy=collect_channel_access_policy_inputs(
                         interactive=interactive,
                         lang=prompt_language,
@@ -560,7 +538,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         groups=groups,
                         group_allow_from=group_allow_from,
                         outbound_allow_to=outbound_allow_to,
-                        tool_profile=resolved_tool_profile,
+                        tool_profile=base_inputs.tool_profile,
                         private_policy_default=current.access_policy.private_policy,
                         allow_from_default=current.access_policy.allow_from,
                         group_policy_default=current.access_policy.group_policy,

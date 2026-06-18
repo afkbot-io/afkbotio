@@ -20,7 +20,7 @@ _KNOWN_PLUGINS: tuple[KnownPlugin, ...] = (
         plugin_id="afkbotui",
         name="AFKBOT UI",
         description="Unified AFKBOT web workspace for automations and future operator surfaces.",
-        source_ref="github:afkbot-io/afkbotuiplugin@main",
+        source_ref="github:afkbot-io/afkbotuiplugin@latest",
     ),
 )
 

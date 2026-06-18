@@ -23,7 +23,7 @@ from afkbot.services.plugins import (
     get_plugin_service,
     scaffold_plugin,
 )
-from afkbot.settings import get_settings
+from afkbot.settings import Settings, get_settings
 
 
 def register(app: typer.Typer) -> None:
@@ -64,14 +64,21 @@ def register(app: typer.Typer) -> None:
         """Show one installed plugin record."""
 
         try:
-            item = get_plugin_service(get_settings()).inspect(plugin_id=plugin_id)
+            settings = get_settings()
+            item = get_plugin_service(settings).inspect(plugin_id=plugin_id)
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin"))
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading="Plugin",
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
 
     @plugin_app.command("config-get")
     def get_plugin_config(
@@ -204,7 +211,14 @@ def register(app: typer.Typer) -> None:
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin installed"))
+        prompt_language = resolve_prompt_language(settings=settings, value=None, ru=False)
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading=msg(prompt_language, en="Plugin installed", ru="Плагин установлен"),
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
 
     @plugin_app.command("scaffold")
     def scaffold(
@@ -302,15 +316,22 @@ def register(app: typer.Typer) -> None:
             "--force",
             help="Update even when configured channel endpoints may lose adapter support.",
         ),
+        reinstall: bool = typer.Option(
+            False,
+            "--reinstall",
+            help="Reinstall the exact saved source ref instead of resolving the latest compatible release.",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of human text."),
     ) -> None:
-        """Reinstall one plugin from its persisted source."""
+        """Update one plugin to the latest compatible release."""
 
         try:
-            item = get_plugin_service(get_settings()).update(
+            settings = get_settings()
+            item = get_plugin_service(settings).update(
                 plugin_id=plugin_id,
                 enable=enable,
                 force=force,
+                reinstall=reinstall,
             )
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
@@ -318,7 +339,14 @@ def register(app: typer.Typer) -> None:
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin updated"))
+        prompt_language = resolve_prompt_language(settings=settings, value=None, ru=False)
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading=msg(prompt_language, en="Plugin updated", ru="Плагин обновлён"),
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
 
     @plugin_app.command("enable")
     def enable_plugin(
@@ -328,14 +356,21 @@ def register(app: typer.Typer) -> None:
         """Enable one installed plugin."""
 
         try:
-            item = get_plugin_service(get_settings()).enable(plugin_id=plugin_id)
+            settings = get_settings()
+            item = get_plugin_service(settings).enable(plugin_id=plugin_id)
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin enabled"))
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading="Plugin enabled",
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
 
     @plugin_app.command("disable")
     def disable_plugin(
@@ -350,14 +385,21 @@ def register(app: typer.Typer) -> None:
         """Disable one installed plugin."""
 
         try:
-            item = get_plugin_service(get_settings()).disable(plugin_id=plugin_id, force=force)
+            settings = get_settings()
+            item = get_plugin_service(settings).disable(plugin_id=plugin_id, force=force)
         except PluginServiceError as exc:
             emit_command_error(exc, default_error_code="plugin_error", json_output=json_output)
             raise typer.Exit(code=1) from None
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin disabled"))
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading="Plugin disabled",
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
 
     @plugin_app.command("remove")
     def remove_plugin(
@@ -382,7 +424,8 @@ def register(app: typer.Typer) -> None:
         """Remove one plugin from the install registry."""
 
         try:
-            item = get_plugin_service(get_settings()).remove(
+            settings = get_settings()
+            item = get_plugin_service(settings).remove(
                 plugin_id=plugin_id,
                 purge_files=purge_files,
                 force=force,
@@ -394,4 +437,21 @@ def register(app: typer.Typer) -> None:
         if json_output:
             typer.echo(json.dumps({"plugin": item.model_dump(mode="json")}, ensure_ascii=True))
             return
-        typer.echo(format_plugin_record(item, heading="Plugin removed"))
+        typer.echo(
+            format_plugin_record(
+                item,
+                heading="Plugin removed",
+                public_base_url=_plugin_public_base_url(settings),
+            )
+        )
+
+
+def _plugin_public_base_url(settings: Settings) -> str:
+    if settings.public_runtime_url:
+        return settings.public_runtime_url.rstrip("/")
+    host = (settings.runtime_host or "127.0.0.1").strip()
+    if host in {"", "0.0.0.0", "::"}:
+        host = "127.0.0.1"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"http://{host}:{settings.runtime_port + 1}"

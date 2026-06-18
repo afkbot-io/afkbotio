@@ -33,6 +33,11 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
             "--account-id",
             help="Channel account id used by bindings and routing telemetry.",
         ),
+        enabled: bool | None = typer.Option(
+            None,
+            "--enabled/--disabled",
+            help="Enable or disable this endpoint.",
+        ),
         reply_mode: str | None = typer.Option(
             None,
             "--reply-mode",
@@ -274,6 +279,7 @@ def register_telethon_update_command(telethon_app: typer.Typer) -> None:
                 profile_id=profile_id,
                 credential_profile_key=credential_profile_key,
                 account_id=account_id,
+                enabled=enabled,
                 reply_mode=reply_mode,
                 private_policy=private_policy,
                 allow_from=allow_from,

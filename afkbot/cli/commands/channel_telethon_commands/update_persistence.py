@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from afkbot.cli.commands.channel_prompt_support import resolve_channel_text
 from afkbot.cli.presentation.setup_prompts import PromptLanguage
 from afkbot.cli.commands.channel_shared import (
     put_access_policy_bindings,
@@ -31,8 +30,9 @@ def save_updated_telethon_channel(
     settings: Settings,
     current: TelethonUserEndpointConfig,
     profile_id: str,
-    credential_profile_key: str | None,
-    account_id: str | None,
+    credential_profile_key: str,
+    account_id: str,
+    enabled: bool,
     reply_mode: TelethonReplyMode,
     tool_profile: ChannelToolProfile,
     access_policy: ChannelAccessPolicy,
@@ -56,25 +56,9 @@ def save_updated_telethon_channel(
     endpoint = TelethonUserEndpointConfig(
         endpoint_id=current.endpoint_id,
         profile_id=profile_id,
-        credential_profile_key=resolve_channel_text(
-            value=credential_profile_key,
-            interactive=False,
-            prompt_en="Credential profile",
-            prompt_ru="Профиль учётных данных",
-            default=current.credential_profile_key or current.endpoint_id,
-            lang=prompt_language,
-            normalize_lower=True,
-        ),
-        account_id=resolve_channel_text(
-            value=account_id,
-            interactive=False,
-            prompt_en="Account id",
-            prompt_ru="ID аккаунта",
-            default=current.account_id,
-            lang=prompt_language,
-            normalize_lower=True,
-        ),
-        enabled=current.enabled,
+        credential_profile_key=credential_profile_key,
+        account_id=account_id,
+        enabled=enabled,
         reply_mode=reply_mode,
         tool_profile=tool_profile,
         access_policy=access_policy,

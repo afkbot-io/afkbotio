@@ -17,7 +17,10 @@ from afkbot.services.profile_runtime.contracts import (
     ProfileRuntimeResolved,
     ProfileRuntimeSecretsView,
 )
-from afkbot.services.setup.defaults import recommended_policy_capabilities
+from afkbot.services.wizard.profile_intent_mapper import (
+    map_profile_intent_to_policy,
+    quick_safe_profile_intent_selection,
+)
 
 
 def _profile_details(
@@ -140,6 +143,8 @@ def test_build_policy_defaults_from_details_recognizes_recommended_setup_shape(
 
     # Arrange
     profile_root = tmp_path / "profiles/default"
+    quick_selection = quick_safe_profile_intent_selection()
+    quick_policy = map_profile_intent_to_policy(quick_selection)
     details = ProfileDetails(
         id="default",
         name="Default",
@@ -165,11 +170,13 @@ def test_build_policy_defaults_from_details_recognizes_recommended_setup_shape(
         subagents_dir="profiles/default/subagents",
         policy=ProfilePolicyView(
             enabled=True,
-            preset="medium",
-            capabilities=recommended_policy_capabilities(),
-            file_access_mode="none",
+            preset=quick_policy.preset,
+            capabilities=quick_policy.capabilities,
+            file_access_mode=quick_policy.file_access_mode,
             allowed_directories=(str(profile_root.resolve(strict=False)),),
-            network_allowlist=(),
+            shell_sandbox_mode=quick_policy.shell_sandbox_mode,
+            shell_allowed_commands=quick_policy.shell_allowed_commands,
+            network_allowlist=("*",),
         ),
     )
 
@@ -178,6 +185,8 @@ def test_build_policy_defaults_from_details_recognizes_recommended_setup_shape(
 
     # Assert
     assert defaults["AFKBOT_POLICY_SETUP_MODE"] == "recommended"
+    assert defaults["AFKBOT_WIZARD_SETUP_DEPTH"] == "quick"
+    assert defaults["AFKBOT_WIZARD_NETWORK"] == "unrestricted"
 
 
 def test_build_profile_defaults_does_not_inherit_global_wizard_intent_metadata() -> None:

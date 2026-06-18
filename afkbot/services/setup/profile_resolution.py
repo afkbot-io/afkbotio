@@ -565,7 +565,7 @@ def resolve_profile_policy_inputs(
         stored_intent = profile_intent_selection_from_defaults(defaults)
         selected_depth = (
             prompt_profile_intent_depth(
-                default=stored_intent.depth if stored_intent is not None else "guided",
+                default=stored_intent.depth if stored_intent is not None else "quick",
                 lang=lang,
             )
             .strip()

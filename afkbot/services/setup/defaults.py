@@ -14,8 +14,19 @@ from afkbot.services.setup.runtime_store import read_runtime_config, read_runtim
 from afkbot.settings import Settings
 
 _RECOMMENDED_POLICY_CAPABILITY_IDS: tuple[PolicyCapabilityId, ...] = (
+    PolicyCapabilityId.FILES,
+    PolicyCapabilityId.SHELL,
     PolicyCapabilityId.MEMORY,
+    PolicyCapabilityId.CREDENTIALS,
+    PolicyCapabilityId.SUBAGENTS,
+    PolicyCapabilityId.AUTOMATION,
     PolicyCapabilityId.TASKFLOW,
+    PolicyCapabilityId.HTTP,
+    PolicyCapabilityId.WEB,
+    PolicyCapabilityId.BROWSER,
+    PolicyCapabilityId.SKILLS,
+    PolicyCapabilityId.APPS,
+    PolicyCapabilityId.MCP,
 )
 
 
@@ -301,8 +312,9 @@ def normalize_runtime_string_seq(raw: object) -> tuple[str, ...]:
 def recommended_policy_capabilities() -> tuple[str, ...]:
     """Return recommended capability ids used by setup defaults and prompts.
 
-    Recommended setup keeps medium preset guardrails while excluding local
-    files, shell, credentials, integrations, browser, and broad network tools.
+    Recommended setup now means the quick sandbox profile: broad day-one
+    capabilities are enabled, while shell/runtime actions still require the
+    configured sandbox boundary.
     """
 
     return tuple(capability.value for capability in _RECOMMENDED_POLICY_CAPABILITY_IDS)

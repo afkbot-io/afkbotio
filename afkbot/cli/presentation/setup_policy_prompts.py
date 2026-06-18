@@ -42,12 +42,12 @@ def prompt_policy_setup_mode(
         text=msg(
             lang,
             en=(
-                "Choose a quick safe profile now, or open the guided wizard to choose where the bot works and "
-                "what it may do. You can still edit the profile later."
+                "Choose a quick sandbox profile now, or configure permissions manually. "
+                "You can still edit the profile later."
             ),
             ru=(
-                "Выберите быструю безопасную настройку или откройте мастер, чтобы указать, где бот работает "
-                "и что ему можно делать. Профиль можно изменить позже."
+                "Выберите быструю sandbox-настройку или настройте права вручную. "
+                "Профиль можно изменить позже."
             ),
         ),
         options=[
@@ -55,16 +55,16 @@ def prompt_policy_setup_mode(
                 "recommended",
                 msg(
                     lang,
-                    en="Quick safe setup - chats/channels, tasks, memory; no files or shell",
-                    ru="Быстро и безопасно - чаты/каналы, задачи, память; без файлов и терминала",
+                    en="Quick sandbox setup - files, network, browser, Task Flow, skills, tools; sandbox required",
+                    ru="Быстро в sandbox - файлы, сеть, браузер, Task Flow, скиллы, тулзы; sandbox обязателен",
                 ),
             ),
             (
                 "custom",
                 msg(
                     lang,
-                    en="Guided setup - choose surfaces, actions, isolation, network",
-                    ru="Мастер настройки - выбрать места работы, действия, изоляцию и сеть",
+                    en="Manual setup - choose capabilities, file scope, shell, and network",
+                    ru="Ручная настройка - выбрать возможности, файлы, терминал и сеть",
                 ),
             ),
         ],

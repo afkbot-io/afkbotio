@@ -12,6 +12,7 @@ from afkbot.services.agent_loop.interactive_resume import (
     build_secure_resume_message,
     extract_resume_tool_call,
     is_credential_profile_question,
+    is_secure_resume_helper_tool,
 )
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.tools.base import ToolCall
@@ -259,7 +260,7 @@ async def resume_chat_after_secure_submit_flow(
     envelope = trusted_envelope
 
     resume_call = extract_resume_tool_call(envelope)
-    if resume_call is None:
+    if resume_call is None or is_secure_resume_helper_tool(resume_call):
         return await run_chat_turn_call(
             message=build_secure_resume_message(envelope),
             profile_id=profile_id,
