@@ -14,6 +14,8 @@ from afkbot.services.automations.graph.contracts import AutomationGraphNodeSpec,
 from afkbot.services.automations.payloads import sanitize_payload
 from afkbot.services.automations.webhook_tokens import build_webhook_path, build_webhook_url
 from afkbot.services.profile_runtime import ProfileRuntimeConfig, get_profile_runtime_config_service
+from afkbot.services.tools.base import ToolContext
+from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.settings import Settings
 from tests.services.automations._harness import (
     BlockingLoop,
@@ -123,10 +125,28 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
             "event_id",
             "k",
         )
+        assert overrides.trusted_runtime_context is not None
+        assert overrides.trusted_runtime_context["automation_runtime"] == {
+            "automation_id": webhook.id,
+        }
+        actor = resolve_task_tool_actor(
+            ToolContext(
+                profile_id="default",
+                session_id=hook_result.session_id,
+                run_id=1,
+                runtime_metadata=overrides.runtime_metadata,
+                trusted_runtime_context=overrides.trusted_runtime_context,
+            )
+        )
+        assert actor.actor_type == "automation"
+        assert actor.actor_ref == f"automation:default:{webhook.id}"
+        assert actor.actor_session_id is None
         assert isinstance(overrides.runtime_metadata["automation"]["event_hash"], str)
         assert overrides.runtime_metadata["automation"]["event_hash"]
         assert overrides.prompt_overlay is not None
         assert "Automation execution context." in overrides.prompt_overlay
+        assert "use task.create directly" in overrides.prompt_overlay
+        assert "do not set session_id or session_profile_id" in overrides.prompt_overlay
         assert hook_result.deduplicated is False
         metadata_after_success = await service.get(profile_id="default", automation_id=webhook.id)
         assert metadata_after_success.webhook is not None

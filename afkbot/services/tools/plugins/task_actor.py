@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from afkbot.services.task_flow.contracts import TaskFlowMetadata, TaskMetadata
 
 _TRUSTED_TASKFLOW_DETACHED_KEY = "taskflow_detached_runtime"
+_TRUSTED_AUTOMATION_RUNTIME_KEY = "automation_runtime"
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,10 @@ class TaskToolActorIdentity:
 
 def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
     """Return the canonical actor identity for task tools in the current runtime."""
+
+    automation_actor = _trusted_automation_actor(ctx=ctx)
+    if automation_actor is not None:
+        return automation_actor
 
     automation_graph = None
     if isinstance(ctx.runtime_metadata, dict):
@@ -54,6 +59,26 @@ def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
         return detached_actor
 
     return TaskToolActorIdentity(actor_type="human", actor_ref="web-user", actor_session_id=None)
+
+
+def _trusted_automation_actor(*, ctx: ToolContext) -> TaskToolActorIdentity | None:
+    trusted_context = ctx.trusted_runtime_context
+    if not isinstance(trusted_context, dict):
+        return None
+    automation_payload = trusted_context.get(_TRUSTED_AUTOMATION_RUNTIME_KEY)
+    if not isinstance(automation_payload, dict):
+        return None
+    automation_id = automation_payload.get("automation_id")
+    if not isinstance(automation_id, int):
+        return None
+    return TaskToolActorIdentity(
+        actor_type="automation",
+        actor_ref=build_automation_principal_ref(
+            profile_id=ctx.profile_id,
+            automation_id=automation_id,
+        ),
+        actor_session_id=None,
+    )
 
 
 async def restrict_employee_read_owner_scope(

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.21] - 2026-06-18
+
+### Changed
+
+- Automation prompt overlays now tell agents how to create Task Flow work from
+  webhook or cron runs: call `task.create` with the target `flow_id`, assign an
+  employee owner, and leave session bindings to the runtime.
+
+### Fixed
+
+- Prompt-mode webhook and cron automations now resolve Task Flow mutations to the
+  trusted `automation:<profile_id>:<automation_id>` principal, so strict public
+  actor validation no longer rejects automation-created tasks with
+  `task_creator_forbidden`.
+- Release metadata and lockfile package metadata are aligned to `1.9.21`.
+
 ## [1.9.20] - 2026-06-18
 
 ### Added

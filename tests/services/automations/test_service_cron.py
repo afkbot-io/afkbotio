@@ -85,6 +85,11 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
             assert overrides.runtime_metadata["automation"]["trigger_type"] == "cron"
             assert "automation_id" in overrides.runtime_metadata["automation"]
             assert "cron_expr" in overrides.runtime_metadata["automation"]
+            assert overrides.trusted_runtime_context is not None
+            assert "automation_runtime" in overrides.trusted_runtime_context
+            automation_runtime = overrides.trusted_runtime_context["automation_runtime"]
+            assert isinstance(automation_runtime, dict)
+            assert "automation_id" in automation_runtime
             assert overrides.prompt_overlay is not None
             assert "Automation execution context." in overrides.prompt_overlay
 

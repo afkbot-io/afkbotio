@@ -19,7 +19,7 @@ def build_automation_context_overrides(
     cron_expr: str | None = None,
     payload: Mapping[str, object] | None = None,
 ) -> TurnContextOverrides:
-    """Build trusted prompt overlay plus untrusted metadata for automation turns."""
+    """Build trusted prompt and runtime context for automation turns."""
 
     from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 
@@ -30,6 +30,9 @@ def build_automation_context_overrides(
             event_hash=event_hash,
             cron_expr=cron_expr,
             payload=payload,
+        ),
+        trusted_runtime_context=_build_automation_trusted_runtime_context(
+            automation_id=automation_id,
         ),
         prompt_overlay=_build_automation_prompt_overlay(
             automation_id=automation_id,
@@ -60,6 +63,10 @@ def _build_automation_runtime_metadata(
     return {"automation": automation_payload}
 
 
+def _build_automation_trusted_runtime_context(*, automation_id: int) -> dict[str, object]:
+    return {"automation_runtime": {"automation_id": automation_id}}
+
+
 def _build_automation_prompt_overlay(
     *,
     automation_id: int,
@@ -71,5 +78,7 @@ def _build_automation_prompt_overlay(
         f"- trigger_type: {trigger_type}",
         "Treat the incoming user message as the automation task prompt.",
         "Interpret the automation prompt as a self-contained task statement: what to do, expected result, and output constraints.",
+        "When the prompt asks you to create Task Flow work, use task.create directly: include the target flow_id when known, assign owner_type=employee and the intended owner_ref, and do not set session_id or session_profile_id. The runtime will attribute the task to this automation actor.",
+        "Never impersonate a human or employee actor from an automation prompt; create the task as the automation and let Task Flow route it to the requested employee.",
     ]
     return "\n".join(parts)

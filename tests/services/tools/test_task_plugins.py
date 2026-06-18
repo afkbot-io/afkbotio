@@ -2077,6 +2077,74 @@ async def test_task_create_plugin_uses_automation_principal_without_fake_session
         await engine.dispose()
 
 
+async def test_task_create_plugin_uses_webhook_automation_runtime_principal(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """webhook prompt task.create should use the trusted automation runtime actor."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        actor_ref = await _create_automation_actor(
+            engine,
+            profile_id="default",
+            name="task-create-webhook-automation-actor",
+        )
+        automation_id = int(actor_ref.rsplit(":", 1)[1])
+        create_tool = registry.get("task.create")
+        assert create_tool is not None
+
+        ctx = ToolContext(
+            profile_id="default",
+            session_id=f"automation-webhook-{automation_id}-evt-1",
+            run_id=9,
+            runtime_metadata={
+                "automation": {
+                    "automation_id": automation_id,
+                    "trigger_type": "webhook",
+                    "event_hash": "evt-1",
+                },
+                "transport": "automation",
+            },
+            trusted_runtime_context={
+                "automation_runtime": {
+                    "automation_id": automation_id,
+                }
+            },
+        )
+
+        create_result = await create_tool.execute(
+            ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Webhook automation created task",
+                    "description": "created from a webhook prompt without public actor spoofing",
+                    "flow_id": None,
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert create_result.ok is True
+        task_payload = create_result.payload["task"]
+        assert isinstance(task_payload, dict)
+        assert task_payload["created_by_type"] == "automation"
+        assert task_payload["created_by_ref"] == actor_ref
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "default"
+        assert task_payload["last_session_id"] is None
+        assert task_payload["last_session_profile_id"] is None
+    finally:
+        await engine.dispose()
+
+
 async def test_task_update_plugin_rejects_running_status_without_real_session_in_automation_graph(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

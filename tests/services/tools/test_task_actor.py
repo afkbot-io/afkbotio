@@ -29,6 +29,51 @@ def test_resolve_task_tool_actor_ignores_untrusted_taskflow_employee_spoof() -> 
     assert identity.actor_session_id is None
 
 
+def test_resolve_task_tool_actor_ignores_untrusted_automation_metadata() -> None:
+    """Model-visible runtime_metadata.automation must not become an auth principal."""
+
+    identity = resolve_task_tool_actor(
+        ToolContext(
+            profile_id="default",
+            session_id="automation-webhook-1-event",
+            run_id=1,
+            runtime_metadata={
+                "transport": "automation",
+                "automation": {"automation_id": 7},
+            },
+        )
+    )
+
+    assert identity.actor_type == "human"
+    assert identity.actor_ref == "web-user"
+    assert identity.actor_session_id is None
+
+
+def test_resolve_task_tool_actor_uses_trusted_automation_runtime_context() -> None:
+    """Prompt-mode automations should create Task Flow work as their automation actor."""
+
+    identity = resolve_task_tool_actor(
+        ToolContext(
+            profile_id="default",
+            session_id="automation-webhook-7-event",
+            run_id=1,
+            runtime_metadata={
+                "transport": "automation",
+                "automation": {"automation_id": 7},
+            },
+            trusted_runtime_context={
+                "automation_runtime": {
+                    "automation_id": 7,
+                }
+            },
+        )
+    )
+
+    assert identity.actor_type == "automation"
+    assert identity.actor_ref == "automation:default:7"
+    assert identity.actor_session_id is None
+
+
 def test_resolve_task_tool_actor_uses_trusted_detached_employee_context() -> None:
     """Trusted detached runtime context should keep employee actor identity."""
 
