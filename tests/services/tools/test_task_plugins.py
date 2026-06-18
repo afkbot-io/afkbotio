@@ -1370,6 +1370,81 @@ async def test_task_update_plugin_rejects_explicit_session_binding_in_automation
         await engine.dispose()
 
 
+async def test_task_update_plugin_ignores_null_session_binding_in_automation_graph_runtime(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """automation graph task.update should treat explicit null session bindings as absent."""
+
+    settings, engine, registry = await _prepare(
+        tmp_path,
+        monkeypatch,
+        taskflow_public_principal_required=True,
+    )
+    try:
+        actor_ref = await _create_automation_actor(
+            engine,
+            profile_id="default",
+            name="task-update-automation-actor",
+        )
+        automation_id = int(actor_ref.rsplit(":", 1)[1])
+        create_tool = registry.get("task.create")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert update_tool is not None
+
+        automation_ctx = ToolContext(
+            profile_id="default",
+            session_id=f"automation-graph-{automation_id}-10-call_tool",
+            run_id=10,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": automation_id,
+                    "run_id": 10,
+                    "node_key": "call_tool",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+        create_result = await create_tool.execute(
+            automation_ctx,
+            create_tool.parse_params(
+                {
+                    "title": "Automation runtime nullable update target",
+                    "description": "Seed task for nullable automation graph update guard.",
+                    "session_id": None,
+                    "session_profile_id": None,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert create_result.ok is True
+        task_id = str(create_result.payload["task"]["id"])
+        update_result = await update_tool.execute(
+            automation_ctx,
+            update_tool.parse_params(
+                {
+                    "task_id": task_id,
+                    "title": "Automation runtime nullable update complete",
+                    "session_id": None,
+                    "session_profile_id": None,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+
+        assert update_result.ok is True
+        task_payload = update_result.payload["task"]
+        assert isinstance(task_payload, dict)
+        assert task_payload["title"] == "Automation runtime nullable update complete"
+        assert task_payload["last_session_id"] is None
+        assert task_payload["last_session_profile_id"] is None
+    finally:
+        await engine.dispose()
+
+
 async def test_task_block_plugin_uses_runtime_task_context_and_schedules_revisit(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -2060,6 +2135,8 @@ async def test_task_create_plugin_uses_automation_principal_without_fake_session
                 {
                     "title": "Automation created task",
                     "description": "created without borrowing a chat/task session",
+                    "session_id": None,
+                    "session_profile_id": None,
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2126,6 +2203,8 @@ async def test_task_create_plugin_uses_webhook_automation_runtime_principal(
                     "flow_id": None,
                     "owner_type": "employee",
                     "owner_ref": "default",
+                    "session_id": None,
+                    "session_profile_id": None,
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,

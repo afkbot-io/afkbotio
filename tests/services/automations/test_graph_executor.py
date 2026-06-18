@@ -1834,6 +1834,83 @@ async def test_graph_executor_action_tool_run_supports_task_tools_under_automati
         await engine.dispose()
 
 
+async def test_graph_executor_action_tool_run_task_create_ignores_null_session_binding(
+    tmp_path: Path,
+) -> None:
+    """Generic task.create tool nodes should tolerate optional null session fields."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=True,
+    )
+    engine, _, service = await prepare_service(tmp_path, settings_override=settings)
+    try:
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-tool-run-task-create-null-session",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=created.id,
+            spec=AutomationGraphSpec(
+                name="tool-run-task-create-null-session-flow",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="call_tool",
+                        name="Call Tool",
+                        node_kind="action",
+                        node_type="tool.run",
+                        config={
+                            "tool_name": "task.create",
+                            "params": {
+                                "title": "Webhook MR review",
+                                "description": "Create review task from webhook",
+                                "owner_type": "employee",
+                                "owner_ref": "default",
+                                "session_id": None,
+                                "session_profile_id": None,
+                            },
+                        },
+                    ),
+                ],
+                edges=[{"source_key": "trigger", "target_key": "call_tool"}],
+            ),
+        )
+
+        assert created.webhook is not None
+        assert created.webhook.webhook_token is not None
+        await service.trigger_webhook(
+            profile_id="default",
+            token=created.webhook.webhook_token,
+            payload={"event_id": "evt-tool-run-task-create-null-session"},
+        )
+
+        run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
+        trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
+        call_tool = next(item for item in trace.nodes if item.node_key == "call_tool")
+        assert run.status == "succeeded"
+        assert call_tool.status == "succeeded"
+        assert call_tool.output is not None
+        task_payload = call_tool.output["default"]["task"]
+        assert task_payload["created_by_type"] == "automation"
+        assert task_payload["created_by_ref"] == f"automation:default:{created.id}"
+        assert task_payload["owner_type"] == "employee"
+        assert task_payload["owner_ref"] == "default"
+        assert task_payload["last_session_id"] is None
+        assert task_payload["last_session_profile_id"] is None
+    finally:
+        await engine.dispose()
+
+
 async def test_graph_executor_enforces_code_node_input_schema(tmp_path: Path) -> None:
     """Versioned code nodes should validate inputs before user code executes."""
 

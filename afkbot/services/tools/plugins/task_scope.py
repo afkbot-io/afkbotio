@@ -64,6 +64,12 @@ def runtime_task_id(*, ctx: ToolContext) -> str | None:
     return value or None
 
 
+def is_explicit_session_binding_value(*, explicit: bool, value: str | None) -> bool:
+    """Return whether a tool payload contains a real session binding override."""
+
+    return explicit and value is not None
+
+
 def _runtime_task_profile_id(*, ctx: ToolContext) -> str | None:
     taskflow_payload = _runtime_taskflow_payload(ctx=ctx)
     if taskflow_payload is None:

@@ -18,6 +18,7 @@ from afkbot.services.tools.params import ToolParameters
 from afkbot.services.tools.plugins.task_actor import resolve_task_tool_actor
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
+    is_explicit_session_binding_value,
     resolve_task_target_profile,
 )
 from afkbot.settings import Settings
@@ -85,8 +86,14 @@ class TaskCreateTool(ToolBase):
                 owner_ref=payload.reviewer_ref,
             )
             explicit_fields = set(getattr(payload, "model_fields_set", set()))
-            session_id_explicit = "session_id" in explicit_fields
-            session_profile_id_explicit = "session_profile_id" in explicit_fields
+            session_id_explicit = is_explicit_session_binding_value(
+                explicit="session_id" in explicit_fields,
+                value=payload.session_id,
+            )
+            session_profile_id_explicit = is_explicit_session_binding_value(
+                explicit="session_profile_id" in explicit_fields,
+                value=payload.session_profile_id,
+            )
             if actor.actor_type == "automation" and (
                 session_id_explicit or session_profile_id_explicit
             ):

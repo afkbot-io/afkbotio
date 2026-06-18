@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.22] - 2026-06-18
+
+### Fixed
+
+- Automation webhook/cron Task Flow tool calls now treat explicit
+  `session_id: null` and `session_profile_id: null` as absent optional fields,
+  so model-generated `task.create` or `task.update` payloads no longer fail with
+  `task_session_binding_forbidden` when they are not actually trying to bind a
+  session.
+- Automation Task Flow tools still reject non-null explicit session bindings, so
+  webhook and graph runs cannot attach tasks to arbitrary chat or Task Flow
+  sessions.
+
 ## [1.9.21] - 2026-06-18
 
 ### Changed
