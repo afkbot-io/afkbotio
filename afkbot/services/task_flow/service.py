@@ -84,6 +84,8 @@ from afkbot.services.task_flow.knowledge_spine import (
     select_canonical_flow_documents,
     select_task_working_documents,
 )
+from afkbot.services.task_flow.manager_intake import ensure_manager_intake_transition_allowed
+from afkbot.services.task_flow.work_modes import MANAGER_INTAKE_LABELS
 from afkbot.settings import Settings, get_settings
 
 _SERVICES_BY_ROOT: dict[str, "TaskFlowService"] = {}
@@ -1870,11 +1872,7 @@ class TaskFlowService:
                     limit=10,
                 )
                 open_existing = next(
-                    (
-                        row
-                        for row in existing_rows
-                        if row.status not in _TASK_TERMINAL_STATUSES
-                    ),
+                    (row for row in existing_rows if row.status not in _TASK_TERMINAL_STATUSES),
                     None,
                 )
                 if open_existing is not None:
@@ -2026,7 +2024,10 @@ class TaskFlowService:
                     reason_code="knowledge_maintenance_required",
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
-                    message="Project knowledge maintenance task created and ready for CTO review.",
+                    message=(
+                        "Project knowledge maintenance task created for root employee "
+                        "intake and validation."
+                    ),
                     details={
                         "flow_id": flow.id,
                         "flow_title": flow.title,
@@ -2534,6 +2535,17 @@ class TaskFlowService:
                     actor_type=normalized_actor_type,
                     actor_ref=normalized_actor_ref,
                 )
+            await ensure_manager_intake_transition_allowed(
+                repo=repo,
+                settings=self._settings,
+                profile_id=profile_id,
+                task_id=row.id,
+                source_type=row.source_type,
+                owner_type=row.owner_type,
+                owner_ref=row.owner_ref,
+                labels=_decode_labels(row.labels_json),
+                target_status="completed",
+            )
             updated = await repo.update_task(
                 profile_id=profile_id,
                 task_id=row.id,
@@ -2714,7 +2726,10 @@ class TaskFlowService:
                     "owner_ref": updated.owner_ref,
                 },
             )
-            if is_employee_executor_owner_type(updated.owner_type) and not manager_escalation_blocker:
+            if (
+                is_employee_executor_owner_type(updated.owner_type)
+                and not manager_escalation_blocker
+            ):
                 await _record_task_wake_requested(
                     repo=repo,
                     task=updated,
@@ -3065,7 +3080,7 @@ class TaskFlowService:
             delegated_labels = (
                 normalized_labels
                 if normalized_labels is not None
-                else tuple(_decode_labels(source_task.labels_json))
+                else _delegated_task_labels(source_task)
             )
             delegated_requires_review = (
                 bool(requires_review) if requires_review is not None else False
@@ -3401,7 +3416,9 @@ class TaskFlowService:
         ):
             normalized_blocked_reason_code = "manager_reassignment_required"
         normalized_ready_at = (
-            None if manager_escalation_blocker_update and ready_at is _TASK_FIELD_UNSET else ready_at
+            None
+            if manager_escalation_blocker_update and ready_at is _TASK_FIELD_UNSET
+            else ready_at
         )
         normalized_owner_type = normalize_task_owner_type(owner_type)
         normalized_owner_ref = _normalize_optional_text(owner_ref)
@@ -3617,6 +3634,41 @@ class TaskFlowService:
                     error_code="task_owner_active_conflict",
                     reason="Employee owner already has another active task",
                 )
+            if effective_status_after_update in {"completed", "review"}:
+                await ensure_manager_intake_transition_allowed(
+                    repo=repo,
+                    settings=self._settings,
+                    profile_id=profile_id,
+                    task_id=current_row.id,
+                    source_type=current_row.source_type,
+                    owner_type=current_row.owner_type,
+                    owner_ref=current_row.owner_ref,
+                    labels=tuple(_decode_labels(current_row.labels_json)),
+                    target_status=effective_status_after_update,
+                )
+                await ensure_manager_intake_transition_allowed(
+                    repo=repo,
+                    settings=self._settings,
+                    profile_id=profile_id,
+                    task_id=current_row.id,
+                    source_type=current_row.source_type,
+                    owner_type=effective_owner_type,
+                    owner_ref=effective_owner_ref,
+                    labels=(
+                        _normalize_labels(labels)
+                        if labels is not None
+                        else tuple(_decode_labels(current_row.labels_json))
+                    ),
+                    target_status=effective_status_after_update,
+                )
+            if effective_status_after_update == "completed":
+                await _ensure_employee_completion_actor_allowed(
+                    row=current_row,
+                    settings=self._settings,
+                    task_profile_id=profile_id,
+                    actor_type=normalized_actor_type,
+                    actor_ref=normalized_actor_ref,
+                )
             effective_session_profile_id: str | None | object = _TASK_FIELD_UNSET
             if requested_session_id is not _TASK_FIELD_UNSET:
                 if requested_session_id is None:
@@ -3765,7 +3817,8 @@ class TaskFlowService:
                 is_employee_executor_owner_type(before.owner_type)
                 and before.status in {"claimed", "running"}
             ) or (
-                is_employee_executor_owner_type(row.owner_type) and row.status in {"claimed", "running"}
+                is_employee_executor_owner_type(row.owner_type)
+                and row.status in {"claimed", "running"}
             )
             return (
                 await _build_task_metadata(repo, row, settings=self._settings),
@@ -4054,7 +4107,7 @@ async def _ensure_actor_refs_exist(
     reviewer_type: str | None,
     reviewer_ref: str | None,
 ) -> None:
-    """Validate AI executor references for owners/reviewers before persistence."""
+    """Validate task principal references for owners/reviewers before persistence."""
 
     await _ensure_task_principal_ref_exists(
         repo,
@@ -4152,7 +4205,7 @@ async def _ensure_task_principal_ref_exists(
     principal_ref: str | None,
     invalid_error_code: str,
 ) -> None:
-    """Validate one task principal reference when it targets an AI executor."""
+    """Validate one task principal reference when it targets an employee."""
 
     normalized_type = normalize_task_owner_type(principal_type)
     normalized_ref = _normalize_optional_text(principal_ref)
@@ -4491,10 +4544,7 @@ def _validate_owner_pair(
             error_code="invalid_owner_type",
             reason="Task Flow owner/reviewer principals must be employees",
         )
-    if (
-        normalized_type == EMPLOYEE_OWNER_TYPE
-        and parse_employee_owner_ref(normalized_ref) is None
-    ):
+    if normalized_type == EMPLOYEE_OWNER_TYPE and parse_employee_owner_ref(normalized_ref) is None:
         raise TaskFlowServiceError(
             error_code="invalid_owner_ref",
             reason="employee ref must match a profile-local employee id",
@@ -4570,7 +4620,9 @@ async def _task_actor_has_manager_scope(
         return True
     if row.reviewer_type == EMPLOYEE_OWNER_TYPE and row.reviewer_ref in managed_employee_ids:
         return True
-    if row.created_by_type == EMPLOYEE_OWNER_TYPE and task_employee_refs.intersection(managed_employee_ids):
+    if row.created_by_type == EMPLOYEE_OWNER_TYPE and task_employee_refs.intersection(
+        managed_employee_ids
+    ):
         return True
     return False
 
@@ -4624,6 +4676,39 @@ async def _ensure_task_actor_can_manage(
         error_code="task_actor_forbidden",
         reason="Task cannot be changed by this actor",
     )
+
+
+async def _ensure_employee_completion_actor_allowed(
+    *,
+    row: Task,
+    settings: Settings | None,
+    task_profile_id: str,
+    actor_type: str | None,
+    actor_ref: str | None,
+) -> None:
+    """Prevent manager employees from certifying subordinate execution as complete."""
+
+    normalized_actor_type = _normalize_optional_text(actor_type)
+    normalized_actor_ref = _normalize_optional_text(actor_ref)
+    if normalized_actor_type != EMPLOYEE_OWNER_TYPE or normalized_actor_ref is None:
+        return
+    if row.owner_type == EMPLOYEE_OWNER_TYPE and row.owner_ref == normalized_actor_ref:
+        return
+    if await _task_actor_has_manager_scope(
+        row=row,
+        settings=settings,
+        task_profile_id=task_profile_id,
+        actor_type=normalized_actor_type,
+        actor_ref=normalized_actor_ref,
+    ):
+        raise TaskFlowServiceError(
+            error_code="task_manager_completion_forbidden",
+            reason=(
+                "Manager employees cannot complete subordinate execution tasks. "
+                "The assigned employee, a human operator, or the runtime must complete "
+                "the delegated work."
+            ),
+        )
 
 
 async def _ensure_flow_actor_can_manage(
@@ -4848,9 +4933,10 @@ def _ensure_public_session_binding_allowed(
         return
     if session_id is _TASK_FIELD_UNSET and session_profile_id is _TASK_FIELD_UNSET:
         return
-    if session_id is not _TASK_FIELD_UNSET and _normalize_optional_text(
-        cast(str | None, session_id)
-    ) is None:
+    if (
+        session_id is not _TASK_FIELD_UNSET
+        and _normalize_optional_text(cast(str | None, session_id)) is None
+    ):
         return
     normalized_actor_type = _normalize_optional_text(actor_type)
     if normalized_actor_type != EMPLOYEE_OWNER_TYPE or _normalize_optional_text(actor_ref) is None:
@@ -5102,10 +5188,11 @@ def _build_task_block_state(
         return None
     depends_on = tuple(str(item).strip() for item in depends_on_task_ids if str(item).strip())
     reason_code = str(row.blocked_reason_code or "").strip().lower()
-    waiting_for_human = (
-        reason_code.startswith("awaiting_human")
-        or reason_code in {"awaiting_input", "approval_required", "review_changes_requested"}
-    )
+    waiting_for_human = reason_code.startswith("awaiting_human") or reason_code in {
+        "awaiting_input",
+        "approval_required",
+        "review_changes_requested",
+    }
     if status == "review":
         return TaskBlockStateMetadata(
             kind="review",
@@ -5489,6 +5576,16 @@ def _task_matches_required_labels(*, row: Task, labels: Sequence[str]) -> bool:
     return set(labels).issubset(task_labels)
 
 
+def _delegated_task_labels(source_task: Task) -> tuple[str, ...]:
+    """Inherit source labels except manager-intake routing labels."""
+
+    return tuple(
+        label
+        for label in _decode_labels(source_task.labels_json)
+        if str(label).strip().lower() not in MANAGER_INTAKE_LABELS
+    )
+
+
 def _resolve_task_session_profile_id(row: Task) -> str:
     return _resolve_task_session_profile_id_values(
         profile_id=row.profile_id,
@@ -5830,11 +5927,7 @@ async def _record_manager_escalation_if_needed(
         limit=10,
     )
     open_escalation = next(
-        (
-            row
-            for row in existing_escalations
-            if row.status not in _TASK_TERMINAL_STATUSES
-        ),
+        (row for row in existing_escalations if row.status not in _TASK_TERMINAL_STATUSES),
         None,
     )
     if open_escalation is not None:

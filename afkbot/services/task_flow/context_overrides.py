@@ -6,6 +6,10 @@ from collections.abc import Sequence
 
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.task_flow.team_prompts import task_flow_team_protocol_for_executor
+from afkbot.services.task_flow.work_modes import (
+    KNOWLEDGE_MAINTENANCE_WORK_MODE,
+    MANAGER_INTAKE_WORK_MODE,
+)
 
 
 def build_task_flow_context_overrides(
@@ -102,6 +106,7 @@ def _build_task_flow_prompt_overlay(
         "Team model:",
         f"- profile:{task_profile_id} is the organization/team boundary for this project.",
         "- Employees are the only Task Flow owners, reviewers, and runtime executors.",
+        "- Subagents are helper tools only: they cannot own, claim, review, comment, or complete Task Flow work except through the employee runtime that invoked them.",
         "- Human/operator intake should enter through the profile root employee (usually cto); managers decompose work, route reviews, and maintain project documents through task.* tools.",
         "- Focused employees own implementation or review for their assigned task and leave durable handoff notes.",
         "Treat the incoming user message as the detached task description.",
@@ -120,7 +125,7 @@ def _build_task_flow_prompt_overlay(
         "When filtering backlog views with task.list, task.board, task.stale.list, or task.stale.sweep, filter by owner_type=employee and owner_ref=<employee_id> when needed.",
         "When inspecting review queues with task.review.list, use the employee actor identity supplied by this runtime.",
         "When acting as a manager, also inspect task.review.list with all_reviewers=true before concluding there is no pending review work in the flow.",
-        "If source_status=review, this run is reviewing the current task. Use task.review.approve or task.review.request_changes to persist the review decision; do not rely on the final assistant message alone.",
+        "If source_status=review, focused reviewer runs should use task.review.approve or task.review.request_changes to persist the review decision. Manager-intake runs must delegate or route review decisions instead of approving them directly.",
         "Durable Task Flow state changes must be persisted through task.* tools. Do not rely on the final assistant message alone to reassign, block, or review a task.",
         "When moving a task to review or completed, do not include retry_after_sec or ready_at unless you are intentionally scheduling a blocked revisit.",
         "Before doing non-trivial work, create an execution plan and persist it with task.comment.add using comment_type=plan. Capture architecture assumptions, ordered steps, dependencies, and validation you intend to run.",
@@ -143,7 +148,7 @@ def _build_task_flow_prompt_overlay(
 
 
 def _work_mode_protocol(*, work_mode: str) -> str:
-    if work_mode == "knowledge_maintenance":
+    if work_mode == KNOWLEDGE_MAINTENANCE_WORK_MODE:
         return "\n".join(
             [
                 "Knowledge maintenance work mode.",
@@ -153,6 +158,19 @@ def _work_mode_protocol(*, work_mode: str) -> str:
                 "- Do not implement specialist work in this task; delegate focused employee-owned work when execution is needed.",
                 "- Confirm only document revisions you can validate from the available evidence.",
                 "- If operator approval is required, block the responsible employee task with reason_code=human_review_required and one precise question.",
+            ]
+        )
+    if work_mode == MANAGER_INTAKE_WORK_MODE:
+        return "\n".join(
+            [
+                "Manager intake work mode.",
+                "- Your job is orchestration, not specialist execution.",
+                "- Read the Knowledge Packet, board, feed, reviews, docs, dependencies, and source task details before routing work.",
+                "- Convert broad intake into focused employee-owned tasks with task.delegate.",
+                "- Each delegated task must include the expected output, evidence required, review owner when needed, and how it unblocks the parent task.",
+                "- Prefer task.delegate with wait_for_delegated_task=true so the intake task waits on real dependencies.",
+                "- Do not run implementation, shell, browser, GitLab/GitHub, or code-review work yourself in this mode.",
+                "- Close or move this intake task to review only after delegated work is finished and summarized, or block it with a precise reason.",
             ]
         )
     return "Execution work mode."

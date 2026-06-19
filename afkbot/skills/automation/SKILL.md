@@ -52,6 +52,7 @@ Use this skill only for explicit automation requests:
    - rewrite the user's ask into a self-contained automation `prompt` that states the task, desired outcome, and any constraints; do not include schedule details in the stored prompt
    - the rewritten prompt should be explicit enough that a later automation run can understand it without the original chat context
    - if the task requires external side effects (for example posting in GitLab/GitHub, calling APIs, or sending messages), encode required tool usage directly in the automation prompt
+   - if the automation creates Task Flow work for a root/manager employee such as `cto`, make that work an intake/delegation task: include `owner_type=employee`, the manager `owner_ref`, a `manager-intake`/`cto-intake` label, and instructions to delegate focused child tasks instead of personally executing specialist work
 3. For `update`, require `id` and include only changed fields.
 4. For `delete`, require `id` and restate target before execution.
 5. After tool call, return short factual result from payload:
@@ -72,5 +73,6 @@ Use this skill only for explicit automation requests:
   - `Use app.run with the telegram app to send ...`
   - `Use http.request to POST ...`
   - `Use bash.exec to run ...`
+- For Task Flow webhook intake such as GitLab merge requests, automation should create or update one manager intake task. The manager task should coordinate specialist review through delegated employee-owned child tasks; do not phrase it as "CTO must personally review and post the final answer" unless the user explicitly wants a one-person workflow.
 - Do not invent missing required fields when user can provide them.
 - Never claim success without successful `automation.*` tool result in current turn.

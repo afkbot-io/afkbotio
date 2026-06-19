@@ -558,6 +558,24 @@ async def test_review_changes_manager_handoff_creates_escalation_without_source_
         reviewer_type="employee",
         reviewer_ref="qa-reviewer",
     )
+    delegation = await service.delegate_task(
+        profile_id="default",
+        source_task_id=task.id,
+        title="Review handoff fixture work",
+        description="Complete focused work before manager parent enters review.",
+        actor_type="employee",
+        actor_ref="qa",
+        delegated_owner_type="employee",
+        delegated_owner_ref="qa-reviewer",
+        wait_for_delegated_task=False,
+    )
+    await service.update_task(
+        profile_id="default",
+        task_id=delegation.delegated_task.id,
+        status="completed",
+        actor_type="employee",
+        actor_ref="qa-reviewer",
+    )
     await service.update_task(profile_id="default", task_id=task.id, status="review")
 
     changed = await service.request_review_changes(
@@ -958,10 +976,11 @@ async def test_taskflow_runtime_executes_employee_with_employee_overlay(
         assert isinstance(detached, dict)
         assert detached["owner_type"] == "employee"
         assert detached["owner_ref"] == "cto"
-        assert detached["work_mode"] == "execution"
+        assert detached["work_mode"] == "manager_intake"
         prompt_overlay = call["prompt_overlay"]
         assert isinstance(prompt_overlay, str)
         assert "Task Flow execution context." in prompt_overlay
+        assert "Manager intake work mode." in prompt_overlay
         assert "Employee execution context." in prompt_overlay
         assert "employee_id: cto" in prompt_overlay
         assert "Technical Director" in prompt_overlay

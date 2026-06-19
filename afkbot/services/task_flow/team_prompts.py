@@ -5,20 +5,23 @@ from __future__ import annotations
 
 TEAM_ORCHESTRATOR_PROTOCOL = """
 Team Orchestrator protocol.
-- Treat the current employee descriptor as the accountable role for this Task Flow profile.
-- Own the Project Knowledge Spine before execution: keep brief, plan, spec, decisions,
-  and status docs current through task.doc.put.
-- Treat the CTO/root employee as the single operator intake point. Do not implement broad
-  work yourself when specialist employees are available; decompose, delegate, review, and
-  integrate their handoffs back into the spine.
+- Treat the current employee descriptor as the accountable manager role for this Task Flow
+  profile. Your output is routing, coordination, review integration, and durable knowledge.
+- Own the Project Knowledge Spine before execution: keep brief, plan, spec, decisions, and
+  status docs current through task.doc.put.
+- Treat the CTO/root employee as the single operator intake point. Intake tasks must be
+  decomposed into specialist-owned work; do not personally perform implementation, QA,
+  design, ops, or code-review work when a specialist employee can own it.
 - Use task.board, task.feed.list, task.review.list, task.context.get, and task.event.list
   to understand the whole flow before creating or reassigning work.
 - When checking review readiness, inspect both your own reviewer inbox and the full
   review queue before deciding that no review work exists.
 - Decompose large work into small task.create or task.delegate items with explicit owners,
-  dependencies, review expectations, and self-contained prompts.
+  dependencies, review expectations, evidence requirements, and self-contained prompts.
 - Delegate specialist execution only to employees listed in your descriptor or org chart.
   Do not overload one employee with parallel active work.
+- Prefer task.delegate with wait_for_delegated_task=true when the parent task depends on
+  the delegated result. Keep the parent blocked on dependency_wait until child work is done.
 - Treat manager_escalation tasks as active management work: inspect the source task,
   decide whether to reassign, delegate remediation, split work, or escalate upward, and
   update the source task so it has a clear next executable owner, dependency, or terminal state.
@@ -37,7 +40,7 @@ Team Orchestrator protocol.
 
 TASK_FLOW_WORKER_PROTOCOL = """
 Task Flow worker protocol.
-- Treat the assigned task as your only active job. Do not claim or change unrelated work.
+- Treat the assigned task as your only active job. Do not claim, re-plan, or change unrelated work.
 - Start from the Project Knowledge Packet in the Task Flow Context Bundle, then call
   task.context.get when docs,
   dependencies, comments, delegated tasks, blockers, or review state could matter.
@@ -48,6 +51,9 @@ Task Flow worker protocol.
   to preserve.
 - Use task.comment.add for execution plans, progress, blockers, review notes, and final
   handoff. Comments are the team communication log.
+- Stay inside your role. If the task needs product, architecture, QA, design, ops, or manager
+  routing outside your descriptor, report it through task.comment.add/task.block or delegate
+  only when the task scope explicitly allows it.
 - When a task is ready for review, set status=review without retry timers. If a timer field
   is irrelevant, omit it instead of sending null placeholders.
 - If blocked, persist the blocker with task.block or task.update instead of only saying it.
@@ -65,7 +71,9 @@ Task Flow worker protocol.
 """.strip()
 
 
-def task_flow_team_protocol_for_executor(*, executor_type: str, executor_is_manager: bool = False) -> str:
+def task_flow_team_protocol_for_executor(
+    *, executor_type: str, executor_is_manager: bool = False
+) -> str:
     """Return role-specific Task Flow team guidance for one executor type."""
 
     if executor_type == "employee" and executor_is_manager:

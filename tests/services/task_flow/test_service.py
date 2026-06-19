@@ -171,11 +171,11 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             created_by_type="human",
             created_by_ref="cli",
             default_owner_type="employee",
-            default_owner_ref="default",
+            default_owner_ref="papercliper",
             labels=("launch",),
         )
         assert flow.default_owner_type == "employee"
-        assert flow.default_owner_ref == "default"
+        assert flow.default_owner_ref == "papercliper"
 
         first_task = await service.create_task(
             profile_id="default",
@@ -187,7 +187,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
         )
         assert first_task.flow_id == flow.id
         assert first_task.owner_type == "employee"
-        assert first_task.owner_ref == "default"
+        assert first_task.owner_ref == "papercliper"
         assert first_task.status == "todo"
 
         dependent_task = await service.create_task(
@@ -199,7 +199,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
             created_by_ref="cli",
             depends_on_task_ids=(first_task.id,),
         )
-        assert dependent_task.owner_ref == "default"
+        assert dependent_task.owner_ref == "papercliper"
         assert dependent_task.status == "blocked"
         assert dependent_task.blocked_reason_code == "dependency_wait"
         assert dependent_task.depends_on_task_ids == (first_task.id,)
@@ -217,7 +217,7 @@ async def test_task_flow_service_uses_flow_owner_defaults_and_dependencies(
         listed = await service.list_tasks(
             profile_id="default",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         assert {item.id for item in listed} == {first_task.id, dependent_task.id}
         listed_by_id = {item.id: item for item in listed}
@@ -539,6 +539,255 @@ async def test_knowledge_maintenance_creates_root_task_for_unconfirmed_flow_docs
         assert item.task.source_ref == f"flow:{flow.id}"
         assert "knowledge-maintenance" in item.task.labels
         assert "human_review_required" in item.task.description
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rejects_manager_intake_completion_without_delegation(
+    tmp_path: Path,
+) -> None:
+    """Service-level updates must enforce manager-intake delegation invariants."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="manager_intake_service_completion.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manager intake",
+            description="Coordinate work through child tasks.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="analyst",
+            labels=("manager-intake",),
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="completed",
+                actor_type="human",
+                actor_ref="cli",
+            )
+
+        assert exc_info.value.error_code == "manager_intake_delegation_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_allows_manager_intake_completion_after_replacement_delegation(
+    tmp_path: Path,
+) -> None:
+    """A failed delegated attempt should not permanently block a successful replacement."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="manager_intake_replacement_delegation.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manager intake with replacement",
+            description="Coordinate work through child tasks.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+            labels=("manager-intake",),
+        )
+        failed_delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=task.id,
+            title="First delegated attempt",
+            description="This attempt fails and should be replaceable.",
+            actor_type="employee",
+            actor_ref="analyst",
+            delegated_owner_type="employee",
+            delegated_owner_ref="reviewer",
+            wait_for_delegated_task=False,
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=failed_delegation.delegated_task.id,
+            status="failed",
+            actor_type="employee",
+            actor_ref="reviewer",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="completed",
+                actor_type="human",
+                actor_ref="cli",
+            )
+
+        assert exc_info.value.error_code == "manager_intake_delegation_unsuccessful"
+
+        replacement = await service.delegate_task(
+            profile_id="default",
+            source_task_id=task.id,
+            title="Replacement delegated work",
+            description="Successful delegated work replaces the failed attempt.",
+            actor_type="employee",
+            actor_ref="analyst",
+            delegated_owner_type="employee",
+            delegated_owner_ref="researcher",
+            wait_for_delegated_task=False,
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=replacement.delegated_task.id,
+            status="completed",
+            actor_type="employee",
+            actor_ref="researcher",
+        )
+
+        completed = await service.update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
+        assert completed.status == "completed"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rejects_manager_intake_atomic_reassign_completion(
+    tmp_path: Path,
+) -> None:
+    """Manager-intake state must be evaluated before owner/label updates are applied."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="manager_intake_atomic_reassign_completion.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manager intake without explicit label",
+            description="A root-owned task is still manager-intake work.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=task.id,
+                owner_type="employee",
+                owner_ref="papercliper",
+                labels=(),
+                status="completed",
+                actor_type="human",
+                actor_ref="cli",
+            )
+
+        assert exc_info.value.error_code == "manager_intake_delegation_required"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rejects_manager_completing_delegated_child(
+    tmp_path: Path,
+) -> None:
+    """Manager actors may route subordinate work but cannot certify it as completed."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="manager_child_completion_forbidden.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        parent = await service.create_task(
+            profile_id="default",
+            title="Engineering manager intake",
+            description="Delegate implementation to a leaf employee.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="analyst",
+        )
+        delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=parent.id,
+            title="Leaf implementation",
+            description="Do the implementation work as the assigned leaf employee.",
+            actor_type="employee",
+            actor_ref="analyst",
+            delegated_owner_type="employee",
+            delegated_owner_ref="papercliper",
+            wait_for_delegated_task=False,
+        )
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.update_task(
+                profile_id="default",
+                task_id=delegation.delegated_task.id,
+                status="completed",
+                actor_type="employee",
+                actor_ref="analyst",
+            )
+
+        assert exc_info.value.error_code == "task_manager_completion_forbidden"
+
+        completed = await service.update_task(
+            profile_id="default",
+            task_id=delegation.delegated_task.id,
+            status="completed",
+            actor_type="employee",
+            actor_ref="papercliper",
+        )
+        assert completed.status == "completed"
+    finally:
+        await engine.dispose()
+
+
+async def test_service_rejects_manager_intake_review_approval_without_delegation(
+    tmp_path: Path,
+) -> None:
+    """Review approval should not bypass manager-intake delegated-work checks."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="manager_intake_review_approval.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manager intake review",
+            description="Review should still require child work.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+            labels=("manager-intake",),
+        )
+        async with session_scope(factory) as session:
+            updated = await TaskFlowRepository(session).update_task(
+                profile_id="default",
+                task_id=task.id,
+                status="review",
+            )
+            assert updated is not None
+
+        with pytest.raises(TaskFlowServiceError) as exc_info:
+            await service.approve_review_task(profile_id="default", task_id=task.id)
+
+        assert exc_info.value.error_code == "manager_intake_delegation_required"
     finally:
         await engine.dispose()
 
@@ -908,11 +1157,14 @@ async def test_task_flow_service_lists_documents_across_scopes_with_filters(
             expected_revision=found[0].revision,
         )
         assert deleted.id == found[0].id
-        assert await service.list_documents(
-            profile_id="default",
-            query="release",
-            scope_type="task",
-        ) == []
+        assert (
+            await service.list_documents(
+                profile_id="default",
+                query="release",
+                scope_type="task",
+            )
+            == []
+        )
         with pytest.raises(TaskFlowServiceError) as deleted_excinfo:
             await service.list_document_revisions(
                 profile_id="default",
@@ -1183,7 +1435,7 @@ async def test_task_flow_service_mentions_show_up_in_employee_inbox(tmp_path: Pa
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         await service.add_task_comment(
             profile_id="default",
@@ -1254,7 +1506,7 @@ async def test_task_flow_service_employee_inbox_includes_review_assignments_by_r
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1322,7 +1574,7 @@ async def test_task_flow_service_comment_on_review_task_wakes_reviewer_feed(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1383,9 +1635,9 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
-            reviewer_ref="default",
+            reviewer_ref="reviewer",
         )
 
         updated = await service.update_task(
@@ -1426,14 +1678,14 @@ async def test_task_flow_service_can_clear_reviewer_assignment(tmp_path: Path) -
                 lease_until=claim_now + timedelta(minutes=15),
                 claim_token="claim-owner-reviewer-fallback",
                 claimed_by="taskflow-runtime:owner",
-                owner_ref="default",
+                owner_ref="papercliper",
             )
 
         assert stale_claim is None
         assert owner_claim is not None
         assert owner_claim.id == task.id
         assert owner_claim.claim_owner_type == "employee"
-        assert owner_claim.claim_owner_ref == "default"
+        assert owner_claim.claim_owner_ref == "papercliper"
     finally:
         await engine.dispose()
 
@@ -1456,7 +1708,7 @@ async def test_task_flow_service_records_wake_events_for_employee_dependency_unb
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         dependent = await service.create_task(
             profile_id="default",
@@ -1465,7 +1717,7 @@ async def test_task_flow_service_records_wake_events_for_employee_dependency_unb
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             depends_on_task_ids=(prerequisite.id,),
         )
 
@@ -1479,7 +1731,7 @@ async def test_task_flow_service_records_wake_events_for_employee_dependency_unb
         wake_event = next(event for event in events if event.event_type == "wake_requested")
         assert wake_event.details["reason_code"] == "dependencies_satisfied"
         assert wake_event.details["owner_type"] == "employee"
-        assert wake_event.details["owner_ref"] == "default"
+        assert wake_event.details["owner_ref"] == "papercliper"
     finally:
         await engine.dispose()
 
@@ -1526,7 +1778,9 @@ async def test_task_flow_service_allows_assigning_task_to_employee(tmp_path: Pat
         await engine.dispose()
 
 
-async def test_task_flow_service_accepts_employee_owner_for_profile_local_role(tmp_path: Path) -> None:
+async def test_task_flow_service_accepts_employee_owner_for_profile_local_role(
+    tmp_path: Path,
+) -> None:
     """Public owner_type=employee should persist canonical employee ownership."""
 
     db_name = "task_flow_employee_owner.db"
@@ -1581,7 +1835,7 @@ async def test_task_flow_service_lists_stale_task_claims(tmp_path: Path) -> None
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         stale_now = datetime.now(timezone.utc)
         async with session_scope(factory) as session:
@@ -1759,9 +2013,9 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
-            reviewer_ref="default",
+            reviewer_ref="reviewer",
             labels=("review",),
         )
         await service.update_task(
@@ -1775,7 +2029,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="reviewer",
             labels=("review",),
         )
         await service.update_task(profile_id="default", task_id=owner_fallback.id, status="review")
@@ -1787,7 +2041,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="auditor",
             labels=("review",),
@@ -1797,7 +2051,7 @@ async def test_task_flow_service_lists_review_inbox_with_reviewer_fallback(tmp_p
         inbox = await service.list_review_tasks(
             profile_id="default",
             actor_type="employee",
-            actor_ref="default",
+            actor_ref="reviewer",
             labels=("review",),
         )
 
@@ -1817,14 +2071,14 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
     try:
         ai_review = await service.create_task(
             profile_id="default",
-            title="Employee profile review",
-            description="Review by the profile orchestrator.",
+            title="Auditor employee review",
+            description="Review by the auditor employee.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
-            reviewer_ref="default",
+            reviewer_ref="auditor",
             labels=("review",),
         )
         await service.update_task(profile_id="default", task_id=ai_review.id, status="review")
@@ -1835,14 +2089,12 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             labels=("review",),
         )
-        await service.update_task(
-            profile_id="default", task_id=reviewer_review.id, status="review"
-        )
+        await service.update_task(profile_id="default", task_id=reviewer_review.id, status="review")
         running_work = await service.create_task(
             profile_id="default",
             title="Active implementation",
@@ -1850,9 +2102,9 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
-            reviewer_ref="default",
+            reviewer_ref="auditor",
             labels=("review",),
         )
         await service.update_task(
@@ -1866,7 +2118,7 @@ async def test_task_flow_service_lists_all_review_inboxes(tmp_path: Path) -> Non
         ai_inbox = await service.list_review_tasks(
             profile_id="default",
             actor_type="employee",
-            actor_ref="default",
+            actor_ref="auditor",
             labels=("review",),
         )
 
@@ -1945,7 +2197,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1987,7 +2239,7 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="reviewer",
         )
         await service.update_task(profile_id="default", task_id=second_review.id, status="review")
 
@@ -1995,14 +2247,14 @@ async def test_task_flow_service_review_actions_transition_tasks_and_unblock_dep
             profile_id="default",
             task_id=second_review.id,
             actor_type="employee",
-            actor_ref="default",
+            actor_ref="reviewer",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="reviewer",
             reason_text="Needs source citations before approval.",
         )
         assert changed.status == "blocked"
         assert changed.owner_type == "employee"
-        assert changed.owner_ref == "default"
+        assert changed.owner_ref == "reviewer"
         assert changed.blocked_reason_code == "review_changes_requested"
         assert changed.blocked_reason_text == "Needs source citations before approval."
     finally:
@@ -2039,7 +2291,7 @@ async def test_task_flow_service_review_actions_accept_employee_actor(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -2067,7 +2319,7 @@ async def test_task_flow_service_review_actions_accept_employee_actor(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -2133,7 +2385,7 @@ async def test_task_flow_service_request_review_changes_respects_team_roster(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="papercliper",
         )
@@ -2244,7 +2496,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         todo_task = await service.create_task(
             profile_id="default",
@@ -2253,7 +2505,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             priority=90,
             due_at=now_utc - timedelta(hours=2),
             labels=("release",),
@@ -2265,7 +2517,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             depends_on_task_ids=(prereq.id,),
             labels=("release",),
         )
@@ -2276,7 +2528,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             labels=("release",),
@@ -2289,7 +2541,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             labels=("release",),
         )
         await service.update_task(
@@ -2338,7 +2590,7 @@ async def test_task_flow_service_builds_board_with_counts_and_filters(tmp_path: 
             created_by_ref="cli",
             owner_type="employee",
             owner_ref="papercliper",
-            priority=55,
+            priority=94,
             labels=("release",),
         )
         claim_now_utc = datetime.now(timezone.utc)
@@ -2808,7 +3060,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -2830,7 +3082,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="papercliper",
         )
@@ -2852,7 +3104,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
         )
         dependent_task = await service.create_task(
             profile_id="default",
@@ -2861,7 +3113,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             depends_on_task_ids=(prerequisite_task.id,),
         )
         assert dependent_task.block_state is not None
@@ -2880,7 +3132,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
             reason_code="vendor_pending",
             reason_text="Still waiting on the external vendor.",
             actor_type="employee",
-            actor_ref="default",
+            actor_ref="papercliper",
         )
         assert vendor_blocked_task.block_state is not None
         assert vendor_blocked_task.block_state.kind == "blocked"
@@ -2888,6 +3140,7 @@ async def test_task_flow_service_derives_operator_friendly_block_state(tmp_path:
         assert vendor_blocked_task.block_state.depends_on_task_ids == (prerequisite_task.id,)
     finally:
         await engine.dispose()
+
 
 async def test_task_flow_service_rejects_ai_actor_mutating_coworker_task(tmp_path: Path) -> None:
     """Employee workers should only mutate their own tasks unless they are the backlog manager."""
@@ -3185,9 +3438,10 @@ async def test_task_flow_service_rejects_public_employee_actor_without_live_sess
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
-            reviewer_ref="default",
+            reviewer_ref="papercliper",
+            source_type="test_fixture",
         )
 
         with pytest.raises(TaskFlowServiceError) as update_exc:
@@ -3196,7 +3450,7 @@ async def test_task_flow_service_rejects_public_employee_actor_without_live_sess
                 task_id=task.id,
                 status="blocked",
                 actor_type="employee",
-                actor_ref="default",
+                actor_ref="papercliper",
                 blocked_reason_code="spoof",
                 blocked_reason_text="No live session proof.",
             )
@@ -3214,7 +3468,7 @@ async def test_task_flow_service_rejects_public_employee_actor_without_live_sess
                 profile_id="default",
                 task_id=task.id,
                 actor_type="employee",
-                actor_ref="default",
+                actor_ref="papercliper",
             )
         assert approve_exc.value.error_code == "task_review_actor_required"
     finally:
@@ -3557,6 +3811,26 @@ async def test_task_flow_service_requires_actor_identity_on_public_mutations(
             )
         assert hijack_exc.value.error_code == "task_actor_required"
 
+        delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=task.id,
+            title="Complete delegated security fixture",
+            description="Create a completed child so the root intake task can enter review.",
+            actor_type="employee",
+            actor_ref="default",
+            actor_session_id="taskflow:default-public",
+            delegated_owner_type="employee",
+            delegated_owner_ref="outsider",
+            wait_for_delegated_task=True,
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=delegation.delegated_task.id,
+            status="completed",
+            actor_type="human",
+            actor_ref="cli",
+        )
+
         reviewed = await service.update_task(
             profile_id="default",
             task_id=task.id,
@@ -3745,6 +4019,23 @@ async def test_task_flow_service_keeps_live_session_activity_after_status_handof
                 touched_at=touched_at,
             )
             assert started is True
+
+        delegation = await service.delegate_task(
+            profile_id="default",
+            source_task_id=task.id,
+            title="Complete handoff fixture",
+            description="Provide completed delegated work before review handoff.",
+            actor_type="employee",
+            actor_ref="default",
+            delegated_owner_type="employee",
+            delegated_owner_ref="outsider",
+            wait_for_delegated_task=True,
+        )
+        await service.update_task(
+            profile_id="default",
+            task_id=delegation.delegated_task.id,
+            status="completed",
+        )
 
         await service.update_task(
             profile_id="default",
@@ -4059,6 +4350,8 @@ async def test_task_flow_service_records_append_only_task_events(tmp_path: Path)
             description="Draft the launch brief for operator review.",
             created_by_type="human",
             created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
         )
         updated = await service.update_task(
             profile_id="default",

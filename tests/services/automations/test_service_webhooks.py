@@ -147,6 +147,9 @@ async def test_service_trigger_webhook_sanitizes_payload_and_deduplicates(tmp_pa
         assert "Automation execution context." in overrides.prompt_overlay
         assert "use task.create directly" in overrides.prompt_overlay
         assert "do not set session_id or session_profile_id" in overrides.prompt_overlay
+        assert "manager-intake style label" in overrides.prompt_overlay
+        assert "delegate focused child tasks" in overrides.prompt_overlay
+        assert "merge-request or code-review webhooks" in overrides.prompt_overlay
         assert hook_result.deduplicated is False
         metadata_after_success = await service.get(profile_id="default", automation_id=webhook.id)
         assert metadata_after_success.webhook is not None

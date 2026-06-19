@@ -121,6 +121,33 @@ class _CompletingSessionRunner:
             )
 
 
+def _write_employee_descriptor(
+    root_dir: Path,
+    *,
+    profile_id: str,
+    employee_id: str,
+    manager_id: str | None = None,
+) -> None:
+    path = root_dir / "profiles" / profile_id / "employees" / f"{employee_id}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    manager_line = f"manager_id: {manager_id}\n" if manager_id else ""
+    path.write_text(
+        (
+            "---\n"
+            f"id: {employee_id}\n"
+            f"name: {employee_id.title()}\n"
+            f"title: {employee_id.title()}\n"
+            "role: test_employee\n"
+            "status: active\n"
+            f"{manager_line}"
+            "---\n\n"
+            f"# {employee_id.title()}\n\n"
+            "Test employee descriptor.\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 async def test_taskflow_runtime_daemon_polls_workers_and_stops_cleanly(tmp_path: Path) -> None:
     """Daemon should start service once, poll workers, and stop cleanly."""
 
@@ -204,7 +231,7 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name="taskflow_runtime_daemon_execute.db",
-        profile_ids=("default", "analyst"),
+        profile_ids=("default",),
     )
     settings = Settings(
         root_dir=tmp_path,
@@ -221,6 +248,13 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
     daemon = TaskFlowRuntimeDaemon(settings=settings, service=runtime_service)
     service = TaskFlowService(factory)
     try:
+        _write_employee_descriptor(tmp_path, profile_id="default", employee_id="cto")
+        _write_employee_descriptor(
+            tmp_path,
+            profile_id="default",
+            employee_id="worker",
+            manager_id="cto",
+        )
         task = await service.create_task(
             profile_id="default",
             title="Background analyze inbox",
@@ -228,7 +262,7 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="worker",
         )
 
         await daemon.start()

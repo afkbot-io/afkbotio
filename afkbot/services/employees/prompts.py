@@ -26,10 +26,40 @@ def build_employee_prompt_overlay(employee: EmployeeMetadata) -> str:
         lines.append(f"- can_delegate_to: {', '.join(employee.can_delegate_to)}")
     if employee.allowed_tools:
         lines.append(f"- allowed_tools: {', '.join(employee.allowed_tools)}")
-        lines.append("- allowed_tools are a hard runtime gate; delegate work instead of calling tools outside this list.")
+        lines.append(
+            "- allowed_tools are a hard runtime gate; delegate work instead of calling tools outside this list."
+        )
     lines.append(f"- can_use_subagents: {str(employee.can_use_subagents).lower()}")
     if employee.subagent_allowlist:
         lines.append(f"- subagent_allowlist: {', '.join(employee.subagent_allowlist)}")
+    if employee.can_use_subagents:
+        lines.append(
+            "- subagents are helper tools only; they do not own, claim, review, comment, or complete Task Flow work independently."
+        )
     if employee.body:
         lines.extend(("", "Employee descriptor:", employee.body))
+    if (
+        employee.manager_id is None
+        or employee.reports
+        or employee.derived_reports
+        or employee.can_delegate_to
+    ):
+        lines.extend(
+            (
+                "",
+                "Manager role boundaries:",
+                "- Use authority to plan, delegate, review handoffs, resolve blockers, and keep task/docs state accurate.",
+                "- Do not treat broad allowed_tools as permission to bypass specialist employees.",
+                "- Create focused delegated tasks for implementation, QA, design, ops, research, or code review whenever a specialist can own the work.",
+            )
+        )
+    else:
+        lines.extend(
+            (
+                "",
+                "Focused role boundaries:",
+                "- Own only work that fits this employee descriptor and the current task.",
+                "- Escalate or request delegation when the task requires a different competency.",
+            )
+        )
     return "\n".join(lines)

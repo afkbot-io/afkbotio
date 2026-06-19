@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.23] - 2026-06-19
+
+### Changed
+
+- Task Flow manager/root employees now run in explicit manager-intake mode: they
+  must inspect project context, delegate focused child tasks, and integrate
+  handoffs instead of personally executing specialist implementation, QA,
+  browser, shell, GitHub/GitLab, or review approval work.
+- New profiles seed a clearer employee chain with role-specific responsibilities,
+  do-not rules, and output contracts for CTO, product, engineering, review, and
+  QA employees.
+- Task Flow prompts and automation overlays now describe manager-owned work as
+  intake/delegation work, including child-task evidence, dependency, and review
+  expectations.
+
+### Security
+
+- Manager-intake runtime now has a coordinator-only task tool allowlist plus
+  `memory.*`; direct review approve/request-changes and execution tools are
+  denied even when the employee descriptor has broad tool access.
+- Manager-intake tasks cannot move to `review` or `completed` until they have
+  delegated child work, no open delegated child tasks remain, and at least one
+  delegated child task completed successfully; failed/cancelled attempts can be
+  replaced without permanently trapping the parent task.
+- Manager employees can route subordinate execution work but cannot complete a
+  delegated child task on behalf of the assigned executor.
+- Manager-intake completion guards now evaluate both the persisted task state and
+  the requested post-update state, preventing atomic owner/label/status updates
+  from bypassing delegation requirements.
+
 ## [1.9.22] - 2026-06-18
 
 ### Fixed

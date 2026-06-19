@@ -6,14 +6,42 @@ from collections.abc import Mapping
 
 from afkbot.services.employees import EmployeeService, EmployeeServiceError
 from afkbot.services.task_flow_principals import EMPLOYEE_OWNER_TYPE, parse_employee_owner_ref
+from afkbot.services.task_flow.work_modes import (
+    KNOWLEDGE_MAINTENANCE_WORK_MODE,
+    MANAGER_INTAKE_WORK_MODE,
+)
 from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 
 _DETACHED_CONTEXT_KEY = "taskflow_detached_runtime"
 _SUBAGENT_RUN_TOOL = "subagent.run"
 _SESSION_JOB_RUN_TOOL = "session.job.run"
-_KNOWLEDGE_MAINTENANCE_WORK_MODE = "knowledge_maintenance"
 _KNOWLEDGE_MAINTENANCE_ALLOWED_TOOLS = ("task.*",)
+_MANAGER_INTAKE_ALLOWED_TOOLS = (
+    "memory.*",
+    "task.get",
+    "task.list",
+    "task.board",
+    "task.feed.list",
+    "task.review.list",
+    "task.context.get",
+    "task.event.list",
+    "task.run.get",
+    "task.run.list",
+    "task.comment.add",
+    "task.comment.list",
+    "task.doc.list",
+    "task.doc.put",
+    "task.doc.confirm",
+    "task.delegate",
+    "task.update",
+    "task.block",
+    "task.dependency.add",
+    "task.dependency.remove",
+    "task.dependency.list",
+    "task.flow.get",
+    "task.flow.list",
+)
 
 
 async def employee_tool_policy_result(
@@ -56,7 +84,8 @@ async def employee_tool_policy_result(
             error_code="employee_tool_forbidden",
             reason=f"Employee {employee.id} is not allowed to call {tool_name}",
         )
-    if _work_mode_from_trusted_context(trusted_runtime_context) == _KNOWLEDGE_MAINTENANCE_WORK_MODE:
+    work_mode = _work_mode_from_trusted_context(trusted_runtime_context)
+    if work_mode == KNOWLEDGE_MAINTENANCE_WORK_MODE:
         if not _tool_name_allowed(
             tool_name=tool_name,
             allowed_tools=_KNOWLEDGE_MAINTENANCE_ALLOWED_TOOLS,
@@ -66,6 +95,19 @@ async def employee_tool_policy_result(
                 reason=(
                     "Task Flow knowledge maintenance mode may call only task.* tools. "
                     "Delegate implementation work instead of using execution tools here."
+                ),
+            )
+    if work_mode == MANAGER_INTAKE_WORK_MODE:
+        if not _tool_name_allowed(
+            tool_name=tool_name,
+            allowed_tools=_MANAGER_INTAKE_ALLOWED_TOOLS,
+        ):
+            return ToolResult.error(
+                error_code="employee_tool_forbidden",
+                reason=(
+                    "Task Flow manager intake mode may call only coordination task tools "
+                    "and memory.* tools. Delegate specialist execution and review actions "
+                    "instead of performing them here."
                 ),
             )
 

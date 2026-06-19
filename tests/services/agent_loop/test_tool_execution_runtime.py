@@ -176,7 +176,9 @@ def _write_employee_descriptor(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _employee_trusted_context(employee_id: str, *, work_mode: str | None = None) -> dict[str, object]:
+def _employee_trusted_context(
+    employee_id: str, *, work_mode: str | None = None
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "owner_type": "employee",
         "owner_ref": employee_id,
@@ -371,6 +373,110 @@ async def test_execute_requested_tool_calls_restricts_knowledge_maintenance_tool
     assert "knowledge maintenance mode" in (results[0].reason or "").lower()
 
 
+async def test_execute_requested_tool_calls_restricts_manager_intake_tools(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Manager intake mode should prevent managers from doing specialist execution."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("task.*", "memory.*", "bash.exec"),
+    )
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:manager-intake",
+        profile_id="default",
+        tool_calls=[ToolCall(name="bash.exec", params={})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context(
+            "cto",
+            work_mode="manager_intake",
+        ),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "manager intake mode" in (results[0].reason or "").lower()
+
+
+async def test_execute_requested_tool_calls_restricts_manager_intake_review_actions(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Manager intake mode should not approve or reject review work directly."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("task.*", "memory.*"),
+    )
+    runtime = ToolExecutionRuntime(
+        tool_registry=_MultiRegistry(_ReviewApproveEchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="taskflow:manager-intake",
+        profile_id="default",
+        tool_calls=[ToolCall(name="task.review.approve", params={"task_id": "task_1"})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        trusted_runtime_context=_employee_trusted_context(
+            "cto",
+            work_mode="manager_intake",
+        ),
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "employee_tool_forbidden"
+    assert "review actions" in (results[0].reason or "").lower()
+
+
 async def test_execute_requested_tool_calls_rejects_employee_without_allowed_tools(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -556,6 +662,15 @@ class _PolicyCaptureEngine(_FakePolicyEngine):
 class _EchoTool(ToolBase):
     name = "bash.exec"
     description = "Echo tool"
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        return ToolResult(ok=True, payload={"ok": True})
+
+
+class _ReviewApproveEchoTool(ToolBase):
+    name = "task.review.approve"
+    description = "Review approve echo tool"
 
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         _ = ctx, params

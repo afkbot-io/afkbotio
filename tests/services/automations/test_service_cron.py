@@ -92,6 +92,8 @@ async def test_service_tick_cron_updates_schedule_fields(tmp_path: Path) -> None
             assert "automation_id" in automation_runtime
             assert overrides.prompt_overlay is not None
             assert "Automation execution context." in overrides.prompt_overlay
+            assert "manager-intake style label" in overrides.prompt_overlay
+            assert "delegate focused child tasks" in overrides.prompt_overlay
 
         async with session_scope(factory) as session:
             star = await session.get(AutomationTriggerCron, due_star.id)

@@ -110,6 +110,7 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
    - state the job clearly
    - name the expected result
    - encode important constraints directly in the prompt
+   - if assigning to the root/manager employee, make it an intake/delegation task, not a specialist execution task
 4. For sequencing, create prerequisite tasks first, then create dependent tasks with `depends_on_task_ids`.
 5. Treat the root/manager employee as the project orchestrator. Assign execution work to employees whose role, manager scope, and allowed tools match the job.
 6. For reassignment or handoff, use `task.update`:
@@ -137,6 +138,9 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
 
 ## Rules
 - Prefer a small set of concrete tasks over one vague umbrella task.
+- Root/manager employees should receive intake tasks that decompose, delegate, monitor, and integrate handoffs. They should not receive prompts that ask them to personally implement, QA, design, operate, or perform full MR/code review when a specialist can own it.
+- For manager/root intake tasks, add a routing label such as `manager-intake` or `cto-intake`, and describe the expected child tasks, dependencies, review expectations, and final integration criteria.
+- Use `task.delegate` from a manager task when delegated work must block the parent; prefer `wait_for_delegated_task=true` so dependencies are explicit.
 - When creating several tasks, create them one by one so later tasks can reference earlier task ids in `depends_on_task_ids`.
 - Prefer one flow per coherent project/thread of work, not one giant global flow.
 - Prefer flow/task documents for durable project knowledge. Comments are for progress, questions, and handoff notes; flow documents are the source of truth for `brief`, `plan`, `spec`, `decisions`, and `status`.
@@ -162,7 +166,9 @@ Do not use this skill for cron/webhook triggers. That belongs to `automation`.
 - One employee task:
   create `task.create` with a self-contained prompt, `owner_type=employee`, and `owner_ref=<employee_id>`.
 - One manager-delegated task:
-  create `task.create` with `owner_type=employee` and the target employee id. The actor must be the same employee, a manager in that employee's hierarchy, a human operator, or an allowed automation.
+  from a manager-owned task, call `task.delegate` with `owner_ref=<employee_id>`, a self-contained description, and `wait_for_delegated_task=true` when the parent depends on the result.
+- One manager/root intake task:
+  create `task.create` with `owner_type=employee`, `owner_ref=<manager_id>`, labels such as `manager-intake`, and a prompt that asks the manager to inspect context, use `task.delegate` for child work, set dependencies, and integrate results instead of doing specialist work directly.
 - One flow with several sequential tasks:
   create `task.flow.create`, then create the first task, then create the second with `depends_on_task_ids=[first_task_id]`, then the third with `depends_on_task_ids=[second_task_id]`.
 - Employee handoff:

@@ -22,6 +22,7 @@ from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.task_flow.context_overrides import build_task_flow_context_overrides
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
+from afkbot.services.task_flow.work_modes import resolve_task_work_mode
 from afkbot.settings import Settings
 from tests.repositories._harness import build_repository_factory
 
@@ -342,7 +343,7 @@ async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_depend
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
         )
         await service.put_task_document(
             profile_id="default",
@@ -501,7 +502,7 @@ async def test_taskflow_runtime_preserves_employee_handoff_from_running_task(
         settings=Settings(
             root_dir=tmp_path,
             db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_handoff.db'}",
-            taskflow_runtime_owner_ref="analyst",
+            taskflow_runtime_owner_ref="papercliper",
         ),
         session_factory=factory,
         session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
@@ -519,7 +520,7 @@ async def test_taskflow_runtime_preserves_employee_handoff_from_running_task(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
         )
         dependent = await service.create_task(
             profile_id="default",
@@ -646,6 +647,8 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
             description="Verify that a lost claim during start is safely retried.",
             created_by_type="human",
             created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
         )
 
         async def _fail_mark_started(*, claimed):
@@ -721,7 +724,7 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
         )
         stale_now = datetime.now(timezone.utc)
         stale_session_id = f"taskflow:{task.id}"
@@ -967,6 +970,61 @@ async def test_taskflow_runtime_creates_and_claims_knowledge_maintenance_task(
         assert len(tasks) == 1
         assert tasks[0].owner_type == "employee"
         assert tasks[0].owner_ref == "default"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_blocks_manager_intake_autocomplete_without_delegation(
+    tmp_path: Path,
+) -> None:
+    """Detached auto-finalize should not complete manager intake work directly."""
+
+    db_name = "taskflow_runtime_manager_intake_guard.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+        taskflow_public_principal_required=False,
+    )
+    service = TaskFlowService(factory, settings=settings, engine=engine)
+    observed_calls: list[_ObservedCall] = []
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Manager intake runtime",
+            description="Runtime must delegate before completion.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+            labels=("manager-intake",),
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-manager-intake")
+
+        assert processed is True
+        async with session_scope(factory) as session:
+            row = await TaskFlowRepository(session).get_task(
+                profile_id="default",
+                task_id=task.id,
+            )
+        assert row is not None
+        assert row.status == "blocked"
+        assert row.blocked_reason_code == "manager_intake_delegation_required"
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -1454,7 +1512,12 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 behavior="complete",
                 observed_calls=observed_calls,
             ),
-            settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}", taskflow_runtime_owner_ref="researcher", llm_max_iterations=10),
+            settings=Settings(
+                root_dir=tmp_path,
+                db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}",
+                taskflow_runtime_owner_ref="researcher",
+                llm_max_iterations=10,
+            ),
         )
         try:
             allowed = await service.create_task(
@@ -1469,9 +1532,9 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
             skipped = await service.create_task(
                 profile_id="default",
                 title="Skipped owner",
-                description="Please handle analyst queue.",
+                description="Please handle papercliper queue.",
                 owner_type="employee",
-                owner_ref="analyst",
+                owner_ref="papercliper",
                 created_by_type="human",
                 created_by_ref="cli",
             )
@@ -1496,7 +1559,11 @@ async def test_taskflow_runtime_respects_optional_owner_ref_filter(tmp_path: Pat
                 behavior="complete",
                 observed_calls=observed_calls,
             ),
-            settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}", llm_max_iterations=10),
+            settings=Settings(
+                root_dir=tmp_path,
+                db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_owner_ref_filter.db'}",
+                llm_max_iterations=10,
+            ),
         )
         try:
             processed = await unfiltered_runtime.execute_next_claimable_task(
@@ -1531,7 +1598,12 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
             behavior="complete",
             observed_calls=observed_calls,
         ),
-        settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_profile_filter.db'}", taskflow_runtime_profile_id="ops", llm_max_iterations=10),
+        settings=Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_profile_filter.db'}",
+            taskflow_runtime_profile_id="ops",
+            llm_max_iterations=10,
+        ),
     )
     try:
         skipped = await service.create_task(
@@ -1539,7 +1611,7 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
             title="Skipped backlog task",
             description="This task should stay untouched in the default backlog.",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1548,7 +1620,7 @@ async def test_taskflow_runtime_respects_optional_profile_filter(tmp_path: Path)
             title="Allowed ops task",
             description="This task should run because the runtime is pinned to the ops backlog.",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
             created_by_type="human",
             created_by_ref="cli",
         )
@@ -1764,7 +1836,7 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
         )
@@ -1784,7 +1856,7 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
         updated = await service.get_task(profile_id="default", task_id=task.id)
         assert updated.status == "completed"
         assert updated.owner_type == "employee"
-        assert updated.owner_ref == "default"
+        assert updated.owner_ref == "papercliper"
 
         async with session_scope(factory) as session:
             repo = TaskFlowRepository(session)
@@ -1834,7 +1906,7 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             priority=90,
@@ -1846,7 +1918,7 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="reviewer",
             priority=80,
@@ -1858,7 +1930,7 @@ async def test_taskflow_runtime_keeps_review_claims_scoped_to_reviewer(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="default",
+            owner_ref="papercliper",
             reviewer_type="employee",
             reviewer_ref="auditor",
             priority=70,
@@ -1915,30 +1987,30 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_distinct_employe
     )
     service = TaskFlowService(factory)
     try:
-        analyst_first = await service.create_task(
+        researcher_first = await service.create_task(
             profile_id="default",
-            title="Analyst high priority",
-            description="Take the highest-priority analyst task first.",
+            title="Researcher high priority",
+            description="Take the highest-priority researcher task first.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="researcher",
             priority=90,
         )
-        analyst_second = await service.create_task(
+        researcher_second = await service.create_task(
             profile_id="default",
-            title="Analyst second task",
-            description="This should wait until analyst is free again.",
+            title="Researcher second task",
+            description="This should wait until researcher is free again.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="researcher",
             priority=80,
         )
         papercliper_task = await service.create_task(
             profile_id="default",
             title="Papercliper task",
-            description="Take this once the analyst already has active work.",
+            description="Take this once the researcher already has active work.",
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
@@ -1969,12 +2041,12 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_distinct_employe
             )
 
         assert first_claim is not None
-        assert first_claim.id == analyst_first.id
+        assert first_claim.id == researcher_first.id
         assert second_claim is not None
         assert second_claim.id == papercliper_task.id
         assert third_claim is None
 
-        waiting = await service.get_task(profile_id="default", task_id=analyst_second.id)
+        waiting = await service.get_task(profile_id="default", task_id=researcher_second.id)
         assert waiting.status == "todo"
     finally:
         await engine.dispose()
@@ -2438,7 +2510,7 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
             created_by_type="human",
             created_by_ref="cli",
             owner_type="employee",
-            owner_ref="analyst",
+            owner_ref="papercliper",
             priority=90,
         )
 
@@ -2447,7 +2519,7 @@ async def test_taskflow_runtime_retries_claim_after_active_owner_conflict(
         assert processed is True
         assert claim_attempts >= 2
         task = (await service.list_tasks(profile_id="default"))[0]
-        assert task.owner_ref == "analyst"
+        assert task.owner_ref == "papercliper"
         assert task.status == "completed"
     finally:
         await runtime.shutdown()
@@ -2531,7 +2603,11 @@ async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
             behavior="complete",
             observed_calls=observed_calls,
         ),
-        settings=Settings(root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_plan_skip.db'}", taskflow_runtime_owner_ref="researcher"),
+        settings=Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_plan_skip.db'}",
+            taskflow_runtime_owner_ref="researcher",
+        ),
     )
     try:
         planned = await service.create_task(
@@ -2692,6 +2768,43 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
     assert "task.board" in overrides.prompt_overlay
 
 
+def test_taskflow_work_mode_resolver_routes_manager_intake() -> None:
+    """Manager and explicitly labeled intake tasks should route to orchestration mode."""
+
+    assert (
+        resolve_task_work_mode(
+            source_type="gitlab_merge_request",
+            labels=("mr-review",),
+            executor_is_manager=False,
+        )
+        == "execution"
+    )
+    assert (
+        resolve_task_work_mode(
+            source_type="manual",
+            labels=("manager-intake",),
+            executor_is_manager=False,
+        )
+        == "manager_intake"
+    )
+    assert (
+        resolve_task_work_mode(
+            source_type="manual",
+            labels=(),
+            executor_is_manager=True,
+        )
+        == "manager_intake"
+    )
+    assert (
+        resolve_task_work_mode(
+            source_type="task_delegation",
+            labels=("implementation",),
+            executor_is_manager=False,
+        )
+        == "execution"
+    )
+
+
 def test_taskflow_context_overrides_include_worker_guidance_for_employees() -> None:
     """Focused employee Task Flow runs should receive worker-specific collaboration rules."""
 
@@ -2735,7 +2848,7 @@ def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers()
         flow_id="flow_demo",
         source_type="manual",
         source_ref=None,
-        work_mode="execution",
+        work_mode="manager_intake",
         priority=90,
         attempt=1,
         requires_review=True,
@@ -2743,9 +2856,11 @@ def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers()
     )
 
     assert overrides.prompt_overlay is not None
+    assert "Manager intake work mode." in overrides.prompt_overlay
     assert "Team Orchestrator protocol." in overrides.prompt_overlay
     assert "Task Flow worker protocol." not in overrides.prompt_overlay
     assert "Decompose large work" in overrides.prompt_overlay
+    assert "Do not run implementation" in overrides.prompt_overlay
 
 
 def test_taskflow_context_overrides_include_knowledge_maintenance_mode() -> None:

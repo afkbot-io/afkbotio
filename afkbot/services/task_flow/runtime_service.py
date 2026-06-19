@@ -27,7 +27,9 @@ from afkbot.services.task_flow_principals import (
     resolve_employee_execution_profile_id,
 )
 from afkbot.services.task_flow.event_log import record_task_event
+from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
+from afkbot.services.task_flow.manager_intake import ensure_manager_intake_transition_allowed
 from afkbot.services.task_flow.message_factory import (
     TaskMessageAttachment,
     compose_task_message,
@@ -37,6 +39,7 @@ from afkbot.services.task_flow.runtime_target import (
     TaskFlowRuntimeTarget,
     build_task_flow_runtime_target,
 )
+from afkbot.services.task_flow.work_modes import resolve_task_work_mode
 from afkbot.services.task_flow.service import TaskFlowService
 from afkbot.services.session_orchestration import SessionOrchestrator, SessionTurnRunner
 from afkbot.settings import Settings, get_settings
@@ -107,9 +110,7 @@ class TaskFlowRuntimeService:
         | None = None,
     ) -> None:
         self._settings = (
-            settings
-            or getattr(session_factory, "_afkbot_test_settings", None)
-            or get_settings()
+            settings or getattr(session_factory, "_afkbot_test_settings", None) or get_settings()
         )
         self._session_factory = session_factory
         self._engine = engine
@@ -277,10 +278,7 @@ class TaskFlowRuntimeService:
         )
         if (
             now < self._next_maintenance_run_at
-            and (
-                not knowledge_maintenance_active
-                or now < self._next_knowledge_maintenance_run_at
-            )
+            and (not knowledge_maintenance_active or now < self._next_knowledge_maintenance_run_at)
             and now < self._next_runtime_history_prune_at
         ):
             return
@@ -294,12 +292,9 @@ class TaskFlowRuntimeService:
                     owner_ref=owner_ref,
                     limit=max(self._settings.taskflow_runtime_maintenance_batch_size, 1),
                 )
-            if (
-                knowledge_maintenance_active
-                and now >= self._next_knowledge_maintenance_run_at
-            ):
-                self._next_knowledge_maintenance_run_at = (
-                    now + _knowledge_maintenance_interval_sec(self._settings)
+            if knowledge_maintenance_active and now >= self._next_knowledge_maintenance_run_at:
+                self._next_knowledge_maintenance_run_at = now + _knowledge_maintenance_interval_sec(
+                    self._settings
                 )
                 await self._ensure_knowledge_maintenance_tasks(
                     worker_id=worker_id,
@@ -605,7 +600,10 @@ class TaskFlowRuntimeService:
                 employee_id=claimed.executor_ref,
             )
             if employee.status != "active":
-                raise RuntimeError(f"Employee {employee.id} is {employee.status} and cannot run tasks")
+                raise RuntimeError(
+                    f"Employee {employee.id} is {employee.status} and cannot run tasks"
+                )
+        executor_is_manager = _employee_has_manager_scope(employee)
         runtime_target = build_task_flow_runtime_target(
             execution_profile_id=claimed.execution_profile_id,
             session_id=claimed.session_id,
@@ -619,15 +617,16 @@ class TaskFlowRuntimeService:
             flow_id=claimed.flow_id,
             source_type=claimed.source_type,
             source_ref=claimed.source_ref,
-            work_mode=_task_work_mode(
+            work_mode=resolve_task_work_mode(
                 source_type=claimed.source_type,
                 labels=claimed.labels,
+                executor_is_manager=executor_is_manager,
             ),
             priority=claimed.priority,
             attempt=claimed.attempt,
             requires_review=claimed.requires_review,
             labels=claimed.labels,
-            executor_is_manager=_employee_has_manager_scope(employee),
+            executor_is_manager=executor_is_manager,
         )
         if employee is None:
             return runtime_target
@@ -684,13 +683,11 @@ class TaskFlowRuntimeService:
                 lines.append("- knowledge blockers: " + "; ".join(packet.blocking_reasons))
             if packet.missing_flow_document_keys:
                 lines.append(
-                    "- missing spine docs: "
-                    + ", ".join(packet.missing_flow_document_keys)
+                    "- missing spine docs: " + ", ".join(packet.missing_flow_document_keys)
                 )
             if packet.unconfirmed_flow_document_keys:
                 lines.append(
-                    "- unconfirmed spine docs: "
-                    + ", ".join(packet.unconfirmed_flow_document_keys)
+                    "- unconfirmed spine docs: " + ", ".join(packet.unconfirmed_flow_document_keys)
                 )
             for packet_doc in packet.documents[:8]:
                 prefix = "flow" if packet_doc.scope_type == "flow" else "task"
@@ -782,6 +779,29 @@ class TaskFlowRuntimeService:
         finalized = False
         async with session_scope(session_factory) as session:
             repo = TaskFlowRepository(session)
+            if outcome.status in {"completed", "review"}:
+                try:
+                    await ensure_manager_intake_transition_allowed(
+                        repo=repo,
+                        settings=self._settings,
+                        profile_id=claimed.task_profile_id,
+                        task_id=claimed.task_id,
+                        source_type=claimed.source_type,
+                        owner_type=claimed.executor_type,
+                        owner_ref=claimed.executor_ref,
+                        labels=claimed.labels,
+                        target_status=outcome.status,
+                    )
+                except TaskFlowServiceError as exc:
+                    outcome = TaskExecutionOutcome(
+                        status="blocked",
+                        summary=exc.reason,
+                        error_code=exc.error_code,
+                        error_text=exc.reason,
+                        blocked_reason_code=exc.error_code,
+                        blocked_reason_text=exc.reason,
+                        run_id=outcome.run_id,
+                    )
             blocked_ready_at = (
                 _blocked_revisit_ready_at(
                     settings=self._settings,
@@ -1187,14 +1207,6 @@ def _resolve_execution_profile_id(row: object) -> str:
 
 def _claim_ttl(settings: Settings) -> timedelta:
     return timedelta(seconds=max(1, int(settings.taskflow_runtime_claim_ttl_sec)))
-
-
-def _task_work_mode(*, source_type: str, labels: tuple[str, ...]) -> str:
-    normalized_source_type = str(source_type or "").strip().lower()
-    normalized_labels = {str(label).strip().lower() for label in labels if str(label).strip()}
-    if normalized_source_type == "knowledge_maintenance" or "knowledge-maintenance" in normalized_labels:
-        return "knowledge_maintenance"
-    return "execution"
 
 
 def _maintenance_interval_sec(settings: Settings) -> float:

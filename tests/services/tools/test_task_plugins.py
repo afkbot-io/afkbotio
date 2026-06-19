@@ -111,12 +111,17 @@ def _write_team_runtime_config(
     _ = (settings, profile_id, team_profile_ids)
 
 
-def _employee_trusted_context(employee_id: str) -> dict[str, object]:
+def _employee_trusted_context(
+    employee_id: str, *, work_mode: str | None = None
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "owner_type": "employee",
+        "owner_ref": employee_id,
+    }
+    if work_mode is not None:
+        payload["work_mode"] = work_mode
     return {
-        "taskflow_detached_runtime": {
-            "owner_type": "employee",
-            "owner_ref": employee_id,
-        }
+        "taskflow_detached_runtime": payload,
     }
 
 
@@ -306,8 +311,40 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
 
         update_tool = registry.get("task.update")
         event_list_tool = registry.get("task.event.list")
+        delegate_tool = registry.get("task.delegate")
         assert update_tool is not None
         assert event_list_tool is not None
+        assert delegate_tool is not None
+        delegate_result = await delegate_tool.execute(
+            _root_employee_context(session_id="s-task", run_id=2),
+            delegate_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": task_id,
+                    "description": "Compile the KPI breakdown as delegated specialist work.",
+                    "owner_ref": "papercliper",
+                    "wait_for_delegated_task": False,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert delegate_result.ok is True
+        delegated_task = delegate_result.payload["delegation"]["delegated_task"]
+        delegated_task_id = str(delegated_task["id"])
+        child_update_result = await update_tool.execute(
+            ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": delegated_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert child_update_result.ok is True
         update_params = update_tool.parse_params(
             {
                 "profile_key": "default",
@@ -656,7 +693,9 @@ async def test_task_plugins_docs_context_and_agent_feed(
             ),
         )
         assert list_result.ok is True
-        assert any(document["document_key"] == "status" for document in list_result.payload["documents"])
+        assert any(
+            document["document_key"] == "status" for document in list_result.payload["documents"]
+        )
 
         put_result = await doc_put_tool.execute(
             ctx,
@@ -1039,12 +1078,12 @@ async def test_task_update_plugin_schedules_blocked_revisit_from_retry_after_sec
         create_result = await create_tool.execute(
             ctx,
             create_tool.parse_params(
-                    {
-                        "profile_key": "default",
-                        "title": "Poll vendor status",
-                        "description": "Recheck the external vendor later.",
-                        "owner_type": "employee",
-                        "owner_ref": "papercliper",
+                {
+                    "profile_key": "default",
+                    "title": "Poll vendor status",
+                    "description": "Recheck the external vendor later.",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -1114,12 +1153,12 @@ async def test_task_update_plugin_ignores_null_retry_timer_conflict(
         create_result = await create_tool.execute(
             ctx,
             create_tool.parse_params(
-                    {
-                        "profile_key": "default",
-                        "title": "Prepare review handoff",
-                        "description": "Move to review after work is done.",
-                        "owner_type": "employee",
-                        "owner_ref": "papercliper",
+                {
+                    "profile_key": "default",
+                    "title": "Prepare review handoff",
+                    "description": "Move to review after work is done.",
+                    "owner_type": "employee",
+                    "owner_ref": "papercliper",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -1172,11 +1211,11 @@ async def test_task_update_plugin_forwards_explicit_ready_at_null(
             profile_id="default",
             task_id=task.id,
             status="blocked",
-                blocked_reason_code="blocked_on_dependency",
-                actor_type="human",
-                actor_ref="web-user",
-                ready_at=datetime.now(timezone.utc) + timedelta(minutes=30),
-            )
+            blocked_reason_code="blocked_on_dependency",
+            actor_type="human",
+            actor_ref="web-user",
+            ready_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+        )
 
         update_tool = registry.get("task.update")
         get_tool = registry.get("task.get")
@@ -1850,10 +1889,10 @@ async def test_task_plugins_task_create_uses_runtime_session_principal_when_guar
             ctx,
             create_tool.parse_params(
                 {
-                        "title": "Runtime backlog note",
-                        "description": "Keep backlog changes in manager profile.",
-                        "owner_type": "employee",
-                        "owner_ref": "reviewer",
+                    "title": "Runtime backlog note",
+                    "description": "Keep backlog changes in manager profile.",
+                    "owner_type": "employee",
+                    "owner_ref": "reviewer",
                 },
                 default_timeout_sec=settings.tool_timeout_default_sec,
                 max_timeout_sec=settings.tool_timeout_max_sec,
@@ -2563,6 +2602,165 @@ async def test_task_delegate_plugin_uses_runtime_task_context_by_default(
         await engine.dispose()
 
 
+async def test_task_update_rejects_manager_intake_completion_before_delegation(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Manager intake tasks must route work before being closed."""
+
+    settings, engine, registry = await _prepare(tmp_path, monkeypatch)
+    try:
+        create_tool = registry.get("task.create")
+        delegate_tool = registry.get("task.delegate")
+        update_tool = registry.get("task.update")
+        assert create_tool is not None
+        assert delegate_tool is not None
+        assert update_tool is not None
+
+        setup_ctx = _root_employee_context(session_id="task-seed", run_id=21)
+        parent_result = await create_tool.execute(
+            setup_ctx,
+            create_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "title": "MR intake",
+                    "description": "Coordinate MR review through the team.",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                    "source_type": "gitlab_merge_request",
+                    "labels": [
+                        "manager-intake",
+                        "cto-intake",
+                        "review-intake",
+                        "delegation-intake",
+                        "mr-review",
+                    ],
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert parent_result.ok is True
+        parent_task_id = str(parent_result.payload["task"]["id"])
+
+        manager_ctx = ToolContext(
+            profile_id="default",
+            session_id="task-seed",
+            run_id=22,
+            runtime_metadata={
+                "transport": "taskflow",
+                "taskflow": {
+                    "task_id": parent_task_id,
+                    "task_profile_id": "default",
+                    "owner_type": "employee",
+                    "owner_ref": "default",
+                    "work_mode": "manager_intake",
+                },
+            },
+            trusted_runtime_context=_employee_trusted_context(
+                "default",
+                work_mode="manager_intake",
+            ),
+        )
+
+        premature_result = await update_tool.execute(
+            manager_ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": parent_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert premature_result.ok is False
+        assert premature_result.error_code == "manager_intake_delegation_required"
+
+        delegate_result = await delegate_tool.execute(
+            manager_ctx,
+            delegate_tool.parse_params(
+                {
+                    "description": "Review the MR diff and report code risks.",
+                    "owner_ref": "papercliper",
+                    "wait_for_delegated_task": True,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert delegate_result.ok is True
+        delegated_task = delegate_result.payload["delegation"]["delegated_task"]
+        delegated_task_id = str(delegated_task["id"])
+        assert "manager-intake" not in delegated_task["labels"]
+        assert "cto-intake" not in delegated_task["labels"]
+        assert "review-intake" not in delegated_task["labels"]
+        assert "delegation-intake" not in delegated_task["labels"]
+        assert "mr-review" in delegated_task["labels"]
+
+        open_child_result = await update_tool.execute(
+            manager_ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": parent_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert open_child_result.ok is False
+        assert open_child_result.error_code == "manager_intake_delegation_open"
+
+        manager_close_child_result = await update_tool.execute(
+            manager_ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": delegated_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert manager_close_child_result.ok is False
+        assert manager_close_child_result.error_code == "task_manager_completion_forbidden"
+
+        close_child_result = await update_tool.execute(
+            ToolContext(profile_id="default", session_id="s-task", run_id=23),
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": delegated_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert close_child_result.ok is True
+
+        completed_parent_result = await update_tool.execute(
+            manager_ctx,
+            update_tool.parse_params(
+                {
+                    "profile_key": "default",
+                    "task_id": parent_task_id,
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert completed_parent_result.ok is True
+        assert completed_parent_result.payload["task"]["status"] == "completed"
+    finally:
+        await engine.dispose()
+
+
 async def test_task_plugins_allow_subagent_runtime_to_delegate_task_to_employee(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -2976,6 +3174,7 @@ async def test_task_flow_create_plugin_infers_employee_default_owner_from_ref(
     finally:
         await engine.dispose()
 
+
 async def test_task_update_plugin_rejects_coworker_task_mutation(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -3379,15 +3578,48 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
         get_tool = registry.get("task.get")
+        delegate_tool = registry.get("task.delegate")
         review_list_tool = registry.get("task.review.list")
         review_approve_tool = registry.get("task.review.approve")
         review_request_changes_tool = registry.get("task.review.request_changes")
         assert create_tool is not None
         assert update_tool is not None
         assert get_tool is not None
+        assert delegate_tool is not None
         assert review_list_tool is not None
         assert review_approve_tool is not None
         assert review_request_changes_tool is not None
+
+        async def _complete_delegated_child(parent_task_id: str) -> None:
+            delegate_result = await delegate_tool.execute(
+                ctx,
+                delegate_tool.parse_params(
+                    {
+                        "profile_key": "default",
+                        "task_id": parent_task_id,
+                        "description": "Complete delegated review fixture work.",
+                        "owner_ref": "papercliper",
+                        "wait_for_delegated_task": False,
+                    },
+                    default_timeout_sec=settings.tool_timeout_default_sec,
+                    max_timeout_sec=settings.tool_timeout_max_sec,
+                ),
+            )
+            assert delegate_result.ok is True
+            delegated_task = delegate_result.payload["delegation"]["delegated_task"]
+            child_update_result = await update_tool.execute(
+                ToolContext(profile_id="default", session_id="s-review-child", run_id=202),
+                update_tool.parse_params(
+                    {
+                        "profile_key": "default",
+                        "task_id": str(delegated_task["id"]),
+                        "status": "completed",
+                    },
+                    default_timeout_sec=settings.tool_timeout_default_sec,
+                    max_timeout_sec=settings.tool_timeout_max_sec,
+                ),
+            )
+            assert child_update_result.ok is True
 
         review_task_result = await create_tool.execute(
             ctx,
@@ -3410,6 +3642,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         review_task = review_task_result.payload["task"]
         assert isinstance(review_task, dict)
         review_task_id = str(review_task["id"])
+        await _complete_delegated_child(review_task_id)
 
         mark_review_result = await update_tool.execute(
             ctx,
@@ -3528,6 +3761,7 @@ async def test_task_review_plugins_handle_inbox_and_review_actions(
         change_task = change_task_result.payload["task"]
         assert isinstance(change_task, dict)
         change_task_id = str(change_task["id"])
+        await _complete_delegated_child(change_task_id)
 
         change_mark_review_result = await update_tool.execute(
             ctx,
@@ -3643,9 +3877,11 @@ async def test_task_review_request_changes_supports_structured_employee_owner(
         )
         create_tool = registry.get("task.create")
         update_tool = registry.get("task.update")
+        delegate_tool = registry.get("task.delegate")
         review_request_changes_tool = registry.get("task.review.request_changes")
         assert create_tool is not None
         assert update_tool is not None
+        assert delegate_tool is not None
         assert review_request_changes_tool is not None
 
         create_result = await create_tool.execute(
@@ -3665,6 +3901,34 @@ async def test_task_review_request_changes_supports_structured_employee_owner(
         )
         assert create_result.ok is True
         task_id = str(create_result.payload["task"]["id"])
+
+        delegate_result = await delegate_tool.execute(
+            ctx,
+            delegate_tool.parse_params(
+                {
+                    "task_id": task_id,
+                    "description": "Complete delegated fixture work before review.",
+                    "owner_ref": "papercliper",
+                    "wait_for_delegated_task": False,
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert delegate_result.ok is True
+        delegated_task = delegate_result.payload["delegation"]["delegated_task"]
+        child_update_result = await update_tool.execute(
+            ToolContext(profile_id="default", session_id="s-review-child", run_id=6),
+            update_tool.parse_params(
+                {
+                    "task_id": str(delegated_task["id"]),
+                    "status": "completed",
+                },
+                default_timeout_sec=settings.tool_timeout_default_sec,
+                max_timeout_sec=settings.tool_timeout_max_sec,
+            ),
+        )
+        assert child_update_result.ok is True
 
         review_result = await update_tool.execute(
             ctx,
@@ -3699,6 +3963,7 @@ async def test_task_review_request_changes_supports_structured_employee_owner(
         assert task_payload["owner_ref"] == "reviewer"
     finally:
         await engine.dispose()
+
 
 async def test_task_review_list_supports_structured_employee_actor(
     tmp_path: Path,
@@ -3807,6 +4072,7 @@ async def test_task_review_list_rejects_all_reviewers_with_actor_selector(
         assert review_list_result.error_code == "invalid_actor"
     finally:
         await engine.dispose()
+
 
 async def test_task_list_and_board_support_employee_owner_filters(
     tmp_path: Path,
