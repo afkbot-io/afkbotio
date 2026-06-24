@@ -851,6 +851,70 @@ async def test_create_schema_materializes_runtime_history_retention_indexes(tmp_
     await engine.dispose()
 
 
+async def test_create_schema_materializes_task_flow_v2_foundation(tmp_path: Path) -> None:
+    """Fresh bootstrap should create Task Flow v2 control-plane tables and indexes."""
+
+    db_path = tmp_path / "task-flow-v2-foundation.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=False,
+    )
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        table_rows = (
+            await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            )
+        ).all()
+        document_columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info(task_document)"))).all()
+        }
+        revision_columns = {
+            str(row[1])
+            for row in (
+                await conn.execute(text("PRAGMA table_info(task_document_revision)"))
+            ).all()
+        }
+        wake_indexes = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA index_list(task_wake)"))).all()
+        }
+        relation_columns = {
+            str(row[1])
+            for row in (await conn.execute(text("PRAGMA table_info(task_relation)"))).all()
+        }
+        recovery_indexes = {
+            str(row[1])
+            for row in (
+                await conn.execute(text("PRAGMA index_list(task_recovery_action)"))
+            ).all()
+        }
+
+    tables = {str(row[0]) for row in table_rows}
+    assert {
+        "task_wake",
+        "task_relation",
+        "task_hold",
+        "task_budget_policy",
+        "task_budget_incident",
+        "task_recovery_action",
+        "task_delegation_claim",
+        "task_note",
+        "task_context_digest",
+    }.issubset(tables)
+    assert "content_hash" in document_columns
+    assert "content_hash" in revision_columns
+    assert "ux_task_wake_profile_key" in wake_indexes
+    assert "ux_task_wake_open_natural_key" in wake_indexes
+    assert {"is_blocking", "satisfied_on_status"}.issubset(relation_columns)
+    assert "ux_task_recovery_open_fingerprint" in recovery_indexes
+    await engine.dispose()
+
+
 async def test_create_schema_materializes_connect_and_channel_dedupe_indexes(
     tmp_path: Path,
 ) -> None:

@@ -147,6 +147,7 @@ def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> No
     _ensure_chat_turn_indexes(conn)
     _ensure_run_indexes(conn)
     _ensure_task_runtime_columns(conn)
+    _ensure_task_flow_v2_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
     _ensure_automation_runtime_columns(conn)
@@ -168,6 +169,7 @@ def _upgrade_task_runtime_schema(conn: Connection) -> None:
 
     _ensure_task_description_column(conn)
     _ensure_task_runtime_columns(conn)
+    _ensure_task_flow_v2_columns(conn)
     _ensure_task_runtime_indexes(conn)
     _ensure_runtime_history_indexes(conn)
 
@@ -283,6 +285,124 @@ def _ensure_task_runtime_columns(conn: Connection) -> None:
             "AND claim_owner_ref IS NULL"
         )
     )
+
+
+def _ensure_task_flow_v2_columns(conn: Connection) -> None:
+    """Ensure Task Flow v2 additive columns and indexes exist for legacy SQLite installs."""
+
+    document_columns = _table_columns(conn, "task_document")
+    if document_columns and "content_hash" not in document_columns:
+        conn.execute(text("ALTER TABLE task_document ADD COLUMN content_hash VARCHAR(64)"))
+    revision_columns = _table_columns(conn, "task_document_revision")
+    if revision_columns and "content_hash" not in revision_columns:
+        conn.execute(text("ALTER TABLE task_document_revision ADD COLUMN content_hash VARCHAR(64)"))
+    if _table_columns(conn, "task_document_revision"):
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_document_revision_hash "
+                "ON task_document_revision (document_id, content_hash)"
+            )
+        )
+    if _table_columns(conn, "task_wake"):
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_wake_open_natural_key "
+                "ON task_wake (task_id, owner_type, owner_ref, reason_code) "
+                "WHERE status IN ('pending', 'claimed')"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_wake_profile_key "
+                "ON task_wake (profile_id, idempotency_key)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_wake_status_run_after "
+                "ON task_wake (status, run_after, priority, created_at)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_wake_profile_owner_status "
+                "ON task_wake (profile_id, owner_type, owner_ref, status)"
+            )
+        )
+    relation_columns = _table_columns(conn, "task_relation")
+    if relation_columns:
+        if "is_blocking" not in relation_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE task_relation "
+                    "ADD COLUMN is_blocking BOOLEAN NOT NULL DEFAULT false"
+                )
+            )
+        if "satisfied_on_status" not in relation_columns:
+            conn.execute(
+                text("ALTER TABLE task_relation ADD COLUMN satisfied_on_status VARCHAR(32)")
+            )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_relation_edge "
+                "ON task_relation (source_task_id, target_task_id, relation_type)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_relation_profile_flow "
+                "ON task_relation (profile_id, flow_id)"
+            )
+        )
+    if _table_columns(conn, "task_hold"):
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_hold_status_expires "
+                "ON task_hold (status, expires_at)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_hold_active_scope "
+                "ON task_hold (profile_id, scope_type, scope_id) "
+                "WHERE status = 'active'"
+            )
+        )
+    if _table_columns(conn, "task_budget_incident"):
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_budget_incident_open_fingerprint "
+                "ON task_budget_incident (profile_id, fingerprint) "
+                "WHERE status = 'open'"
+            )
+        )
+    if _table_columns(conn, "task_recovery_action"):
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_task_recovery_status_due "
+                "ON task_recovery_action (status, due_at)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_task_recovery_open_fingerprint "
+                "ON task_recovery_action (profile_id, fingerprint) "
+                "WHERE status = 'open'"
+            )
+        )
+    digest_columns = _table_columns(conn, "task_context_digest")
+    if digest_columns:
+        if "source_max_event_id" not in digest_columns:
+            conn.execute(
+                text("ALTER TABLE task_context_digest ADD COLUMN source_max_event_id INTEGER")
+            )
+        if "source_document_watermark" not in digest_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE task_context_digest "
+                    "ADD COLUMN source_document_watermark VARCHAR(128)"
+                )
+            )
 
 
 def _ensure_run_indexes(conn: Connection) -> None:

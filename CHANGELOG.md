@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.25] - 2026-06-25
+
+### Added
+
+- Task Flow v2 now persists employee wake rows for explicit mentions,
+  retryable blockers, delegation follow-ups, and employee inbox read-side state.
+- Task Flow documents and revisions now store content hashes so project memory
+  can detect stale or duplicate knowledge without relying on raw text scans.
+
+### Changed
+
+- Employee inboxes now return `recent_wakes` separately from audit events, while
+  `wake_requested` remains an audit trail instead of a work queue source.
+- Task Flow context and API contracts now expose relation, wake, note, digest,
+  hold, budget, recovery, and delegation-claim metadata for the native UI.
+
+### Fixed
+
+- Retryable blocked runtime tasks such as external polling now enqueue and
+  consume wake rows, so employees can revisit blocked work without event-feed
+  loops or duplicate task creation.
+
 ## [1.9.24] - 2026-06-24
 
 ### Added

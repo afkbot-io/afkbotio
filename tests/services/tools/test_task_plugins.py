@@ -261,7 +261,8 @@ async def test_task_plugins_crud_roundtrip(tmp_path: Path, monkeypatch: MonkeyPa
         assert feed["total_count"] == 1
         assert feed["todo_count"] == 1
         assert feed["mention_event_count"] == 0
-        assert {event["event_type"] for event in feed["recent_events"]} >= {"wake_requested"}
+        assert {wake["reason_code"] for wake in feed["recent_wakes"]} >= {"task_created"}
+        assert feed["recent_events"] == []
 
         comment_add_result = await comment_add_tool.execute(
             ctx,

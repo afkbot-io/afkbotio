@@ -18,6 +18,7 @@ class TaskDocumentRevision(Base):
         UniqueConstraint("document_id", "revision", name="ux_task_document_revision_number"),
         Index("ix_task_document_revision_document", "document_id", "revision"),
         Index("ix_task_document_revision_created", "created_at", "id"),
+        Index("ix_task_document_revision_hash", "document_id", "content_hash"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -25,6 +26,7 @@ class TaskDocumentRevision(Base):
     revision: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text, default="")
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by_type: Mapped[str] = mapped_column(String(32))
     created_by_ref: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

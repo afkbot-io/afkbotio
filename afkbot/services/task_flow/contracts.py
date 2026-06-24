@@ -39,6 +39,7 @@ class TaskDocumentMetadata(BaseModel):
     document_key: str
     title: str
     body: str
+    content_hash: str | None = None
     revision: int = Field(ge=1)
     confirmation_status: str = "draft"
     confirmed_revision: int | None = None
@@ -64,6 +65,7 @@ class TaskDocumentRevisionMetadata(BaseModel):
     revision: int = Field(ge=1)
     title: str
     body: str
+    content_hash: str | None = None
     created_by_type: str
     created_by_ref: str
     created_at: datetime
@@ -322,6 +324,53 @@ class TaskDependencyMetadata(BaseModel):
     created_at: datetime
 
 
+class TaskRelationMetadata(BaseModel):
+    """Public metadata for one typed relation edge between tasks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    profile_id: str
+    flow_id: str | None = None
+    source_task_id: str
+    target_task_id: str
+    relation_type: str
+    is_blocking: bool = False
+    satisfied_on_status: str | None = None
+    created_by_type: str | None = None
+    created_by_ref: str | None = None
+    details: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class TaskWakeMetadata(BaseModel):
+    """Public metadata for one Task Flow v2 wake request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    task_id: str
+    profile_id: str
+    flow_id: str | None = None
+    owner_type: str
+    owner_ref: str
+    reason_code: str
+    status: str
+    priority: int
+    idempotency_key: str
+    payload: dict[str, object] = Field(default_factory=dict)
+    source_event_id: int | None = None
+    task_run_id: int | None = None
+    run_after: datetime | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
+    finished_at: datetime | None = None
+    coalesced_count: int = Field(default=0, ge=0)
+    last_coalesced_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class TaskKnowledgePacketDocumentMetadata(BaseModel):
     """One bounded document excerpt selected for a Task Flow knowledge packet."""
 
@@ -412,6 +461,7 @@ class EmployeeTaskInboxMetadata(BaseModel):
     running_count: int = Field(ge=0)
     mention_event_count: int = Field(ge=0)
     tasks: tuple[TaskMetadata, ...] = ()
+    recent_wakes: tuple[TaskWakeMetadata, ...] = ()
     recent_events: tuple[EmployeeTaskInboxEventMetadata, ...] = ()
 
 
@@ -427,9 +477,11 @@ class TaskContextMetadata(BaseModel):
     flow_documents: tuple[TaskDocumentMetadata, ...] = ()
     task_documents: tuple[TaskDocumentMetadata, ...] = ()
     dependencies: tuple[TaskDependencyMetadata, ...] = ()
+    relations: tuple[TaskRelationMetadata, ...] = ()
     dependency_tasks: tuple[TaskMetadata, ...] = ()
     dependents: tuple[TaskDependencyMetadata, ...] = ()
     dependent_tasks: tuple[TaskMetadata, ...] = ()
     delegated_tasks: tuple[TaskMetadata, ...] = ()
+    recent_wakes: tuple[TaskWakeMetadata, ...] = ()
     recent_comments: tuple[TaskCommentMetadata, ...] = ()
     recent_events: tuple[TaskEventMetadata, ...] = ()

@@ -273,6 +273,114 @@ async def test_task_flow_service_updates_flow_metadata_without_changing_identity
         await engine.dispose()
 
 
+async def test_task_flow_service_records_create_task_wake_queue_item(tmp_path: Path) -> None:
+    """Creating ready employee work should write a Task Flow v2 wake request."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_task_wake.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Wake the CTO",
+            description="New employee-owned work should be claimable through wake queue v2.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="default",
+        )
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("pending",),
+            )
+            assert len(wakes) == 1
+            wake = wakes[0]
+            original_priority = wake.priority
+            duplicate = await repo.enqueue_task_wake(
+                wake_id="wake_duplicate",
+                task_id=task.id,
+                profile_id=task.profile_id,
+                flow_id=task.flow_id,
+                owner_type=wake.owner_type,
+                owner_ref=wake.owner_ref,
+                reason_code=wake.reason_code,
+                idempotency_key=wake.idempotency_key,
+                payload_json=wake.payload_json,
+                priority=wake.priority,
+                run_after=wake.run_after,
+            )
+            natural_duplicate = await repo.enqueue_task_wake(
+                wake_id="wake_natural_duplicate",
+                task_id=task.id,
+                profile_id=task.profile_id,
+                flow_id=task.flow_id,
+                owner_type=wake.owner_type,
+                owner_ref=wake.owner_ref,
+                reason_code=wake.reason_code,
+                idempotency_key=f"{wake.idempotency_key}:payload-variant",
+                payload_json='{"variant": true}',
+                priority=original_priority + 10,
+                run_after=wake.run_after,
+            )
+            coalesced = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("pending",),
+            )
+            coalesced_count_after_natural_duplicate = natural_duplicate.coalesced_count
+            priority_after_natural_duplicate = natural_duplicate.priority
+            claimed = await repo.claim_open_task_wake_for_task(
+                task_id=task.id,
+                owner_type=wake.owner_type,
+                owner_ref=wake.owner_ref,
+                now_utc=datetime.now(timezone.utc),
+                claimed_by="taskflow-runtime:test",
+            )
+            assert claimed is not None
+            await repo.finish_claimed_task_wakes(
+                task_id=task.id,
+                claimed_by="taskflow-runtime:test",
+                status="consumed",
+                finished_at=datetime.now(timezone.utc),
+            )
+            reopened = await repo.enqueue_task_wake(
+                wake_id="wake_reopened",
+                task_id=task.id,
+                profile_id=task.profile_id,
+                flow_id=task.flow_id,
+                owner_type=wake.owner_type,
+                owner_ref=wake.owner_ref,
+                reason_code=wake.reason_code,
+                idempotency_key=wake.idempotency_key,
+                payload_json=wake.payload_json,
+                priority=wake.priority,
+                run_after=wake.run_after,
+            )
+
+        assert wake.owner_type == "employee"
+        assert wake.owner_ref == "default"
+        assert wake.reason_code == "task_created"
+        assert duplicate.id == wake.id
+        assert natural_duplicate.id == wake.id
+        assert coalesced_count_after_natural_duplicate == 2
+        assert priority_after_natural_duplicate == original_priority + 10
+        assert len(coalesced) == 1
+        assert reopened.id == wake.id
+        assert reopened.status == "pending"
+        assert reopened.task_run_id is None
+        assert reopened.claimed_by is None
+        assert reopened.claimed_at is None
+        assert reopened.finished_at is None
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_creates_default_flow_documents_and_revisions(
     tmp_path: Path,
 ) -> None:
@@ -1627,6 +1735,55 @@ async def test_task_document_repository_uses_revision_compare_and_swap(
         await engine.dispose()
 
 
+async def test_task_document_repository_deduplicates_identical_revision(
+    tmp_path: Path,
+) -> None:
+    """Repository document updates should not create a revision for identical content."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="task_flow_document_repo_dedupe.db",
+    )
+    service = TaskFlowService(factory)
+    try:
+        flow = await service.create_flow(
+            profile_id="default",
+            title="Dedupe documentation",
+            description="Document mutations should avoid no-op revisions.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+        document = next(
+            item
+            for item in await service.list_flow_documents(profile_id="default", flow_id=flow.id)
+            if item.document_key == "plan"
+        )
+
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            row = await repo.get_task_document_by_id(
+                profile_id="default",
+                document_id=document.id,
+            )
+            assert row is not None
+            updated = await repo.update_task_document(
+                document=row,
+                title=row.title,
+                body=row.body,
+                updated_by_type="human",
+                updated_by_ref="cli",
+                expected_revision=row.revision,
+            )
+            assert updated is not None
+            revisions = await repo.list_task_document_revisions(document_id=document.id)
+
+        assert updated.revision == document.revision
+        assert updated.content_hash is not None
+        assert len(revisions) == 1
+    finally:
+        await engine.dispose()
+
+
 async def test_task_flow_service_builds_task_context_with_docs_history_and_relations(
     tmp_path: Path,
 ) -> None:
@@ -1739,6 +1896,15 @@ async def test_task_flow_service_builds_task_context_with_docs_history_and_relat
         assert context.recent_comments[0].comment_type == "plan"
         assert context.delegated_tasks[0].id == delegated.delegated_task.id
         assert context.dependencies[0].depends_on_task_id == delegated.delegated_task.id
+        relation_types = {relation.relation_type for relation in context.relations}
+        assert {"delegated_to", "blocked_by"}.issubset(relation_types)
+        blocking_relation = next(
+            relation for relation in context.relations if relation.relation_type == "blocked_by"
+        )
+        assert blocking_relation.is_blocking is True
+        assert blocking_relation.satisfied_on_status == "completed"
+        assert context.recent_wakes
+        assert {wake.reason_code for wake in context.recent_wakes} >= {"task_created"}
     finally:
         await engine.dispose()
 
@@ -1783,18 +1949,16 @@ async def test_task_flow_service_mentions_show_up_in_employee_inbox(tmp_path: Pa
         assert inbox.owner_type == "employee"
         assert inbox.owner_ref == "researcher"
         assert inbox.mention_event_count == 1
-        assert {event.event_type for event in inbox.recent_events} >= {
-            "mention_created",
-            "wake_requested",
-        }
+        assert {event.event_type for event in inbox.recent_events} >= {"mention_created"}
+        assert {wake.reason_code for wake in inbox.recent_wakes} >= {"explicit_mention"}
         mention_event = next(
             event for event in inbox.recent_events if event.event_type == "mention_created"
         )
-        wake_event = next(
-            event for event in inbox.recent_events if event.event_type == "wake_requested"
+        wake = next(
+            wake for wake in inbox.recent_wakes if wake.reason_code == "explicit_mention"
         )
         assert mention_event.task_id == task.id
-        assert wake_event.details["reason_code"] == "explicit_mention"
+        assert wake.task_id == task.id
         assert mention_event.details["mentions"] == [
             {
                 "owner_type": "employee",
@@ -1931,16 +2095,15 @@ async def test_task_flow_service_comment_on_review_task_wakes_reviewer_feed(
             event_limit=10,
         )
 
-        wake_event = next(
-            event
-            for event in inbox.recent_events
-            if event.event_type == "wake_requested"
-            and event.details.get("reason_code") == "comment_added"
+        wake = next(
+            wake
+            for wake in inbox.recent_wakes
+            if wake.reason_code == "comment_added"
         )
-        assert wake_event.task_id == task.id
-        assert wake_event.details["owner_type"] == "employee"
-        assert wake_event.details["owner_ref"] == "reviewer"
-        assert wake_event.details["comment_id"] == comment.id
+        assert wake.task_id == task.id
+        assert wake.owner_type == "employee"
+        assert wake.owner_ref == "reviewer"
+        assert wake.payload["comment_id"] == comment.id
     finally:
         await engine.dispose()
 
@@ -5207,9 +5370,10 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             owner_ref="default",
         )
         assert any(
-            event.event_type == "wake_requested"
-            and event.details.get("reason_code") == "comment_added"
-            for event in feed.recent_events
+            wake.reason_code == "comment_added"
+            and wake.owner_type == "employee"
+            and wake.owner_ref == "default"
+            for wake in feed.recent_wakes
         )
 
         await service.add_task_comment(
@@ -5254,9 +5418,9 @@ async def test_task_flow_service_adds_and_lists_comments_and_surfaces_them_in_in
             owner_type="employee",
             owner_ref="default",
         )
-        assert fresh_feed.recent_events[0].event_type == "wake_requested"
-        assert fresh_feed.recent_events[0].details["reason_code"] == "comment_added"
-        assert fresh_feed.recent_events[0].message == "Comment added for the responsible employee."
+        assert fresh_feed.recent_wakes[0].reason_code == "comment_added"
+        assert fresh_feed.recent_wakes[0].payload["owner_type"] == "employee"
+        assert fresh_feed.recent_wakes[0].payload["owner_ref"] == "default"
     finally:
         await engine.dispose()
 

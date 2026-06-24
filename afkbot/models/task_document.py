@@ -33,6 +33,7 @@ class TaskDocument(Base):
     document_key: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(255))
     body: Mapped[str] = mapped_column(Text, default="")
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     confirmation_status: Mapped[str] = mapped_column(String(32), default="draft")
     confirmed_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import logging
 import secrets
@@ -26,7 +27,7 @@ from afkbot.services.task_flow_principals import (
     EMPLOYEE_OWNER_TYPE,
     resolve_employee_execution_profile_id,
 )
-from afkbot.services.task_flow.event_log import record_task_event
+from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
 from afkbot.services.task_flow.lease_runtime import run_with_lease_refresh
 from afkbot.services.task_flow.manager_intake import ensure_manager_intake_transition_allowed
@@ -211,6 +212,12 @@ class TaskFlowRuntimeService:
                 )
                 if not released:
                     continue
+                await repo.release_claimed_task_wakes(
+                    task_id=row.id,
+                    claimed_by=row.claimed_by,
+                    task_run_id=row.last_run_id,
+                    run_after=None if next_status == "review" else now_utc,
+                )
                 if row.last_run_id is not None:
                     await repo.update_task_run(
                         task_run_id=row.last_run_id,
@@ -453,6 +460,11 @@ class TaskFlowRuntimeService:
                     )
                     if not attached:
                         raise RuntimeError("Failed to attach claimed task run metadata")
+                    await repo.attach_task_run_to_claimed_wakes(
+                        task_id=row.id,
+                        claimed_by=worker_id,
+                        task_run_id=task_run.id,
+                    )
                     attachments = await repo.list_task_attachments(task_id=row.id)
                     return ClaimedTaskExecution(
                         task_id=row.id,
@@ -534,6 +546,12 @@ class TaskFlowRuntimeService:
         )
         if not updated:
             return True
+        await repo.finish_claimed_task_wakes(
+            task_id=task_id,
+            claimed_by=worker_id,
+            status="consumed",
+            finished_at=datetime.now(timezone.utc),
+        )
         await record_task_event(
             repo=repo,
             task_id=task_id,
@@ -596,6 +614,12 @@ class TaskFlowRuntimeService:
         )
         if not blocked:
             return False
+        await repo.finish_claimed_task_wakes(
+            task_id=task_id,
+            claimed_by=worker_id,
+            status="consumed",
+            finished_at=datetime.now(timezone.utc),
+        )
         await record_task_event(
             repo=repo,
             task_id=task_id,
@@ -922,6 +946,13 @@ class TaskFlowRuntimeService:
                 blocked_reason_text=outcome.blocked_reason_text,
             )
             if finalized:
+                await repo.finish_claimed_task_wakes(
+                    task_id=claimed.task_id,
+                    claimed_by=claimed.worker_id,
+                    task_run_id=claimed.task_run_id,
+                    status="consumed",
+                    finished_at=finished_at,
+                )
                 await repo.update_task_run(
                     task_run_id=claimed.task_run_id,
                     status=outcome.status,
@@ -944,21 +975,11 @@ class TaskFlowRuntimeService:
                     details=_task_event_details_for_outcome(outcome),
                 )
                 if outcome.status == "blocked" and blocked_ready_at is not None:
-                    await record_task_event(
+                    await _record_runtime_task_wake_requested(
                         repo=repo,
-                        task_id=claimed.task_id,
-                        task_run_id=claimed.task_run_id,
-                        event_type="wake_requested",
-                        actor_type="runtime",
-                        actor_ref=claimed.worker_id,
-                        message="Blocked AI task scheduled for revisit.",
-                        details={
-                            "reason_code": outcome.blocked_reason_code or "blocked_revisit",
-                            "owner_type": claimed.owner_type,
-                            "owner_ref": claimed.owner_ref,
-                            "status": "blocked",
-                            "ready_at": blocked_ready_at.isoformat(),
-                        },
+                        claimed=claimed,
+                        reason_code=outcome.blocked_reason_code or "blocked_revisit",
+                        run_after=blocked_ready_at,
                     )
                 await _ensure_runtime_summary_comment(
                     repo=repo,
@@ -1063,12 +1084,24 @@ class TaskFlowRuntimeService:
                 error_code=error_code,
                 error_text=error_text,
             )
+            await repo.release_claimed_task_wakes(
+                task_id=claimed.task_id,
+                claimed_by=claimed.worker_id,
+                task_run_id=claimed.task_run_id,
+                run_after=None if release_status == "review" else finished_at,
+            )
             await repo.update_task_run(
                 task_run_id=claimed.task_run_id,
                 status="cancelled",
                 error_code=error_code,
                 error_text=error_text,
                 finished_at=finished_at,
+            )
+            await repo.release_claimed_task_wakes(
+                task_id=claimed.task_id,
+                claimed_by=claimed.worker_id,
+                task_run_id=claimed.task_run_id,
+                run_after=finished_at,
             )
 
     async def _mark_run_cancelled(
@@ -1116,12 +1149,25 @@ class TaskFlowRuntimeService:
                     outcome.error_text if outcome.status == "failed" else _RUNTIME_UNSET
                 ),
             )
+            await repo.release_claimed_task_wakes(
+                task_id=claimed.task_id,
+                claimed_by=claimed.worker_id,
+                task_run_id=claimed.task_run_id,
+                run_after=finished_at,
+            )
             current = await repo.get_task(
                 profile_id=claimed.task_profile_id,
                 task_id=claimed.task_id,
             )
 
         if current is None:
+            await repo.finish_claimed_task_wakes(
+                task_id=claimed.task_id,
+                claimed_by=claimed.worker_id,
+                task_run_id=claimed.task_run_id,
+                status="consumed",
+                finished_at=finished_at,
+            )
             await repo.update_task_run(
                 task_run_id=claimed.task_run_id,
                 status="cancelled",
@@ -1378,6 +1424,81 @@ def _should_schedule_blocked_revisit(blocked_reason_code: str | None) -> bool:
         "external_state_poll",
         "external_status_poll",
     }
+
+
+async def _record_runtime_task_wake_requested(
+    *,
+    repo: TaskFlowRepository,
+    claimed: ClaimedTaskExecution,
+    reason_code: str,
+    run_after: datetime,
+) -> None:
+    """Persist a Task Flow v2 wake row for retryable runtime blockers."""
+
+    owner_type = claimed.executor_type
+    owner_ref = claimed.executor_ref
+    payload: dict[str, object] = {
+        "reason_code": reason_code,
+        "owner_type": owner_type,
+        "owner_ref": owner_ref,
+        "status": "blocked",
+        "ready_at": run_after.isoformat(),
+        "source_type": claimed.source_type,
+        "source_ref": claimed.source_ref,
+    }
+    event = await repo.create_task_event(
+        task_id=claimed.task_id,
+        task_run_id=claimed.task_run_id,
+        event_type="wake_requested",
+        actor_type="runtime",
+        actor_ref=claimed.worker_id,
+        message="Blocked AI task scheduled for revisit.",
+        details_json=encode_task_event_details(payload),
+    )
+    await repo.enqueue_task_wake(
+        wake_id=f"wake_{secrets.token_hex(8)}",
+        task_id=claimed.task_id,
+        profile_id=claimed.task_profile_id,
+        flow_id=claimed.flow_id,
+        owner_type=owner_type,
+        owner_ref=owner_ref,
+        reason_code=reason_code,
+        idempotency_key=_runtime_task_wake_idempotency_key(
+            claimed=claimed,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            reason_code=reason_code,
+            run_after=run_after,
+        ),
+        payload_json=encode_task_event_details(payload),
+        source_event_id=event.id,
+        priority=claimed.priority,
+        run_after=run_after,
+    )
+
+
+def _runtime_task_wake_idempotency_key(
+    *,
+    claimed: ClaimedTaskExecution,
+    owner_type: str,
+    owner_ref: str,
+    reason_code: str,
+    run_after: datetime,
+) -> str:
+    fingerprint_payload = {
+        "task_id": claimed.task_id,
+        "profile_id": claimed.task_profile_id,
+        "flow_id": claimed.flow_id,
+        "task_run_id": claimed.task_run_id,
+        "owner_type": owner_type,
+        "owner_ref": owner_ref,
+        "reason_code": reason_code,
+        "run_after": run_after.isoformat(),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return f"runtime-wake:{fingerprint}"
 
 
 def _blocked_revisit_ready_at(

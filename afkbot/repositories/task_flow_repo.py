@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -29,13 +30,22 @@ from afkbot.db.dialect import session_dialect_name
 from afkbot.db.upsert import upsert_insert_for_session
 from afkbot.models.task import Task
 from afkbot.models.task_attachment import TaskAttachment
+from afkbot.models.task_budget_incident import TaskBudgetIncident
+from afkbot.models.task_budget_policy import TaskBudgetPolicy
+from afkbot.models.task_context_digest import TaskContextDigest
+from afkbot.models.task_delegation_claim import TaskDelegationClaim
 from afkbot.models.task_dependency import TaskDependency
 from afkbot.models.task_document import TaskDocument
 from afkbot.models.task_document_revision import TaskDocumentRevision
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
+from afkbot.models.task_hold import TaskHold
+from afkbot.models.task_note import TaskNote
 from afkbot.models.task_notification_cursor import TaskNotificationCursor
+from afkbot.models.task_recovery_action import TaskRecoveryAction
+from afkbot.models.task_relation import TaskRelation
 from afkbot.models.task_run import TaskRun
+from afkbot.models.task_wake import TaskWake
 from afkbot.services.task_flow_principals import EMPLOYEE_EXECUTOR_OWNER_TYPES
 
 _UNSET = object()
@@ -222,6 +232,7 @@ class TaskFlowRepository:
     ) -> TaskDocument:
         """Create one editable Task Flow document at revision 1."""
 
+        content_hash = task_document_content_hash(body)
         row = TaskDocument(
             id=document_id,
             profile_id=profile_id,
@@ -230,6 +241,7 @@ class TaskFlowRepository:
             document_key=document_key,
             title=title,
             body=body,
+            content_hash=content_hash,
             revision=1,
             created_by_type=created_by_type,
             created_by_ref=created_by_ref,
@@ -243,6 +255,7 @@ class TaskFlowRepository:
             revision=row.revision,
             title=row.title,
             body=row.body,
+            content_hash=content_hash,
             created_by_type=created_by_type,
             created_by_ref=created_by_ref,
         )
@@ -363,10 +376,47 @@ class TaskFlowRepository:
                 )
             )
 
+        scope_rank = case(
+            (TaskDocument.scope_type == "flow", 0),
+            (TaskDocument.scope_type == "task", 1),
+            else_=2,
+        )
+        flow_key_rank = case(
+            *(
+                (
+                    and_(
+                        TaskDocument.scope_type == "flow",
+                        TaskDocument.document_key == key,
+                    ),
+                    index,
+                )
+                for index, key in enumerate(normalized_flow_keys)
+            ),
+            else_=999,
+        )
+        task_key_rank = case(
+            *(
+                (
+                    and_(
+                        TaskDocument.scope_type == "task",
+                        TaskDocument.document_key == key,
+                    ),
+                    index,
+                )
+                for index, key in enumerate(normalized_task_keys)
+            ),
+            else_=999,
+        )
         statement: Select[tuple[TaskDocument]] = (
             select(TaskDocument)
             .where(*conditions)
-            .order_by(TaskDocument.updated_at.desc(), TaskDocument.id.asc())
+            .order_by(
+                scope_rank.asc(),
+                flow_key_rank.asc(),
+                task_key_rank.asc(),
+                TaskDocument.updated_at.desc(),
+                TaskDocument.id.asc(),
+            )
             .limit(limit)
             .offset(offset)
         )
@@ -382,9 +432,17 @@ class TaskFlowRepository:
         updated_by_ref: str,
         expected_revision: int | None = None,
     ) -> TaskDocument | None:
-        """Update latest document body and append a new revision."""
+        """Update latest document body and append a new revision when content changed."""
 
         revision = int(expected_revision if expected_revision is not None else document.revision)
+        content_hash = task_document_content_hash(body)
+        current_content_hash = document.content_hash or task_document_content_hash(document.body)
+        if str(document.title or "") == title and current_content_hash == content_hash:
+            if document.content_hash != content_hash:
+                document.content_hash = content_hash
+                await self._session.flush()
+                await self._session.refresh(document)
+            return document
         next_revision = revision + 1
         statement = (
             update(TaskDocument)
@@ -396,6 +454,7 @@ class TaskFlowRepository:
                 revision=next_revision,
                 title=title,
                 body=body,
+                content_hash=content_hash,
                 confirmation_status="draft",
                 confirmed_revision=None,
                 confirmed_by_type=None,
@@ -414,6 +473,7 @@ class TaskFlowRepository:
             revision=next_revision,
             title=title,
             body=body,
+            content_hash=content_hash,
             created_by_type=updated_by_type,
             created_by_ref=updated_by_ref,
         )
@@ -473,14 +533,17 @@ class TaskFlowRepository:
         body: str,
         created_by_type: str,
         created_by_ref: str,
+        content_hash: str | None = None,
     ) -> TaskDocumentRevision:
         """Append one immutable document revision."""
 
+        resolved_content_hash = content_hash or task_document_content_hash(body)
         row = TaskDocumentRevision(
             document_id=document_id,
             revision=revision,
             title=title,
             body=body,
+            content_hash=resolved_content_hash,
             created_by_type=created_by_type,
             created_by_ref=created_by_ref,
         )
@@ -747,6 +810,64 @@ class TaskFlowRepository:
         result = await self._session.execute(statement)
         await self._session.flush()
         return int(getattr(result, "rowcount", 0) or 0)
+
+    async def delete_task_v2_children(self, *, task_id: str) -> int:
+        """Delete Task Flow v2 control-plane rows linked to one task."""
+
+        total = 0
+        statements: tuple[Delete, ...] = (
+            delete(TaskWake).where(TaskWake.task_id == task_id),
+            delete(TaskRelation).where(
+                or_(
+                    TaskRelation.source_task_id == task_id,
+                    TaskRelation.target_task_id == task_id,
+                )
+            ),
+            delete(TaskNote).where(TaskNote.task_id == task_id),
+            delete(TaskContextDigest).where(TaskContextDigest.task_id == task_id),
+            delete(TaskDelegationClaim).where(TaskDelegationClaim.source_task_id == task_id),
+            delete(TaskRecoveryAction).where(
+                or_(
+                    TaskRecoveryAction.source_task_id == task_id,
+                    TaskRecoveryAction.recovery_task_id == task_id,
+                )
+            ),
+            delete(TaskBudgetIncident).where(TaskBudgetIncident.task_id == task_id),
+            delete(TaskHold).where(
+                or_(
+                    and_(TaskHold.scope_type == "task", TaskHold.scope_id == task_id),
+                    and_(TaskHold.scope_type == "tree", TaskHold.scope_id == task_id),
+                )
+            ),
+        )
+        for statement in statements:
+            result = await self._session.execute(statement)
+            total += int(getattr(result, "rowcount", 0) or 0)
+        await self._session.flush()
+        return total
+
+    async def delete_flow_v2_children(self, *, profile_id: str, flow_id: str) -> int:
+        """Delete Task Flow v2 control-plane rows linked directly to one flow."""
+
+        total = 0
+        statements: tuple[Delete, ...] = (
+            delete(TaskHold).where(TaskHold.profile_id == profile_id, TaskHold.flow_id == flow_id),
+            delete(TaskBudgetPolicy).where(
+                TaskBudgetPolicy.profile_id == profile_id,
+                TaskBudgetPolicy.scope_type == "flow",
+                TaskBudgetPolicy.scope_id == flow_id,
+            ),
+            delete(TaskBudgetIncident).where(
+                TaskBudgetIncident.profile_id == profile_id,
+                TaskBudgetIncident.flow_id == flow_id,
+                TaskBudgetIncident.task_id.is_(None),
+            ),
+        )
+        for statement in statements:
+            result = await self._session.execute(statement)
+            total += int(getattr(result, "rowcount", 0) or 0)
+        await self._session.flush()
+        return total
 
     async def list_tasks(
         self,
@@ -1172,6 +1293,368 @@ class TaskFlowRepository:
         await self._session.flush()
         return row
 
+    async def enqueue_task_wake(
+        self,
+        *,
+        wake_id: str,
+        task_id: str,
+        profile_id: str,
+        flow_id: str | None,
+        owner_type: str,
+        owner_ref: str,
+        reason_code: str,
+        idempotency_key: str,
+        payload_json: str = "{}",
+        source_event_id: int | None = None,
+        priority: int = 50,
+        run_after: datetime | None = None,
+        now_utc: datetime | None = None,
+    ) -> TaskWake:
+        """Create or coalesce one Task Flow v2 wake request."""
+
+        normalized_key = str(idempotency_key or "").strip()
+        if not normalized_key:
+            raise ValueError("idempotency_key is required")
+        existing = await self.get_task_wake_by_idempotency_key(
+            profile_id=profile_id,
+            idempotency_key=normalized_key,
+        )
+        coalesced_at = now_utc or datetime.now(timezone.utc)
+        if existing is not None:
+            existing.coalesced_count = int(existing.coalesced_count or 0) + 1
+            existing.last_coalesced_at = coalesced_at
+            if existing.status not in {"pending", "claimed"}:
+                existing.status = "pending"
+                existing.finished_at = None
+                existing.task_run_id = None
+                existing.claimed_by = None
+                existing.claimed_at = None
+            await self._session.flush()
+            await self._session.refresh(existing)
+            return existing
+        existing_open = await self.get_open_task_wake_by_natural_key(
+            task_id=task_id,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            reason_code=reason_code,
+        )
+        if existing_open is not None:
+            existing_open.coalesced_count = int(existing_open.coalesced_count or 0) + 1
+            existing_open.last_coalesced_at = coalesced_at
+            existing_open.payload_json = payload_json
+            existing_open.priority = max(int(existing_open.priority or 0), int(priority))
+            if run_after is not None and (
+                existing_open.run_after is None or run_after < existing_open.run_after
+            ):
+                existing_open.run_after = run_after
+            await self._session.flush()
+            await self._session.refresh(existing_open)
+            return existing_open
+        row = TaskWake(
+            id=wake_id,
+            task_id=task_id,
+            profile_id=profile_id,
+            flow_id=flow_id,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            reason_code=reason_code,
+            idempotency_key=normalized_key,
+            payload_json=payload_json,
+            source_event_id=source_event_id,
+            priority=priority,
+            run_after=run_after,
+            status="pending",
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def get_task_wake_by_idempotency_key(
+        self,
+        *,
+        profile_id: str,
+        idempotency_key: str,
+    ) -> TaskWake | None:
+        """Return one wake by its profile-scoped idempotency key."""
+
+        statement: Select[tuple[TaskWake]] = select(TaskWake).where(
+            TaskWake.profile_id == profile_id,
+            TaskWake.idempotency_key == idempotency_key,
+        ).execution_options(populate_existing=True)
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def get_open_task_wake_by_natural_key(
+        self,
+        *,
+        task_id: str,
+        owner_type: str,
+        owner_ref: str,
+        reason_code: str,
+    ) -> TaskWake | None:
+        """Return one open wake for the same runnable work item."""
+
+        statement: Select[tuple[TaskWake]] = (
+            select(TaskWake)
+            .where(
+                TaskWake.task_id == task_id,
+                TaskWake.owner_type == owner_type,
+                TaskWake.owner_ref == owner_ref,
+                TaskWake.reason_code == reason_code,
+                TaskWake.status.in_(("pending", "claimed")),
+            )
+            .order_by(TaskWake.created_at.asc(), TaskWake.id.asc())
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
+    async def claim_open_task_wake_for_task(
+        self,
+        *,
+        task_id: str,
+        owner_type: str,
+        owner_ref: str,
+        now_utc: datetime,
+        claimed_by: str,
+    ) -> TaskWake | None:
+        """Mark the highest-priority ready wake for a just-claimed task."""
+
+        statement: Select[tuple[TaskWake]] = (
+            select(TaskWake)
+            .where(
+                TaskWake.task_id == task_id,
+                TaskWake.owner_type == owner_type,
+                TaskWake.owner_ref == owner_ref,
+                TaskWake.status == "pending",
+                or_(TaskWake.run_after.is_(None), TaskWake.run_after <= now_utc),
+            )
+            .order_by(
+                TaskWake.priority.desc(),
+                TaskWake.run_after.is_(None),
+                TaskWake.run_after.asc(),
+                TaskWake.created_at.asc(),
+                TaskWake.id.asc(),
+            )
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        row = (await self._session.execute(statement)).scalar_one_or_none()
+        if row is None:
+            return None
+        result = await self._session.execute(
+            update(TaskWake)
+            .where(TaskWake.id == row.id, TaskWake.status == "pending")
+            .values(status="claimed", claimed_by=claimed_by, claimed_at=now_utc)
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.flush()
+        if not _result_succeeded(result):
+            return None
+        await self._session.refresh(row)
+        return row
+
+    async def attach_task_run_to_claimed_wakes(
+        self,
+        *,
+        task_id: str,
+        claimed_by: str,
+        task_run_id: int,
+    ) -> int:
+        """Attach a task run to wake records claimed by this worker."""
+
+        result = await self._session.execute(
+            update(TaskWake)
+            .where(
+                TaskWake.task_id == task_id,
+                TaskWake.claimed_by == claimed_by,
+                TaskWake.status == "claimed",
+                TaskWake.task_run_id.is_(None),
+            )
+            .values(task_run_id=task_run_id)
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def release_claimed_task_wakes(
+        self,
+        *,
+        task_id: str,
+        claimed_by: str | None = None,
+        task_run_id: int | None = None,
+        run_after: datetime | None | object = _UNSET,
+    ) -> int:
+        """Return claimed wake records to pending when the task claim is retried."""
+
+        conditions: list[ColumnElement[bool]] = [
+            TaskWake.task_id == task_id,
+            TaskWake.status == "claimed",
+        ]
+        if task_run_id is not None:
+            conditions.append(TaskWake.task_run_id == task_run_id)
+        if claimed_by is not None:
+            conditions.append(TaskWake.claimed_by == claimed_by)
+        values: dict[str, object] = {
+            "status": "pending",
+            "claimed_by": None,
+            "claimed_at": None,
+            "task_run_id": None,
+        }
+        if run_after is not _UNSET:
+            values["run_after"] = run_after
+        result = await self._session.execute(
+            update(TaskWake)
+            .where(*conditions)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def finish_claimed_task_wakes(
+        self,
+        *,
+        task_id: str,
+        claimed_by: str | None = None,
+        task_run_id: int | None = None,
+        status: str,
+        finished_at: datetime,
+    ) -> int:
+        """Close claimed wake records after runtime resolves the corresponding claim."""
+
+        conditions: list[ColumnElement[bool]] = [
+            TaskWake.task_id == task_id,
+            TaskWake.status == "claimed",
+        ]
+        if task_run_id is not None:
+            conditions.append(TaskWake.task_run_id == task_run_id)
+        if claimed_by is not None:
+            conditions.append(TaskWake.claimed_by == claimed_by)
+        result = await self._session.execute(
+            update(TaskWake)
+            .where(*conditions)
+            .values(status=status, finished_at=finished_at)
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    async def list_task_wakes(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str | None = None,
+        task_id: str | None = None,
+        statuses: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[TaskWake]:
+        """Return Task Flow v2 wake records newest first."""
+
+        statement: Select[tuple[TaskWake]] = select(TaskWake).where(
+            TaskWake.profile_id == profile_id
+        ).execution_options(populate_existing=True)
+        if flow_id is not None:
+            statement = statement.where(TaskWake.flow_id == flow_id)
+        if task_id is not None:
+            statement = statement.where(TaskWake.task_id == task_id)
+        if statuses:
+            statement = statement.where(TaskWake.status.in_(tuple(statuses)))
+        statement = statement.order_by(
+            func.coalesce(TaskWake.source_event_id, 0).desc(),
+            TaskWake.created_at.desc(),
+            TaskWake.id.desc(),
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def create_task_relation(
+        self,
+        *,
+        relation_id: str,
+        profile_id: str,
+        flow_id: str | None,
+        source_task_id: str,
+        target_task_id: str,
+        relation_type: str,
+        is_blocking: bool = False,
+        satisfied_on_status: str | None = None,
+        created_by_type: str | None = None,
+        created_by_ref: str | None = None,
+        details_json: str = "{}",
+    ) -> TaskRelation:
+        """Create or return one typed relation edge."""
+
+        existing = await self.get_task_relation(
+            source_task_id=source_task_id,
+            target_task_id=target_task_id,
+            relation_type=relation_type,
+        )
+        if existing is not None:
+            return existing
+        row = TaskRelation(
+            id=relation_id,
+            profile_id=profile_id,
+            flow_id=flow_id,
+            source_task_id=source_task_id,
+            target_task_id=target_task_id,
+            relation_type=relation_type,
+            is_blocking=is_blocking,
+            satisfied_on_status=satisfied_on_status,
+            created_by_type=created_by_type,
+            created_by_ref=created_by_ref,
+            details_json=details_json,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_task_relations(
+        self,
+        *,
+        profile_id: str,
+        flow_id: str | None = None,
+        task_id: str | None = None,
+        relation_types: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[TaskRelation]:
+        """Return relation edges for one profile, flow, or task."""
+
+        statement: Select[tuple[TaskRelation]] = select(TaskRelation).where(
+            TaskRelation.profile_id == profile_id
+        )
+        if flow_id is not None:
+            statement = statement.where(TaskRelation.flow_id == flow_id)
+        if task_id is not None:
+            statement = statement.where(
+                or_(
+                    TaskRelation.source_task_id == task_id,
+                    TaskRelation.target_task_id == task_id,
+                )
+            )
+        if relation_types:
+            statement = statement.where(TaskRelation.relation_type.in_(tuple(relation_types)))
+        statement = statement.order_by(TaskRelation.created_at.desc(), TaskRelation.id.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def get_task_relation(
+        self,
+        *,
+        source_task_id: str,
+        target_task_id: str,
+        relation_type: str,
+    ) -> TaskRelation | None:
+        """Return one exact task relation edge."""
+
+        statement: Select[tuple[TaskRelation]] = select(TaskRelation).where(
+            TaskRelation.source_task_id == source_task_id,
+            TaskRelation.target_task_id == target_task_id,
+            TaskRelation.relation_type == relation_type,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
+
     async def list_task_events(
         self,
         *,
@@ -1313,7 +1796,6 @@ class TaskFlowRepository:
                 TaskEvent.event_type.in_(
                     (
                         "mention_created",
-                        "wake_requested",
                         "recovery_action_created",
                         "runtime_claim_rejected",
                     )
@@ -1323,6 +1805,36 @@ class TaskFlowRepository:
             )
             .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
         )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def list_task_wakes_for_owner(
+        self,
+        *,
+        profile_id: str,
+        owner_type: str,
+        owner_ref: str,
+        statuses: Sequence[str] | None = ("pending", "claimed"),
+        limit: int | None = None,
+    ) -> list[TaskWake]:
+        """Return recent wake queue rows for one employee owner."""
+
+        statement: Select[tuple[TaskWake]] = (
+            select(TaskWake)
+            .where(
+                TaskWake.profile_id == profile_id,
+                TaskWake.owner_type == owner_type,
+                TaskWake.owner_ref == owner_ref,
+            )
+            .order_by(
+                func.coalesce(TaskWake.source_event_id, 0).desc(),
+                TaskWake.created_at.desc(),
+                TaskWake.id.desc(),
+            )
+        )
+        if statuses:
+            statement = statement.where(TaskWake.status.in_(tuple(statuses)))
         if limit is not None:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
@@ -1758,6 +2270,13 @@ class TaskFlowRepository:
             await self._session.flush()
             if not _result_succeeded(result):
                 continue
+            await self.claim_open_task_wake_for_task(
+                task_id=candidate_task_id,
+                owner_type=candidate_claim_owner_type,
+                owner_ref=candidate_claim_owner_ref,
+                now_utc=now_utc,
+                claimed_by=claimed_by,
+            )
             statement_select: Select[tuple[Task]] = select(Task).where(
                 Task.claim_token == claim_token
             )
@@ -2135,6 +2654,12 @@ class TaskFlowRepository:
 def _result_succeeded(result: object) -> bool:
     rowcount = int(getattr(result, "rowcount", 0) or 0)
     return rowcount > 0
+
+
+def task_document_content_hash(body: str) -> str:
+    """Return a stable hash for one Task Flow document body."""
+
+    return hashlib.sha256(str(body or "").encode("utf-8")).hexdigest()
 
 
 def _apply_task_claim_locking_for_dialect(

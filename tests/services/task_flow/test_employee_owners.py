@@ -343,9 +343,10 @@ async def test_task_comment_wakes_responsible_employee_feed(tmp_path: Path) -> N
         owner_type="employee",
         owner_ref="cto",
     )
-    assert feed.recent_events
-    assert feed.recent_events[0].event_type == "wake_requested"
-    assert feed.recent_events[0].details["reason_code"] == "comment_added"
+    assert feed.recent_wakes
+    assert feed.recent_wakes[0].reason_code == "comment_added"
+    assert feed.recent_wakes[0].owner_type == "employee"
+    assert feed.recent_wakes[0].owner_ref == "cto"
 
 
 async def test_task_comment_resumes_non_dependency_blocked_employee_task(
@@ -517,12 +518,11 @@ async def test_manager_reassignment_blocker_wakes_employee_manager(tmp_path: Pat
         owner_ref="qa",
     )
     assert any(item.id == escalation_task.id for item in manager_feed.tasks)
-    assert manager_feed.recent_events
     assert any(
-        event.event_type == "wake_requested"
-        and event.details["escalation_type"] == "manager_reassignment"
-        and event.details["source_owner_ref"] == "qa-reviewer"
-        for event in manager_feed.recent_events
+        wake.reason_code == "manager_reassignment_required"
+        and wake.payload["escalation_type"] == "manager_reassignment"
+        and wake.payload["source_owner_ref"] == "qa-reviewer"
+        for wake in manager_feed.recent_wakes
     )
     worker_feed = await service.build_employee_inbox(
         profile_id="default",

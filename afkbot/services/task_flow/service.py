@@ -26,7 +26,9 @@ from afkbot.models.task_document import TaskDocument
 from afkbot.models.task_document_revision import TaskDocumentRevision
 from afkbot.models.task_event import TaskEvent
 from afkbot.models.task_flow import TaskFlow
+from afkbot.models.task_relation import TaskRelation
 from afkbot.models.task_run import TaskRun
+from afkbot.models.task_wake import TaskWake
 from afkbot.repositories.chat_session_repo import ChatSessionRepository
 from afkbot.repositories.chat_session_turn_queue_repo import ChatSessionTurnQueueRepository
 from afkbot.repositories.task_flow_repo import TaskFlowRepository, _UNSET as _REPO_FIELD_UNSET
@@ -68,8 +70,10 @@ from afkbot.services.task_flow.contracts import (
     TaskKnowledgePacketDocumentMetadata,
     TaskKnowledgePacketMetadata,
     TaskMetadata,
+    TaskRelationMetadata,
     TaskRunMetadata,
     TaskSessionActivityMetadata,
+    TaskWakeMetadata,
 )
 from afkbot.services.task_flow.event_log import encode_task_event_details, record_task_event
 from afkbot.services.task_flow.errors import TaskFlowServiceError
@@ -1096,6 +1100,10 @@ class TaskFlowService:
                 profile_id=profile_id,
                 scope_type=_TASK_DOCUMENT_SCOPE_FLOW,
                 scope_id=normalized_flow_id,
+            )
+            await repo.delete_flow_v2_children(
+                profile_id=profile_id,
+                flow_id=normalized_flow_id,
             )
             deleted = await repo.delete_flow(profile_id=profile_id, flow_id=normalized_flow_id)
             if not deleted:
@@ -2402,6 +2410,12 @@ class TaskFlowService:
                 owner_ref=normalized_owner_ref,
                 limit=event_limit,
             )
+            recent_wakes = await repo.list_task_wakes_for_owner(
+                profile_id=profile_id,
+                owner_type=normalized_owner_type,
+                owner_ref=normalized_owner_ref,
+                limit=event_limit,
+            )
             title_by_task_id: dict[str, str] = {}
             for event in recent_events:
                 if event.task_id in title_by_task_id:
@@ -2426,6 +2440,7 @@ class TaskFlowService:
                         settings=self._settings,
                     )
                 ),
+                recent_wakes=tuple(_to_task_wake_metadata(row) for row in recent_wakes),
                 recent_events=tuple(
                     _to_employee_task_inbox_event_metadata(
                         row,
@@ -2489,6 +2504,17 @@ class TaskFlowService:
                 source_ref=task.id,
                 limit=20,
             )
+            relation_rows = await repo.list_task_relations(
+                profile_id=profile_id,
+                task_id=task.id,
+                limit=50,
+            )
+            wake_rows = await repo.list_task_wakes(
+                profile_id=profile_id,
+                task_id=task.id,
+                statuses=("pending", "claimed"),
+                limit=10,
+            )
             event_rows = await repo.list_task_events(task_id=task.id, limit=max(event_limit, 1))
             comment_rows = await repo.list_task_comment_events(
                 task_id=task.id,
@@ -2509,6 +2535,7 @@ class TaskFlowService:
                 flow_documents=tuple(_to_task_document_metadata(row) for row in flow_documents),
                 task_documents=tuple(_to_task_document_metadata(row) for row in task_documents),
                 dependencies=tuple(_to_dependency_metadata(row) for row in dependencies),
+                relations=tuple(_to_task_relation_metadata(row) for row in relation_rows),
                 dependency_tasks=tuple(
                     await _build_task_metadata_many(
                         repo,
@@ -2531,6 +2558,7 @@ class TaskFlowService:
                         settings=self._settings,
                     )
                 ),
+                recent_wakes=tuple(_to_task_wake_metadata(row) for row in wake_rows),
                 recent_comments=tuple(_to_task_comment_metadata(row) for row in comment_rows),
                 recent_events=tuple(_to_task_event_metadata(row) for row in event_rows),
             )
@@ -3302,6 +3330,24 @@ class TaskFlowService:
                     "source_ref": delegated_row.source_ref,
                 },
             )
+            await repo.create_task_relation(
+                relation_id=_new_identifier("rel"),
+                profile_id=profile_id,
+                flow_id=delegated_flow_id,
+                source_task_id=source_task.id,
+                target_task_id=delegated_row.id,
+                relation_type="delegated_to",
+                created_by_type=normalized_actor_type,
+                created_by_ref=normalized_actor_ref,
+                details_json=encode_task_event_details(
+                    {
+                        "owner_type": delegated_row.owner_type,
+                        "owner_ref": delegated_row.owner_ref,
+                        "source_type": delegated_row.source_type,
+                        "source_ref": delegated_row.source_ref,
+                    }
+                ),
+            )
             if (
                 is_employee_executor_owner_type(delegated_row.owner_type)
                 and delegated_row.status == "todo"
@@ -3361,6 +3407,25 @@ class TaskFlowService:
                         "depends_on_task_id": delegated_row.id,
                         "satisfied_on_status": "completed",
                     },
+                )
+                await repo.create_task_relation(
+                    relation_id=_new_identifier("rel"),
+                    profile_id=profile_id,
+                    flow_id=delegated_flow_id,
+                    source_task_id=source_task.id,
+                    target_task_id=delegated_row.id,
+                    relation_type="blocked_by",
+                    is_blocking=True,
+                    satisfied_on_status="completed",
+                    created_by_type=normalized_actor_type,
+                    created_by_ref=normalized_actor_ref,
+                    details_json=encode_task_event_details(
+                        {
+                            "depends_on_task_id": delegated_row.id,
+                            "satisfied_on_status": "completed",
+                            "source": "delegation_wait",
+                        }
+                    ),
                 )
                 dependency_metadata = TaskDependencyMetadata(
                     task_id=source_task.id,
@@ -5258,6 +5323,33 @@ def _new_identifier(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:16]}"
 
 
+def _task_wake_idempotency_key(
+    *,
+    task: Task,
+    owner_type: str,
+    owner_ref: str,
+    reason_code: str,
+    payload: dict[str, object],
+) -> str:
+    """Return a stable key for coalescing duplicate wake requests."""
+
+    fingerprint_payload = {
+        "task_id": task.id,
+        "profile_id": task.profile_id,
+        "flow_id": task.flow_id,
+        "owner_type": owner_type,
+        "owner_ref": owner_ref,
+        "reason_code": reason_code,
+        "status": task.status,
+        "ready_at": task.ready_at.isoformat() if task.ready_at is not None else None,
+        "payload": payload,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return f"wake:{fingerprint}"
+
+
 def _to_flow_metadata(row: TaskFlow) -> TaskFlowMetadata:
     return TaskFlowMetadata(
         id=row.id,
@@ -5586,7 +5678,10 @@ def _build_task_flow_schema_error(
         "task",
         "task_event",
         "task_run",
+        "task_wake",
+        "task_relation",
         "flow_id",
+        "content_hash",
         "reviewer_type",
         "reviewer_ref",
         "requires_review",
@@ -5673,6 +5768,7 @@ def _to_task_document_metadata(row: TaskDocument) -> TaskDocumentMetadata:
         document_key=row.document_key,
         title=row.title,
         body=row.body,
+        content_hash=row.content_hash,
         revision=row.revision,
         confirmation_status=row.confirmation_status,
         confirmed_revision=row.confirmed_revision,
@@ -5698,9 +5794,53 @@ def _to_task_document_revision_metadata(
         revision=row.revision,
         title=row.title,
         body=row.body,
+        content_hash=row.content_hash,
         created_by_type=row.created_by_type,
         created_by_ref=row.created_by_ref,
         created_at=row.created_at,
+    )
+
+
+def _to_task_relation_metadata(row: TaskRelation) -> TaskRelationMetadata:
+    return TaskRelationMetadata(
+        id=row.id,
+        profile_id=row.profile_id,
+        flow_id=row.flow_id,
+        source_task_id=row.source_task_id,
+        target_task_id=row.target_task_id,
+        relation_type=row.relation_type,
+        is_blocking=bool(row.is_blocking),
+        satisfied_on_status=row.satisfied_on_status,
+        created_by_type=row.created_by_type,
+        created_by_ref=row.created_by_ref,
+        details=_decode_json_object(row.details_json),
+        created_at=row.created_at,
+    )
+
+
+def _to_task_wake_metadata(row: TaskWake) -> TaskWakeMetadata:
+    return TaskWakeMetadata(
+        id=row.id,
+        task_id=row.task_id,
+        profile_id=row.profile_id,
+        flow_id=row.flow_id,
+        owner_type=row.owner_type,
+        owner_ref=row.owner_ref,
+        reason_code=row.reason_code,
+        status=row.status,
+        priority=row.priority,
+        idempotency_key=row.idempotency_key,
+        payload=_decode_json_object(row.payload_json),
+        source_event_id=row.source_event_id,
+        task_run_id=row.task_run_id,
+        run_after=row.run_after,
+        claimed_by=row.claimed_by,
+        claimed_at=row.claimed_at,
+        finished_at=row.finished_at,
+        coalesced_count=int(row.coalesced_count or 0),
+        last_coalesced_at=row.last_coalesced_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -6200,6 +6340,7 @@ async def _append_task_comment_event(
         message=message,
         details_json=encode_task_event_details(details),
     )
+    task = await repo.get_task(profile_id=profile_id, task_id=task_id) if mentions else None
     for mention in mentions:
         await repo.create_task_event(
             task_id=task_id,
@@ -6210,23 +6351,43 @@ async def _append_task_comment_event(
             message=message,
             details_json=encode_task_event_details({"mentions": [mention]}),
         )
-        await repo.create_task_event(
+        wake_payload: dict[str, object] = {
+            "reason_code": "explicit_mention",
+            "owner_type": mention["owner_type"],
+            "owner_ref": mention["owner_ref"],
+            "status": "mentioned",
+            "mentions": [mention],
+        }
+        wake_event = await repo.create_task_event(
             task_id=task_id,
             task_run_id=task_run_id,
             event_type="wake_requested",
             actor_type=actor_type,
             actor_ref=actor_ref,
             message="Explicit mention requested AI attention.",
-            details_json=encode_task_event_details(
-                {
-                    "reason_code": "explicit_mention",
-                    "owner_type": mention["owner_type"],
-                    "owner_ref": mention["owner_ref"],
-                    "status": "mentioned",
-                    "mentions": [mention],
-                }
-            ),
+            details_json=encode_task_event_details(wake_payload),
         )
+        if task is not None:
+            await repo.enqueue_task_wake(
+                wake_id=_new_identifier("wake"),
+                task_id=task.id,
+                profile_id=task.profile_id,
+                flow_id=task.flow_id,
+                owner_type=str(mention["owner_type"]),
+                owner_ref=str(mention["owner_ref"]),
+                reason_code="explicit_mention",
+                idempotency_key=_task_wake_idempotency_key(
+                    task=task,
+                    owner_type=str(mention["owner_type"]),
+                    owner_ref=str(mention["owner_ref"]),
+                    reason_code="explicit_mention",
+                    payload=wake_payload,
+                ),
+                payload_json=encode_task_event_details(wake_payload),
+                source_event_id=wake_event.id,
+                priority=task.priority,
+                run_after=task.ready_at,
+            )
     return row
 
 
@@ -6243,24 +6404,43 @@ async def _record_task_wake_requested(
     """Record a visible wake signal for employee-owned runnable or soon-runnable work."""
 
     owner_type, owner_ref = _task_responsible_employee(task) or (task.owner_type, task.owner_ref)
-    await repo.create_task_event(
+    payload = {
+        "reason_code": reason_code,
+        "owner_type": owner_type,
+        "owner_ref": owner_ref,
+        "reviewer_type": task.reviewer_type,
+        "reviewer_ref": task.reviewer_ref,
+        "status": task.status,
+        "ready_at": task.ready_at.isoformat() if task.ready_at is not None else None,
+        **(details or {}),
+    }
+    event = await repo.create_task_event(
         task_id=task.id,
         event_type="wake_requested",
         actor_type=actor_type,
         actor_ref=actor_ref,
         message=message or f"Wake requested: {reason_code}",
-        details_json=encode_task_event_details(
-            {
-                "reason_code": reason_code,
-                "owner_type": owner_type,
-                "owner_ref": owner_ref,
-                "reviewer_type": task.reviewer_type,
-                "reviewer_ref": task.reviewer_ref,
-                "status": task.status,
-                "ready_at": task.ready_at.isoformat() if task.ready_at is not None else None,
-                **(details or {}),
-            }
+        details_json=encode_task_event_details(payload),
+    )
+    await repo.enqueue_task_wake(
+        wake_id=_new_identifier("wake"),
+        task_id=task.id,
+        profile_id=task.profile_id,
+        flow_id=task.flow_id,
+        owner_type=owner_type,
+        owner_ref=owner_ref,
+        reason_code=reason_code,
+        idempotency_key=_task_wake_idempotency_key(
+            task=task,
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            reason_code=reason_code,
+            payload=payload,
         ),
+        payload_json=encode_task_event_details(payload),
+        source_event_id=event.id,
+        priority=task.priority,
+        run_after=task.ready_at,
     )
 
 
@@ -6871,6 +7051,7 @@ async def _delete_task_row(
         scope_id=row.id,
     )
     await repo.delete_task_attachments(task_id=row.id)
+    await repo.delete_task_v2_children(task_id=row.id)
     await repo.delete_task_events(task_id=row.id)
     await repo.delete_task_runs(task_id=row.id)
     await repo.delete_task_dependencies(task_id=row.id)

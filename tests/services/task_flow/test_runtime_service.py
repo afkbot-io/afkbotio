@@ -398,6 +398,24 @@ async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_depend
         assert len(listed_runs) == 1
         assert listed_runs[0].id == updated.last_run_id
         assert listed_runs[0].status == "completed"
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            consumed_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=first.id,
+                statuses=("consumed",),
+            )
+            open_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=first.id,
+                statuses=("pending", "claimed"),
+            )
+        assert len(consumed_wakes) == 1
+        assert consumed_wakes[0].task_run_id == listed_runs[0].id
+        assert consumed_wakes[0].finished_at is not None
+        assert open_wakes == []
+        context = await service.build_task_context(profile_id="default", task_id=first.id)
+        assert context.recent_wakes == ()
         listed_events = await service.list_task_events(profile_id="default", task_id=first.id)
         execution_event = next(
             item for item in listed_events if item.event_type == "execution_completed"
@@ -504,6 +522,112 @@ async def test_taskflow_runtime_blocks_non_interactive_task_when_agent_asks_ques
                 claimed_by="worker-b-ready",
             )
             assert claimed_revisit is None
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_enqueues_and_consumes_retryable_blocked_wake(
+    tmp_path: Path,
+) -> None:
+    """Retryable blocked outcomes should use the v2 wake queue, not event-only feed state."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_retryable_blocked_wake.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    behavior = {"value": "external_poll"}
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_retryable_blocked_wake.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior=behavior["value"],
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Poll external system",
+            description="Check a remote status and revisit while it is pending.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-poll")
+
+        assert processed is True
+        blocked = await service.get_task(profile_id="default", task_id=task.id)
+        assert blocked.status == "blocked"
+        assert blocked.blocked_reason_code == "external_poll"
+        assert blocked.ready_at is not None
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            pending_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("pending",),
+            )
+        external_wake = next(wake for wake in pending_wakes if wake.reason_code == "external_poll")
+        assert external_wake.owner_type == "employee"
+        assert external_wake.owner_ref == "papercliper"
+        assert external_wake.task_run_id is None
+        assert external_wake.source_event_id is not None
+        assert external_wake.run_after is not None
+
+        ready_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        async with session_scope(factory) as session:
+            await session.execute(
+                text("UPDATE task SET ready_at = :ready_at WHERE id = :task_id"),
+                {"ready_at": ready_at, "task_id": task.id},
+            )
+            await session.execute(
+                text(
+                    "UPDATE task_wake SET run_after = :ready_at "
+                    "WHERE task_id = :task_id AND reason_code = 'external_poll'"
+                ),
+                {"ready_at": ready_at, "task_id": task.id},
+            )
+
+        behavior["value"] = "complete"
+        processed_retry = await runtime.execute_next_claimable_task(worker_id="worker-poll-retry")
+
+        assert processed_retry is True
+        completed = await service.get_task(profile_id="default", task_id=task.id)
+        assert completed.status == "completed"
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            open_external_wakes = [
+                wake
+                for wake in await repo.list_task_wakes(
+                    profile_id="default",
+                    task_id=task.id,
+                    statuses=("pending", "claimed"),
+                )
+                if wake.reason_code == "external_poll"
+            ]
+            consumed_external_wakes = [
+                wake
+                for wake in await repo.list_task_wakes(
+                    profile_id="default",
+                    task_id=task.id,
+                    statuses=("consumed",),
+                )
+                if wake.reason_code == "external_poll"
+            ]
+        assert open_external_wakes == []
+        assert len(consumed_external_wakes) == 1
+        assert consumed_external_wakes[0].task_run_id == completed.last_run_id
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -753,6 +877,21 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert task_run is not None
         assert task_run.status == "cancelled"
         assert task_run.error_code == "task_claim_lost"
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            pending_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("pending",),
+            )
+            consumed_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("consumed",),
+            )
+        assert len(pending_wakes) == 1
+        assert pending_wakes[0].task_run_id is None
+        assert consumed_wakes == []
 
         monkeypatch.setattr(runtime, "_mark_started", original_mark_started)
         processed_retry = await runtime.execute_next_claimable_task(
@@ -764,6 +903,15 @@ async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
         assert completed.status == "completed"
         assert completed.current_attempt == 1
         assert len(observed_calls) == 1
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            consumed_after_retry = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("consumed",),
+            )
+        assert len(consumed_after_retry) == 1
+        assert consumed_after_retry[0].task_run_id is not None
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -870,6 +1018,103 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
             executor_type="employee",
             executor_ref="papercliper",
         )
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweep_reopens_claimed_wake_for_retry(tmp_path: Path) -> None:
+    """Expired claim maintenance should not leave the corresponding wake stuck as claimed."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_wake_sweep_reopen.db",
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_wake_sweep_reopen.db'}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Recover wake after worker crash",
+            description="The wake should become pending again after stale-claim sweep.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+        )
+        stale_now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=stale_now,
+                lease_until=stale_now - timedelta(minutes=5),
+                claim_token="stale-wake-claim",
+                claimed_by="taskflow-runtime:stale-wake",
+            )
+            assert claimed is not None
+            task_run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=claimed.current_attempt + 1,
+                owner_type=claimed.owner_type,
+                owner_ref=claimed.owner_ref,
+                execution_mode="detached",
+                status="running",
+                session_id=f"taskflow:{task.id}",
+                run_id=None,
+                worker_id="taskflow-runtime:stale-wake",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            attached = await repo.attach_task_run(
+                task_id=task.id,
+                claim_token="stale-wake-claim",
+                task_run_id=task_run.id,
+                session_id=f"taskflow:{task.id}",
+            )
+            assert attached is True
+            await repo.attach_task_run_to_claimed_wakes(
+                task_id=task.id,
+                claimed_by="taskflow-runtime:stale-wake",
+                task_run_id=task_run.id,
+            )
+            started = await repo.mark_task_started(
+                task_id=task.id,
+                claim_token="stale-wake-claim",
+                started_at=stale_now - timedelta(minutes=10),
+            )
+            assert started is True
+
+        released_count = await runtime.sweep_expired_claims(worker_id="worker-wake-sweep")
+
+        assert released_count == 1
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            pending_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("pending",),
+            )
+            claimed_wakes = await repo.list_task_wakes(
+                profile_id="default",
+                task_id=task.id,
+                statuses=("claimed",),
+            )
+        assert len(pending_wakes) == 1
+        assert pending_wakes[0].task_run_id is None
+        assert pending_wakes[0].claimed_by is None
+        assert claimed_wakes == []
     finally:
         await runtime.shutdown()
         await engine.dispose()
