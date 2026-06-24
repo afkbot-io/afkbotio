@@ -60,6 +60,8 @@ async def test_connect_issue_claim_refresh_revoke_flow(
         session_id="desktop-session",
         base_url="http://127.0.0.1:8081",
         ttl_sec=120,
+        allow_diagnostics=True,
+        allow_operator_workspace=True,
         context_overrides=TurnContextOverrides(
             runtime_metadata={
                 "transport": "desktop",
@@ -93,6 +95,8 @@ async def test_connect_issue_claim_refresh_revoke_flow(
     )
     assert claimed_scope.profile_id == "default"
     assert claimed_scope.session_id == "desktop-session"
+    assert claimed_scope.allow_diagnostics is True
+    assert claimed_scope.allow_operator_workspace is True
     assert claimed_scope.runtime_metadata == {
         "transport": "desktop",
         "peer_id": "workspace-7",
@@ -125,6 +129,8 @@ async def test_connect_issue_claim_refresh_revoke_flow(
     )
     assert refreshed_scope.profile_id == "default"
     assert refreshed_scope.session_id == "desktop-session"
+    assert refreshed_scope.allow_diagnostics is True
+    assert refreshed_scope.allow_operator_workspace is True
     assert refreshed_scope.runtime_metadata == claimed_scope.runtime_metadata
     assert refreshed_scope.prompt_overlay == claimed_scope.prompt_overlay
 

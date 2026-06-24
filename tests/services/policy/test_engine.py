@@ -52,17 +52,18 @@ def test_policy_engine_enforces_tool_allow_and_deny() -> None:
         )
 
 
-def test_policy_engine_allows_explicit_cli_override_without_bypassing_denies() -> None:
-    """Explicit CLI-approved tools may bypass the allow gate, but not deny rules."""
+def test_policy_engine_approval_does_not_bypass_profile_allowlist_or_denies() -> None:
+    """Explicit approval should not widen profile authorization or deny boundaries."""
 
     engine = PolicyEngine()
     allowed_policy = _policy(allowed_tools_json='["memory.search"]')
-    engine.ensure_tool_call_allowed(
-        policy=allowed_policy,
-        tool_name="debug.echo",
-        params={},
-        approved_tool_names={"debug.echo"},
-    )
+    with pytest.raises(PolicyViolationError, match="Tool is not allowed by policy: debug.echo"):
+        engine.ensure_tool_call_allowed(
+            policy=allowed_policy,
+            tool_name="debug.echo",
+            params={},
+            approved_tool_names={"debug.echo"},
+        )
 
     denied_policy = _policy(
         allowed_tools_json='["memory.search"]',
@@ -74,6 +75,31 @@ def test_policy_engine_allows_explicit_cli_override_without_bypassing_denies() -
             tool_name="debug.echo",
             params={},
             approved_tool_names={"debug.echo"},
+        )
+
+
+def test_policy_engine_profile_allowlist_exempt_tools_bypass_allow_but_not_deny() -> None:
+    """Scoped internal runtime grants may bypass profile allowlist, but never deny rules."""
+
+    engine = PolicyEngine()
+    allowed_policy = _policy(allowed_tools_json='["memory.search"]')
+    engine.ensure_tool_call_allowed(
+        policy=allowed_policy,
+        tool_name="app.run",
+        params={},
+        profile_allowlist_exempt_tool_names={"app.run"},
+    )
+
+    denied_policy = _policy(
+        allowed_tools_json='["memory.search"]',
+        denied_tools_json='["app.run"]',
+    )
+    with pytest.raises(PolicyViolationError, match="Tool is denied by policy: app.run"):
+        engine.ensure_tool_call_allowed(
+            policy=denied_policy,
+            tool_name="app.run",
+            params={},
+            profile_allowlist_exempt_tool_names={"app.run"},
         )
 
 

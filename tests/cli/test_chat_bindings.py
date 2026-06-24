@@ -102,7 +102,7 @@ def test_chat_cli_resolves_binding_target_before_turn(
     assert result.exit_code == 0
     assert captured["message"] == "hello"
     assert captured["profile_id"] == "sales"
-    assert captured["session_id"] == "profile:sales:chat:42:thread:9001"
+    assert captured["session_id"] == "profile:sales:channel:telegram:chat:42:thread:9001"
 
 
 def test_chat_cli_requires_transport_when_binding_resolution_enabled(
@@ -283,6 +283,6 @@ def test_chat_cli_binding_resolved_session_rejects_second_terminal(
     assert first_result["result"].exit_code == 0
     assert second.exit_code == 2
     assert (
-        "Chat session 'profile:sales:chat:42:thread:9001' is already open in another terminal"
+        "Chat session 'profile:sales:channel:telegram:chat:42:thread:9001' is already open in another terminal"
         in second.stderr
     )

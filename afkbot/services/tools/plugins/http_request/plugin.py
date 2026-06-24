@@ -52,6 +52,65 @@ class HttpRequestTool(ToolBase):
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
+    async def prepare_policy_params(
+        self,
+        raw_params: Mapping[str, object],
+        *,
+        ctx: ToolContext | None = None,
+        default_timeout_sec: int,
+        max_timeout_sec: int,
+    ) -> dict[str, object]:
+        """Resolve credential placeholders before policy inspects outbound targets."""
+
+        payload = self.parse_params(
+            raw_params,
+            default_timeout_sec=default_timeout_sec,
+            max_timeout_sec=max_timeout_sec,
+        )
+        parsed = HttpRequestParams.model_validate(payload.model_dump())
+        if ctx is None:
+            return self.policy_params(raw_params, ctx=ctx)
+        resolved_url = await resolve_secret_placeholders(
+            settings=self._settings,
+            profile_id=ctx.profile_id,
+            source=parsed.url,
+            default_app_name="http",
+            default_profile_name=parsed.credential_profile_key,
+            tool_name=self.name,
+            allowed_app_names={"http"},
+        )
+        resolved_headers = {
+            str(key): await resolve_secret_placeholders(
+                settings=self._settings,
+                profile_id=ctx.profile_id,
+                source=str(value),
+                default_app_name="http",
+                default_profile_name=parsed.credential_profile_key,
+                tool_name=self.name,
+                allowed_app_names={"http"},
+            )
+            for key, value in parsed.headers.items()
+        }
+        resolved_body = (
+            None
+            if parsed.body is None
+            else await resolve_secret_placeholders(
+                settings=self._settings,
+                profile_id=ctx.profile_id,
+                source=parsed.body,
+                default_app_name="http",
+                default_profile_name=parsed.credential_profile_key,
+                tool_name=self.name,
+                allowed_app_names={"http"},
+            )
+        )
+        return {
+            **self.policy_params(raw_params, ctx=ctx),
+            "url": resolved_url,
+            "headers": resolved_headers,
+            "body": resolved_body,
+        }
+
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         prepared = self._prepare_params(ctx=ctx, params=params, expected=HttpRequestParams)
         if isinstance(prepared, ToolResult):

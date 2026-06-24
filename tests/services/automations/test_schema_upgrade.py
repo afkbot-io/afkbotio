@@ -75,7 +75,6 @@ async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
                         claim_token VARCHAR(64),
                         in_progress_until DATETIME,
                         last_session_id VARCHAR(255),
-                        last_received_at DATETIME,
                         FOREIGN KEY(automation_id) REFERENCES automation(id)
                     )
                     """
@@ -123,7 +122,8 @@ async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
                             last_started_at,
                             last_succeeded_at,
                             last_failed_at,
-                            last_error
+                            last_error,
+                            last_received_at
                         FROM automation_trigger_webhook
                         WHERE automation_id = 1
                         """
@@ -138,10 +138,128 @@ async def test_create_schema_backfills_hash_refs_for_legacy_webhook_rows(
         assert row[2] is None
         assert row[3] is None
         assert row[4] is None
+        assert row[9] is None
         assert row[5] is None
         assert row[6] is None
         assert row[7] is None
         assert row[8] is None
+    finally:
+        await engine.dispose()
+
+
+async def test_create_schema_backfills_connect_token_runtime_columns(
+    tmp_path: Path,
+) -> None:
+    """Legacy connect token tables should gain current auth/runtime columns."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'legacy_connect_schema.db'}",
+        root_dir=tmp_path,
+    )
+    engine = create_engine(settings)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE profile (
+                        id VARCHAR(64) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE connect_claim_token (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        session_id VARCHAR(128) NOT NULL,
+                        base_url VARCHAR(2048) NOT NULL,
+                        token_hash VARCHAR(128) NOT NULL,
+                        expires_at DATETIME NOT NULL,
+                        used_at DATETIME
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE connect_session_token (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        session_id VARCHAR(128) NOT NULL,
+                        base_url VARCHAR(2048) NOT NULL,
+                        refresh_token_hash VARCHAR(128) NOT NULL,
+                        expires_at DATETIME NOT NULL,
+                        revoked_at DATETIME
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE connect_access_token (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        profile_id VARCHAR(64) NOT NULL,
+                        session_id VARCHAR(128) NOT NULL,
+                        refresh_session_id INTEGER NOT NULL,
+                        base_url VARCHAR(2048) NOT NULL,
+                        token_hash VARCHAR(128) NOT NULL,
+                        expires_at DATETIME NOT NULL,
+                        revoked_at DATETIME
+                    )
+                    """
+                )
+            )
+
+        await create_schema(engine)
+
+        async with engine.connect() as conn:
+            columns_by_table = {
+                table_name: {
+                    str(row[1])
+                    for row in (
+                        await conn.execute(text(f"PRAGMA table_info({table_name})"))
+                    ).fetchall()
+                }
+                for table_name in (
+                    "connect_claim_token",
+                    "connect_session_token",
+                    "connect_access_token",
+                )
+            }
+
+        assert {
+            "claim_pin_hash",
+            "claim_failed_attempts",
+            "claim_blocked_at",
+            "allow_diagnostics",
+            "allow_operator_workspace",
+            "runtime_metadata_json",
+            "prompt_overlay",
+        }.issubset(columns_by_table["connect_claim_token"])
+        assert {
+            "session_proof_hash",
+            "allow_diagnostics",
+            "allow_operator_workspace",
+            "runtime_metadata_json",
+            "prompt_overlay",
+        }.issubset(columns_by_table["connect_session_token"])
+        assert {
+            "allow_diagnostics",
+            "allow_operator_workspace",
+            "runtime_metadata_json",
+            "prompt_overlay",
+        }.issubset(columns_by_table["connect_access_token"])
     finally:
         await engine.dispose()
 
@@ -770,7 +888,6 @@ async def test_create_schema_creates_graph_tables_without_breaking_legacy_rows(
             "automation_edge",
             "automation_run",
             "automation_node_run",
-            "automation_optimization_snapshot",
         }.issubset(table_names)
 
         session_factory = create_session_factory(engine)

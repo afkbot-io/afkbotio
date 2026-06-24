@@ -76,6 +76,17 @@ class AppRunTool(ToolBase):
         app_name = payload.app_name.strip().lower()
         if not app_name:
             return ToolResult.error(error_code="app_not_supported", reason="app_name is required")
+        routed_app_names = {
+            str(name).strip().lower()
+            for name in (ctx.routed_app_names or ())
+            if str(name).strip()
+        }
+        if routed_app_names and app_name not in routed_app_names:
+            return ToolResult.error(
+                error_code="app_not_allowed_in_turn",
+                reason=f"App not available in current turn: {app_name}",
+                metadata={"allowed_apps": sorted(routed_app_names)},
+            )
 
         app_registry = self._app_registry or get_app_registry(
             settings=self._settings,

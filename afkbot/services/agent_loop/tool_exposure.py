@@ -38,6 +38,7 @@ class ToolSurface:
     visible_tools: tuple[LLMToolDefinition, ...]
     executable_tool_names: tuple[str, ...]
     approval_required_tool_names: tuple[str, ...]
+    routed_app_names: tuple[str, ...] = ()
 
 
 class ToolExposureBuilder:
@@ -74,7 +75,10 @@ class ToolExposureBuilder:
 
         if self._tool_registry is None:
             return ToolSurface(
-                visible_tools=(), executable_tool_names=(), approval_required_tool_names=()
+                visible_tools=(),
+                executable_tool_names=(),
+                approval_required_tool_names=(),
+                routed_app_names=(),
             )
         allowed_names = self._policy_engine.allowed_tool_names(
             policy=policy,
@@ -139,6 +143,7 @@ class ToolExposureBuilder:
             visible_tools=tuple(definitions),
             executable_tool_names=filtered_names,
             approval_required_tool_names=approval_visible_names,
+            routed_app_names=selected_app_names,
         )
 
     def _passes_runtime_hard_guards(
@@ -175,6 +180,17 @@ class ToolExposureBuilder:
         except PolicyViolationError:
             return True
 
+    def _tool_is_allowed_by_profile(self, *, policy: ProfilePolicy, tool_name: str) -> bool:
+        """Return whether one tool is allowed by profile policy, failing closed."""
+
+        try:
+            return self._policy_engine.is_tool_allowed_by_profile(
+                policy=policy,
+                tool_name=tool_name,
+            )
+        except PolicyViolationError:
+            return False
+
     def _merge_approved_tool_names(
         self,
         *,
@@ -195,8 +211,7 @@ class ToolExposureBuilder:
             trusted_runtime_context=trusted_runtime_context,
             approved_tool_names=channel_owned_tool_names,
         )
-        candidate_names = tuple(generic_approved_names) + tuple(channel_owned_approved_names)
-        if not candidate_names:
+        if not generic_approved_names and not channel_owned_approved_names:
             return filtered_names
 
         blocked_sensitive_names = set(
@@ -204,7 +219,24 @@ class ToolExposureBuilder:
         )
         merged = list(filtered_names)
         seen = set(filtered_names)
-        for raw_name in candidate_names:
+        for raw_name in tuple(generic_approved_names):
+            name = str(raw_name).strip()
+            if (
+                not name
+                or name in seen
+                or self._tool_is_explicitly_denied(policy=policy, tool_name=name)
+                or not self._tool_is_allowed_by_profile(policy=policy, tool_name=name)
+                or not self._passes_runtime_hard_guards(
+                    tool_name=name,
+                    runtime_metadata=runtime_metadata,
+                    tool_access_mode=tool_access_mode,
+                    blocked_sensitive_names=blocked_sensitive_names,
+                )
+            ):
+                continue
+            merged.append(name)
+            seen.add(name)
+        for raw_name in tuple(channel_owned_approved_names):
             name = str(raw_name).strip()
             if (
                 not name
@@ -339,6 +371,7 @@ class ToolExposureBuilder:
             if (
                 name in direct_names
                 or self._tool_is_explicitly_denied(policy=policy, tool_name=name)
+                or not self._tool_is_allowed_by_profile(policy=policy, tool_name=name)
                 or not self._passes_runtime_hard_guards(
                     tool_name=name,
                     runtime_metadata=runtime_metadata,

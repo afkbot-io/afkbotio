@@ -31,6 +31,7 @@ async def issue_connect_url(
     base_url: str,
     ttl_sec: int | None = None,
     allow_diagnostics: bool = False,
+    allow_operator_workspace: bool = False,
     claim_pin: str | None = None,
     context_overrides: TurnContextOverrides | None = None,
 ) -> ConnectIssueResult:
@@ -43,6 +44,7 @@ async def issue_connect_url(
         base_url=base_url,
         ttl_sec=ttl_sec,
         allow_diagnostics=allow_diagnostics,
+        allow_operator_workspace=allow_operator_workspace,
         claim_pin=claim_pin,
         context_overrides=context_overrides,
     )

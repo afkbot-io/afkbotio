@@ -10,6 +10,8 @@ from afkbot.services.profile_runtime.runtime_config import get_profile_runtime_c
 from afkbot.services.path_scope import resolve_in_scope
 from afkbot.settings import Settings
 
+_RESERVED_IO_ROOTS = frozenset({"channel_attachments"})
+
 
 class WorkspacePathResolutionError(ValueError):
     """Structured workspace path failure for scope and existence errors."""
@@ -27,6 +29,7 @@ class ToolShellPolicy:
 
     shell_sandbox_mode: str = "disabled"
     shell_allowed_commands: tuple[str, ...] = ()
+    scoped_sandbox_required: bool = False
 
 
 def resolve_tool_workspace_base_dir(*, settings: Settings, profile_id: str) -> Path:
@@ -56,7 +59,7 @@ async def resolve_tool_workspace_scope_roots(
         except ProfileServiceError:
             return (base_dir,)
         if not profile.policy.enabled:
-            return ()
+            return (base_dir,)
         resolved_roots = _normalize_scope_roots(profile.policy.allowed_directories)
         if not resolved_roots:
             return (base_dir,)
@@ -76,6 +79,7 @@ async def resolve_tool_shell_policy(*, settings: Settings, profile_id: str) -> T
     return ToolShellPolicy(
         shell_sandbox_mode=profile.policy.shell_sandbox_mode,
         shell_allowed_commands=profile.policy.shell_allowed_commands,
+        scoped_sandbox_required=profile.policy.enabled,
     )
 
 
@@ -157,12 +161,29 @@ def resolve_io_path(
 ) -> Path:
     """Resolve file IO path from base dir with optional hard scope enforcement."""
 
-    return resolve_workspace_path(
+    resolved = resolve_workspace_path(
         base_dir=base_dir,
         scope_roots=scope_roots,
         raw_path=raw_path,
         must_exist=must_exist,
     )
+    if is_reserved_tool_io_path(base_dir=base_dir, path=resolved):
+        raise WorkspacePathResolutionError(
+            code="reserved_path",
+            raw_path=raw_path,
+            reason=f"Path is reserved for channel runtime data: {raw_path}",
+        )
+    return resolved
+
+
+def is_reserved_tool_io_path(*, base_dir: Path, path: Path) -> bool:
+    """Return whether generic file tools must not expose one workspace path."""
+
+    try:
+        relative = path.resolve(strict=False).relative_to(base_dir.resolve(strict=False))
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0] in _RESERVED_IO_ROOTS
 
 
 def to_workspace_relative(*, base_dir: Path, path: Path) -> str:

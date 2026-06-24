@@ -113,7 +113,7 @@ def test_plugin_install_uses_prompted_source_when_argument_is_omitted(
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     get_settings.cache_clear()
     captured: dict[str, object] = {}
-    installed = _plugin_record(plugin_id="kanban", name="Task Flow Kanban")
+    installed = _plugin_record(plugin_id="sample", name="Sample Plugin")
 
     class _FakePluginService:
         def list_installed(self) -> tuple[InstalledPluginRecord, ...]:
@@ -312,10 +312,10 @@ def test_plugin_install_prompt_text_includes_installed_summary() -> None:
 
     text = _plugin_install_prompt_text(
         lang=PromptLanguage.EN,
-        installed_plugin_labels=("afkbotui", "kanban"),
+        installed_plugin_labels=("afkbotui", "sample"),
     )
 
-    assert "Installed plugins: 2 (afkbotui, kanban)." in text
+    assert "Installed plugins: 2 (afkbotui, sample)." in text
 
 
 def test_plugin_install_custom_source_validation_accepts_github_sources() -> None:

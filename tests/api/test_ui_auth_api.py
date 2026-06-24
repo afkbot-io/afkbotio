@@ -20,6 +20,7 @@ def _write_api_demo_plugin(
     *,
     plugin_id: str = "demo",
     operator_required: bool = True,
+    public: bool = False,
     api_prefix: str | None = None,
     web_prefix: str | None = None,
 ) -> None:
@@ -38,7 +39,7 @@ def _write_api_demo_plugin(
                 "afkbot_version": "*",
                 "kind": "embedded",
                 "entrypoint": f"{package_name}.plugin:register",
-                "auth": {"operator_required": operator_required},
+                "auth": {"operator_required": operator_required, "public": public},
                 "capabilities": {"api_router": True, "static_web": True, "lifecycle": False},
                 "mounts": {"api_prefix": resolved_api_prefix, "web_prefix": resolved_web_prefix},
                 "paths": {"python_root": "python", "web_root": "web/dist"},
@@ -160,6 +161,7 @@ def test_protected_plugin_surfaces_require_login_and_accept_cookie(
         assert api_authed.json() == {"plugin": "demo"}
         assert web_authed.status_code == 200
         assert "demo mounted" in web_authed.text
+        assert web_authed.headers["cache-control"] == "no-store, max-age=0"
 
         logout_response = client.post("/v1/auth/logout")
         api_after_logout = client.get("/v1/plugins/demo/ping")
@@ -191,11 +193,11 @@ def test_operator_required_plugin_fails_closed_when_ui_auth_is_not_configured(
         assert web_response.status_code == 503
 
 
-def test_unprotected_plugin_web_surface_stays_public_but_default_api_prefix_requires_auth(
+def test_default_private_plugin_web_surface_requires_auth(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Auth-enabled runtimes keep web opt-in policy but protect the shared plugin API prefix."""
+    """Plugin mounts should be private by default even when operator_required is false."""
 
     source_root = tmp_path / "public-plugin-src"
     _write_api_demo_plugin(source_root, plugin_id="publicdemo", operator_required=False)
@@ -221,10 +223,50 @@ def test_unprotected_plugin_web_surface_stays_public_but_default_api_prefix_requ
 
     with TestClient(create_app()) as client:
         api_response = client.get("/v1/plugins/publicdemo/ping")
-        web_response = client.get("/plugins/publicdemo/")
+        web_response = client.get("/plugins/publicdemo/", follow_redirects=False)
 
         assert api_response.status_code == 401
         assert api_response.json()["error_code"] == "ui_auth_required"
+        assert web_response.status_code == 303
+        assert web_response.headers["location"].startswith("/auth/login?")
+
+
+def test_explicit_public_plugin_web_surface_stays_public(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A plugin may opt out of mount protection only with auth.public=true."""
+
+    source_root = tmp_path / "public-plugin-src"
+    _write_api_demo_plugin(
+        source_root,
+        plugin_id="publicdemo",
+        operator_required=False,
+        public=True,
+    )
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    get_settings.cache_clear()
+    settings = get_settings()
+    upsert_ui_auth(
+        settings,
+        username="operator",
+        password_hash=hash_ui_auth_password("correct-horse-battery"),
+        session_ttl_sec=3600,
+        idle_ttl_sec=900,
+        login_rate_limit_window_sec=600,
+        login_rate_limit_max_attempts=5,
+        lockout_sec=600,
+        protected_plugin_ids=(),
+        trust_proxy_headers=False,
+    )
+    get_settings.cache_clear()
+    settings = get_settings()
+    get_plugin_service(settings).install(source=str(source_root))
+
+    with TestClient(create_app()) as client:
+        web_response = client.get("/plugins/publicdemo/")
+
         assert web_response.status_code == 200
         assert "publicdemo mounted" in web_response.text
 

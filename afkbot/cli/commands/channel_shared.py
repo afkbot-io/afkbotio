@@ -18,6 +18,10 @@ from afkbot.cli.presentation.prompt_i18n import msg, single_hint
 from afkbot.cli.presentation.prompt_i18n import PromptLanguage
 from afkbot.services.channel_routing import ChannelBindingRule
 from afkbot.services.channel_routing.contracts import SessionPolicy
+from afkbot.services.channel_routing.endpoint_bindings import (
+    delete_endpoint_owned_bindings as delete_endpoint_owned_bindings,
+    set_endpoint_owned_bindings_enabled as set_endpoint_owned_bindings_enabled,
+)
 from afkbot.services.channel_routing.service import (
     ChannelBindingService,
     ChannelBindingServiceError,
@@ -83,6 +87,8 @@ CHANNEL_TOOL_PROFILE_DETAIL_EN = (
     "generic app.run, shell, or filesystem access. For private admin support use "
     "`support_readonly`. Use `inherit` only for a fully trusted channel."
 )
+
+
 CHANNEL_TOOL_PROFILE_DETAIL_RU = (
     "Выберите инструменты, видимые в диалогах, запущенных из этого канала. Профиль остаётся "
     "максимальным потолком прав; эта настройка в основном сужает его. Фиксированные инструменты "
@@ -554,6 +560,7 @@ def collect_channel_access_policy_inputs(
     groups_default: tuple[str, ...] = (),
     group_allow_from_default: tuple[str, ...] = (),
     outbound_allow_to_default: tuple[str, ...] = (),
+    prompt_outbound_safety: bool = False,
 ) -> ChannelAccessPolicy:
     """Collect OpenClaw-style access controls shared by channel transports."""
 
@@ -687,7 +694,7 @@ def collect_channel_access_policy_inputs(
             )
         )
     if (
-        interactive
+        (interactive or prompt_outbound_safety)
         and outbound_allow_to is None
         and _channel_tool_profile_may_send_outbound(tool_profile)
     ):
@@ -838,14 +845,11 @@ async def _delete_existing_access_policy_bindings(
     endpoint_id: str,
     transport: str,
 ) -> None:
-    existing = await service.list(transport=transport)
-    for rule in existing:
-        if rule.binding_id == endpoint_id or rule.binding_id.startswith(f"{endpoint_id}:"):
-            try:
-                await service.delete(binding_id=rule.binding_id)
-            except ChannelBindingServiceError as exc:
-                if exc.error_code != "channel_binding_not_found":
-                    raise
+    await delete_endpoint_owned_bindings(
+        service=service,
+        endpoint_id=endpoint_id,
+        transport=transport,
+    )
 
 
 def build_access_policy_binding_rules(

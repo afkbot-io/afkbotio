@@ -266,6 +266,8 @@ class Settings(BaseSettings):
     runtime_worker_count: int = 4
     runtime_cron_interval_sec: float = 60.0
     runtime_cron_max_due_per_tick: int = 32
+    runtime_webhook_busy_max_retries: int = 3
+    runtime_webhook_busy_retry_delay_sec: float = 1.0
     runtime_shutdown_timeout_sec: float = 10.0
     runtime_read_timeout_sec: float = 5.0
     automation_run_timeout_sec: float = 1800.0
@@ -289,6 +291,10 @@ class Settings(BaseSettings):
     taskflow_knowledge_maintenance_terminal_cooldown_sec: int = 86400
     taskflow_blocked_revisit_initial_sec: int = 7200
     taskflow_blocked_revisit_max_sec: int = 86400
+    taskflow_task_max_attempts: int = 5
+    taskflow_repeated_blocker_max_count: int = 3
+    taskflow_delegation_max_children_per_task: int = 3
+    taskflow_delegation_max_same_owner_open_tasks: int = 1
     browser_backend: BrowserBackendId = DEFAULT_BROWSER_BACKEND
     browser_cdp_url: str | None = None
     browser_lightpanda_binary_path: str | None = None
@@ -356,7 +362,7 @@ class Settings(BaseSettings):
     session_compaction_keep_recent_turns: int = 6
     session_compaction_max_chars: int = 4000
     session_compaction_prune_raw_turns: bool = False
-    channel_routing_fallback_transports: tuple[str, ...] = ("cli", "api", "automation")
+    channel_routing_fallback_transports: tuple[str, ...] = ("cli",)
     channel_routing_telemetry_enabled: bool = True
     channel_routing_telemetry_history_size: int = 200
     telegram_polling_limit: int = 20
@@ -578,6 +584,7 @@ class Settings(BaseSettings):
         "ui_auth_login_rate_limit_max_attempts",
         "ui_auth_lockout_sec",
         "runtime_worker_count",
+        "runtime_webhook_busy_max_retries",
         "agent_tool_parallel_max_concurrent",
         "runtime_cron_max_due_per_tick",
         "runtime_max_header_bytes",
@@ -589,6 +596,10 @@ class Settings(BaseSettings):
         "taskflow_knowledge_maintenance_terminal_cooldown_sec",
         "taskflow_blocked_revisit_initial_sec",
         "taskflow_blocked_revisit_max_sec",
+        "taskflow_task_max_attempts",
+        "taskflow_repeated_blocker_max_count",
+        "taskflow_delegation_max_children_per_task",
+        "taskflow_delegation_max_same_owner_open_tasks",
         "browser_session_idle_ttl_sec",
         "diffs_artifact_ttl_sec",
         "secure_flow_max_steps",
@@ -705,6 +716,7 @@ class Settings(BaseSettings):
     @field_validator(
         "runtime_cron_interval_sec",
         "runtime_read_timeout_sec",
+        "runtime_webhook_busy_retry_delay_sec",
         "automation_run_timeout_sec",
         "taskflow_runtime_poll_interval_sec",
         "llm_request_timeout_sec",

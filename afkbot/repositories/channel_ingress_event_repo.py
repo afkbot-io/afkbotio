@@ -47,12 +47,15 @@ class ChannelIngressEventRepository:
             transport=transport,
             event_key=event_key,
         )
-        self._session.add(row)
         try:
-            await self._session.flush()
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush()
         except IntegrityError:
-            await self._session.rollback()
-            return None
+            existing = await self.get_by_key(endpoint_id=endpoint_id, event_key=event_key)
+            if existing is not None:
+                return None
+            raise
         await self._session.refresh(row)
         return row
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pytest import MonkeyPatch
 
+from afkbot.services.automations import AutomationsServiceError
 from afkbot.services.automations.runtime_daemon import RuntimeDaemon
 from tests.services.automations._runtime_harness import (
     FakeRuntimeService,
@@ -97,6 +98,52 @@ async def test_runtime_daemon_webhook_queue_full(tmp_path: Path) -> None:
         assert third_payload["error_code"] == "queue_full"
     finally:
         service.webhook_blocker.set()
+        await daemon.stop()
+
+
+async def test_runtime_daemon_requeues_busy_webhook_delivery(tmp_path: Path) -> None:
+    """Transient webhook claim contention should be retried by the daemon worker."""
+
+    class BusyOnceRuntimeService(FakeRuntimeService):
+        async def trigger_webhook(self, **kwargs: object) -> object:
+            await super().trigger_webhook(**kwargs)
+            if len(self.webhook_calls) == 1:
+                raise AutomationsServiceError(
+                    error_code="automation_webhook_busy",
+                    reason="Webhook is busy.",
+                )
+            return {"ok": True}
+
+    service = BusyOnceRuntimeService()
+    settings = build_settings(
+        tmp_path,
+        runtime_webhook_busy_retry_delay_sec=0.01,
+        runtime_webhook_busy_max_retries=2,
+    )
+    daemon = RuntimeDaemon(
+        settings=settings,
+        service=service,
+        webhook_token_validator=lambda _profile_id, _token: asyncio.sleep(0, result=True),
+    )
+    await daemon.start()
+    try:
+        status, payload = await request_json(
+            host=settings.runtime_host,
+            port=daemon.bound_port,
+            method="POST",
+            path=webhook_path(),
+            body='{"event_id":"evt-busy"}',
+        )
+        assert status == 202
+        assert payload == {"accepted": True}
+
+        for _ in range(80):
+            if len(service.webhook_calls) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        assert len(service.webhook_calls) == 2
+        assert service.webhook_calls[0] == service.webhook_calls[1]
+    finally:
         await daemon.stop()
 
 

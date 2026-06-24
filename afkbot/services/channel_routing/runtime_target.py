@@ -21,6 +21,7 @@ from afkbot.services.channel_routing.service import (
     get_channel_binding_service,
 )
 from afkbot.services.profile_id import validate_profile_id
+from afkbot.services.session_ids import compose_bounded_session_id, encode_session_component
 from afkbot.settings import Settings
 
 
@@ -185,6 +186,23 @@ def build_routing_runtime_metadata(
             "session_policy": target.routing.session_policy,
         }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def build_channel_default_session_id(*, selectors: RoutingSelectors) -> str:
+    """Build a collision-safe fallback session id for channel ingress."""
+
+    parts = ["channel", encode_session_component(selectors.transport or "unknown")]
+    if selectors.account_id:
+        parts.extend(("account", encode_session_component(selectors.account_id)))
+    if selectors.peer_id:
+        parts.extend(("chat", encode_session_component(selectors.peer_id)))
+    if selectors.thread_id:
+        parts.extend(("thread", encode_session_component(selectors.thread_id)))
+    if selectors.user_id:
+        parts.extend(("user", encode_session_component(selectors.user_id)))
+    if len(parts) == 2:
+        parts.append("default")
+    return compose_bounded_session_id(*parts)
 
 
 def build_routing_context_overrides(

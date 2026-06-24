@@ -141,6 +141,41 @@ class TaskCreateTool(ToolBase):
                     error_code="task_session_binding_forbidden",
                     reason="AI actor cannot bind its current session to another profile",
                 )
+            effective_flow_id = payload.flow_id
+            if "flow_id" not in explicit_fields:
+                runtime_taskflow = (
+                    ctx.runtime_metadata.get("taskflow")
+                    if isinstance(ctx.runtime_metadata, dict)
+                    else None
+                )
+                if isinstance(runtime_taskflow, dict):
+                    runtime_flow_id = runtime_taskflow.get("flow_id")
+                    if isinstance(runtime_flow_id, str) and runtime_flow_id.strip():
+                        effective_flow_id = runtime_flow_id.strip()
+            source_ref_for_idempotency = str(payload.source_ref or "").strip()
+            if actor.actor_type == "automation" and source_ref_for_idempotency:
+                existing_task = await service.find_task_by_source(
+                    profile_id=target_profile_id,
+                    source_type=payload.source_type,
+                    source_ref=source_ref_for_idempotency,
+                )
+                if existing_task is not None:
+                    if effective_flow_id is not None and existing_task.flow_id != effective_flow_id:
+                        return ToolResult.error(
+                            error_code="task_source_conflict",
+                            reason=(
+                                "A task already exists for this source_ref in another Task Flow"
+                            ),
+                        )
+                    return ToolResult(ok=True, payload={"task": existing_task.model_dump(mode="json")})
+            if actor.actor_type == "automation" and effective_flow_id is None:
+                return ToolResult.error(
+                    error_code="task_flow_required",
+                    reason=(
+                        "Automation-created tasks must pass flow_id or run inside a Task Flow "
+                        "runtime that provides one."
+                    ),
+                )
             item = await service.create_task(
                 profile_id=target_profile_id,
                 title=payload.title,
@@ -151,7 +186,7 @@ class TaskCreateTool(ToolBase):
                 session_id=effective_session_id,
                 session_profile_id=effective_session_profile_id,
                 actor_session_id=actor.actor_session_id,
-                flow_id=payload.flow_id,
+                flow_id=effective_flow_id,
                 priority=payload.priority,
                 due_at=payload.due_at,
                 owner_type=resolved_owner_type,

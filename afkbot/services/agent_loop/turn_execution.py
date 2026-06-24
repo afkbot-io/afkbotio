@@ -207,6 +207,7 @@ class TurnExecutionRuntime:
             available_tools = prepared.available_tools
             executable_tool_names = set(prepared.executable_tool_names)
             approval_required_tool_names = set(prepared.approval_required_tool_names)
+            routed_app_names = set(prepared.routed_app_names)
             history = prepared.history
 
             machine.think()
@@ -322,6 +323,7 @@ class TurnExecutionRuntime:
                         else set(effective_overrides.channel_owned_tool_names)
                     ),
                     approval_required_tool_names=approval_required_tool_names,
+                    routed_app_names=routed_app_names,
                 )
                 pending_envelope = self._pending_envelopes.build_tool_not_allowed_envelope(
                     tool_calls=normalized_planned_tool_calls,
@@ -400,6 +402,7 @@ class TurnExecutionRuntime:
                         else effective_overrides.channel_owned_tool_names
                     ),
                     approval_required_tool_names=tuple(approval_required_tool_names),
+                    routed_app_names=tuple(routed_app_names),
                 )
                 assistant_message = llm_result.assistant_message
                 pending_envelope = llm_result.pending_envelope

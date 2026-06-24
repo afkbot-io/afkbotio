@@ -67,6 +67,7 @@ class ConnectAccessTokenContext:
     base_url: str
     expires_at: datetime
     allow_diagnostics: bool = False
+    allow_operator_workspace: bool = False
     runtime_metadata: dict[str, object] | None = None
     prompt_overlay: str | None = None
 

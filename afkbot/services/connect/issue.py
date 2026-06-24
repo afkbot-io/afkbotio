@@ -36,6 +36,7 @@ async def issue_connect_url(
     base_url: str,
     ttl_sec: int | None = None,
     allow_diagnostics: bool = False,
+    allow_operator_workspace: bool = False,
     claim_pin: str | None = None,
     context_overrides: TurnContextOverrides | None = None,
 ) -> ConnectIssueResult:
@@ -88,6 +89,7 @@ async def issue_connect_url(
             if normalized_claim_pin is None
             else hash_token(normalized_claim_pin),
             allow_diagnostics=allow_diagnostics,
+            allow_operator_workspace=allow_operator_workspace,
             runtime_metadata_json=serialize_runtime_metadata(
                 None if context_snapshot is None else context_snapshot.runtime_metadata
             ),

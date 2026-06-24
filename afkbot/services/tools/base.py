@@ -32,6 +32,8 @@ class ToolContext:
     actor: Literal["main", "subagent"] = "main"
     runtime_metadata: dict[str, object] | None = None
     trusted_runtime_context: dict[str, object] | None = None
+    routed_app_names: tuple[str, ...] | None = None
+    policy_network_allowlist_json: str | None = None
     progress_callback: ToolProgressCallback | None = None
 
 
@@ -139,6 +141,19 @@ class ToolBase(ABC):
 
         _ = ctx
         return {str(key): value for key, value in raw_params.items()}
+
+    async def prepare_policy_params(
+        self,
+        raw_params: Mapping[str, object],
+        *,
+        ctx: ToolContext | None = None,
+        default_timeout_sec: int,
+        max_timeout_sec: int,
+    ) -> dict[str, object]:
+        """Return policy-evaluable params after any async tool-local normalization."""
+
+        _ = default_timeout_sec, max_timeout_sec
+        return self.policy_params(raw_params, ctx=ctx)
 
     @abstractmethod
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:

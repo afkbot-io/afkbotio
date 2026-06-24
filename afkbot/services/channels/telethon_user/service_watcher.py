@@ -13,7 +13,6 @@ from afkbot.services.channel_routing.runtime_target import (
     RuntimeTarget,
     build_routing_context_overrides,
 )
-from afkbot.services.channel_routing.service import ChannelBindingServiceError
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
 from afkbot.services.channels.ingress_journal import get_channel_ingress_journal_service
@@ -294,28 +293,20 @@ async def resolve_watcher_runtime_target(
         transport=service._endpoint.transport,
         account_id=service._endpoint.account_id,
     )
-    try:
-        resolved = await resolve_runtime_target_fn(
-            settings=service._settings,
-            explicit_profile_id=None,
-            explicit_session_id=None,
-            resolve_binding=True,
-            selectors=selectors,
-            default_profile_id=service._endpoint.profile_id,
-            default_session_id=default_session_id,
-        )
-        return RuntimeTarget(
-            profile_id=resolved.profile_id,
-            session_id=default_session_id,
-            routing=resolved.routing,
-        )
-    except ChannelBindingServiceError as exc:
-        if exc.error_code != "channel_binding_no_match":
-            raise
-        return RuntimeTarget(
-            profile_id=service._endpoint.profile_id,
-            session_id=default_session_id,
-        )
+    resolved = await resolve_runtime_target_fn(
+        settings=service._settings,
+        explicit_profile_id=None,
+        explicit_session_id=None,
+        resolve_binding=True,
+        selectors=selectors,
+        default_profile_id=service._endpoint.profile_id,
+        default_session_id=default_session_id,
+    )
+    return RuntimeTarget(
+        profile_id=resolved.profile_id,
+        session_id=default_session_id,
+        routing=resolved.routing,
+    )
 
 
 async def pop_watcher_batch(service: TelethonUserService) -> tuple[TelethonWatchedEvent, ...]:

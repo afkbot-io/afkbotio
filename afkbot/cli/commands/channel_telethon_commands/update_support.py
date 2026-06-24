@@ -225,6 +225,7 @@ def update_telethon_channel(
         groups_default=current.access_policy.groups,
         group_allow_from_default=current.access_policy.group_allow_from,
         outbound_allow_to_default=current.access_policy.outbound_allow_to,
+        prompt_outbound_safety=not yes and not sync_binding,
     )
     resolved_group_invocation_mode = (
         normalize_telethon_group_invocation_mode(

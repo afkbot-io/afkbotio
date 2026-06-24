@@ -83,7 +83,7 @@ def test_channel_telegram_add_accepts_group_trigger_mode(
     assert "- merge_order: explicit > current > inherited > system" in shown
     assert "- inherited_defaults_source: profile:default" in shown
     assert (
-        "- current_channel_overrides: group_trigger_mode, ingress_batch, reply_humanization, tool_profile"
+        "- current_channel_overrides: access_policy, group_trigger_mode, ingress_batch, reply_humanization, tool_profile"
         in shown
     )
     assert (
@@ -183,6 +183,18 @@ def test_channel_telegram_add_creates_allowlist_bindings_from_access_flags(
         ("owner-bot:group:-100123:user:67890", "owner-bot", "-100123", "67890"),
     ]
 
+    disable_result = runner.invoke(app, ["channel", "telegram", "disable", "owner-bot"])
+    assert disable_result.exit_code == 0
+    disabled_bindings = run_channel_binding_service_sync(
+        settings,
+        lambda service: service.list(transport="telegram", profile_id="default"),
+    )
+    assert {item.binding_id: item.enabled for item in disabled_bindings} == {
+        "owner-bot:dm:12345": False,
+        "owner-bot:group:-100123:user:12345": False,
+        "owner-bot:group:-100123:user:67890": False,
+    }
+
 
 def test_channel_telegram_add_interactive_uses_profile_defaults(
     tmp_path: Path,
@@ -222,7 +234,7 @@ def test_channel_telegram_add_interactive_uses_profile_defaults(
     assert "- profile: default" in shown
     assert "- credential_profile: support-bot" in shown
     assert "- account_id: support-bot" in shown
-    assert "- tool_profile: support_readonly" in shown
+    assert "- tool_profile: messaging_safe" in shown
     assert "- ingress_batch.enabled: False" in shown
     assert "- reply_humanization.enabled: False" in shown
 

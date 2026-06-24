@@ -135,8 +135,8 @@ class AutomationRepositoryClaimsMixin:
         lease_until: datetime,
         claim_token: str,
         session_id: str,
-    ) -> bool:
-        """Atomically claim webhook event; False when duplicate or trigger missing."""
+    ) -> str:
+        """Atomically claim webhook event and return accepted, duplicate, busy, or missing."""
 
         processed_exists = (
             await self._session.get(
@@ -146,7 +146,7 @@ class AutomationRepositoryClaimsMixin:
             is not None
         )
         if processed_exists:
-            return False
+            return "duplicate"
 
         processed_subquery = (
             select(AutomationWebhookProcessedEvent.automation_id)
@@ -189,7 +189,22 @@ class AutomationRepositoryClaimsMixin:
         )
         result = await self._session.execute(statement)
         await self._session.flush()
-        return result_succeeded(result)
+        if result_succeeded(result):
+            return "accepted"
+        current = (
+            await self._session.execute(
+                select(AutomationTriggerWebhook)
+                .where(AutomationTriggerWebhook.automation_id == automation_id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            return "missing"
+        if current.in_progress_event_hash == event_hash:
+            return "duplicate"
+        if current.in_progress_event_hash:
+            return "busy"
+        return "missing"
 
     async def complete_webhook_event(
         self,
@@ -260,6 +275,46 @@ class AutomationRepositoryClaimsMixin:
         result = await self._session.execute(statement)
         await self._session.flush()
         return result_succeeded(result)
+
+    async def fail_webhook_event_terminal(
+        self,
+        *,
+        automation_id: int,
+        event_hash: str,
+        claim_token: str,
+        failed_at: datetime,
+        error_message: str,
+    ) -> bool:
+        """Mark a claimed webhook event as failed without allowing replay."""
+
+        statement = (
+            update(AutomationTriggerWebhook)
+            .where(
+                AutomationTriggerWebhook.automation_id == automation_id,
+                AutomationTriggerWebhook.in_progress_event_hash == event_hash,
+                AutomationTriggerWebhook.claim_token == claim_token,
+            )
+            .values(
+                last_event_hash=event_hash,
+                in_progress_event_hash=None,
+                claim_token=None,
+                in_progress_until=None,
+                last_failed_at=failed_at,
+                last_error=error_message,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        result = await self._session.execute(statement)
+        if not result_succeeded(result):
+            await self._session.flush()
+            return False
+
+        await self._record_processed_webhook_event(
+            automation_id=automation_id,
+            event_hash=event_hash,
+        )
+        await self._session.flush()
+        return True
 
     async def mark_webhook_started(
         self,

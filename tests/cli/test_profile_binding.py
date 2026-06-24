@@ -102,7 +102,10 @@ def test_profile_binding_set_list_resolve_show_and_delete(
     assert resolve_result.exit_code == 0
     resolve_payload = json.loads(resolve_result.stdout)
     assert resolve_payload["decision"]["profile_id"] == "sales"
-    assert resolve_payload["decision"]["session_id"] == "profile:sales:chat:42:thread:9001"
+    assert (
+        resolve_payload["decision"]["session_id"]
+        == "profile:sales:channel:telegram:chat:42:thread:9001"
+    )
 
     delete_result = runner.invoke(app, ["profile", "binding", "delete", "telegram-sales"])
     assert delete_result.exit_code == 0

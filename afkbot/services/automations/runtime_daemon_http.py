@@ -98,7 +98,7 @@ class RuntimeDaemonHttpRuntime:
                 "reason": "Missing or invalid webhook token",
             }
         try:
-            payload = parse_webhook_payload(request.body)
+            payload = parse_webhook_payload(request.body, headers=request.headers)
         except ValueError:
             return 400, {
                 "ok": False,

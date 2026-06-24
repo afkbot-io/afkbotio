@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, ForeignKeyConstraint, Integer, String, Text
+from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from afkbot.models.base import Base
@@ -18,6 +18,7 @@ class ChatTurn(Base):
             ["chat_session.id", "chat_session.profile_id"],
             name="fk_chat_turn_session_profile",
         ),
+        Index("ix_chat_turn_profile_session_id", "profile_id", "session_id", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

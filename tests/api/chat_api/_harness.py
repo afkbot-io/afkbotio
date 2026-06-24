@@ -31,6 +31,8 @@ def patch_valid_chat_access_token(
     profile_id: str = "default",
     session_id: str = "api-s",
     token: str = "acc-1",
+    allow_diagnostics: bool = False,
+    allow_operator_workspace: bool = False,
 ) -> None:
     """Patch connect token validation with a deterministic successful context."""
 
@@ -48,6 +50,8 @@ def patch_valid_chat_access_token(
             session_id=session_id,
             base_url="http://127.0.0.1:8081",
             expires_at=datetime.now(tz=UTC),
+            allow_diagnostics=allow_diagnostics,
+            allow_operator_workspace=allow_operator_workspace,
         )
 
     monkeypatch.setattr("afkbot.api.chat_auth.validate_connect_access_token", _fake_validate)

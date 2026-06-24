@@ -297,6 +297,58 @@ def test_browser_install_wizard_persists_lightpanda_backend(
     get_settings.cache_clear()
 
 
+def test_browser_install_wizard_does_not_persist_backend_when_install_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Interactive browser install should persist wizard answers only after success."""
+
+    runner = CliRunner()
+    monkeypatch.setenv("AFKBOT_SKIP_SETUP_GUARD", "1")
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    monkeypatch.setattr("afkbot.cli.commands.browser.browser_install_wizard_enabled", lambda: True)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.browser_support.prompt_browser_backend",
+        lambda **kwargs: "lightpanda_cdp",
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.browser_support.prompt_browser_cdp_url",
+        lambda **kwargs: "http://127.0.0.1:9222",
+    )
+    monkeypatch.setattr(
+        "afkbot.cli.commands.browser.get_browser_runtime_status",
+        lambda settings=None: BrowserRuntimeStatus(
+            ok=False,
+            error_code="browser_cdp_unavailable",
+            reason="Configured CDP browser is unavailable: ConnectionRefusedError",
+            remediation="Start Lightpanda and retry.",
+            backend="lightpanda_cdp",
+        ),
+    )
+    monkeypatch.setattr("afkbot.cli.commands.browser.prompt_confirm", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "afkbot.cli.commands.browser.install_browser_runtime",
+        lambda force=False, settings=None: BrowserRuntimeInstallResult(
+            ok=False,
+            error_code="browser_install_failed",
+            reason="Browser runtime install failed.",
+            package_installed=False,
+            browser_installed=False,
+            backend="lightpanda_cdp",
+        ),
+    )
+
+    result = runner.invoke(app, ["browser", "install"])
+
+    assert result.exit_code == 1
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.browser_backend == "playwright_chromium"
+    assert settings.browser_cdp_url is None
+    get_settings.cache_clear()
+
+
 def test_browser_backend_command_persists_runtime_config(
     tmp_path: Path,
     monkeypatch,

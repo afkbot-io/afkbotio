@@ -95,6 +95,9 @@ async def validate_connect_access_token(
             base_url=row.base_url,
             expires_at=as_utc(row.expires_at),
             allow_diagnostics=bool(getattr(row, "allow_diagnostics", False)),
+            allow_operator_workspace=bool(
+                getattr(row, "allow_operator_workspace", False)
+            ),
             runtime_metadata=runtime_metadata,
             prompt_overlay=(row.prompt_overlay or "").strip() or None,
         )

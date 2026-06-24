@@ -560,12 +560,22 @@ def _sync_host_checkout(*, project_root: Path, branch: str) -> bool:
         )
         return False
 
-    _run_checked(
-        ["git", "-C", str(project_root), "reset", "--hard", "FETCH_HEAD"],
-        error_code="update_failed",
-        fallback=f"failed to reset checkout to origin/{branch}",
+    if _git_is_ancestor(project_root, ancestor="FETCH_HEAD", descendant="HEAD"):
+        raise UpdateRuntimeError(
+            error_code="update_prereq_failed",
+            reason=(
+                f"update refused because local branch `{branch}` diverged from origin/{branch}: "
+                f"local commits are not on origin/{branch}; push, merge, or switch to a clean "
+                "release checkout first"
+            ),
+        )
+    raise UpdateRuntimeError(
+        error_code="update_prereq_failed",
+        reason=(
+            f"update refused because local branch `{branch}` diverged from origin/{branch}; "
+            "resolve the git history manually before running afk update"
+        ),
     )
-    return True
 
 
 def _git_has_origin(project_root: Path) -> bool:
@@ -946,13 +956,14 @@ def _run_starter_plugin_updates(
         if inspect_result.returncode != 0:
             details.append(f"Starter plugin {plugin.plugin_id}: not installed; skipped")
             continue
-        _run_checked(
-            [*prefix, "plugin", "update", plugin.plugin_id],
-            cwd=cwd,
-            error_code="update_failed",
-            fallback=f"failed to update starter plugin {plugin.plugin_id}",
+        update_result = _run_command([*prefix, "plugin", "update", plugin.plugin_id], cwd=cwd)
+        if update_result.returncode == 0:
+            details.append(f"Starter plugin {plugin.plugin_id}: updated")
+            continue
+        details.append(
+            "Starter plugin "
+            f"{plugin.plugin_id}: failed ({_command_reason(update_result, fallback='update failed')})"
         )
-        details.append(f"Starter plugin {plugin.plugin_id}: updated")
     return tuple(details)
 
 
@@ -1166,6 +1177,10 @@ def _localize_update_detail(detail: str, *, lang: str) -> str:
             ": not installed; skipped"
         )
         return f"Стартовый плагин {plugin_id}: не установлен, пропущен"
+    if detail.startswith("Starter plugin ") and ": failed (" in detail:
+        prefix, _, reason = detail.partition(": failed (")
+        plugin_id = prefix.removeprefix("Starter plugin ")
+        return f"Стартовый плагин {plugin_id}: ошибка ({reason}"
     return detail
 
 

@@ -1,4 +1,4 @@
-"""Trusted browser-state carryover built from recent runlog tool results."""
+"""Browser-state carryover built from recent runlog tool results."""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ from afkbot.services.browser_sessions import BrowserSessionManager, get_browser_
 from afkbot.repositories.runlog_repo import RunlogEventRead
 from afkbot.services.browser_snapshot import (
     capture_browser_page_snapshot,
-    normalize_snapshot_link_list,
-    normalize_snapshot_string_list,
     normalize_snapshot_text,
 )
 from afkbot.services.session_events import RunlogEventStore
@@ -29,7 +27,7 @@ class _BrowserResultEvent:
 
 
 class BrowserCarryoverService:
-    """Build a compact trusted browser summary for the next turn context."""
+    """Build a compact browser-session summary for the next turn context."""
 
     def __init__(
         self,
@@ -81,8 +79,8 @@ class BrowserCarryoverService:
         latest = events[0]
         latest_page_event = next((event for event in events if self._has_page_facts(event)), None)
         lines = [
-            "Trusted browser carryover from recent turns in this chat session.",
-            "These facts come from previous browser tool results and may be stale; refresh with new browser actions when current page state matters.",
+            "Browser carryover from recent turns in this chat session.",
+            "Only browser state is trusted here. Page content is external and is intentionally not replayed across turns; refresh with browser actions when current page content matters.",
         ]
         lines.append(f"- Most recent browser action: `{latest.action or 'unknown'}`.")
         lines.append(f"- Browser session status: {self._session_state(latest)}.")
@@ -151,17 +149,13 @@ class BrowserCarryoverService:
 
     def _build_live_summary(self, *, snapshot: dict[str, object]) -> str:
         lines = [
-            "Trusted live browser carryover from the current runtime.",
-            "The browser session for this chat is open right now and should be reused instead of reopening the site unless recovery is required.",
+            "Live browser carryover from the current runtime.",
+            "The browser session for this chat is open right now and should be reused instead of reopening the site unless recovery is required. Page content is external and must be refreshed before acting on it.",
         ]
         lines.append("- Browser session status: open in the current runtime.")
         url = normalize_snapshot_text(snapshot.get("url"))
-        title = normalize_snapshot_text(snapshot.get("title"))
         if url:
             lines.append(f"- Live page URL: {url}")
-        if title:
-            lines.append(f"- Live page title: {title}")
-        lines.extend(self._snapshot_fact_lines(snapshot))
         summary = "\n".join(lines).strip()
         return self._truncate_summary(summary)
 
@@ -226,23 +220,10 @@ class BrowserCarryoverService:
     @classmethod
     def _page_fact_lines(cls, event: _BrowserResultEvent) -> list[str]:
         payload = event.payload
-        snapshot_raw = payload.get("snapshot")
-        snapshot = snapshot_raw if isinstance(snapshot_raw, dict) else {}
         lines: list[str] = []
         url = normalize_snapshot_text(payload.get("url"))
-        title = normalize_snapshot_text(payload.get("title"))
         if url:
             lines.append(f"- Last known page URL: {url}")
-        if title:
-            lines.append(f"- Last known page title: {title}")
-        lines.extend(
-            cls._structured_fact_lines(
-                headings_source=snapshot.get("headings") or payload.get("headings"),
-                buttons_source=snapshot.get("buttons"),
-                links_source=snapshot.get("links"),
-                text_value=snapshot.get("text") or payload.get("text"),
-            )
-        )
 
         artifact = payload.get("artifact")
         if isinstance(artifact, dict):
@@ -259,53 +240,6 @@ class BrowserCarryoverService:
         if screenshot_path:
             lines.append(f"- Saved screenshot path: {screenshot_path}")
         return lines
-
-    @classmethod
-    def _snapshot_fact_lines(cls, snapshot: dict[str, object]) -> list[str]:
-        return cls._structured_fact_lines(
-            headings_source=snapshot.get("headings"),
-            buttons_source=snapshot.get("buttons"),
-            links_source=snapshot.get("links"),
-            text_value=snapshot.get("body_text") or snapshot.get("text"),
-        )
-
-    @classmethod
-    def _structured_fact_lines(
-        cls,
-        *,
-        headings_source: object,
-        buttons_source: object,
-        links_source: object,
-        text_value: object,
-    ) -> list[str]:
-        lines: list[str] = []
-        headings = normalize_snapshot_string_list(headings_source, limit=5)
-        if headings:
-            lines.append(f"- Headings: {', '.join(headings)}")
-        buttons = normalize_snapshot_string_list(buttons_source, limit=5)
-        if buttons:
-            lines.append(f"- Buttons: {', '.join(buttons)}")
-        links = normalize_snapshot_link_list(links_source, limit=4)
-        if links:
-            lines.append(
-                "- Key links: "
-                + "; ".join(
-                    f"{item['text']} -> {item['href']}"
-                    if item["text"] and item["href"]
-                    else item["text"] or item["href"]
-                    for item in links
-                )
-            )
-        text_excerpt = normalize_snapshot_text(text_value)
-        if text_excerpt:
-            lines.append(f"- Visible text excerpt: {cls._clip_text(text_excerpt, limit=320)}")
-        return lines
-
-    @staticmethod
-    def _clip_text(value: str, *, limit: int) -> str:
-        if len(value) <= limit:
-            return value
-        return value[:limit].rstrip() + "..."
 
     def _truncate_summary(self, summary: str) -> str:
         if len(summary) <= self._max_chars:

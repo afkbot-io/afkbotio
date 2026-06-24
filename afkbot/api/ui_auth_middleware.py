@@ -38,7 +38,13 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
             plugin_auth_mounts=self._plugin_auth_mounts,
         )
         if not surface.protected:
-            return await call_next(request)
+            response = await call_next(request)
+            _apply_plugin_web_cache_headers(
+                response=response,
+                path=request.url.path,
+                plugin_auth_mounts=self._plugin_auth_mounts,
+            )
+            return response
 
         if not surface.auth_configured:
             if surface.api_request:
@@ -88,6 +94,11 @@ class PluginUIAuthMiddleware(BaseHTTPMiddleware):
             settings=self._settings,
             session=session,
         )
+        _apply_plugin_web_cache_headers(
+            response=response,
+            path=request.url.path,
+            plugin_auth_mounts=self._plugin_auth_mounts,
+        )
         return response
 
 
@@ -96,3 +107,32 @@ def _request_target(request: Request) -> str:
     if not query:
         return str(request.url.path)
     return f"{request.url.path}?{query}"
+
+
+def _apply_plugin_web_cache_headers(
+    *,
+    response: Response,
+    path: str,
+    plugin_auth_mounts: tuple[PluginAuthMount, ...],
+) -> None:
+    """Prevent stale plugin UI shells/assets after plugin upgrades."""
+
+    if not _is_plugin_web_path(path=path, plugin_auth_mounts=plugin_auth_mounts):
+        return
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+
+
+def _is_plugin_web_path(
+    *,
+    path: str,
+    plugin_auth_mounts: tuple[PluginAuthMount, ...],
+) -> bool:
+    normalized = str(path or "").strip() or "/"
+    for mount in plugin_auth_mounts:
+        prefix = str(mount.web_prefix or "").strip().rstrip("/")
+        if not prefix:
+            continue
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return False

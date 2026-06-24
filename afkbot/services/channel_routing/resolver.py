@@ -36,6 +36,7 @@ def resolve_channel_binding(
     _, _, _, selected = max(matches, key=lambda item: (item[0], item[1], item[2]))
     effective_session_id = _scope_binding_session_id(
         profile_id=selected.profile_id,
+        routing_input=routing_input,
         session_id=resolve_session_id(
             policy=selected.session_policy,
             routing_input=routing_input,
@@ -138,11 +139,21 @@ def _specificity(binding: ChannelBindingRule) -> int:
     )
 
 
-def _scope_binding_session_id(*, profile_id: str, session_id: str) -> str:
-    """Namespace binding-derived session ids by target profile ownership."""
+def _scope_binding_session_id(
+    *,
+    profile_id: str,
+    routing_input: ChannelRoutingInput,
+    session_id: str,
+) -> str:
+    """Namespace binding-derived session ids by profile and channel account ownership."""
 
-    return compose_bounded_session_id(
+    parts = [
         "profile",
         encode_session_component(profile_id),
-        session_id,
-    )
+    ]
+    if routing_input.transport:
+        parts.extend(("channel", encode_session_component(routing_input.transport)))
+    if routing_input.account_id:
+        parts.extend(("account", encode_session_component(routing_input.account_id)))
+    parts.append(session_id)
+    return compose_bounded_session_id(*parts)

@@ -94,6 +94,7 @@ class PluginAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     operator_required: bool = False
+    public: bool = False
 
 
 class PluginPaths(BaseModel):
@@ -245,6 +246,7 @@ class PluginAuthMount:
     api_prefix: str | None
     web_prefix: str | None
     operator_required: bool
+    public: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +288,7 @@ class PluginRuntimeSnapshot:
                 api_prefix=plugin.record.manifest.mounts.api_prefix,
                 web_prefix=plugin.record.manifest.mounts.web_prefix,
                 operator_required=plugin.record.manifest.auth.operator_required,
+                public=plugin.record.manifest.auth.public,
             )
             for plugin in self.plugins
         )

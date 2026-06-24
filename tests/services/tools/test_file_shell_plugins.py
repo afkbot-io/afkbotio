@@ -25,6 +25,7 @@ from afkbot.services.tools.registry import ToolRegistry
 from afkbot.services.tools.shell_sandbox import build_shell_sandbox_launch
 from afkbot.services.tools.trusted_executables import TrustedExecutableError
 from afkbot.services.tools.trusted_executables import resolve_trusted_executable
+from afkbot.services.tools.workspace import resolve_tool_workspace_scope_roots
 from afkbot.settings import Settings
 
 
@@ -158,6 +159,27 @@ async def _set_allowed_directories(
         await engine.dispose()
 
 
+async def test_disabled_profile_policy_keeps_file_tools_scoped_to_profile_root(
+    tmp_path: Path,
+) -> None:
+    """Policy disabled should not make file tools resolve paths without a hard scope."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'disabled-policy-scope.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[],
+        enabled=False,
+    )
+
+    roots = await resolve_tool_workspace_scope_roots(settings=settings, profile_id="default")
+
+    assert roots == ((settings.profiles_dir / "default").resolve(strict=False),)
+
+
 async def test_file_tools_roundtrip(tmp_path: Path) -> None:
     """file.* tools should support write/read/edit/search/list workflow."""
 
@@ -247,6 +269,69 @@ async def test_file_tools_roundtrip(tmp_path: Path) -> None:
     list_result = await list_tool.execute(ctx, list_params)
     assert list_result.ok is True
     assert any(item["path"] == "tmp/demo.txt" for item in list_result.payload["entries"])
+
+
+async def test_file_tools_do_not_expose_channel_attachments(tmp_path: Path) -> None:
+    """Generic file tools must not expose inbound channel attachment storage."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    profile_root = tmp_path / "profiles/default"
+    attachment_file = (
+        profile_root
+        / "channel_attachments"
+        / "telegram"
+        / "telegram-main"
+        / "event-1"
+        / "private.txt"
+    )
+    attachment_file.parent.mkdir(parents=True, exist_ok=True)
+    attachment_file.write_text("secret attachment\n", encoding="utf-8")
+    visible_file = profile_root / "notes.txt"
+    visible_file.write_text("visible needle\n", encoding="utf-8")
+
+    read_tool = registry.get("file.read")
+    assert read_tool is not None
+    read_result = await read_tool.execute(
+        ctx,
+        read_tool.parse_params(
+            {"path": "channel_attachments/telegram/telegram-main/event-1/private.txt"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert read_result.ok is False
+    assert read_result.error_code == "file_read_invalid"
+    assert "reserved for channel runtime data" in (read_result.reason or "")
+
+    list_tool = registry.get("file.list")
+    assert list_tool is not None
+    list_result = await list_tool.execute(
+        ctx,
+        list_tool.parse_params(
+            {"path": ".", "recursive": True, "include_hidden": True},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert list_result.ok is True
+    listed_paths = {str(item["path"]) for item in list_result.payload["entries"]}
+    assert "notes.txt" in listed_paths
+    assert not any(path.startswith("channel_attachments/") for path in listed_paths)
+
+    search_tool = registry.get("file.search")
+    assert search_tool is not None
+    search_result = await search_tool.execute(
+        ctx,
+        search_tool.parse_params(
+            {"path": ".", "query": "secret", "glob": "**/*.txt"},
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert search_result.ok is True
+    assert search_result.payload["count"] == 0
 
 
 async def test_file_read_applies_max_body_limit(tmp_path: Path) -> None:
@@ -518,6 +603,7 @@ async def test_bash_exec_enforces_shell_command_allowlist_direct_mode(tmp_path: 
         settings=settings,
         profile_id="default",
         directories=[tmp_path / "profiles/default"],
+        enabled=False,
         shell_allowed_commands=("printf",),
     )
     registry = _registry(settings)
@@ -574,6 +660,7 @@ async def test_bash_exec_allowlist_ignores_user_controlled_path(
         settings=settings,
         profile_id="default",
         directories=[tmp_path / "profiles/default"],
+        enabled=False,
         shell_allowed_commands=("safe",),
     )
     registry = _registry(settings)
@@ -735,6 +822,40 @@ async def test_bash_exec_required_sandbox_fails_closed_without_backend(
     assert "sandbox is required" in str(result.reason)
 
 
+async def test_bash_exec_scoped_policy_rejects_disabled_sandbox(tmp_path: Path) -> None:
+    """Scoped policy-enabled shell profiles must not run with sandbox disabled."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'disabled-sandbox.db'}",
+        root_dir=tmp_path,
+    )
+    await _set_allowed_directories(
+        settings=settings,
+        profile_id="default",
+        directories=[tmp_path / "profiles/default"],
+        enabled=True,
+        shell_sandbox_mode="disabled",
+    )
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "cmd": "printf 'unsafe'",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is False
+    assert result.error_code == "bash_exec_sandbox_unavailable"
+    assert "scoped bash.exec profiles" in str(result.reason)
+
+
 async def test_bash_exec_rejects_shell_startup_env_overrides(tmp_path: Path) -> None:
     """Shell startup and directory env vars should not be user-overridable."""
 
@@ -815,8 +936,8 @@ async def test_full_access_invocation_cwd_sets_relative_base_without_narrowing_s
     assert read_result.payload["content"] == "outside"
 
 
-async def test_policy_disabled_removes_hard_workspace_scope(tmp_path: Path) -> None:
-    """Disabled policy should not keep file tools pinned to the profile workspace."""
+async def test_policy_disabled_keeps_hard_workspace_scope(tmp_path: Path) -> None:
+    """Disabled policy should still keep file tools pinned to the profile workspace."""
 
     outside = tmp_path / "outside.txt"
     outside.write_text("outside", encoding="utf-8")
@@ -844,8 +965,9 @@ async def test_policy_disabled_removes_hard_workspace_scope(tmp_path: Path) -> N
         max_timeout_sec=settings.tool_timeout_max_sec,
     )
     read_result = await read_tool.execute(ctx, read_params)
-    assert read_result.ok is True
-    assert read_result.payload["content"] == "outside"
+    assert read_result.ok is False
+    assert read_result.error_code == "file_read_invalid"
+    assert "outside scope" in str(read_result.reason)
 
 
 async def test_bash_exec_clamps_timeout_above_runtime_max(tmp_path: Path) -> None:
@@ -1204,6 +1326,77 @@ async def test_bash_exec_can_resume_interactive_prompt(tmp_path: Path) -> None:
     assert "answer=y" in str(resume_result.payload["stdout"])
     assert resume_result.payload.get("session_id") is None
     assert resume_result.payload["chars_written"] == 2
+
+
+async def test_bash_exec_rejects_interactive_resume_from_another_chat_session(
+    tmp_path: Path,
+) -> None:
+    """Interactive bash.exec sessions belong to the ToolContext that created them."""
+
+    # Arrange
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    owner_ctx = ToolContext(profile_id="default", session_id="owner-session", run_id=1)
+    attacker_ctx = ToolContext(profile_id="default", session_id="attacker-session", run_id=2)
+    tool = registry.get("bash.exec")
+    assert tool is not None
+    script = (
+        "import sys; "
+        "sys.stdout.write('secret prompt> '); "
+        "sys.stdout.flush(); "
+        "sys.stdin.readline(); "
+        "print('done')"
+    )
+    start_result = await tool.execute(
+        owner_ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "cmd": f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
+                "yield_time_ms": 100,
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert start_result.ok is True
+    assert start_result.payload["running"] is True
+    session_id = str(start_result.payload["session_id"])
+
+    # Act
+    resume_result = await tool.execute(
+        attacker_ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "session_id": session_id,
+                "chars": "stolen\n",
+                "yield_time_ms": 100,
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    # Assert
+    assert resume_result.ok is False
+    assert resume_result.error_code == "bash_exec_invalid"
+    assert "does not belong to this tool context" in str(resume_result.reason)
+
+    cleanup_result = await tool.execute(
+        owner_ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "session_id": session_id,
+                "chars": "\n",
+                "yield_time_ms": 500,
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert cleanup_result.ok is True
 
 
 async def test_bash_exec_empty_poll_collects_later_output(tmp_path: Path) -> None:
@@ -1724,11 +1917,9 @@ async def test_custom_scope_keeps_profile_workspace_and_extra_roots(tmp_path: Pa
         max_timeout_sec=settings.tool_timeout_max_sec,
     )
     bash_result = await bash_tool.execute(ctx, bash_params)
-    assert bash_result.ok is True
-    assert str(bash_result.payload["stdout"]).strip() == str(
-        (tmp_path / "profiles/default").resolve()
-    )
-    assert bash_result.payload["cwd"] == "."
+    assert bash_result.ok is False
+    assert bash_result.error_code == "bash_exec_sandbox_unavailable"
+    assert "scoped bash.exec profiles" in str(bash_result.reason)
 
 
 async def test_file_tools_enforce_hard_workspace_override_scope(tmp_path: Path) -> None:
@@ -1834,6 +2025,40 @@ async def test_file_search_streams_without_read_bytes(tmp_path: Path, monkeypatc
     result = await tool.execute(ctx, params)
     assert result.ok is True
     assert result.payload["count"] == 1
+
+
+async def test_file_search_skips_symlink_targets_outside_scope(tmp_path: Path) -> None:
+    """file.search must not follow an in-scope symlink to an out-of-scope file."""
+
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("needle outside scope\n", encoding="utf-8")
+    (workspace / "visible.txt").write_text("ordinary workspace file\n", encoding="utf-8")
+    (workspace / "leaked.txt").symlink_to(outside / "secret.txt")
+
+    settings = Settings(root_dir=workspace, tool_workspace_root=workspace)
+    registry = _registry(settings)
+    ctx = ToolContext(profile_id="default", session_id="s", run_id=1)
+    tool = registry.get("file.search")
+    assert tool is not None
+
+    params = tool.parse_params(
+        {
+            "profile_key": "default",
+            "path": ".",
+            "query": "needle",
+            "glob": "*.txt",
+        },
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+    result = await tool.execute(ctx, params)
+
+    assert result.ok is True
+    assert result.payload["count"] == 0
+    assert result.payload["matches"] == []
 
 
 async def test_file_list_stops_iteration_after_max_entries(tmp_path: Path, monkeypatch) -> None:

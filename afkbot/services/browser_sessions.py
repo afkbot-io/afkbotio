@@ -40,6 +40,8 @@ class BrowserSessionHandle:
     live_carryover_summary: str | None = None
     live_carryover_page_url: str = ""
     live_carryover_updated_monotonic: float = 0.0
+    network_guard_allowlist_json: str | None = None
+    network_guard_blocked_url: str | None = None
 
 
 class BrowserSessionManager:

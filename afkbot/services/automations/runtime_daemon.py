@@ -7,7 +7,7 @@ import logging
 import signal
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -26,7 +26,7 @@ from afkbot.services.automations.runtime_http import (
     HttpRequest,
     write_json_response,
 )
-from afkbot.services.automations.service import get_automations_service
+from afkbot.services.automations.service import AutomationsServiceError, get_automations_service
 from afkbot.settings import Settings, get_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ class _WebhookQueueTask:
     profile_id: str
     token: str
     payload: Mapping[str, object]
+    busy_retry_count: int = 0
 
 
 class RuntimeDaemon:
@@ -316,10 +317,41 @@ class RuntimeDaemon:
                     )
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                _LOGGER.exception("automation_runtime_webhook_task_failed")
+            except Exception as exc:
+                if not await self._maybe_requeue_busy_webhook_task(task=task, exc=exc):
+                    _LOGGER.exception("automation_runtime_webhook_task_failed")
             finally:
                 self._queue.task_done()
+
+    async def _maybe_requeue_busy_webhook_task(
+        self,
+        *,
+        task: _WebhookQueueTask,
+        exc: BaseException,
+    ) -> bool:
+        """Requeue webhook deliveries that hit transient trigger contention."""
+
+        if not _is_webhook_busy_error(exc):
+            return False
+        max_retries = max(0, int(self._settings.runtime_webhook_busy_max_retries))
+        if task.busy_retry_count >= max_retries or self._shutting_down:
+            return False
+        retry_delay = max(0.0, float(self._settings.runtime_webhook_busy_retry_delay_sec))
+        if retry_delay:
+            await asyncio.sleep(retry_delay)
+        if self._shutting_down:
+            return False
+        retry_task = replace(task, busy_retry_count=task.busy_retry_count + 1)
+        if not self._enqueue_task(retry_task):
+            return False
+        _LOGGER.info(
+            "automation_runtime_webhook_busy_requeued",
+            extra={
+                "profile_id": task.profile_id,
+                "busy_retry_count": retry_task.busy_retry_count,
+            },
+        )
+        return True
 
     def _enqueue_task(self, task: _WebhookQueueTask) -> bool:
         try:
@@ -360,6 +392,15 @@ class RuntimeDaemon:
 
     async def _read_request(self, reader: asyncio.StreamReader) -> HttpRequest | HttpReadError:
         return await self._http_runtime.read_request(reader)
+
+
+def _is_webhook_busy_error(exc: BaseException) -> bool:
+    """Return whether an exception represents transient webhook trigger contention."""
+
+    return (
+        isinstance(exc, AutomationsServiceError)
+        and exc.error_code == "automation_webhook_busy"
+    )
 
 
 async def run_runtime_daemon(*, host: str | None = None, port: int | None = None) -> None:

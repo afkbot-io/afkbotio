@@ -8,7 +8,7 @@ import typer
 
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.command_errors import raise_usage_error
-from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.services.channel_routing.endpoint_bindings import set_endpoint_owned_bindings_enabled
 from afkbot.services.channel_routing.service import (
     ChannelBindingServiceError,
     get_channel_binding_service,
@@ -69,14 +69,13 @@ async def _set_telethon_endpoint_enabled(
     updated = TelethonUserEndpointConfig.model_validate(
         (await service.update(current.model_copy(update={"enabled": enabled}))).model_dump()
     )
-    try:
-        binding_service = get_channel_binding_service(settings)
-        binding = await binding_service.get(binding_id=channel_id)
-        await binding_service.put(
-            ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
-        )
-    except ChannelBindingServiceError:
-        pass
+    binding_service = get_channel_binding_service(settings)
+    await set_endpoint_owned_bindings_enabled(
+        service=binding_service,
+        endpoint_id=channel_id,
+        transport=current.transport,
+        enabled=enabled,
+    )
     return updated
 
 

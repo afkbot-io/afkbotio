@@ -205,15 +205,7 @@ def _is_local_http_host(hostname: str | None) -> bool:
     normalized = str(hostname or "").strip().lower().rstrip(".")
     if not normalized:
         return False
-    if _is_loopback_host(normalized):
-        return True
-    if normalized.endswith(".local") or normalized.endswith(".internal"):
-        return True
-    try:
-        address = ip_address(normalized)
-    except ValueError:
-        return False
-    return address.is_loopback or address.is_private
+    return _is_loopback_host(normalized)
 
 
 def _is_loopback_host(hostname: str | None) -> bool:

@@ -85,6 +85,7 @@ class AutomationWebhookTriggerResult(BaseModel):
     session_id: str
     payload: dict[str, Any]
     deduplicated: bool = False
+    status: Literal["accepted", "deduplicated"] = "accepted"
 
 
 class AutomationCronTickResult(BaseModel):

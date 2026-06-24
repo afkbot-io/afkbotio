@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
 from afkbot.services.channel_routing.runtime_target import (
     RoutingSelectors,
+    build_channel_default_session_id,
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
@@ -121,7 +122,7 @@ async def flush_inbound_batch(
             resolve_binding=True,
             selectors=selectors,
             default_profile_id=service._endpoint.profile_id,
-            default_session_id=f"telegram_user:{batch.peer_id}",
+            default_session_id=build_channel_default_session_id(selectors=selectors),
         )
     except ChannelBindingServiceError as exc:
         if exc.error_code != "channel_binding_no_match":

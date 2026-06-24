@@ -31,8 +31,11 @@ from afkbot.cli.commands.channel_prompt_support import (
 )
 from afkbot.cli.commands.channel_shared import (
     collect_channel_access_policy_inputs,
+    delete_endpoint_owned_bindings,
     normalize_channel_tool_profile,
+    set_endpoint_owned_bindings_enabled,
 )
+from afkbot.services.channel_routing.service import run_channel_binding_service_sync
 from afkbot.cli.presentation.setup_prompts import PromptLanguage, msg, resolve_prompt_language
 from afkbot.services.channels.endpoint_contracts import (
     ChannelEndpointConfig,
@@ -229,9 +232,17 @@ def register(app: typer.Typer) -> None:
 
         settings = get_settings()
         try:
-            run_channel_endpoint_service_sync(
+            deleted_endpoint = run_channel_endpoint_service_sync(
                 settings,
-                lambda service: service.delete(endpoint_id=channel_id),
+                lambda service: _delete_channel_endpoint(service, channel_id=channel_id),
+            )
+            run_channel_binding_service_sync(
+                settings,
+                lambda service: delete_endpoint_owned_bindings(
+                    service=service,
+                    endpoint_id=channel_id,
+                    transport=deleted_endpoint.transport,
+                ),
             )
         except Exception as exc:
             _raise_channel_cli_error(exc)
@@ -445,6 +456,15 @@ def _set_channel_enabled(
             settings,
             lambda service: _update_channel_enabled(service, channel_id=channel_id, enabled=enabled),
         )
+        run_channel_binding_service_sync(
+            settings,
+            lambda service: set_endpoint_owned_bindings_enabled(
+                service=service,
+                endpoint_id=updated.endpoint_id,
+                transport=updated.transport,
+                enabled=updated.enabled,
+            ),
+        )
     except Exception as exc:
         _raise_channel_cli_error(exc)
     reload_install_managed_runtime_notice(settings)
@@ -464,6 +484,16 @@ async def _update_channel_enabled(
     endpoint = await service.get(endpoint_id=channel_id)
     updated = endpoint.model_copy(update={"enabled": enabled})
     return await service.update(updated)
+
+
+async def _delete_channel_endpoint(
+    service: ChannelEndpointService,
+    *,
+    channel_id: str,
+) -> ChannelEndpointConfig:
+    endpoint = await service.get(endpoint_id=channel_id)
+    await service.delete(endpoint_id=channel_id)
+    return endpoint
 
 
 def _resolve_plugin_channel_config_payload(

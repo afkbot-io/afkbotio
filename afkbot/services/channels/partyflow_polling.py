@@ -27,6 +27,7 @@ from afkbot.services.apps.runtime import AppRuntime
 from afkbot.services.atomic_writes import atomic_json_write
 from afkbot.services.channel_routing.runtime_target import (
     RoutingSelectors,
+    build_channel_default_session_id,
     build_routing_context_overrides,
     resolve_runtime_target,
 )
@@ -422,7 +423,7 @@ class PartyFlowPollingService:
                 resolve_binding=True,
                 selectors=selectors,
                 default_profile_id=self._endpoint.profile_id,
-                default_session_id=f"partyflow:{batch.peer_id}",
+                default_session_id=build_channel_default_session_id(selectors=selectors),
             )
         except ChannelBindingServiceError as exc:
             if exc.error_code != "channel_binding_no_match":

@@ -11,6 +11,7 @@ from typing import Final
 from urllib.parse import unquote
 
 from afkbot.services.automations.contracts import WEBHOOK_INGRESS_PATH
+from afkbot.services.automations.payloads import WEBHOOK_IDEMPOTENCY_HEADER_NAMES
 from afkbot.services.automations.runtime_service import coerce_webhook_payload_mapping
 
 _WEBHOOK_PATH_PREFIX: Final[str] = f"{WEBHOOK_INGRESS_PATH}/"
@@ -260,13 +261,40 @@ async def write_json_response(
         await writer.wait_closed()
 
 
-def parse_webhook_payload(body: bytes) -> Mapping[str, object]:
+def parse_webhook_payload(
+    body: bytes,
+    *,
+    headers: Mapping[str, str] | None = None,
+) -> Mapping[str, object]:
     """Parse one webhook JSON body into the mapping shape accepted by runtime service."""
 
     if not body:
+        parsed_payload: Mapping[str, object] = {}
+    else:
+        try:
+            parsed = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("payload must be a valid JSON object") from exc
+        parsed_payload = coerce_webhook_payload_mapping(parsed)
+    idempotency_headers = _extract_idempotency_headers(headers)
+    if not idempotency_headers:
+        return parsed_payload
+    existing_headers = parsed_payload.get("headers")
+    if isinstance(existing_headers, Mapping):
+        merged_headers = {str(key): value for key, value in existing_headers.items()}
+        merged_headers.update(idempotency_headers)
+        return {**parsed_payload, "headers": merged_headers}
+    return {**parsed_payload, "headers": idempotency_headers}
+
+
+def _extract_idempotency_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    """Return provider delivery headers safe to attach to webhook payload metadata."""
+
+    if not headers:
         return {}
-    try:
-        parsed = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("payload must be a valid JSON object") from exc
-    return coerce_webhook_payload_mapping(parsed)
+    result: dict[str, str] = {}
+    for raw_name, value in headers.items():
+        name = str(raw_name).lower()
+        if name in WEBHOOK_IDEMPOTENCY_HEADER_NAMES and str(value).strip():
+            result[name] = str(value).strip()
+    return result

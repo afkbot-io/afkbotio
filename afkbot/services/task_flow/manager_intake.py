@@ -86,12 +86,22 @@ async def ensure_manager_intake_transition_allowed(
         row for row in delegated_rows if str(row.status or "").strip().lower() == "completed"
     ]
     if not completed_rows:
+        unsuccessful_rows = [
+            row
+            for row in delegated_rows
+            if str(row.status or "").strip().lower() in {"failed", "cancelled"}
+        ]
+        unsuccessful_ids = ", ".join(row.id for row in unsuccessful_rows[:5])
+        suffix = (
+            f" Unsuccessful child work: {unsuccessful_ids}."
+            if unsuccessful_ids
+            else ""
+        )
         raise TaskFlowServiceError(
             error_code="manager_intake_delegation_unsuccessful",
             reason=(
-                "Manager intake tasks need at least one completed delegated child task "
-                "before moving to review or completed. Replace failed or cancelled child "
-                "work, or block this intake task with a precise reason."
+                "Manager intake tasks need at least one completed delegated child task before "
+                f"moving to review or completed.{suffix}"
             ),
         )
 

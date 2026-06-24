@@ -9,12 +9,18 @@ from pydantic import Field
 from pytest import MonkeyPatch
 
 from afkbot.models.profile_policy import ProfilePolicy
+from afkbot.services.policy import PolicyViolationError
+from afkbot.services.employees.tool_policy import employee_tool_policy_result
 from afkbot.services.agent_loop.tool_execution_runtime import ToolExecutionRuntime
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.error_logging import component_log_path
 from afkbot.services.tools.base import ToolBase, ToolCall, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.bash_exec.plugin import BashExecTool
+from afkbot.services.tools.plugins.app_run.plugin import create_tool as create_app_run_tool
+from afkbot.services.tools.plugins.http_request.plugin import HttpRequestTool
+from afkbot.services.tools.plugins.session_job_run import create_tool as create_session_job_run_tool
 from afkbot.settings import get_settings
 
 
@@ -45,8 +51,16 @@ class _FakePolicyEngine:
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
         approved_network_hosts: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
     ) -> None:
-        _ = policy, tool_name, params, approved_tool_names, approved_network_hosts
+        _ = (
+            policy,
+            tool_name,
+            params,
+            approved_tool_names,
+            approved_network_hosts,
+            profile_allowlist_exempt_tool_names,
+        )
         return None
 
 
@@ -120,6 +134,24 @@ class _ExplodingPolicyParamsTool(ToolBase):
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         _ = ctx, params
         raise AssertionError("execute should not run for disallowed tools")
+
+
+class _ExplodingTaskPolicyParamsTool(ToolBase):
+    name = "task.create"
+    description = "Exploding Task Flow policy params tool"
+
+    def policy_params(
+        self,
+        raw_params: dict[str, object],
+        *,
+        ctx: ToolContext | None = None,
+    ) -> dict[str, object]:
+        _ = raw_params, ctx
+        raise AssertionError("policy_params should not run for subagent task tools")
+
+    async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
+        _ = ctx, params
+        raise AssertionError("execute should not run for subagent task tools")
 
 
 class _FakeRegistry:
@@ -232,6 +264,44 @@ async def test_execute_requested_tool_calls_rejects_disallowed_tool_before_polic
     assert results[0].ok is False
     assert results[0].error_code == "tool_not_allowed_in_turn"
     assert results[0].reason == "Tool not available in current turn: mcp.github.search"
+
+
+async def test_execute_requested_tool_calls_blocks_subagent_taskflow_tools_before_policy_params() -> None:
+    """Subagent runtimes must not mutate Task Flow through a human fallback actor."""
+
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_ExplodingTaskPolicyParamsTool()),
+        actor="subagent",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="subagent:taskflow-tool",
+        profile_id="default",
+        tool_calls=[ToolCall(name="task.create", params={"title": "Hidden mutation"})],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "subagent_taskflow_tool_forbidden"
+    assert "trusted identity" in (results[0].reason or "")
 
 
 async def test_execute_requested_tool_calls_enforces_employee_allowed_tools(
@@ -636,6 +706,79 @@ async def test_execute_requested_tool_calls_enforces_employee_subagent_allowlist
     assert "researcher" in str(results[0].reason)
 
 
+async def test_session_job_run_enforces_employee_policy_for_nested_bash(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Nested bash jobs should not bypass employee allowed_tools via session.job.run."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("session.job.run",),
+    )
+    settings = get_settings()
+    tool = create_session_job_run_tool(settings)
+    params = tool.parse_params(
+        {"jobs": [{"kind": "bash", "cmd": "printf should-not-run", "cwd": "."}]},
+        default_timeout_sec=settings.tool_timeout_default_sec,
+        max_timeout_sec=settings.tool_timeout_max_sec,
+    )
+
+    result = await tool.execute(
+        ToolContext(
+            profile_id="default",
+            session_id="taskflow:employee-bash-tool",
+            run_id=1,
+            trusted_runtime_context=_employee_trusted_context("cto"),
+        ),
+        params,
+    )
+
+    assert result.ok is True
+    nested = result.payload["results"][0]
+    assert nested["ok"] is False
+    assert nested["error_code"] == "employee_tool_forbidden"
+    assert "bash.exec" in str(nested["reason"])
+
+
+async def test_employee_tool_policy_normalizes_subagent_allowlist(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Employee subagent allowlists should match the same normalized names as runtime lookup."""
+
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    _write_employee_descriptor(
+        tmp_path,
+        employee_id="cto",
+        allowed_tools=("session.job.run",),
+        can_use_subagents=True,
+        subagent_allowlist=("Reviewer",),
+    )
+
+    result = await employee_tool_policy_result(
+        settings=get_settings(),
+        profile_id="default",
+        trusted_runtime_context=_employee_trusted_context("cto"),
+        tool_name="session.job.run",
+        params={
+            "jobs": [
+                {
+                    "kind": "subagent",
+                    "subagent_name": " reviewer ",
+                    "prompt": "check",
+                }
+            ]
+        },
+    )
+
+    assert result is None
+
+
 class _PolicyCaptureEngine(_FakePolicyEngine):
     def __init__(self) -> None:
         self.calls: list[tuple[str, set[str] | None, set[str] | None]] = []
@@ -648,8 +791,9 @@ class _PolicyCaptureEngine(_FakePolicyEngine):
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
         approved_network_hosts: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
     ) -> None:
-        _ = policy, params
+        _ = policy, params, profile_allowlist_exempt_tool_names
         self.calls.append(
             (
                 tool_name,
@@ -657,6 +801,25 @@ class _PolicyCaptureEngine(_FakePolicyEngine):
                 None if approved_network_hosts is None else set(approved_network_hosts),
             )
         )
+
+
+class _RejectingPolicyParamsCaptureEngine(_FakePolicyEngine):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def ensure_tool_call_allowed(
+        self,
+        *,
+        policy: ProfilePolicy,
+        tool_name: str,
+        params: dict[str, object],
+        approved_tool_names: set[str] | None = None,
+        approved_network_hosts: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
+    ) -> None:
+        _ = policy, approved_tool_names, approved_network_hosts, profile_allowlist_exempt_tool_names
+        self.calls.append((tool_name, dict(params)))
+        raise PolicyViolationError(reason="captured policy params")
 
 
 class _EchoTool(ToolBase):
@@ -776,6 +939,50 @@ async def test_execute_requested_tool_calls_passes_cli_policy_tool_approval_over
     assert policy_engine.calls == [("bash.exec", {"bash.exec"}, set())]
 
 
+async def test_execute_requested_tool_calls_blocks_user_facing_credential_placeholders() -> None:
+    """User-facing runtimes must not resolve credential placeholders through generic tools."""
+
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(_EchoTool()),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="telegram:chat:1",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="bash.exec",
+                params={"cmd": "printf '%s' '${{CRED:global/default/api_key}}'"},
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"bash.exec"},
+        runtime_metadata={"transport": "telegram_user"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "credential_placeholder_blocked_in_user_channel"
+
+
 async def test_execute_requested_tool_calls_filters_channel_owned_generic_approval() -> None:
     """Reserved channel-owned tools should not use the generic approval bypass."""
 
@@ -868,6 +1075,180 @@ async def test_execute_requested_tool_calls_grants_active_partyflow_history_netw
     assert results[0].ok is True
     assert policy_engine.calls == [
         ("channel.history.list", {"channel.history.list"}, {"api.partyflow.ru"})
+    ]
+
+
+async def test_execute_requested_tool_calls_enforces_routed_app_names() -> None:
+    """app.run must enforce routed app guards at execution time, not only in LLM schema."""
+
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(create_app_run_tool(get_settings())),
+        actor="main",
+        policy_engine=_FakePolicyEngine(),
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-routed-app",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="app.run",
+                params={"app_name": "partyflow", "action": "send_message"},
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"app.run"},
+        routed_app_names={"telegram"},
+    )
+
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert results[0].error_code == "app_not_allowed_in_turn"
+    assert results[0].metadata == {"allowed_apps": ["telegram"]}
+
+
+async def test_http_request_policy_sees_resolved_credential_url(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Network policy must inspect resolved credential placeholders, not raw text."""
+
+    async def _resolve_placeholder(**kwargs: object) -> str:
+        source = str(kwargs["source"])
+        return source.replace("${{CRED:target-url}}", "https://blocked.example/data")
+
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.http_request.plugin.resolve_secret_placeholders",
+        _resolve_placeholder,
+    )
+    policy_engine = _RejectingPolicyParamsCaptureEngine()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(HttpRequestTool(get_settings())),
+        actor="main",
+        policy_engine=policy_engine,
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-http-policy-placeholder",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="http.request",
+                params={"url": "${{CRED:target-url}}"},
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"http.request"},
+    )
+
+    assert results[0].ok is False
+    assert results[0].error_code == "profile_policy_violation"
+    assert policy_engine.calls == [
+        (
+            "http.request",
+            {
+                "url": "https://blocked.example/data",
+                "profile_id": "default",
+                "profile_key": "default",
+                "headers": {},
+                "body": None,
+            },
+        )
+    ]
+
+
+async def test_bash_exec_policy_sees_resolved_credential_command(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Shell/network policy must inspect resolved command placeholders before execution."""
+
+    async def _resolve_placeholder(**kwargs: object) -> str:
+        source = str(kwargs["source"])
+        return source.replace("${{CRED:cmd}}", "curl https://blocked.example")
+
+    monkeypatch.setattr(
+        "afkbot.services.tools.plugins.bash_exec.plugin.resolve_secret_placeholders",
+        _resolve_placeholder,
+    )
+    policy_engine = _RejectingPolicyParamsCaptureEngine()
+    runtime = ToolExecutionRuntime(
+        tool_registry=_FakeRegistry(BashExecTool(get_settings())),
+        actor="main",
+        policy_engine=policy_engine,
+        security_guard=_FakeSecurityGuard(),
+        safety_policy=_FakeSafetyPolicy(),
+        tool_invocation_gates=_FakeToolInvocationGuards(),
+        tool_timeout_default_sec=30,
+        tool_timeout_max_sec=60,
+        log_event=_noop_async,
+        raise_if_cancel_requested=_noop_async,
+        sanitize=lambda value: value,
+        sanitize_value=lambda value: value,
+        to_params_dict=lambda value: dict(value),
+        tool_log_payload=lambda **_: {},
+    )
+
+    results = await runtime.execute_requested_tool_calls(
+        run_id=1,
+        session_id="s-bash-policy-placeholder",
+        profile_id="default",
+        tool_calls=[
+            ToolCall(
+                name="bash.exec",
+                params={"cmd": "${{CRED:cmd}}", "cwd": "."},
+            )
+        ],
+        policy=ProfilePolicy(profile_id="default"),
+        automation_intent=False,
+        explicit_skill_requests=None,
+        explicit_subagent_requests=None,
+        allow_confirmation_markers=False,
+        allowed_tool_names={"bash.exec"},
+    )
+
+    assert results[0].ok is False
+    assert results[0].error_code == "profile_policy_violation"
+    assert policy_engine.calls == [
+        (
+            "bash.exec",
+            {
+                "cmd": "curl https://blocked.example",
+                "cwd": ".",
+                "profile_id": "default",
+                "profile_key": "default",
+            },
+        )
     ]
 
 

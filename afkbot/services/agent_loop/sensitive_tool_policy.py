@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 from afkbot.services.channel_routing.policy import is_user_facing_transport
 from afkbot.services.tools.base import ToolResult
 
@@ -14,6 +16,7 @@ _USER_FACING_BLOCKED_TOOL_NAMES = frozenset(
         "credentials.delete",
     }
 )
+_CREDENTIAL_PLACEHOLDER_MARKERS = ("${{CRED:", "${CRED_")
 
 
 def blocked_tool_names_for_runtime(
@@ -45,6 +48,28 @@ def blocked_tool_result(
     )
 
 
+def blocked_credential_placeholder_result(
+    *,
+    tool_name: str,
+    params: Mapping[str, object],
+    runtime_metadata: dict[str, object] | None,
+) -> ToolResult | None:
+    """Block credential placeholder expansion in user-facing channel runtimes."""
+
+    if not _is_user_facing_runtime(runtime_metadata):
+        return None
+    if not _contains_credential_placeholder(params):
+        return None
+    return ToolResult.error(
+        error_code="credential_placeholder_blocked_in_user_channel",
+        reason=(
+            "Credential placeholders are blocked in user-facing channel conversations. "
+            "Use a trusted operator surface or preconfigured channel endpoint credentials."
+        ),
+        metadata={"tool_name": tool_name},
+    )
+
+
 def _is_user_facing_runtime(runtime_metadata: dict[str, object] | None) -> bool:
     """Return whether runtime metadata clearly identifies an external user-facing ingress."""
 
@@ -61,4 +86,20 @@ def _is_user_facing_runtime(runtime_metadata: dict[str, object] | None) -> bool:
         batch_transport = batch_payload.get("transport")
         if isinstance(batch_transport, str) and is_user_facing_transport(batch_transport):
             return True
+    return False
+
+
+def _contains_credential_placeholder(value: object) -> bool:
+    """Return whether nested params contain supported credential placeholder markers."""
+
+    if isinstance(value, str):
+        return any(marker in value for marker in _CREDENTIAL_PLACEHOLDER_MARKERS)
+    if isinstance(value, Mapping):
+        return any(
+            _contains_credential_placeholder(key)
+            or _contains_credential_placeholder(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        return any(_contains_credential_placeholder(item) for item in value)
     return False

@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import Field, model_validator
 
 from afkbot.services.credentials import CredentialsServiceError
+from afkbot.services.policy import scope_requires_shell_sandbox
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolProgressCallback, ToolResult
 from afkbot.services.tools.credential_placeholders import (
     redact_secret_fragments,
@@ -278,6 +279,38 @@ class BashExecTool(ToolBase):
             max_timeout_sec=max_timeout_sec,
         )
 
+    async def prepare_policy_params(
+        self,
+        raw_params: Mapping[str, object],
+        *,
+        ctx: ToolContext | None = None,
+        default_timeout_sec: int,
+        max_timeout_sec: int,
+    ) -> dict[str, object]:
+        """Resolve command placeholders before shell/network policy evaluates the command."""
+
+        payload = self.parse_params(
+            raw_params,
+            default_timeout_sec=default_timeout_sec,
+            max_timeout_sec=max_timeout_sec,
+        )
+        parsed = BashExecParams.model_validate(payload.model_dump())
+        if ctx is None or parsed.cmd is None:
+            return self.policy_params(raw_params, ctx=ctx)
+        resolved_cmd = await resolve_secret_placeholders(
+            settings=self._settings,
+            profile_id=ctx.profile_id,
+            source=parsed.cmd,
+            default_app_name="global",
+            default_profile_name="default",
+            tool_name=self.name,
+            allowed_app_names={"global"},
+        )
+        return {
+            **self.policy_params(raw_params, ctx=ctx),
+            "cmd": resolved_cmd,
+        }
+
     async def execute(self, ctx: ToolContext, params: ToolParameters) -> ToolResult:
         prepared = self._prepare_params(ctx=ctx, params=params, expected=BashExecParams)
         if isinstance(prepared, ToolResult):
@@ -288,6 +321,9 @@ class BashExecTool(ToolBase):
             if payload.session_id is not None:
                 session_result = await self._session_manager.resume_session(
                     session_id=payload.session_id,
+                    owner_profile_id=ctx.profile_id,
+                    owner_session_id=ctx.session_id,
+                    owner_actor=ctx.actor,
                     chars=payload.chars,
                     yield_time_ms=payload.yield_time_ms or _DEFAULT_RESUME_YIELD_TIME_MS,
                 )
@@ -345,6 +381,10 @@ class BashExecTool(ToolBase):
                     scope_roots=scope_roots,
                     shell_sandbox_mode=shell_policy.shell_sandbox_mode,
                     shell_allowed_commands=shell_policy.shell_allowed_commands,
+                    scoped_sandbox_required=shell_policy.scoped_sandbox_required,
+                    owner_profile_id=ctx.profile_id,
+                    owner_session_id=ctx.session_id,
+                    owner_actor=ctx.actor,
                 )
                 return ToolResult(ok=True, payload=self._build_session_payload(session_result))
 
@@ -361,6 +401,7 @@ class BashExecTool(ToolBase):
                 scope_roots=scope_roots,
                 shell_sandbox_mode=shell_policy.shell_sandbox_mode,
                 shell_allowed_commands=shell_policy.shell_allowed_commands,
+                scoped_sandbox_required=shell_policy.scoped_sandbox_required,
             )
             command_result["cwd"] = to_workspace_relative(base_dir=base_dir, path=cwd)
             if resolved_values:
@@ -446,6 +487,10 @@ class BashExecTool(ToolBase):
         scope_roots: tuple[Path, ...],
         shell_sandbox_mode: str,
         shell_allowed_commands: tuple[str, ...],
+        scoped_sandbox_required: bool,
+        owner_profile_id: str,
+        owner_session_id: str,
+        owner_actor: str,
     ) -> BashExecSessionResult:
         command = self._resolve_command_invocation(
             cmd=resolved_cmd,
@@ -464,8 +509,16 @@ class BashExecTool(ToolBase):
             scope_roots=scope_roots,
             shell_sandbox_mode=shell_sandbox_mode,
         )
+        self._ensure_scoped_shell_sandbox_applied(
+            launch=launch,
+            scope_roots=scope_roots,
+            required=scoped_sandbox_required,
+        )
         return await self._session_manager.start_session(
             request=BashExecSessionStartRequest(
+                owner_profile_id=owner_profile_id,
+                owner_session_id=owner_session_id,
+                owner_actor=owner_actor,
                 argv=launch.argv,
                 cwd=launch.cwd,
                 env=launch.env,
@@ -529,6 +582,7 @@ class BashExecTool(ToolBase):
         scope_roots: tuple[Path, ...],
         shell_sandbox_mode: str,
         shell_allowed_commands: tuple[str, ...],
+        scoped_sandbox_required: bool,
     ) -> dict[str, object]:
         command = self._resolve_command_invocation(
             cmd=cmd,
@@ -546,6 +600,11 @@ class BashExecTool(ToolBase):
             env=process_env,
             scope_roots=scope_roots,
             shell_sandbox_mode=shell_sandbox_mode,
+        )
+        self._ensure_scoped_shell_sandbox_applied(
+            launch=launch,
+            scope_roots=scope_roots,
+            required=scoped_sandbox_required,
         )
         output_tail = _StreamingOutputTail()
         emit_lock = asyncio.Lock()
@@ -716,6 +775,25 @@ class BashExecTool(ToolBase):
             shell_display=shell_path,
             login_applied=login_applied,
             execution_mode="shell",
+        )
+
+    @staticmethod
+    def _ensure_scoped_shell_sandbox_applied(
+        *,
+        launch: object,
+        scope_roots: tuple[Path, ...],
+        required: bool,
+    ) -> None:
+        if not required:
+            return
+        if not scope_requires_shell_sandbox(scope_roots):
+            return
+        if getattr(launch, "sandbox_kind", "none") != "none":
+            return
+        raise ShellSandboxUnavailableError(
+            "Shell sandbox is required for scoped bash.exec profiles; refusing to run the "
+            "command without OS sandbox isolation. Enable a supported sandbox backend or use a "
+            "full-system trusted profile for unrestricted shell access."
         )
 
     @staticmethod

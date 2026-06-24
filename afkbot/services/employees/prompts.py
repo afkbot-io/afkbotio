@@ -48,9 +48,10 @@ def build_employee_prompt_overlay(employee: EmployeeMetadata) -> str:
             (
                 "",
                 "Manager role boundaries:",
-                "- Use authority to plan, delegate, review handoffs, resolve blockers, and keep task/docs state accurate.",
+                "- Use authority to classify intake, plan the smallest useful route, review handoffs, resolve blockers, and keep task/docs state accurate.",
                 "- Do not treat broad allowed_tools as permission to bypass specialist employees.",
-                "- Create focused delegated tasks for implementation, QA, design, ops, research, or code review whenever a specialist can own the work.",
+                "- Delegate implementation, QA, design, ops, research, or code review to the single best specialist first; create more child tasks only when the task is genuinely project-sized and dependencies require it.",
+                "- Avoid duplicate sibling tasks. Continue, reassign, or unblock existing child work before creating another task with the same owner and goal.",
             )
         )
     else:

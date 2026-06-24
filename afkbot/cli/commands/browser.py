@@ -128,14 +128,13 @@ def register(app: typer.Typer) -> None:
                 )
                 raise typer.Exit(code=0)
 
-        if pending_updates:
-            settings, _ = persist_runtime_config_updates(settings, **pending_updates)
-
         activity = (
             nullcontext() if json_output else ActivityIndicator(label="Installing browser runtime")
         )
         with activity:
             result = install_browser_runtime(force=force, settings=settings)
+        if result.ok and pending_updates:
+            persist_runtime_config_updates(settings, **pending_updates)
         if json_output:
             typer.echo(json.dumps(install_payload(result, settings=settings), ensure_ascii=True))
         else:

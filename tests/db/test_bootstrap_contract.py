@@ -658,6 +658,89 @@ async def test_create_schema_backfills_run_hot_path_indexes_for_existing_table(
     await engine.dispose()
 
 
+async def test_create_schema_materializes_session_hot_path_indexes(tmp_path: Path) -> None:
+    """Fresh bootstrap should create indexes used by session and Task Flow hot paths."""
+
+    db_path = tmp_path / "session-hot-path-indexes.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=False,
+    )
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        chat_turn_rows = (await conn.execute(text("PRAGMA index_list(chat_turn)"))).all()
+        runlog_rows = (await conn.execute(text("PRAGMA index_list(runlog_event)"))).all()
+        task_rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
+
+    chat_turn_indexes = {str(row[1]) for row in chat_turn_rows}
+    runlog_indexes = {str(row[1]) for row in runlog_rows}
+    task_indexes = {str(row[1]) for row in task_rows}
+    assert "ix_chat_turn_profile_session_id" in chat_turn_indexes
+    assert "ix_runlog_event_session_id_id" in runlog_indexes
+    assert "ix_runlog_event_session_type_id" in runlog_indexes
+    assert "ix_task_profile_status" in task_indexes
+    assert "ix_task_profile_owner_status" in task_indexes
+    assert "ix_task_profile_flow" in task_indexes
+    assert "ix_task_due_at" in task_indexes
+    assert "ix_task_lease_until" in task_indexes
+    assert "ix_task_profile_last_session_status" in task_indexes
+    assert "ix_task_claim_token" in task_indexes
+    await engine.dispose()
+
+
+async def test_create_schema_backfills_session_hot_path_indexes_for_existing_tables(
+    tmp_path: Path,
+) -> None:
+    """Repeated bootstrap should restore hot-path indexes missing from legacy tables."""
+
+    db_path = tmp_path / "session-hot-path-indexes-legacy.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=False,
+    )
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.begin() as conn:
+        for index_name in (
+            "ix_chat_turn_profile_session_id",
+            "ix_runlog_event_session_id_id",
+            "ix_runlog_event_session_type_id",
+            "ix_task_profile_status",
+            "ix_task_profile_owner_status",
+            "ix_task_profile_flow",
+            "ix_task_due_at",
+            "ix_task_lease_until",
+            "ix_task_profile_last_session_status",
+            "ix_task_claim_token",
+        ):
+            await conn.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        chat_turn_rows = (await conn.execute(text("PRAGMA index_list(chat_turn)"))).all()
+        runlog_rows = (await conn.execute(text("PRAGMA index_list(runlog_event)"))).all()
+        task_rows = (await conn.execute(text("PRAGMA index_list(task)"))).all()
+
+    assert "ix_chat_turn_profile_session_id" in {str(row[1]) for row in chat_turn_rows}
+    runlog_indexes = {str(row[1]) for row in runlog_rows}
+    assert "ix_runlog_event_session_id_id" in runlog_indexes
+    assert "ix_runlog_event_session_type_id" in runlog_indexes
+    task_indexes = {str(row[1]) for row in task_rows}
+    assert "ix_task_profile_status" in task_indexes
+    assert "ix_task_profile_owner_status" in task_indexes
+    assert "ix_task_profile_flow" in task_indexes
+    assert "ix_task_due_at" in task_indexes
+    assert "ix_task_lease_until" in task_indexes
+    assert "ix_task_profile_last_session_status" in task_indexes
+    assert "ix_task_claim_token" in task_indexes
+    await engine.dispose()
+
+
 async def test_create_schema_degrades_active_owner_index_when_legacy_duplicates_exist(
     tmp_path: Path,
 ) -> None:
@@ -759,8 +842,49 @@ async def test_create_schema_materializes_runtime_history_retention_indexes(tmp_
 
     assert "ix_task_last_run_id" in {str(row[1]) for row in task_rows}
     assert "ix_task_event_created_at" in {str(row[1]) for row in task_event_rows}
-    assert "ix_task_run_finished_at" in {str(row[1]) for row in task_run_rows}
+    task_run_indexes = {str(row[1]) for row in task_run_rows}
+    assert "ix_task_run_finished_at" in task_run_indexes
+    assert "ix_task_run_task_attempt" in task_run_indexes
+    assert "ix_task_run_status" in task_run_indexes
+    assert "ix_task_run_session" in task_run_indexes
     assert "ix_runlog_event_created_at" in {str(row[1]) for row in runlog_rows}
+    await engine.dispose()
+
+
+async def test_create_schema_materializes_connect_and_channel_dedupe_indexes(
+    tmp_path: Path,
+) -> None:
+    """Bootstrap should create named legacy-upgrade indexes for connect tokens and channel ingress."""
+
+    db_path = tmp_path / "connect-channel-indexes.db"
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{db_path}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=False,
+    )
+    engine = create_engine(settings)
+
+    await create_schema(engine)
+    async with engine.connect() as conn:
+        claim_rows = (await conn.execute(text("PRAGMA index_list(connect_claim_token)"))).all()
+        session_rows = (
+            await conn.execute(text("PRAGMA index_list(connect_session_token)"))
+        ).all()
+        access_rows = (await conn.execute(text("PRAGMA index_list(connect_access_token)"))).all()
+        ingress_rows = (await conn.execute(text("PRAGMA index_list(channel_ingress_event)"))).all()
+
+    claim_indexes = {str(row[1]) for row in claim_rows}
+    session_indexes = {str(row[1]) for row in session_rows}
+    access_indexes = {str(row[1]) for row in access_rows}
+    ingress_indexes = {str(row[1]) for row in ingress_rows}
+    assert "uq_connect_claim_token_hash" in claim_indexes
+    assert "ix_connect_claim_profile_session" in claim_indexes
+    assert "uq_connect_session_refresh_token_hash" in session_indexes
+    assert "ix_connect_session_profile_session" in session_indexes
+    assert "uq_connect_access_token_hash" in access_indexes
+    assert "ix_connect_access_profile_session" in access_indexes
+    assert "ix_connect_access_refresh_session" in access_indexes
+    assert "uq_channel_ingress_event_key" in ingress_indexes
     await engine.dispose()
 
 

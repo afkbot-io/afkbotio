@@ -115,10 +115,10 @@ def test_chat_turn_route_resolves_binding_after_auth_and_before_runtime(
             "reason": (
                 "Access token session mismatch: "
                 "token(session_id='token-session') "
-                "!= request(session_id='profile:sales:chat:42:thread:9001')."
-            ),
+                    "!= request(session_id='profile:sales:channel:telegram:chat:42:thread:9001')."
+                ),
+            }
         }
-    }
 
 
 def test_chat_turn_route_rejects_binding_resolution_without_transport(

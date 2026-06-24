@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.db.session import session_scope
+from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.models.runlog_event import RunlogEvent
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
@@ -22,6 +23,7 @@ from afkbot.services.channels.active_context import build_active_channel_context
 from afkbot.services.channels.endpoint_contracts import PartyFlowPollingEndpointConfig
 from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointConfig
 from afkbot.services.llm import LLMResponse, MockLLMProvider, ToolCallRequest
+from afkbot.services.policy import PolicyEngine, PolicyViolationError
 from afkbot.services.skills.skills import SkillLoader
 from afkbot.services.tools.base import ToolCall
 from afkbot.services.tools.registry import ToolRegistry
@@ -33,6 +35,27 @@ async def _ensure_default_profile_policy(session: AsyncSession):
 
     await ProfileRepository(session).get_or_create_default("default")
     return await ProfilePolicyRepository(session).get_or_create_default("default")
+
+
+def test_policy_approval_does_not_bypass_profile_allowlist() -> None:
+    """Explicit approval confirms allowed tools; it must not widen profile authorization."""
+
+    policy = ProfilePolicy(profile_id="default")
+    policy.policy_enabled = True
+    policy.allowed_tools_json = json.dumps(["debug.echo"], ensure_ascii=True)
+    policy.denied_tools_json = "[]"
+
+    try:
+        PolicyEngine().ensure_tool_call_allowed(
+            policy=policy,
+            tool_name="bash.exec",
+            params={},
+            approved_tool_names={"bash.exec"},
+        )
+    except PolicyViolationError as exc:
+        assert "not allowed" in exc.reason
+    else:
+        raise AssertionError("approved tool bypassed the profile allowlist")
 
 
 async def test_medium_policy_requires_confirmation_for_destructive_bash(tmp_path: Path) -> None:

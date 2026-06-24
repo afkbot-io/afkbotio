@@ -107,9 +107,9 @@ class ChannelAccessPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    private_policy: ChannelAccessMode = "open"
+    private_policy: ChannelAccessMode = "disabled"
     allow_from: tuple[str, ...] = ()
-    group_policy: ChannelAccessMode = "open"
+    group_policy: ChannelAccessMode = "disabled"
     groups: tuple[str, ...] = ()
     group_allow_from: tuple[str, ...] = ()
     outbound_allow_to: tuple[str, ...] = ()
@@ -118,7 +118,7 @@ class ChannelAccessPolicy(BaseModel):
     @classmethod
     def _normalize_access_mode(cls, value: object) -> ChannelAccessMode:
         if value is None:
-            return "open"
+            return "disabled"
         if not isinstance(value, str):
             raise ValueError("access policy mode must be a string")
         normalized = value.strip().lower()
@@ -238,6 +238,8 @@ class ChannelEndpointConfig(BaseModel):
             return value
         if not isinstance(value, Mapping):
             raise ValueError("access_policy must be an object")
+        if not value:
+            return ChannelAccessPolicy()
         return ChannelAccessPolicy.model_validate(value)
 
     @field_validator("config", mode="before")

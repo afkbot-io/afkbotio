@@ -8,7 +8,7 @@ import typer
 
 from afkbot.cli.managed_runtime import reload_install_managed_runtime_notice
 from afkbot.cli.command_errors import raise_usage_error
-from afkbot.services.channel_routing import ChannelBindingRule
+from afkbot.cli.commands.channel_shared import set_endpoint_owned_bindings_enabled
 from afkbot.services.channel_routing.service import (
     ChannelBindingServiceError,
     get_channel_binding_service,
@@ -66,14 +66,12 @@ async def _set_telegram_endpoint_enabled(
     updated = TelegramPollingEndpointConfig.model_validate(
         (await service.update(current.model_copy(update={"enabled": enabled}))).model_dump()
     )
-    try:
-        binding_service = get_channel_binding_service(settings)
-        binding = await binding_service.get(binding_id=channel_id)
-        await binding_service.put(
-            ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
-        )
-    except ChannelBindingServiceError:
-        pass
+    await set_endpoint_owned_bindings_enabled(
+        service=get_channel_binding_service(settings),
+        endpoint_id=channel_id,
+        transport="telegram",
+        enabled=enabled,
+    )
     return updated
 
 

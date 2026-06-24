@@ -7,7 +7,7 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from afkbot.api.chat_targeting import build_ws_chat_target_or_error
-from afkbot.api.routes_chat import status_code_for_connect_access_error, ws_close_reason
+from afkbot.api.chat_routes import status_code_for_connect_access_error, ws_close_reason
 from afkbot.services.channel_routing.runtime_target import RuntimeTarget
 from afkbot.settings import Settings
 

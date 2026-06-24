@@ -49,6 +49,30 @@ def test_resolve_task_tool_actor_ignores_untrusted_automation_metadata() -> None
     assert identity.actor_session_id is None
 
 
+def test_resolve_task_tool_actor_ignores_untrusted_automation_graph_metadata() -> None:
+    """Model-visible runtime_metadata.automation_graph must not become an auth principal."""
+
+    identity = resolve_task_tool_actor(
+        ToolContext(
+            profile_id="default",
+            session_id="automation-graph-7-node",
+            run_id=1,
+            runtime_metadata={
+                "automation_graph": {
+                    "automation_id": 7,
+                    "run_id": 1,
+                    "node_key": "call_tool",
+                    "trigger_type": "webhook",
+                }
+            },
+        )
+    )
+
+    assert identity.actor_type == "human"
+    assert identity.actor_ref == "web-user"
+    assert identity.actor_session_id is None
+
+
 def test_resolve_task_tool_actor_uses_trusted_automation_runtime_context() -> None:
     """Prompt-mode automations should create Task Flow work as their automation actor."""
 

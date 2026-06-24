@@ -53,14 +53,31 @@ class ChannelIngressPendingEventRepository:
             chat_kind=chat_kind,
             source_event_id=source_event_id,
         )
-        self._session.add(row)
         try:
-            await self._session.flush()
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush()
         except IntegrityError:
-            await self._session.rollback()
-            return None
+            existing = await self._get_by_key(endpoint_id=endpoint_id, event_key=event_key)
+            if existing is not None:
+                return None
+            raise
         await self._session.refresh(row)
         return row
+
+    async def _get_by_key(
+        self,
+        *,
+        endpoint_id: str,
+        event_key: str,
+    ) -> ChannelIngressPendingEvent | None:
+        statement: Select[tuple[ChannelIngressPendingEvent]] = select(
+            ChannelIngressPendingEvent
+        ).where(
+            ChannelIngressPendingEvent.endpoint_id == endpoint_id,
+            ChannelIngressPendingEvent.event_key == event_key,
+        )
+        return (await self._session.execute(statement)).scalar_one_or_none()
 
     async def list_by_endpoint(self, *, endpoint_id: str) -> list[ChannelIngressPendingEvent]:
         """List pending events for one endpoint in stable oldest-first order."""

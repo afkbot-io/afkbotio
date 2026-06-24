@@ -23,11 +23,13 @@ from afkbot.cli.commands.channel_shared import (
     collect_channel_access_policy_inputs,
     collect_channel_add_base_inputs,
     collect_channel_update_base_inputs,
+    delete_endpoint_owned_bindings,
     merge_ingress_batch_config,
     put_access_policy_bindings,
     resolve_binding_update_inputs,
     render_channel_add_intro,
     render_ingress_batch_summary,
+    set_endpoint_owned_bindings_enabled,
     should_collect_channel_add_interactively,
     should_collect_channel_update_interactively,
 )
@@ -46,7 +48,7 @@ from afkbot.services.apps.partyflow.http_api import (
     PartyFlowApiError,
     _get_me,
 )
-from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
+from afkbot.services.channel_routing import ChannelBindingService
 from afkbot.services.channel_routing.contracts import SessionPolicy
 from afkbot.services.channel_routing.service import (
     ChannelBindingServiceError,
@@ -545,6 +547,7 @@ def register_partyflow_commands(channel_app: typer.Typer) -> None:
                         groups_default=current.access_policy.groups,
                         group_allow_from_default=current.access_policy.group_allow_from,
                         outbound_allow_to_default=current.access_policy.outbound_allow_to,
+                        prompt_outbound_safety=not yes and not sync_binding,
                     ),
                     ingress_batch=merge_ingress_batch_config(
                         current=current.ingress_batch,
@@ -994,29 +997,22 @@ async def _sync_partyflow_binding_enabled(
     channel_id: str,
     enabled: bool,
 ) -> None:
-    bindings = await service.list(transport="partyflow")
-    for binding in bindings:
-        if binding.binding_id != channel_id and not binding.binding_id.startswith(f"{channel_id}:"):
-            continue
-        await service.put(
-            ChannelBindingRule(**(binding.model_dump(mode="python") | {"enabled": enabled}))
-        )
+    await set_endpoint_owned_bindings_enabled(
+        service=service,
+        endpoint_id=channel_id,
+        transport="partyflow",
+        enabled=enabled,
+    )
 
 
 def _delete_partyflow_bindings(*, settings: Settings, channel_id: str) -> bool:
     async def _delete_rules(service: ChannelBindingService) -> bool:
-        rules = await service.list(transport="partyflow")
-        removed = False
-        for rule in rules:
-            if rule.binding_id != channel_id and not rule.binding_id.startswith(f"{channel_id}:"):
-                continue
-            try:
-                await service.delete(binding_id=rule.binding_id)
-                removed = True
-            except ChannelBindingServiceError as exc:
-                if exc.error_code != "channel_binding_not_found":
-                    raise
-        return removed
+        removed_count = await delete_endpoint_owned_bindings(
+            service=service,
+            endpoint_id=channel_id,
+            transport="partyflow",
+        )
+        return removed_count > 0
 
     return run_channel_binding_service_sync(settings, _delete_rules)
 

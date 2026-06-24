@@ -10,6 +10,7 @@ from pydantic import Field
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import RoutedToolParameters, ToolParameters
 from afkbot.services.tools.workspace import (
+    is_reserved_tool_io_path,
     resolve_io_path,
     resolve_tool_workspace_base_dir,
     resolve_tool_workspace_scope_roots,
@@ -92,6 +93,8 @@ class FileListTool(ToolBase):
         results: list[dict[str, object]] = []
         iterator = base.rglob("*") if recursive else base.iterdir()
         for item in iterator:
+            if is_reserved_tool_io_path(base_dir=base_dir, path=item):
+                continue
             relative = item.relative_to(base).as_posix()
             if not include_hidden and any(part.startswith(".") for part in relative.split("/")):
                 continue

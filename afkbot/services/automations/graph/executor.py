@@ -705,7 +705,7 @@ class TaskCreateNodeAdapter:
             "source_type": _config_direct_optional_text(invocation, field="source_type")
             or "automation_graph",
             "source_ref": _config_direct_optional_text(invocation, field="source_ref")
-            or f"{invocation.context.automation_id}:{invocation.context.run_id}:{invocation.node.node_key}",
+            or _default_task_create_source_ref(invocation),
         }
         for config_field in (
             "status",
@@ -778,38 +778,49 @@ class TaskCreateNodeAdapter:
         )
 
 
+def _default_task_create_source_ref(invocation: NodeInvocation) -> str:
+    """Build a stable source reference for graph-created Task Flow work."""
+
+    node_key = str(invocation.node.node_key or "task_create").strip()[:80]
+    if invocation.context.trigger_type == "webhook" and invocation.context.event_hash:
+        return (
+            f"automation_graph:{invocation.context.automation_id}:"
+            f"webhook:{invocation.context.event_hash[:64]}:{node_key}"
+        )
+    return (
+        f"automation_graph:{invocation.context.automation_id}:"
+        f"run:{invocation.context.run_id}:{node_key}"
+    )
+
+
 _AUTOMATION_GRAPH_ALLOWED_TOOL_NAMES = frozenset(
     {
         "task.board",
-        "task.block",
-        "task.comment.add",
         "task.comment.list",
-        "task.create",
-        "task.delegate",
-        "task.dependency.add",
+        "task.context.get",
         "task.dependency.list",
-        "task.dependency.remove",
+        "task.doc.list",
         "task.event.list",
-        "task.flow.create",
+        "task.feed.list",
         "task.flow.get",
         "task.flow.list",
         "task.get",
         "task.list",
-        "task.review.approve",
         "task.review.list",
-        "task.review.request_changes",
         "task.run.get",
         "task.run.list",
         "task.stale.list",
-        "task.update",
     }
 )
 _AUTOMATION_GRAPH_SAFE_TOOL_NAMES = frozenset(
     {
         "task.board",
         "task.comment.list",
+        "task.context.get",
         "task.dependency.list",
+        "task.doc.list",
         "task.event.list",
+        "task.feed.list",
         "task.flow.get",
         "task.flow.list",
         "task.get",
@@ -911,7 +922,7 @@ class ToolRunNodeAdapter:
                 explicit_subagent_requests=set(),
                 allow_confirmation_markers=False,
                 runtime_metadata=ctx.runtime_metadata,
-                trusted_runtime_context=None,
+                trusted_runtime_context=ctx.trusted_runtime_context,
                 allowed_tool_names=set(_AUTOMATION_GRAPH_ALLOWED_TOOL_NAMES),
             )
         except Exception as exc:
@@ -1906,6 +1917,11 @@ def _build_graph_tool_context(*, invocation: NodeInvocation, session_id: str) ->
                 "run_id": invocation.context.run_id,
                 "node_key": invocation.node.node_key,
                 "trigger_type": invocation.context.trigger_type,
+            }
+        },
+        trusted_runtime_context={
+            "automation_runtime": {
+                "automation_id": invocation.context.automation_id,
             }
         },
     )

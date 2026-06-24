@@ -585,7 +585,7 @@ async def test_plan_only_turn_context_mentions_execution_tools_hidden_from_direc
 async def test_plan_only_turn_context_mentions_approval_surface_tools_hidden_from_direct_execution(
     tmp_path: Path,
 ) -> None:
-    """Plan-only turns should mention approval-gated tools that become visible in trusted chat."""
+    """Plan-only turns must not mention approval tools outside the profile allowlist."""
 
     settings, engine, factory = await create_test_db(
         tmp_path,
@@ -620,10 +620,10 @@ async def test_plan_only_turn_context_mentions_approval_surface_tools_hidden_fro
 
         assert provider.requests
         context = provider.requests[0].context
-        assert "# Plan-Only Execution Surface" in context
-        assert "`bash.exec` (approval)" in context
-        assert "`session.job.run` (approval)" in context
-        assert "`file.read` (approval)" in context
+        assert "# Plan-Only Execution Surface" not in context
+        assert "`bash.exec` (approval)" not in context
+        assert "`session.job.run` (approval)" not in context
+        assert "`file.read` (approval)" not in context
 
     await engine.dispose()
 
@@ -926,9 +926,10 @@ async def test_llm_context_includes_recent_browser_state_from_prior_turn(tmp_pat
 
     assert len(scripted.requests) == 3
     second_request = scripted.requests[2]
-    assert "Trusted browser carryover from recent turns" in second_request.context
+    assert "Browser carryover from recent turns" in second_request.context
     assert "Last known page URL: https://example.com" in second_request.context
-    assert "Headings: Hero, Pricing" in second_request.context
+    assert "Headings: Hero, Pricing" not in second_request.context
+    assert "Hero section with pricing" not in second_request.context
 
     await engine.dispose()
 
@@ -1551,7 +1552,7 @@ async def test_llm_cli_approval_surface_fails_closed_on_invalid_deny_policy_json
 
 
 async def test_llm_visible_tools_include_cli_approval_surface_for_afk_chat(tmp_path: Path) -> None:
-    """Trusted afk chat should expose curated approval-required tools even outside policy allowlist."""
+    """Trusted afk chat must not expose approval tools outside the profile allowlist."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_cli_approval_surface.db")
 
@@ -1577,12 +1578,10 @@ async def test_llm_visible_tools_include_cli_approval_surface_for_afk_chat(tmp_p
         visible = tool_surface.visible_tools
         by_name = {item.name: item for item in visible}
         assert "debug.echo" in by_name
-        assert "bash.exec" in by_name
-        assert "session.job.run" in by_name
-        assert "file.read" in by_name
-        assert by_name["bash.exec"].requires_confirmation is True
-        assert by_name["session.job.run"].requires_confirmation is True
-        assert by_name["file.read"].requires_confirmation is True
+        assert "bash.exec" not in by_name
+        assert "session.job.run" not in by_name
+        assert "file.read" not in by_name
+        assert tool_surface.approval_required_tool_names == ()
 
     await engine.dispose()
 
@@ -1590,7 +1589,7 @@ async def test_llm_visible_tools_include_cli_approval_surface_for_afk_chat(tmp_p
 async def test_llm_visible_tools_include_explicitly_approved_tool_without_bypassing_deny_rules(
     tmp_path: Path,
 ) -> None:
-    """Trusted CLI-approved tools should become visible to replanning without bypassing denies."""
+    """Trusted CLI-approved tools must not bypass allow or deny rules."""
 
     settings, engine, factory = await create_test_db(tmp_path, "loop_llm_approved_tools_visible.db")
 
@@ -1617,7 +1616,7 @@ async def test_llm_visible_tools_include_explicitly_approved_tool_without_bypass
         visible = tool_surface.visible_tools
         tool_names = {item.name for item in visible}
         assert "debug.echo" in tool_names
-        assert "bash.exec" in tool_names
+        assert "bash.exec" not in tool_names
         assert "file.read" not in tool_names
         assert "channel.history.list" not in tool_names
 

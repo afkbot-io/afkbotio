@@ -95,6 +95,14 @@ def register(app: typer.Typer) -> None:
             "--allow-diagnostics/--no-allow-diagnostics",
             help="Allow paired client tokens to read operator /v1/health diagnostics. Keep off for public chat clients.",
         ),
+        allow_operator_workspace: bool = typer.Option(
+            False,
+            "--allow-operator-workspace/--no-allow-operator-workspace",
+            help=(
+                "Allow paired client tokens to use operator Task Flow document workspace APIs. "
+                "Use only for trusted operator UI clients."
+            ),
+        ),
         json_output: bool = typer.Option(
             False,
             "--json",
@@ -142,6 +150,7 @@ def register(app: typer.Typer) -> None:
                     base_url=base_url,
                     ttl_sec=ttl_sec,
                     allow_diagnostics=allow_diagnostics,
+                    allow_operator_workspace=allow_operator_workspace,
                     claim_pin=resolved_claim_pin,
                     context_overrides=runtime_overrides,
                 )
@@ -185,7 +194,7 @@ def register(app: typer.Typer) -> None:
             typer.secho(
                 "warning: this connect URL targets loopback and works only on the same device. "
                 "For phones or other machines, start AFKBOT on a reachable interface and pass "
-                "`afk connect --host http://<LAN-IP>:<port>` or configure `public_chat_api_url`.",
+                "`afk connect --host https://<public-host>` or configure `public_chat_api_url`.",
                 fg=typer.colors.YELLOW,
                 err=True,
             )

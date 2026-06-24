@@ -80,7 +80,7 @@ async def test_channel_binding_service_persists_and_resolves_rules(tmp_path) -> 
         assert decision is not None
         assert decision.binding_id == "telegram-peer-42"
         assert decision.profile_id == "sales"
-        assert decision.session_id == "profile:sales:chat:42:thread:9001"
+        assert decision.session_id == "profile:sales:channel:telegram:chat:42:thread:9001"
     finally:
         await service.shutdown()
 

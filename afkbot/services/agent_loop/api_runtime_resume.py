@@ -13,8 +13,12 @@ from afkbot.services.agent_loop.interactive_resume import (
     extract_resume_tool_call,
     is_credential_profile_question,
     is_secure_resume_helper_tool,
+    is_tool_not_allowed_question,
 )
-from afkbot.services.agent_loop.turn_context import TurnContextOverrides
+from afkbot.services.agent_loop.turn_context import (
+    TurnContextOverrides,
+    merge_turn_context_overrides,
+)
 from afkbot.services.tools.base import ToolCall
 
 
@@ -143,6 +147,62 @@ async def _resume_profile_selection(
     )
 
 
+async def _resume_tool_access_approval(
+    *,
+    envelope: ActionEnvelope,
+    profile_id: str,
+    session_id: str,
+    approved: bool | None,
+    client_msg_id: str | None,
+    context_overrides: TurnContextOverrides | None,
+    run_chat_turn_call: ChatTurnRunner,
+) -> TurnResult:
+    """Resume a tool-surface approval by adding a one-turn runtime approval."""
+
+    if approved is False:
+        return _finalized_turn_result(
+            session_id=session_id,
+            profile_id=profile_id,
+            message="Operation cancelled: user denied tool execution.",
+        )
+    if approved is not True:
+        return _blocked_turn_result(
+            session_id=session_id,
+            profile_id=profile_id,
+            message="Tool access confirmation failed: approval answer is missing.",
+            blocked_reason="tool_access_answer_missing",
+        )
+    resume_call = extract_resume_tool_call(envelope)
+    if resume_call is None:
+        return _blocked_turn_result(
+            session_id=session_id,
+            profile_id=profile_id,
+            message="Tool execution request failed: approved tool payload is missing.",
+            blocked_reason="tool_not_allowed_resume_payload_missing",
+        )
+    tool_name = str(resume_call.name or "").strip()
+    if not tool_name:
+        return _blocked_turn_result(
+            session_id=session_id,
+            profile_id=profile_id,
+            message="Tool execution request failed: approved tool name is missing.",
+            blocked_reason="tool_not_allowed_tool_name_missing",
+        )
+    approval_overrides = TurnContextOverrides(approved_tool_names=(tool_name,))
+    merged_overrides = (
+        merge_turn_context_overrides(context_overrides, approval_overrides)
+        or approval_overrides
+    )
+    return await run_chat_turn_call(
+        message=f"tool_access_resume:{tool_name}",
+        profile_id=profile_id,
+        session_id=session_id,
+        client_msg_id=client_msg_id or f"answer:{envelope.question_id or 'tool'}:approved",
+        planned_tool_calls=[resume_call],
+        context_overrides=merged_overrides,
+    )
+
+
 async def resume_chat_interaction_flow(
     *,
     envelope: ActionEnvelope,
@@ -178,6 +238,17 @@ async def resume_chat_interaction_flow(
             profile_id=profile_id,
             session_id=session_id,
             answer_text=answer_text,
+            client_msg_id=client_msg_id,
+            context_overrides=context_overrides,
+            run_chat_turn_call=run_chat_turn_call,
+        )
+
+    if is_tool_not_allowed_question(envelope):
+        return await _resume_tool_access_approval(
+            envelope=envelope,
+            profile_id=profile_id,
+            session_id=session_id,
+            approved=approved,
             client_msg_id=client_msg_id,
             context_overrides=context_overrides,
             run_chat_turn_call=run_chat_turn_call,

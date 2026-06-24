@@ -215,6 +215,7 @@ async def ensure_host_allowed(
                     "action": context.action,
                 },
                 approved_tool_names=approved_tool_names,
+                profile_allowlist_exempt_tool_names=approved_tool_names,
             )
             policy_engine.ensure_tool_call_allowed(
                 policy=policy,
@@ -226,6 +227,7 @@ async def ensure_host_allowed(
                 },
                 approved_tool_names=approved_tool_names,
                 approved_network_hosts=approved_network_hosts,
+                profile_allowlist_exempt_tool_names=approved_tool_names,
             )
     finally:
         await engine.dispose()

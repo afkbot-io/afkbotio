@@ -7,6 +7,7 @@ import asyncio
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
 from afkbot.repositories.profile_repo import ProfileRepository
+from afkbot.services.channel_routing.endpoint_bindings import count_endpoint_owned_bindings
 from afkbot.services.channel_routing.service import get_channel_binding_service
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
 from afkbot.services.channels.endpoint_contracts import UNSUPPORTED_PARTYFLOW_WEBHOOK_REASON
@@ -96,8 +97,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else False
         )
-        binding_count = sum(
-            1 for item in telegram_bindings if item.enabled and item.account_id == account_id
+        binding_count = count_endpoint_owned_bindings(
+            bindings=telegram_bindings,
+            endpoint_id=endpoint.endpoint_id,
         )
         state_path = endpoint_service.telegram_polling_state_path(endpoint_id=endpoint.endpoint_id)
         telegram_reports.append(
@@ -147,8 +149,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else False
         )
-        binding_count = sum(
-            1 for item in partyflow_bindings if item.enabled and item.account_id == account_id
+        binding_count = count_endpoint_owned_bindings(
+            bindings=partyflow_bindings,
+            endpoint_id=endpoint.endpoint_id,
         )
         state_path = endpoint_service.partyflow_polling_state_path(endpoint_id=endpoint.endpoint_id)
         partyflow_reports.append(
@@ -185,8 +188,9 @@ async def run_channel_health_diagnostics(settings: Settings) -> DoctorChannelsRe
             if profile_exists
             else set()
         )
-        binding_count = sum(
-            1 for item in telethon_bindings if item.enabled and item.account_id == account_id
+        binding_count = count_endpoint_owned_bindings(
+            bindings=telethon_bindings,
+            endpoint_id=endpoint.endpoint_id,
         )
         state_path = endpoint_service.telethon_user_state_path(endpoint_id=endpoint.endpoint_id)
         telethon_reports.append(

@@ -25,12 +25,14 @@ def test_plugin_api_surface_uses_combined_runtime_and_manifest_protection() -> N
         api_prefix="/v1/plugins/demo",
         web_prefix="/plugins/demo",
         operator_required=True,
+        public=False,
     )
     mount_runtime_only = PluginAuthMount(
         plugin_id="runtime-only",
         api_prefix="/v1/plugins/runtime-only",
         web_prefix="/plugins/runtime-only",
         operator_required=False,
+        public=False,
     )
 
     surface_without_protection = resolve_ui_auth_surface(
@@ -70,6 +72,7 @@ def test_operator_required_plugin_mount_fails_closed_when_ui_auth_is_not_configu
         api_prefix="/internal/demo",
         web_prefix="/plugins/demo",
         operator_required=True,
+        public=False,
     )
 
     api_surface = resolve_ui_auth_surface(
@@ -89,3 +92,52 @@ def test_operator_required_plugin_mount_fails_closed_when_ui_auth_is_not_configu
     assert web_surface.protected is True
     assert web_surface.api_request is False
     assert web_surface.auth_configured is False
+
+
+def test_required_shared_plugin_api_fails_closed_when_ui_auth_is_not_configured() -> None:
+    """The built-in plugin management API must not become public before UI auth setup."""
+
+    surface = resolve_ui_auth_surface(
+        "/v1/plugins/demo/config",
+        Settings(plugin_api_auth_required=True),
+        plugin_auth_mounts=(),
+    )
+
+    assert surface.protected is True
+    assert surface.api_request is True
+    assert surface.auth_configured is False
+
+
+def test_plugin_mounts_are_private_by_default_and_public_only_by_manifest_opt_out() -> None:
+    """Plugin web/API mounts should not become public unless the manifest says so explicitly."""
+
+    private_mount = PluginAuthMount(
+        plugin_id="private-demo",
+        api_prefix="/private-api/demo",
+        web_prefix="/private/demo",
+        operator_required=False,
+        public=False,
+    )
+    public_mount = PluginAuthMount(
+        plugin_id="public-demo",
+        api_prefix="/public-api/demo",
+        web_prefix="/public/demo",
+        operator_required=False,
+        public=True,
+    )
+
+    private_surface = resolve_ui_auth_surface(
+        "/private/demo/",
+        _configured_settings(),
+        plugin_auth_mounts=(private_mount, public_mount),
+    )
+    public_surface = resolve_ui_auth_surface(
+        "/public/demo/",
+        _configured_settings(),
+        plugin_auth_mounts=(private_mount, public_mount),
+    )
+
+    assert private_surface.protected is True
+    assert private_surface.plugin_id == "private-demo"
+    assert public_surface.protected is False
+    assert public_surface.api_request is False

@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from afkbot.models.automation import Automation
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationWebhookTriggerResult
-from afkbot.services.automations.errors import AutomationsServiceError
+from afkbot.services.automations.errors import (
+    AutomationsServiceError,
+    is_nonretryable_automation_error,
+)
 from afkbot.services.automations.graph.service import AutomationGraphService
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
 from afkbot.services.automations.message_factory import (
@@ -53,7 +56,7 @@ async def trigger_webhook_automation(
     lease_until = now_utc + WEBHOOK_CLAIM_TTL
     claim_token = secrets.token_hex(16)
 
-    async def _claim_op(repo: AutomationRepository) -> tuple[Automation, bool, str]:
+    async def _claim_op(repo: AutomationRepository) -> tuple[Automation, str, str]:
         row = await repo.find_webhook_by_target(
             profile_id=normalized_profile_id,
             token=normalized_token,
@@ -68,7 +71,7 @@ async def trigger_webhook_automation(
             automation_id=automation.id,
             event_hash=event_hash,
         )
-        accepted = await repo.claim_webhook_event(
+        claim_status = await repo.claim_webhook_event(
             automation_id=webhook.automation_id,
             received_at=now_utc,
             event_hash=event_hash,
@@ -76,16 +79,30 @@ async def trigger_webhook_automation(
             claim_token=claim_token,
             session_id=session_id,
         )
-        return (automation, accepted, session_id)
+        return (automation, claim_status, session_id)
 
-    automation, accepted, session_id = await with_repo(_claim_op)
-    if not accepted:
+    automation, claim_status, session_id = await with_repo(_claim_op)
+    if claim_status == "duplicate":
         return AutomationWebhookTriggerResult(
             automation_id=automation.id,
             profile_id=automation.profile_id,
             session_id=session_id,
             payload=sanitized_payload,
             deduplicated=True,
+            status="deduplicated",
+        )
+    if claim_status == "busy":
+        raise AutomationsServiceError(
+            error_code="automation_webhook_busy",
+            reason=(
+                "Automation webhook is already processing another delivery. "
+                "Retry this event after the current delivery finishes."
+            ),
+        )
+    if claim_status != "accepted":
+        raise AutomationsServiceError(
+            error_code="automation_webhook_state_conflict",
+            reason="Failed to claim webhook execution",
         )
 
     runtime_target = build_automation_runtime_target(
@@ -118,6 +135,15 @@ async def trigger_webhook_automation(
 
     async def _release(repo: AutomationRepository) -> bool:
         return await repo.release_webhook_event(
+            automation_id=automation.id,
+            event_hash=event_hash,
+            claim_token=claim_token,
+            failed_at=datetime.now(timezone.utc),
+            error_message=_format_webhook_execution_error(exc_info),
+        )
+
+    async def _fail_terminal(repo: AutomationRepository) -> bool:
+        return await repo.fail_webhook_event_terminal(
             automation_id=automation.id,
             event_hash=event_hash,
             claim_token=claim_token,
@@ -195,11 +221,14 @@ async def trigger_webhook_automation(
         raise
     except Exception as exc:
         exc_info = exc
-        released = await with_repo(_release)
-        if not released:
+        if is_nonretryable_automation_error(exc):
+            finalized = await with_repo(_fail_terminal)
+        else:
+            finalized = await with_repo(_release)
+        if not finalized:
             raise AutomationsServiceError(
                 error_code="automation_webhook_state_conflict",
-                reason="Failed to release webhook claim",
+                reason="Failed to finalize webhook claim",
             ) from exc
         raise
 
@@ -213,6 +242,7 @@ async def trigger_webhook_automation(
         profile_id=automation.profile_id,
         session_id=session_id,
         payload=sanitized_payload,
+        status="accepted",
     )
 
 

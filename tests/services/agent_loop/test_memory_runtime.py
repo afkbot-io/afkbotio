@@ -31,8 +31,11 @@ class _AllowAllPolicyEngine:
         policy: ProfilePolicy,
         tool_name: str,
         params: dict[str, object],
+        approved_tool_names: set[str] | None = None,
+        approved_network_hosts: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
     ) -> None:
-        _ = policy
+        _ = policy, approved_tool_names, approved_network_hosts, profile_allowlist_exempt_tool_names
         self.calls.append((tool_name, params))
 
 

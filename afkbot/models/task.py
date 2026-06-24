@@ -28,6 +28,8 @@ class Task(Base, TimestampMixin):
         Index("ix_task_due_at", "due_at"),
         Index("ix_task_lease_until", "lease_until"),
         Index("ix_task_last_run_id", "last_run_id"),
+        Index("ix_task_profile_last_session_status", "profile_id", "last_session_id", "status"),
+        Index("ix_task_claim_token", "claim_token"),
         Index(
             "ux_task_active_employee_owner",
             "profile_id",

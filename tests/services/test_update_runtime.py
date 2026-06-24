@@ -161,11 +161,11 @@ def test_run_update_fast_forwards_checkout_and_restarts_service(
     ] in commands
 
 
-def test_run_update_resets_checkout_after_history_rewrite(
+def test_run_update_rejects_checkout_after_history_rewrite(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Local update should hard-reset when remote history was rewritten."""
+    """Local update should not discard commits when remote history was rewritten."""
 
     # Arrange
     settings = _prepare_settings(tmp_path, monkeypatch)
@@ -243,18 +243,92 @@ def test_run_update_resets_checkout_after_history_rewrite(
         lambda *, settings, timeout_sec=90.0: True,
     )
 
-    # Act
-    result = run_update(settings)
+    # Act / Assert
+    with pytest.raises(UpdateRuntimeError) as exc:
+        run_update(settings)
 
-    # Assert
-    assert result.install_mode == "host"
-    assert result.source_updated is True
-    assert result.runtime_restarted is True
-    assert "Git source reset to origin/main after history rewrite" in result.details
-    assert ("doctor", "--no-integrations", "--no-upgrades", "--no-daemon") in afk_calls
-    assert ("upgrade", "apply", "--quiet") in afk_calls
-    assert ["git", "-C", str(tmp_path), "reset", "--hard", "FETCH_HEAD"] in commands
+    assert exc.value.error_code == "update_prereq_failed"
+    assert "diverged from origin/main" in exc.value.reason
+    assert afk_calls == []
+    assert ["git", "-C", str(tmp_path), "reset", "--hard", "FETCH_HEAD"] not in commands
     assert ["git", "-C", str(tmp_path), "merge", "--ff-only", "FETCH_HEAD"] not in commands
+
+
+def test_run_update_rejects_clean_checkout_with_unpushed_commits(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A clean branch with local commits must not be hard-reset by afk update."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='afkbot'\nversion='1.0.0'\n", encoding="utf-8"
+    )
+    commands: list[list[str]] = []
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        commands.append(command)
+        if command[:4] == ["git", "-C", str(tmp_path), "remote"]:
+            return subprocess.CompletedProcess(command, 0, stdout="origin-url\n", stderr="")
+        if command[:6] == ["git", "-C", str(tmp_path), "symbolic-ref", "--quiet", "--short"]:
+            return subprocess.CompletedProcess(command, 0, stdout="main\n", stderr="")
+        if command[:6] == ["git", "-C", str(tmp_path), "diff", "--quiet", "--ignore-submodules"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:6] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "diff",
+            "--cached",
+            "--quiet",
+            "--ignore-submodules",
+        ]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:5] == ["git", "-C", str(tmp_path), "ls-files", "--others"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, stdout="local-sha\n", stderr="")
+        if command[:5] == ["git", "-C", str(tmp_path), "rev-parse", "FETCH_HEAD"]:
+            return subprocess.CompletedProcess(command, 0, stdout="remote-sha\n", stderr="")
+        if command[:7] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            "FETCH_HEAD",
+        ]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        if command[:7] == [
+            "git",
+            "-C",
+            str(tmp_path),
+            "merge-base",
+            "--is-ancestor",
+            "FETCH_HEAD",
+            "HEAD",
+        ]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+    monkeypatch.setattr("afkbot.services.update_runtime._CODE_CHECKOUT_ROOT", tmp_path)
+
+    with pytest.raises(UpdateRuntimeError) as exc:
+        run_update(settings)
+
+    assert exc.value.error_code == "update_prereq_failed"
+    assert "local commits are not on origin/main" in exc.value.reason
+    assert ["git", "-C", str(tmp_path), "reset", "--hard", "FETCH_HEAD"] not in commands
 
 
 def test_run_update_rejects_dirty_checkout(
@@ -1508,6 +1582,33 @@ def test_run_starter_plugin_updates_refreshes_installed_catalog_plugin(
     assert details == ("Starter plugin afkbotui: updated",)
     assert [sys.executable, "-m", "afkbot.cli.main", "plugin", "inspect", "afkbotui", "--json"] in commands
     assert [sys.executable, "-m", "afkbot.cli.main", "plugin", "update", "afkbotui"] in commands
+
+
+def test_run_starter_plugin_updates_reports_failure_without_raising(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Core updates should not fail solely because an installed starter plugin refresh failed."""
+
+    settings = _prepare_settings(tmp_path, monkeypatch)
+
+    def _fake_run_command(
+        command: list[str],
+        *,
+        cwd: Path | None = None,
+        timeout_sec: float | None = None,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        del cwd, timeout_sec, env
+        if command[-3:] == ["inspect", "afkbotui", "--json"]:
+            return subprocess.CompletedProcess(command, 0, stdout='{"plugin": {}}\n', stderr="")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="network unavailable")
+
+    monkeypatch.setattr("afkbot.services.update_runtime._run_command", _fake_run_command)
+
+    details = _run_starter_plugin_updates(settings=settings)
+
+    assert details == ("Starter plugin afkbotui: failed (network unavailable)",)
 
 
 def test_format_update_success_for_language_renders_russian_copy() -> None:

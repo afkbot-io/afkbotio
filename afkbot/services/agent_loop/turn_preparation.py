@@ -60,6 +60,7 @@ class PreparedTurn:
     available_tools: tuple[LLMToolDefinition, ...]
     executable_tool_names: tuple[str, ...]
     approval_required_tool_names: tuple[str, ...]
+    routed_app_names: tuple[str, ...]
 
 
 class TurnPreparationRuntime:
@@ -196,6 +197,7 @@ class TurnPreparationRuntime:
         available_tools: tuple[LLMToolDefinition, ...] = ()
         executable_tool_names: tuple[str, ...] = ()
         approval_required_tool_names: tuple[str, ...] = ()
+        routed_app_names: tuple[str, ...] = ()
         prompt_overlay = None if context_overrides is None else context_overrides.prompt_overlay
         if llm_enabled:
             tool_access_mode = (
@@ -230,6 +232,7 @@ class TurnPreparationRuntime:
             available_tools = tool_surface.visible_tools
             executable_tool_names = tool_surface.executable_tool_names
             approval_required_tool_names = tool_surface.approval_required_tool_names
+            routed_app_names = tool_surface.routed_app_names
             prompt_overlay = combine_prompt_overlays(
                 prompt_overlay,
                 self._parallel_tool_strategy_note(
@@ -342,6 +345,7 @@ class TurnPreparationRuntime:
             available_tools=available_tools,
             executable_tool_names=executable_tool_names,
             approval_required_tool_names=approval_required_tool_names,
+            routed_app_names=routed_app_names,
         )
 
     def _plan_only_execution_surface_note(

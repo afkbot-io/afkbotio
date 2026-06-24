@@ -23,7 +23,7 @@ def test_browser_carryover_truncates_on_bullet_boundaries(tmp_path) -> None:
 
     summary = "\n".join(
         [
-            "Trusted live browser carryover from the current runtime.",
+            "Live browser carryover from the current runtime.",
             "- Browser session status: open in the current runtime and should be reused instead of reopening the site unless recovery is required.",
             "- Live page URL: https://example.com/dashboard?tab=orders&view=expanded&filter=high-priority",
         ]
@@ -162,4 +162,5 @@ async def test_browser_carryover_reads_jsonl_runlog_events(tmp_path) -> None:
     )
     assert summary is not None
     assert "https://example.com/dashboard" in summary
-    assert "Orders" in summary
+    assert "Orders" not in summary
+    assert "Open orders are visible" not in summary

@@ -36,6 +36,9 @@ def terminate_process_tree(pid: int | None, sig: int) -> None:
 class BashExecSessionStartRequest:
     """Spawn contract for one interactive `bash.exec` session."""
 
+    owner_profile_id: str
+    owner_session_id: str
+    owner_actor: str
     argv: tuple[str, ...]
     cwd: Path
     env: dict[str, str]
@@ -84,6 +87,9 @@ class _DrainSnapshot:
 @dataclass(slots=True)
 class _BashExecSession:
     session_id: str
+    owner_profile_id: str
+    owner_session_id: str
+    owner_actor: str
     process: asyncio.subprocess.Process
     display_cmd: str
     cwd_label: str
@@ -131,6 +137,9 @@ class BashExecSessionManager:
         )
         session = _BashExecSession(
             session_id=self._new_session_id(),
+            owner_profile_id=request.owner_profile_id,
+            owner_session_id=request.owner_session_id,
+            owner_actor=request.owner_actor,
             process=process,
             display_cmd=request.display_cmd,
             cwd_label=request.cwd_label,
@@ -157,12 +166,20 @@ class BashExecSessionManager:
         self,
         *,
         session_id: str,
+        owner_profile_id: str,
+        owner_session_id: str,
+        owner_actor: str,
         chars: str,
         yield_time_ms: int,
     ) -> BashExecSessionResult:
         """Write to one existing session stdin and collect the next bounded output chunk."""
 
-        session = await self._get_session(session_id)
+        session = await self._get_session(
+            session_id,
+            owner_profile_id=owner_profile_id,
+            owner_session_id=owner_session_id,
+            owner_actor=owner_actor,
+        )
         stdin = session.process.stdin
         if chars:
             if stdin is None or stdin.is_closing():
@@ -369,12 +386,26 @@ class BashExecSessionManager:
             except TimeoutError:
                 return
 
-    async def _get_session(self, session_id: str) -> _BashExecSession:
+    async def _get_session(
+        self,
+        session_id: str,
+        *,
+        owner_profile_id: str,
+        owner_session_id: str,
+        owner_actor: str,
+    ) -> _BashExecSession:
         async with self._lock:
             try:
-                return self._sessions[session_id]
+                session = self._sessions[session_id]
             except KeyError as exc:
                 raise ValueError(f"Unknown session_id: {session_id}") from exc
+        if (
+            session.owner_profile_id != owner_profile_id
+            or session.owner_session_id != owner_session_id
+            or session.owner_actor != owner_actor
+        ):
+            raise ValueError(f"session_id={session_id} does not belong to this tool context")
+        return session
 
     async def _discard_session(self, session_id: str, *, terminate: bool) -> None:
         async with self._lock:

@@ -30,6 +30,9 @@ class ConnectClaimToken(Base, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     allow_diagnostics: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_operator_workspace: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     runtime_metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_overlay: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

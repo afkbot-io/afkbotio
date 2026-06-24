@@ -12,10 +12,10 @@ from afkbot.services.agent_loop.api_runtime import run_chat_turn
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
 from afkbot.services.channel_routing.runtime_target import (
     RoutingSelectors,
+    build_channel_default_session_id,
     build_routing_context_overrides,
     resolve_runtime_target,
 )
-from afkbot.services.channel_routing.service import ChannelBindingServiceError
 from afkbot.services.channels.access_policy import is_channel_message_allowed
 from afkbot.services.channels.active_context import build_active_channel_context_overrides
 from afkbot.services.channels.context_overrides import build_channel_tool_profile_context_overrides
@@ -121,29 +121,16 @@ class PluginChannelIngressDispatcher:
             thread_id=inbound.thread_id,
             user_id=inbound.user_id,
         )
-        try:
-            target = await resolve_runtime_target(
-                settings=self._settings,
-                explicit_profile_id=None,
-                explicit_session_id=None,
-                resolve_binding=True,
-                require_binding_match=require_binding_match,
-                selectors=selectors,
-                default_profile_id=self._endpoint.profile_id,
-                default_session_id=f"{self._endpoint.transport}:{inbound.peer_id}",
-            )
-        except ChannelBindingServiceError as exc:
-            if exc.error_code != "channel_binding_no_match":
-                raise
-            target = await resolve_runtime_target(
-                settings=self._settings,
-                explicit_profile_id=None,
-                explicit_session_id=None,
-                resolve_binding=False,
-                selectors=selectors,
-                default_profile_id=self._endpoint.profile_id,
-                default_session_id=f"{self._endpoint.transport}:{inbound.peer_id}",
-            )
+        target = await resolve_runtime_target(
+            settings=self._settings,
+            explicit_profile_id=None,
+            explicit_session_id=None,
+            resolve_binding=True,
+            require_binding_match=require_binding_match,
+            selectors=selectors,
+            default_profile_id=self._endpoint.profile_id,
+            default_session_id=build_channel_default_session_id(selectors=selectors),
+        )
         context_overrides = merge_turn_context_overrides(
             build_routing_context_overrides(target=target, selectors=selectors),
             build_active_channel_context_overrides(

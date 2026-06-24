@@ -7,10 +7,12 @@ from pathlib import Path
 
 from pydantic import Field
 
+from afkbot.services.path_scope import resolve_in_scope_or_none
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import RoutedToolParameters, ToolParameters
 from afkbot.services.tools.text_snapshots import read_prefix_bytes
 from afkbot.services.tools.workspace import (
+    is_reserved_tool_io_path,
     resolve_io_path,
     resolve_tool_workspace_base_dir,
     resolve_tool_workspace_scope_roots,
@@ -72,6 +74,7 @@ class FileSearchTool(ToolBase):
                 self._search,
                 base_dir=base_dir,
                 base=base,
+                scope_roots=scope_roots,
                 query=payload.query,
                 glob_pattern=payload.glob,
                 case_sensitive=payload.case_sensitive,
@@ -91,6 +94,7 @@ class FileSearchTool(ToolBase):
         *,
         base_dir: Path,
         base: Path,
+        scope_roots: tuple[Path, ...],
         query: str,
         glob_pattern: str,
         case_sensitive: bool,
@@ -102,6 +106,14 @@ class FileSearchTool(ToolBase):
 
         for file_path in base.glob(glob_pattern):
             resolved = file_path.resolve(strict=False)
+            if is_reserved_tool_io_path(base_dir=base_dir, path=resolved):
+                continue
+            if scope_roots and not any(
+                resolve_in_scope_or_none(resolved, scope_root=scope_root, strict=False)
+                is not None
+                for scope_root in scope_roots
+            ):
+                continue
             if not resolved.is_file():
                 continue
             raw = read_prefix_bytes(path=resolved, max_bytes=max_bytes_per_file)

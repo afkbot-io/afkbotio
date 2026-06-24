@@ -36,24 +36,6 @@ def resolve_task_tool_actor(ctx: ToolContext) -> TaskToolActorIdentity:
     if automation_actor is not None:
         return automation_actor
 
-    automation_graph = None
-    if isinstance(ctx.runtime_metadata, dict):
-        candidate = ctx.runtime_metadata.get("automation_graph")
-        if isinstance(candidate, dict):
-            automation_graph = candidate
-
-    if isinstance(automation_graph, dict):
-        automation_id = automation_graph.get("automation_id")
-        if isinstance(automation_id, int):
-            return TaskToolActorIdentity(
-                actor_type="automation",
-                actor_ref=build_automation_principal_ref(
-                    profile_id=ctx.profile_id,
-                    automation_id=automation_id,
-                ),
-                actor_session_id=None,
-            )
-
     detached_actor = _trusted_taskflow_detached_actor(ctx=ctx)
     if detached_actor is not None:
         return detached_actor
@@ -205,8 +187,6 @@ async def ensure_employee_flow_read_scope(
 
     if flow.default_owner_type == EMPLOYEE_OWNER_TYPE and flow.default_owner_ref in readable_employee_ids:
         return None
-    if flow.created_by_type == EMPLOYEE_OWNER_TYPE and flow.created_by_ref in readable_employee_ids:
-        return None
 
     from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 
@@ -294,6 +274,5 @@ def _task_references_readable_employee(
         for principal_type, principal_ref in (
             (task.owner_type, task.owner_ref),
             (task.reviewer_type, task.reviewer_ref),
-            (task.created_by_type, task.created_by_ref),
         )
     )

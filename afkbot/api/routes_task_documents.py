@@ -5,14 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from afkbot.api.chat_auth import require_chat_http_context
+from afkbot.api.chat_auth import ensure_operator_workspace_scope, require_chat_http_context
 from afkbot.services.connect import ConnectAccessTokenContext
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.task_flow.contracts import (
     TaskDocumentMetadata,
     TaskDocumentRevisionMetadata,
 )
-from afkbot.services.task_flow.human_ref import resolve_local_human_ref
 from afkbot.settings import get_settings
 
 router = APIRouter(prefix="/v1/task-documents", tags=["task-documents"])
@@ -164,12 +163,13 @@ async def post_task_document_confirm(
     )
     settings = get_settings()
     service = get_task_flow_service(settings)
+    actor_ref = _operator_actor_ref(auth_context)
     try:
         document = await service.confirm_document(
             profile_id=auth_context.profile_id,
             document_id=document_id,
-            actor_type="human",
-            actor_ref=resolve_local_human_ref(settings),
+            actor_type="operator",
+            actor_ref=actor_ref,
             actor_session_id=auth_context.session_id,
             expected_revision=request.expected_revision,
         )
@@ -195,12 +195,13 @@ async def delete_task_document(
     )
     settings = get_settings()
     service = get_task_flow_service(settings)
+    actor_ref = _operator_actor_ref(auth_context)
     try:
         document = await service.delete_document(
             profile_id=auth_context.profile_id,
             document_id=document_id,
-            actor_type="human",
-            actor_ref=resolve_local_human_ref(settings),
+            actor_type="operator",
+            actor_ref=actor_ref,
             actor_session_id=auth_context.session_id,
             expected_revision=request.expected_revision if request else None,
         )
@@ -228,7 +229,16 @@ async def _require_profile_context(
                 "reason": "Requested profile does not match the access token profile.",
             },
         )
+    ensure_operator_workspace_scope(auth_context)
     return auth_context
+
+
+def _operator_actor_ref(context: ConnectAccessTokenContext) -> str:
+    """Return a stable non-human actor ref for operator workspace API writes."""
+
+    profile_id = str(context.profile_id or "").strip() or "unknown-profile"
+    session_id = str(context.session_id or "").strip() or "unknown-session"
+    return f"connect:{profile_id}:{session_id}"
 
 
 def _task_document_http_error(exc: TaskFlowServiceError) -> HTTPException:

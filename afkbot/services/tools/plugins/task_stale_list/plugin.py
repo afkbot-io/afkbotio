@@ -8,6 +8,7 @@ from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_servic
 from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_task_owner_inputs
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import restrict_employee_read_owner_scope
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -48,11 +49,20 @@ class TaskStaleListTool(ToolBase):
             return scope_error
         try:
             service = get_task_flow_service(self._settings)
-            _, resolved_owner_ref = resolve_task_owner_inputs(
+            resolved_owner_type, resolved_owner_ref = resolve_task_owner_inputs(
                 field_prefix="owner",
                 owner_type=None,
                 owner_ref=payload.owner_ref,
             )
+            _, resolved_owner_ref, read_scope_error = await restrict_employee_read_owner_scope(
+                ctx=ctx,
+                settings=self._settings,
+                target_profile_id=target_profile_id,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+            )
+            if read_scope_error is not None:
+                return read_scope_error
             items = await service.list_stale_task_claims(
                 profile_id=target_profile_id,
                 owner_ref=resolved_owner_ref,

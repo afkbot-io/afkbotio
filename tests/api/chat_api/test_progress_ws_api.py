@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 
 from afkbot.api.app import create_app
-from afkbot.api.routes_chat import _schedule_ws_auth_revalidate_at
+from afkbot.api.chat_routes import _schedule_ws_auth_revalidate_at
 from afkbot.services.agent_loop.api_runtime import ProgressPollResponse
 from afkbot.services.agent_loop.progress_stream import ProgressCursor, ProgressEvent
 from afkbot.services.connect import ConnectAccessTokenContext

@@ -260,6 +260,18 @@ def ensure_health_diagnostics_scope(context: ConnectAccessTokenContext) -> None:
     )
 
 
+def ensure_operator_workspace_scope(context: ConnectAccessTokenContext) -> None:
+    """Reject operator workspace APIs for ordinary chat-scoped connect tokens."""
+
+    if context.allow_operator_workspace:
+        return
+    raise _chat_auth_http_error(
+        status_code=status.HTTP_403_FORBIDDEN,
+        error_code="connect_operator_scope_required",
+        reason="Access token is not allowed to use operator Task Flow document workspace.",
+    )
+
+
 def _profile_scope_mismatch_reason(
     *,
     token_profile_id: str,

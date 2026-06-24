@@ -141,6 +141,43 @@ def test_channel_access_wizard_prompts_outbound_allowlist_for_send_profiles(
     assert text_prompts == ["Allowed outbound chat/user ids"]
 
 
+def test_channel_update_prompts_outbound_allowlist_when_send_profile_is_flagged(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Flag-driven updates should still ask the channel.send safety question."""
+
+    bool_prompts: list[str] = []
+    text_prompts: list[str] = []
+
+    def _fake_bool(**kwargs: object) -> bool:
+        bool_prompts.append(str(kwargs["prompt_en"]))
+        return True
+
+    def _fake_text(**kwargs: object) -> str:
+        text_prompts.append(str(kwargs["prompt_en"]))
+        return "67890"
+
+    monkeypatch.setattr(channel_shared, "resolve_channel_bool", _fake_bool)
+    monkeypatch.setattr(channel_shared, "resolve_channel_text", _fake_text)
+
+    access = collect_channel_access_policy_inputs(
+        interactive=False,
+        prompt_outbound_safety=True,
+        lang=PromptLanguage.EN,
+        private_policy=None,
+        allow_from=None,
+        group_policy=None,
+        groups=None,
+        group_allow_from=None,
+        outbound_allow_to=None,
+        tool_profile="messaging_safe",
+    )
+
+    assert access.outbound_allow_to == ("67890",)
+    assert bool_prompts == ["Limit proactive channel.send targets?"]
+    assert text_prompts == ["Allowed outbound chat/user ids"]
+
+
 def test_channel_tool_profile_prompt_is_shared_and_explains_permission_ceiling(
     monkeypatch: MonkeyPatch,
 ) -> None:

@@ -142,15 +142,16 @@ class TaskUpdateTool(ToolBase):
                 )
             except TaskTimingInputError as exc:
                 return ToolResult.error(error_code=exc.error_code, reason=exc.reason)
+            requested_status = (payload.status or "").strip().lower()
+            if requested_status in {"claimed", "running"}:
+                return ToolResult.error(
+                    error_code="task_active_status_forbidden",
+                    reason=(
+                        "Task claimed/running states are reserved for the detached "
+                        "Task Flow runtime claim lifecycle."
+                    ),
+                )
             if (
-                actor.actor_type == "employee"
-                and effective_session_id is None
-                and payload.status in {"claimed", "running"}
-            ):
-                effective_session_id = ctx.session_id
-                if not session_profile_id_explicit:
-                    effective_session_profile_id = ctx.profile_id
-            elif (
                 actor.actor_type == "employee"
                 and effective_session_id is not None
                 and effective_session_id == ctx.session_id

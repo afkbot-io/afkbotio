@@ -144,6 +144,7 @@ def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> No
     """Apply lightweight idempotent schema upgrades for existing runtime databases."""
 
     _ensure_task_description_column(conn)
+    _ensure_chat_turn_indexes(conn)
     _ensure_run_indexes(conn)
     _ensure_task_runtime_columns(conn)
     _ensure_task_runtime_indexes(conn)
@@ -153,10 +154,13 @@ def _upgrade_schema(conn: Connection, *, settings: Settings | None = None) -> No
     _ensure_webhook_token_columns(conn)
     _ensure_webhook_execution_columns(conn)
     _ensure_profile_policy_runtime_columns(conn)
+    _ensure_connect_scope_columns(conn)
     vault = _resolve_credentials_vault(settings)
     _guard_legacy_plaintext_webhook_tokens(conn, vault=vault)
     _backfill_encrypted_webhook_tokens(conn, vault=vault)
     _backfill_webhook_token_hashes(conn)
+    _ensure_connect_runtime_indexes(conn)
+    _ensure_channel_ingress_runtime_indexes(conn)
 
 
 def _upgrade_task_runtime_schema(conn: Connection) -> None:
@@ -300,6 +304,19 @@ def _ensure_run_indexes(conn: Connection) -> None:
     )
 
 
+def _ensure_chat_turn_indexes(conn: Connection) -> None:
+    """Ensure session transcript hot-path indexes exist for legacy SQLite installs."""
+
+    if not _table_columns(conn, "chat_turn"):
+        return
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_chat_turn_profile_session_id "
+            "ON chat_turn (profile_id, session_id, id)"
+        )
+    )
+
+
 def _ensure_task_runtime_indexes(conn: Connection) -> None:
     """Ensure Task Flow runtime indexes exist for legacy SQLite installs."""
 
@@ -341,6 +358,32 @@ def _ensure_task_runtime_indexes(conn: Connection) -> None:
             "ON task (profile_id, claim_owner_type, claim_owner_ref, status)"
         )
     )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_task_profile_status "
+            "ON task (profile_id, status)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_task_profile_owner_status "
+            "ON task (profile_id, owner_type, owner_ref, status)"
+        )
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_task_profile_flow ON task (profile_id, flow_id)")
+    )
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_due_at ON task (due_at)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_lease_until ON task (lease_until)"))
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_task_profile_last_session_status "
+            "ON task (profile_id, last_session_id, status)"
+        )
+    )
+    conn.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_task_claim_token ON task (claim_token)")
+    )
     claim_predicate = (
         "claim_owner_type = 'employee' AND status IN ('claimed', 'running')"
     )
@@ -380,11 +423,28 @@ def _ensure_runtime_history_indexes(conn: Connection) -> None:
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_task_run_finished_at ON task_run (finished_at, id)")
         )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_task_run_task_attempt ON task_run (task_id, attempt)")
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_run_status ON task_run (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_run_session ON task_run (session_id)"))
     if _table_columns(conn, "runlog_event"):
         conn.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_runlog_event_created_at "
                 "ON runlog_event (created_at, id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_runlog_event_session_id_id "
+                "ON runlog_event (session_id, id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_runlog_event_session_type_id "
+                "ON runlog_event (session_id, event_type, id)"
             )
         )
 
@@ -574,6 +634,7 @@ def _ensure_webhook_execution_columns(conn: Connection) -> None:
         "last_succeeded_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_succeeded_at DATETIME",
         "last_failed_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_failed_at DATETIME",
         "last_error": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_error TEXT",
+        "last_received_at": "ALTER TABLE automation_trigger_webhook ADD COLUMN last_received_at DATETIME",
     }
     for column_name, ddl in missing_columns.items():
         if column_name not in columns:
@@ -593,6 +654,135 @@ def _ensure_profile_policy_runtime_columns(conn: Connection) -> None:
                 "ADD COLUMN shell_sandbox_mode VARCHAR(16) NOT NULL DEFAULT 'disabled'"
             )
         )
+
+
+def _ensure_connect_scope_columns(conn: Connection) -> None:
+    """Ensure connect token tables expose the current authorization columns."""
+
+    table_columns: dict[str, dict[str, str]] = {
+        "connect_claim_token": {
+            "claim_pin_hash": "ALTER TABLE connect_claim_token ADD COLUMN claim_pin_hash VARCHAR(128)",
+            "claim_failed_attempts": (
+                "ALTER TABLE connect_claim_token "
+                "ADD COLUMN claim_failed_attempts INTEGER NOT NULL DEFAULT 0"
+            ),
+            "claim_blocked_at": "ALTER TABLE connect_claim_token ADD COLUMN claim_blocked_at DATETIME",
+            "allow_diagnostics": (
+                "ALTER TABLE connect_claim_token "
+                "ADD COLUMN allow_diagnostics BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "allow_operator_workspace": (
+                "ALTER TABLE connect_claim_token "
+                "ADD COLUMN allow_operator_workspace BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "runtime_metadata_json": (
+                "ALTER TABLE connect_claim_token ADD COLUMN runtime_metadata_json TEXT"
+            ),
+            "prompt_overlay": "ALTER TABLE connect_claim_token ADD COLUMN prompt_overlay TEXT",
+        },
+        "connect_session_token": {
+            "session_proof_hash": (
+                "ALTER TABLE connect_session_token ADD COLUMN session_proof_hash VARCHAR(128)"
+            ),
+            "allow_diagnostics": (
+                "ALTER TABLE connect_session_token "
+                "ADD COLUMN allow_diagnostics BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "allow_operator_workspace": (
+                "ALTER TABLE connect_session_token "
+                "ADD COLUMN allow_operator_workspace BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "runtime_metadata_json": (
+                "ALTER TABLE connect_session_token ADD COLUMN runtime_metadata_json TEXT"
+            ),
+            "prompt_overlay": "ALTER TABLE connect_session_token ADD COLUMN prompt_overlay TEXT",
+        },
+        "connect_access_token": {
+            "allow_diagnostics": (
+                "ALTER TABLE connect_access_token "
+                "ADD COLUMN allow_diagnostics BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "allow_operator_workspace": (
+                "ALTER TABLE connect_access_token "
+                "ADD COLUMN allow_operator_workspace BOOLEAN NOT NULL DEFAULT false"
+            ),
+            "runtime_metadata_json": (
+                "ALTER TABLE connect_access_token ADD COLUMN runtime_metadata_json TEXT"
+            ),
+            "prompt_overlay": "ALTER TABLE connect_access_token ADD COLUMN prompt_overlay TEXT",
+        },
+    }
+
+    for table_name, missing_columns in table_columns.items():
+        columns = _table_columns(conn, table_name)
+        if not columns:
+            continue
+        for column_name, ddl in missing_columns.items():
+            if column_name not in columns:
+                conn.execute(text(ddl))
+
+
+def _ensure_connect_runtime_indexes(conn: Connection) -> None:
+    """Ensure legacy connect token tables expose current uniqueness and lookup indexes."""
+
+    if _table_columns(conn, "connect_claim_token"):
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_connect_claim_token_hash "
+                "ON connect_claim_token (token_hash)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_connect_claim_profile_session "
+                "ON connect_claim_token (profile_id, session_id)"
+            )
+        )
+    if _table_columns(conn, "connect_session_token"):
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_connect_session_refresh_token_hash "
+                "ON connect_session_token (refresh_token_hash)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_connect_session_profile_session "
+                "ON connect_session_token (profile_id, session_id)"
+            )
+        )
+    if _table_columns(conn, "connect_access_token"):
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_connect_access_token_hash "
+                "ON connect_access_token (token_hash)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_connect_access_profile_session "
+                "ON connect_access_token (profile_id, session_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_connect_access_refresh_session "
+                "ON connect_access_token (refresh_session_id)"
+            )
+        )
+
+
+def _ensure_channel_ingress_runtime_indexes(conn: Connection) -> None:
+    """Ensure legacy inbound channel dedupe tables enforce processed-event uniqueness."""
+
+    if not _table_columns(conn, "channel_ingress_event"):
+        return
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_channel_ingress_event_key "
+            "ON channel_ingress_event (endpoint_id, event_key)"
+        )
+    )
 
 
 def _backfill_webhook_token_hashes(conn: Connection) -> None:

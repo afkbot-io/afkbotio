@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from afkbot.services.channels.endpoint_contracts import TelethonUserEndpointConfig
 from afkbot.services.channels.endpoint_service import get_channel_endpoint_service
 from afkbot.services.channels.ingress_journal import get_channel_ingress_journal_service
@@ -62,6 +65,27 @@ async def test_channel_endpoint_delete_removes_ingress_journal_rows(tmp_path: Pa
     finally:
         await profiles.shutdown()
         await endpoints.shutdown()
+        await journal.shutdown()
+
+
+async def test_channel_ingress_journal_does_not_treat_missing_endpoint_as_duplicate(
+    tmp_path: Path,
+) -> None:
+    """Foreign-key failures should not be collapsed into duplicate-event semantics."""
+
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'missing-endpoint.db'}",
+    )
+    journal = get_channel_ingress_journal_service(settings)
+    try:
+        with pytest.raises(IntegrityError):
+            await journal.try_claim(
+                endpoint_id="missing-endpoint",
+                transport="telegram_user",
+                event_key="telegram:1",
+            )
+    finally:
         await journal.shutdown()
 
 

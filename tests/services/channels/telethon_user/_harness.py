@@ -11,6 +11,7 @@ from afkbot.db.engine import create_engine
 from afkbot.services.channel_routing import ChannelBindingRule, ChannelBindingService
 from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.services.channels.endpoint_contracts import (
+    ChannelAccessPolicy,
     ChannelIngressBatchConfig,
     ChannelReplyHumanizationConfig,
     TelethonUserEndpointConfig,
@@ -191,6 +192,7 @@ def endpoint(
     reply_humanization: ChannelReplyHumanizationConfig | None = None,
     mark_read_before_reply: bool = True,
     watcher: TelethonWatcherConfig | None = None,
+    access_policy: ChannelAccessPolicy | None = None,
 ) -> TelethonUserEndpointConfig:
     """Build one Telethon endpoint config with overridable runtime flags."""
 
@@ -209,6 +211,8 @@ def endpoint(
         reply_humanization=reply_humanization or ChannelReplyHumanizationConfig(),
         mark_read_before_reply=mark_read_before_reply,
         watcher=watcher or TelethonWatcherConfig(),
+        access_policy=access_policy
+        or ChannelAccessPolicy(private_policy="open", group_policy="open"),
     )
 
 

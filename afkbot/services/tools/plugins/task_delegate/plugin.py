@@ -27,6 +27,8 @@ class TaskDelegateParams(ToolParameters):
     description: str = Field(min_length=1)
     owner_type: str | None = Field(default=None, min_length=1, max_length=32)
     owner_ref: str | None = Field(default=None, min_length=1, max_length=255)
+    reviewer_type: str | None = Field(default=None, min_length=1, max_length=32)
+    reviewer_ref: str | None = Field(default=None, min_length=1, max_length=255)
     flow_id: str | None = Field(default=None, max_length=64)
     priority: int | None = Field(default=None, ge=0)
     due_at: datetime | None = None
@@ -74,6 +76,11 @@ class TaskDelegateTool(ToolBase):
                 owner_type=payload.owner_type,
                 owner_ref=payload.owner_ref,
             )
+            resolved_reviewer_type, resolved_reviewer_ref = resolve_task_owner_inputs(
+                field_prefix="reviewer",
+                owner_type=payload.reviewer_type,
+                owner_ref=payload.reviewer_ref,
+            )
             if resolved_owner_ref is None:
                 return ToolResult.error(
                     error_code="invalid_owner_ref",
@@ -84,6 +91,8 @@ class TaskDelegateTool(ToolBase):
                 source_task_id=source_task_id,
                 delegated_owner_type=resolved_owner_type or "employee",
                 delegated_owner_ref=resolved_owner_ref,
+                delegated_reviewer_type=resolved_reviewer_type,
+                delegated_reviewer_ref=resolved_reviewer_ref,
                 description=payload.description,
                 actor_type=actor.actor_type,
                 actor_ref=actor.actor_ref,

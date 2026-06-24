@@ -64,6 +64,7 @@ def scaffold_plugin(
             },
             "auth": {
                 "operator_required": False,
+                "public": False,
             },
             "capabilities": {
                 "api_router": api_router,

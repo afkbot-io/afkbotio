@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, case, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from afkbot.models.connect_access_token import ConnectAccessToken
@@ -27,6 +27,7 @@ class ConnectRepository:
         token_hash: str,
         claim_pin_hash: str | None,
         allow_diagnostics: bool,
+        allow_operator_workspace: bool,
         runtime_metadata_json: str | None,
         prompt_overlay: str | None,
         expires_at: datetime,
@@ -40,6 +41,7 @@ class ConnectRepository:
             token_hash=token_hash,
             claim_pin_hash=claim_pin_hash,
             allow_diagnostics=allow_diagnostics,
+            allow_operator_workspace=allow_operator_workspace,
             runtime_metadata_json=runtime_metadata_json,
             prompt_overlay=prompt_overlay,
             expires_at=expires_at,
@@ -74,30 +76,42 @@ class ConnectRepository:
         rowcount = int(getattr(result, "rowcount", 0) or 0)
         return rowcount > 0
 
-    async def update_claim_pin_failure_state(
+    async def record_claim_pin_failure(
         self,
         *,
         claim_id: int,
-        failed_attempts: int,
-        blocked_at: datetime | None,
-    ) -> bool:
-        """Persist current claim PIN failure state for one token."""
+        failed_at: datetime,
+        max_attempts: int,
+    ) -> tuple[int, datetime | None] | None:
+        """Atomically record one failed claim PIN attempt and return the new lock state."""
 
+        next_attempts = ConnectClaimToken.claim_failed_attempts + 1
         statement = (
             update(ConnectClaimToken)
             .where(
                 ConnectClaimToken.id == claim_id,
                 ConnectClaimToken.used_at.is_(None),
+                ConnectClaimToken.claim_blocked_at.is_(None),
             )
             .values(
-                claim_failed_attempts=failed_attempts,
-                claim_blocked_at=blocked_at,
+                claim_failed_attempts=next_attempts,
+                claim_blocked_at=case(
+                    (next_attempts >= max(1, int(max_attempts)), failed_at),
+                    else_=ConnectClaimToken.claim_blocked_at,
+                ),
+            )
+            .returning(
+                ConnectClaimToken.claim_failed_attempts,
+                ConnectClaimToken.claim_blocked_at,
             )
             .execution_options(synchronize_session=False)
         )
         result = await self._session.execute(statement)
         await self._session.flush()
-        return int(getattr(result, "rowcount", 0) or 0) > 0
+        row = result.one_or_none()
+        if row is None:
+            return None
+        return int(row[0] or 0), row[1]
 
     async def create_refresh_session(
         self,
@@ -108,6 +122,7 @@ class ConnectRepository:
         refresh_token_hash: str,
         session_proof_hash: str | None,
         allow_diagnostics: bool,
+        allow_operator_workspace: bool,
         runtime_metadata_json: str | None,
         prompt_overlay: str | None,
         expires_at: datetime,
@@ -121,6 +136,7 @@ class ConnectRepository:
             refresh_token_hash=refresh_token_hash,
             session_proof_hash=session_proof_hash,
             allow_diagnostics=allow_diagnostics,
+            allow_operator_workspace=allow_operator_workspace,
             runtime_metadata_json=runtime_metadata_json,
             prompt_overlay=prompt_overlay,
             expires_at=expires_at,
@@ -139,6 +155,7 @@ class ConnectRepository:
         base_url: str,
         access_token_hash: str,
         allow_diagnostics: bool,
+        allow_operator_workspace: bool,
         runtime_metadata_json: str | None,
         prompt_overlay: str | None,
         expires_at: datetime,
@@ -152,6 +169,7 @@ class ConnectRepository:
             base_url=base_url,
             access_token_hash=access_token_hash,
             allow_diagnostics=allow_diagnostics,
+            allow_operator_workspace=allow_operator_workspace,
             runtime_metadata_json=runtime_metadata_json,
             prompt_overlay=prompt_overlay,
             expires_at=expires_at,

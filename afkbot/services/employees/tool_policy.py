@@ -10,6 +10,7 @@ from afkbot.services.task_flow.work_modes import (
     KNOWLEDGE_MAINTENANCE_WORK_MODE,
     MANAGER_INTAKE_WORK_MODE,
 )
+from afkbot.services.naming import normalize_runtime_name
 from afkbot.services.tools.base import ToolResult
 from afkbot.settings import Settings
 
@@ -120,8 +121,11 @@ async def employee_tool_policy_result(
             reason=f"Employee {employee.id} is not allowed to run subagents",
         )
     if employee.subagent_allowlist:
+        allowed_subagents = {
+            _normalize_subagent_name(name) for name in employee.subagent_allowlist
+        }
         forbidden = tuple(
-            name for name in requested_subagents if name not in employee.subagent_allowlist
+            name for name in requested_subagents if name not in allowed_subagents
         )
         if forbidden:
             return ToolResult.error(
@@ -175,7 +179,7 @@ def _work_mode_from_trusted_context(
 
 def _requested_subagent_names(*, tool_name: str, params: Mapping[str, object]) -> tuple[str, ...]:
     if tool_name == _SUBAGENT_RUN_TOOL:
-        subagent_name = str(params.get("subagent_name") or "").strip()
+        subagent_name = _normalize_subagent_name(str(params.get("subagent_name") or ""))
         return (subagent_name,) if subagent_name else ()
     if tool_name != _SESSION_JOB_RUN_TOOL:
         return ()
@@ -188,7 +192,17 @@ def _requested_subagent_names(*, tool_name: str, params: Mapping[str, object]) -
             continue
         if str(item.get("kind") or "").strip() != "subagent":
             continue
-        subagent_name = str(item.get("subagent_name") or "").strip()
+        subagent_name = _normalize_subagent_name(str(item.get("subagent_name") or ""))
         if subagent_name:
             names.append(subagent_name)
     return tuple(names)
+
+
+def _normalize_subagent_name(raw_name: str) -> str:
+    raw = str(raw_name or "").strip()
+    if not raw:
+        return ""
+    try:
+        return normalize_runtime_name(raw)
+    except ValueError:
+        return raw

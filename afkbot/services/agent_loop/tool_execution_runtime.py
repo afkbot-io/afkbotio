@@ -10,7 +10,10 @@ from typing import Literal
 from pydantic import ValidationError
 
 from afkbot.services.agent_loop.channel_tool_policy import blocked_tool_result_for_runtime
-from afkbot.services.agent_loop.sensitive_tool_policy import blocked_tool_result
+from afkbot.services.agent_loop.sensitive_tool_policy import (
+    blocked_credential_placeholder_result,
+    blocked_tool_result,
+)
 from afkbot.models.profile_policy import ProfilePolicy
 from afkbot.services.agent_loop.safety_policy import SafetyPolicy
 from afkbot.services.agent_loop.security_guard import SecurityGuard
@@ -20,6 +23,7 @@ from afkbot.services.channels.active_context import (
     filter_channel_owned_approved_tool_names,
     filter_generic_approved_tool_names,
 )
+from afkbot.services.credentials import CredentialsServiceError
 from afkbot.services.error_logging import log_exception, redact_log_text
 from afkbot.services.employees.tool_policy import employee_tool_policy_result
 from afkbot.services.policy import PolicyEngine, PolicyViolationError
@@ -34,6 +38,17 @@ SanitizeValue = Callable[[object], object]
 NormalizeParams = Callable[[object], dict[str, object]]
 BuildToolLogPayload = Callable[..., dict[str, object]]
 SanitizeText = Callable[[str], str]
+
+
+def _normalize_routed_app_names(app_names: set[str] | None) -> tuple[str, ...] | None:
+    """Return deterministic app.run routing guards for the current turn."""
+
+    if app_names is None:
+        return None
+    normalized = sorted({str(name).strip().lower() for name in app_names if str(name).strip()})
+    if not normalized:
+        return None
+    return tuple(normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,9 +123,11 @@ class ToolExecutionRuntime:
         approved_tool_names: set[str] | None = None,
         channel_owned_tool_names: set[str] | None = None,
         approval_required_tool_names: set[str] | None = None,
+        routed_app_names: set[str] | None = None,
     ) -> list[ToolResult]:
         """Execute tool calls with sequential guards and bounded safe fan-out."""
 
+        normalized_routed_app_names = _normalize_routed_app_names(routed_app_names)
         ctx = ToolContext(
             profile_id=profile_id,
             session_id=session_id,
@@ -118,14 +135,15 @@ class ToolExecutionRuntime:
             actor=self._actor,
             runtime_metadata=runtime_metadata,
             trusted_runtime_context=trusted_runtime_context,
+            routed_app_names=normalized_routed_app_names,
+            policy_network_allowlist_json=policy.network_allowlist_json,
+        )
+        effective_channel_owned_tool_names = filter_channel_owned_approved_tool_names(
+            trusted_runtime_context=trusted_runtime_context,
+            approved_tool_names=channel_owned_tool_names,
         )
         effective_approved_tool_names = filter_generic_approved_tool_names(approved_tool_names)
-        effective_approved_tool_names.update(
-            filter_channel_owned_approved_tool_names(
-                trusted_runtime_context=trusted_runtime_context,
-                approved_tool_names=channel_owned_tool_names,
-            )
-        )
+        effective_approved_tool_names.update(effective_channel_owned_tool_names)
         effective_approved_network_hosts = filter_channel_owned_approved_network_hosts(
             trusted_runtime_context=trusted_runtime_context,
             approved_tool_names=channel_owned_tool_names,
@@ -231,6 +249,7 @@ class ToolExecutionRuntime:
                 confirmation_question_id=confirmation_question_id,
                 allowed_tool_names=allowed_tool_names,
                 approved_tool_names=effective_approved_tool_names,
+                profile_allowlist_exempt_tool_names=effective_channel_owned_tool_names,
                 approved_network_hosts=effective_approved_network_hosts,
                 approval_required_tool_names=approval_required_tool_names,
             )
@@ -377,6 +396,7 @@ class ToolExecutionRuntime:
         confirmation_question_id: str | None,
         allowed_tool_names: set[str] | None,
         approved_tool_names: set[str] | None,
+        profile_allowlist_exempt_tool_names: set[str] | None,
         approved_network_hosts: set[str] | None,
         approval_required_tool_names: set[str] | None,
     ) -> ToolResult | _PreparedToolExecution:
@@ -387,6 +407,13 @@ class ToolExecutionRuntime:
                 error_code=guarded_error_code or "security_secure_input_required",
                 reason=guarded_reason or "Secret-like tool call blocked",
             )
+        placeholder_result = blocked_credential_placeholder_result(
+            tool_name=execution_name,
+            params=execution_params,
+            runtime_metadata=ctx.runtime_metadata,
+        )
+        if placeholder_result is not None:
+            return placeholder_result
         if (
             approval_required_tool_names is not None
             and execution_name in approval_required_tool_names
@@ -403,6 +430,15 @@ class ToolExecutionRuntime:
             return ToolResult.error(
                 error_code="tool_not_allowed_in_turn",
                 reason=f"Tool not available in current turn: {execution_name}",
+            )
+        if ctx.actor == "subagent" and execution_name.startswith("task."):
+            return ToolResult.error(
+                error_code="subagent_taskflow_tool_forbidden",
+                reason=(
+                    "Subagent runtimes cannot use Task Flow tools directly. Return findings "
+                    "to the employee that invoked the subagent so the employee can update "
+                    "Task Flow with its trusted identity."
+                ),
             )
         session_job_turn_result = self._session_job_turn_surface_result(
             execution_name=execution_name,
@@ -427,14 +463,34 @@ class ToolExecutionRuntime:
             if subagent_intent_result is not None:
                 return subagent_intent_result
         tool = None if self._tool_registry is None else self._tool_registry.get(execution_name)
-        approval_params = (
-            execution_params
-            if tool is None
-            else tool.policy_params(
-                execution_params,
-                ctx=ctx,
+        try:
+            approval_params = (
+                execution_params
+                if tool is None
+                else await tool.prepare_policy_params(
+                    execution_params,
+                    ctx=ctx,
+                    default_timeout_sec=self._tool_timeout_default_sec,
+                    max_timeout_sec=self._tool_timeout_max_sec,
+                )
             )
-        )
+        except ToolParametersValidationError as exc:
+            return ToolResult.error(
+                error_code=exc.error_code,
+                reason=exc.reason,
+                metadata=exc.metadata,
+            )
+        except CredentialsServiceError as exc:
+            return ToolResult.error(
+                error_code=exc.error_code,
+                reason=exc.reason,
+                metadata=exc.details,
+            )
+        except (ValidationError, ValueError) as exc:
+            return ToolResult.error(
+                error_code="tool_params_invalid",
+                reason=str(exc),
+            )
         automation_intent_result = self._tool_invocation_gates.automation_intent_required_result(
             tool_name=execution_name,
             automation_intent=automation_intent,
@@ -478,6 +534,7 @@ class ToolExecutionRuntime:
                 tool_name=execution_name,
                 params=approval_params,
                 approved_tool_names=approved_tool_names,
+                profile_allowlist_exempt_tool_names=profile_allowlist_exempt_tool_names,
                 approved_network_hosts=approved_network_hosts,
             )
         except PolicyViolationError as exc:

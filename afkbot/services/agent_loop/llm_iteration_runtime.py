@@ -107,6 +107,7 @@ class LLMIterationRuntime:
         approved_tool_names: tuple[str, ...] | None = None,
         channel_owned_tool_names: tuple[str, ...] | None = None,
         approval_required_tool_names: tuple[str, ...] | None = None,
+        routed_app_names: tuple[str, ...] | None = None,
     ) -> LLMIterationResult:
         """Execute one iterative LLM loop with sequential guarded tool calls."""
 
@@ -204,6 +205,7 @@ class LLMIterationRuntime:
                     if approval_required_tool_names is None
                     else set(approval_required_tool_names)
                 ),
+                routed_app_names=None if routed_app_names is None else set(routed_app_names),
             )
             pending_envelope = self._build_pending_envelope(
                 tool_calls=tool_calls,

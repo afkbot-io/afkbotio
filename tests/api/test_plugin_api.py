@@ -14,7 +14,7 @@ from afkbot.services.plugins import get_plugin_service
 from afkbot.settings import get_settings
 
 
-def _write_api_demo_plugin(root: Path) -> None:
+def _write_api_demo_plugin(root: Path, *, public: bool = False) -> None:
     (root / ".afkbot-plugin").mkdir(parents=True, exist_ok=True)
     (root / "python/afkbot_plugin_demo").mkdir(parents=True, exist_ok=True)
     (root / "web/dist").mkdir(parents=True, exist_ok=True)
@@ -40,6 +40,7 @@ def _write_api_demo_plugin(root: Path) -> None:
                     "outbound_http": False,
                     "data_dir_write": False,
                 },
+                "auth": {"public": public},
                 "capabilities": {"api_router": True, "static_web": True, "lifecycle": True},
                 "mounts": {"api_prefix": "/v1/plugins/demo", "web_prefix": "/plugins/demo"},
                 "paths": {"python_root": "python", "web_root": "web/dist"},
@@ -135,9 +136,10 @@ def register(registry: PluginRuntimeRegistry) -> None:
 
 def test_create_app_mounts_installed_plugin(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     source_root = tmp_path / "demo-plugin-src"
-    _write_api_demo_plugin(source_root)
+    _write_api_demo_plugin(source_root, public=True)
     monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    monkeypatch.setenv("AFKBOT_PLUGIN_API_AUTH_REQUIRED", "false")
     get_settings.cache_clear()
     settings = get_settings()
     get_plugin_service(settings).install(source=str(source_root))
@@ -203,9 +205,38 @@ def test_create_app_mounts_installed_plugin(tmp_path: Path, monkeypatch: MonkeyP
         assert api_response.json() == {"plugin": "demo"}
         assert web_response.status_code == 200
         assert "demo mounted" in web_response.text
+        assert web_response.headers["cache-control"] == "no-store, max-age=0"
         assert (tmp_path / "plugin-started.txt").read_text(encoding="utf-8") == "started"
 
     assert (tmp_path / "plugin-stopped.txt").read_text(encoding="utf-8") == "stopped"
+
+
+def test_plugin_management_api_fails_closed_when_auth_is_required_but_not_configured(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "demo-plugin-src"
+    _write_api_demo_plugin(source_root)
+    monkeypatch.setenv("AFKBOT_ROOT_DIR", str(tmp_path))
+    monkeypatch.setenv("AFKBOT_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'afkbot.db'}")
+    get_settings.cache_clear()
+    settings = get_settings()
+    get_plugin_service(settings).install(source=str(source_root))
+
+    with TestClient(create_app()) as client:
+        plugins_response = client.get("/v1/plugins")
+        config_response = client.get("/v1/plugins/demo/config")
+        api_response = client.get("/v1/plugins/demo/ping")
+        web_response = client.get("/plugins/demo/")
+
+        assert plugins_response.status_code == 503
+        assert plugins_response.json()["error_code"] == "ui_auth_not_configured"
+        assert config_response.status_code == 503
+        assert config_response.json()["error_code"] == "ui_auth_not_configured"
+        assert api_response.status_code == 503
+        assert api_response.json()["error_code"] == "ui_auth_not_configured"
+        assert web_response.status_code == 503
+        assert "Operator authentication is required" in web_response.text
 
 
 def test_create_app_cleans_up_once_when_plugin_startup_fails(

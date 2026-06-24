@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Mapping
 from hashlib import sha256
+from typing import Final
 
 from afkbot.services.agent_loop.security_guard import SecurityGuard
 
@@ -13,6 +15,18 @@ _SENSITIVE_VALUE_HINT_FIELDS = frozenset(
     {"name", "field", "key", "slug", "credential_name", "credential_slug"}
 )
 _SECURITY_GUARD = SecurityGuard()
+WEBHOOK_IDEMPOTENCY_HEADER_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "webhook-id",
+        "idempotency-key",
+        "x-github-delivery",
+        "x-gitlab-event-uuid",
+        "x-gitlab-webhook-uuid",
+        "x-request-id",
+        "x-idempotency-key",
+        "x-event-id",
+    }
+)
 
 
 def resolve_webhook_event_hash(payload: Mapping[str, object]) -> str:
@@ -20,9 +34,12 @@ def resolve_webhook_event_hash(payload: Mapping[str, object]) -> str:
 
     event_key = extract_webhook_event_key(payload)
     if event_key is None:
-        # No explicit idempotency key: avoid false dedupe across different events
-        # with equal payload bodies by using one-time per-request hash.
-        return sha256(secrets.token_urlsafe(32).encode("utf-8")).hexdigest()
+        stable_payload = _stable_payload_fingerprint(payload)
+        if stable_payload is not None:
+            return sha256(f"payload:{stable_payload}".encode("utf-8")).hexdigest()
+        # Last-resort fallback for non-JSON-like payloads. This preserves delivery
+        # over dedupe only when there is no stable representation to hash.
+        return sha256(f"delivery:{secrets.token_urlsafe(32)}".encode("utf-8")).hexdigest()
     return sha256(f"event:{event_key}".encode("utf-8")).hexdigest()
 
 
@@ -44,17 +61,26 @@ def extract_webhook_event_key(payload: Mapping[str, object]) -> str | None:
     headers = payload.get("headers")
     if isinstance(headers, Mapping):
         normalized_headers = {str(key).lower(): value for key, value in headers.items()}
-        header_candidates = (
-            "x-github-delivery",
-            "x-request-id",
-            "x-idempotency-key",
-            "x-event-id",
-        )
-        for header_name in header_candidates:
+        for header_name in WEBHOOK_IDEMPOTENCY_HEADER_NAMES:
             value = normalized_headers.get(header_name)
             if isinstance(value, (str, int)) and str(value).strip():
                 return str(value).strip()
     return None
+
+
+def _stable_payload_fingerprint(payload: Mapping[str, object]) -> str | None:
+    """Return a deterministic fallback fingerprint for retry dedupe."""
+
+    try:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=repr,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def sanitize_payload(payload: Mapping[str, object]) -> dict[str, object]:

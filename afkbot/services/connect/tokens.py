@@ -98,7 +98,6 @@ async def claim_connect_token(
         except ConnectServiceError as exc:
             if exc.error_code not in {"connect_claim_pin_missing", "connect_claim_pin_invalid"}:
                 raise
-            failed_attempts = int(getattr(claim_row, "claim_failed_attempts", 0) or 0) + 1
             max_attempts = max(
                 int(
                     getattr(
@@ -109,14 +108,29 @@ async def claim_connect_token(
                 ),
                 1,
             )
-            blocked_at = now if failed_attempts >= max_attempts else None
-            await repo.update_claim_pin_failure_state(
+            failure_state = await repo.record_claim_pin_failure(
                 claim_id=claim_row.id,
-                failed_attempts=failed_attempts,
-                blocked_at=blocked_at,
+                failed_at=now,
+                max_attempts=max_attempts,
             )
             # Persist lockout state even though this claim attempt fails and the outer scope raises.
             await db.commit()
+            if failure_state is None:
+                latest_claim_row = await repo.get_claim_token_by_hash(token_hash=claim_hash)
+                if latest_claim_row is not None and latest_claim_row.claim_blocked_at is not None:
+                    raise ConnectServiceError(
+                        error_code="connect_claim_pin_locked",
+                        reason=(
+                            "Connect claim token is blocked after too many invalid PIN attempts."
+                        ),
+                    ) from exc
+                if latest_claim_row is not None and latest_claim_row.used_at is not None:
+                    raise ConnectServiceError(
+                        error_code="connect_token_used",
+                        reason="Connect claim token already used.",
+                    ) from exc
+                raise
+            _, blocked_at = failure_state
             if blocked_at is not None:
                 raise ConnectServiceError(
                     error_code="connect_claim_pin_locked",
@@ -146,6 +160,9 @@ async def claim_connect_token(
                 refresh_token_hash=refresh_hash,
                 session_proof_hash=session_proof_hash,
                 allow_diagnostics=bool(getattr(claim_row, "allow_diagnostics", False)),
+                allow_operator_workspace=bool(
+                    getattr(claim_row, "allow_operator_workspace", False)
+                ),
                 runtime_metadata_json=runtime_metadata_json,
                 prompt_overlay=prompt_overlay,
                 expires_at=refresh_expires_at,
@@ -164,6 +181,9 @@ async def claim_connect_token(
                 base_url=claim_row.base_url,
                 access_token_hash=access_token_hash,
                 allow_diagnostics=bool(getattr(claim_row, "allow_diagnostics", False)),
+                allow_operator_workspace=bool(
+                    getattr(claim_row, "allow_operator_workspace", False)
+                ),
                 runtime_metadata_json=runtime_metadata_json,
                 prompt_overlay=prompt_overlay,
                 expires_at=access_expires_at,
@@ -275,6 +295,9 @@ async def refresh_connect_access_token(
                 base_url=row.base_url,
                 access_token_hash=access_token_hash,
                 allow_diagnostics=bool(getattr(row, "allow_diagnostics", False)),
+                allow_operator_workspace=bool(
+                    getattr(row, "allow_operator_workspace", False)
+                ),
                 runtime_metadata_json=row.runtime_metadata_json,
                 prompt_overlay=row.prompt_overlay,
                 expires_at=access_expires_at,

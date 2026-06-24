@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.24] - 2026-06-24
+
+### Added
+
+- Task Flow task attachments now have API coverage for upload, list, download,
+  and delete flows, including actor identity and safe download headers.
+- Task Flow delegation now enforces bounded child-task fanout and duplicate
+  sibling protection so autonomous managers do not create runaway duplicate
+  work.
+
+### Changed
+
+- Task Flow manager and worker prompts now prefer focused delegation, meaningful
+  handoff/blocker/review/final comments, and avoid routine progress-comment
+  spam.
+- Channel setup, routing diagnostics, app runtime grants, and update messages
+  now use stricter security wording and clearer operator guidance.
+
+### Fixed
+
+- Automation webhook claims now return correct `accepted`, `duplicate`, `busy`,
+  or `missing` states even when SQLAlchemy has a stale trigger row in the
+  identity map.
+- `task.create` remains usable from trusted automation/webhook contexts without
+  fake session bindings while rejecting explicit cross-session binding attempts.
+- Policy approval no longer widens profile tool authorization; only scoped
+  internal runtime grants can bypass profile allowlists, and deny rules still
+  win.
+- Task Flow document confirmations, task comments, and operator-side plugin
+  actions consistently require a valid public actor identity.
+
 ## [1.9.23] - 2026-06-19
 
 ### Changed

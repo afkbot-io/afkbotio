@@ -7,6 +7,7 @@ from pydantic import Field
 from afkbot.services.task_flow import TaskFlowServiceError, get_task_flow_service
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import ensure_employee_task_read_scope
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -46,6 +47,15 @@ class TaskDependencyListTool(ToolBase):
             return scope_error
         try:
             service = get_task_flow_service(self._settings)
+            task = await service.get_task(profile_id=target_profile_id, task_id=payload.task_id)
+            read_error = await ensure_employee_task_read_scope(
+                ctx=ctx,
+                settings=self._settings,
+                target_profile_id=target_profile_id,
+                task=task,
+            )
+            if read_error is not None:
+                return read_error
             items = await service.list_dependencies(
                 profile_id=target_profile_id,
                 task_id=payload.task_id,

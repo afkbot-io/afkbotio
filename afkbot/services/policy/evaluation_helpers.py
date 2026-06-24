@@ -124,10 +124,10 @@ SCHEMELESS_HOST_ARG_OPTIONS: dict[str, frozenset[str]] = {
 }
 
 
-def parse_string_set(*, raw: str, field_name: str) -> set[str]:
+def parse_string_set(*, raw: str | None, field_name: str) -> set[str]:
     """Parse JSON string lists from persisted profile policy fields."""
 
-    if not raw.strip():
+    if raw is None or not raw.strip():
         return set()
     try:
         data = json.loads(raw)

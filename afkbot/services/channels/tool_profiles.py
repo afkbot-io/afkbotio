@@ -99,12 +99,13 @@ def allowed_tool_names_for_channel_profile(
 
 
 def default_channel_tool_profile_for_policy(*, policy: ProfilePolicyView) -> ChannelToolProfile:
-    """Return the safest useful default channel tool profile for one profile policy."""
+    """Return the safe default channel tool profile for user-facing ingress.
 
-    if _policy_supports_memory(policy=policy) and _policy_supports_readonly_files(policy=policy):
-        return "support_readonly"
-    if _policy_supports_taskflow(policy=policy) and _policy_supports_memory(policy=policy):
-        return "taskflow_operator"
+    Channel defaults must not auto-inherit filesystem or Task Flow write access from
+    the backing profile. Higher-trust presets remain available only as an explicit
+    operator choice during channel setup/update.
+    """
+
     if _policy_supports_memory(policy=policy):
         return "messaging_safe"
     return "chat_minimal"
@@ -114,18 +115,3 @@ def _policy_supports_memory(*, policy: ProfilePolicyView) -> bool:
     if not policy.enabled:
         return True
     return "memory" in set(policy.capabilities)
-
-
-def _policy_supports_readonly_files(*, policy: ProfilePolicyView) -> bool:
-    if not policy.enabled:
-        return True
-    return "files" in set(policy.capabilities) and policy.file_access_mode in {
-        "read_only",
-        "read_write",
-    }
-
-
-def _policy_supports_taskflow(*, policy: ProfilePolicyView) -> bool:
-    if not policy.enabled:
-        return True
-    return "taskflow" in set(policy.capabilities)

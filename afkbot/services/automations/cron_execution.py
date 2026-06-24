@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.repositories.automation_repo import AutomationRepository
 from afkbot.services.automations.contracts import AutomationCronTickResult
-from afkbot.services.automations.errors import AutomationsServiceError
+from afkbot.services.automations.errors import (
+    AutomationsServiceError,
+    is_nonretryable_automation_error,
+)
 from afkbot.services.automations.graph.service import AutomationGraphService
 from afkbot.services.automations.lease_runtime import run_with_lease_refresh
 from afkbot.services.automations.message_factory import (
@@ -144,6 +147,7 @@ async def tick_cron_automations(
                 source="automation",
             )
 
+        next_run_at: datetime | None = None
         try:
             next_run_at = compute_next_run_at(cron_expr, normalized_now, timezone_name)
             await run_with_lease_refresh(
@@ -185,7 +189,7 @@ async def tick_cron_automations(
 
             await with_repo(_release)
             raise
-        except Exception:
+        except Exception as exc:
             failed_ids.append(automation_id)
             _LOGGER.exception(
                 "automation_cron_failed automation_id=%s profile_id=%s",
@@ -193,12 +197,25 @@ async def tick_cron_automations(
                 profile_id,
             )
 
-            async def _release(repo: AutomationRepository) -> bool:
-                return await repo.release_cron_claim(
-                    automation_id=automation_id,
-                    claim_token=claim_token,
-                )
+            if is_nonretryable_automation_error(exc) and next_run_at is not None:
 
-            await with_repo(_release)
+                async def _finish_nonretryable(repo: AutomationRepository) -> bool:
+                    return await repo.mark_cron_executed(
+                        automation_id=automation_id,
+                        next_run_at=next_run_at,
+                        executed_at=normalized_now,
+                        claim_token=claim_token,
+                    )
+
+                await with_repo(_finish_nonretryable)
+            else:
+
+                async def _release(repo: AutomationRepository) -> bool:
+                    return await repo.release_cron_claim(
+                        automation_id=automation_id,
+                        claim_token=claim_token,
+                    )
+
+                await with_repo(_release)
 
     return AutomationCronTickResult(triggered_ids=triggered_ids, failed_ids=failed_ids)

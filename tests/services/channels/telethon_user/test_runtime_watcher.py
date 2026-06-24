@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
-from afkbot.services.channel_routing import ChannelBindingService
+from afkbot.services.channel_routing import ChannelBindingService, ChannelBindingServiceError
 from afkbot.services.channels import ChannelDeliveryTarget
 from afkbot.services.channels.endpoint_contracts import TelethonWatcherConfig
 from afkbot.services.channels.telethon_user.service import TelethonUserService
@@ -110,11 +110,11 @@ async def test_telethon_user_service_watcher_collects_channel_posts_and_sends_di
     assert fake_client.sent_messages == [{"entity": "me", "text": "digest ready"}]
 
 
-async def test_telethon_user_service_watcher_falls_back_to_endpoint_profile_without_binding(
+async def test_telethon_user_service_watcher_fails_closed_without_binding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Watcher mode should keep working without a binding by falling back to the endpoint profile/session."""
+    """Watcher mode should not route digests after the endpoint binding is removed."""
 
     settings = Settings(
         root_dir=tmp_path,
@@ -178,18 +178,14 @@ async def test_telethon_user_service_watcher_falls_back_to_endpoint_profile_with
                 is_reply=False,
             )
         )
-        await service._flush_watcher_batch()  # type: ignore[attr-defined]
+        with pytest.raises(ChannelBindingServiceError) as exc_info:
+            await service._flush_watcher_batch()  # type: ignore[attr-defined]
+        assert exc_info.value.error_code == "channel_binding_no_match"
     finally:
         await service.stop()
 
-    assert len(captured) == 1
-    assert captured[0]["profile_id"] == "default"
-    assert captured[0]["session_id"] == "telegram_user_watch:telethon-main"
-    assert captured[0]["context_overrides"].runtime_metadata["peer_id"] == watcher_memory_peer_id(
-        "telethon-main"
-    )
-    assert "channel_binding" not in captured[0]["context_overrides"].runtime_metadata
-    assert fake_client.sent_messages == [{"entity": "me", "text": "fallback digest"}]
+    assert captured == []
+    assert fake_client.sent_messages == []
 
 
 async def test_telethon_user_service_watcher_skips_muted_and_blocked_dialogs(

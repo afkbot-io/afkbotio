@@ -20,7 +20,11 @@ from afkbot.repositories.task_flow_repo import TaskFlowRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.task_flow.context_overrides import build_task_flow_context_overrides
-from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
+from afkbot.services.task_flow.message_factory import task_session_id
+from afkbot.services.task_flow.runtime_service import (
+    TaskFlowContextBundleError,
+    TaskFlowRuntimeService,
+)
 from afkbot.services.task_flow.service import TaskFlowService
 from afkbot.services.task_flow.work_modes import resolve_task_work_mode
 from afkbot.settings import Settings
@@ -37,15 +41,6 @@ def _write_profile_subagent(
     path = settings.profiles_dir / profile_id / "subagents" / f"{subagent_name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown, encoding="utf-8")
-
-
-def _write_team_runtime_config(
-    *,
-    settings: Settings,
-    profile_id: str,
-    team_profile_ids: tuple[str, ...],
-) -> None:
-    _ = (settings, profile_id, team_profile_ids)
 
 
 @dataclass
@@ -215,6 +210,27 @@ class _FakeLoop:
                 profile_id=profile_id,
                 envelope=ActionEnvelope(action="finalize", message="Delegated follow-up created"),
             )
+        if self._behavior == "external_poll":
+            await runlog.create_event(
+                run_id=run.id,
+                session_id=session_id,
+                event_type="turn.finalize",
+                payload={
+                    "assistant_message": "External system is still pending.",
+                    "blocked_reason": "external_poll",
+                    "state": "finalized",
+                },
+            )
+            return TurnResult(
+                run_id=run.id,
+                session_id=session_id,
+                profile_id=profile_id,
+                envelope=ActionEnvelope(
+                    action="finalize",
+                    message="External system is still pending.",
+                    blocked_reason="external_poll",
+                ),
+            )
         if self._behavior == "approve_review":
             assert isinstance(taskflow_payload, dict)
             updated = await TaskFlowRepository(self._session).update_task(
@@ -371,7 +387,12 @@ async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_depend
         assert processed is True
         updated = await service.get_task(profile_id="default", task_id=first.id)
         assert updated.status == "completed"
-        assert updated.last_session_id == f"taskflow:{first.id}"
+        expected_session_id = task_session_id(
+            task_id=first.id,
+            executor_type="employee",
+            executor_ref="papercliper",
+        )
+        assert updated.last_session_id == expected_session_id
         assert updated.last_run_id is not None
         listed_runs = await service.list_task_runs(profile_id="default", task_id=first.id)
         assert len(listed_runs) == 1
@@ -395,14 +416,14 @@ async def test_taskflow_runtime_executes_employee_owned_task_and_unblocks_depend
             task_run_id=updated.last_run_id,
         )
         assert fetched_run.id == updated.last_run_id
-        assert fetched_run.session_id == f"taskflow:{first.id}"
+        assert fetched_run.session_id == expected_session_id
         assert fetched_run.run_id is not None
         unblocked = await service.get_task(profile_id="default", task_id=dependent.id)
         assert unblocked.status == "todo"
         assert len(observed_calls) == 1
         observed = observed_calls[0]
         assert observed.profile_id == "default"
-        assert observed.session_id == f"taskflow:{first.id}"
+        assert observed.session_id == expected_session_id
         assert observed.transport == "taskflow"
         assert observed.account_id == first.id
         assert observed.task_id == first.id
@@ -615,6 +636,63 @@ async def test_taskflow_runtime_marks_llm_timeout_as_failed(
         await engine.dispose()
 
 
+async def test_taskflow_runtime_fails_before_agent_when_context_bundle_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Detached runtime must not execute a task without its Task Flow context bundle."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_context_failed.db",
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_context_failed.db'}",
+        taskflow_knowledge_maintenance_enabled=False,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+
+    async def _fail_context(claimed) -> str:
+        del claimed
+        raise TaskFlowContextBundleError("context store unavailable")
+
+    monkeypatch.setattr(runtime, "_render_task_context_summary", _fail_context)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Run with required context",
+            description="This task must not run if context cannot be prepared.",
+            created_by_type="human",
+            created_by_ref="cli",
+        )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-context")
+
+        assert processed is True
+        assert observed_calls == []
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "failed"
+        assert updated.last_error_code == "task_context_bundle_failed"
+        assert updated.last_error_text == "context store unavailable"
+        listed_events = await service.list_task_events(profile_id="default", task_id=task.id)
+        failed_event = next(item for item in listed_events if item.event_type == "execution_failed")
+        assert failed_event.details["error_code"] == "task_context_bundle_failed"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_releases_task_when_start_transition_is_lost(
     tmp_path: Path,
     monkeypatch,
@@ -787,7 +865,11 @@ async def test_taskflow_runtime_sweeps_expired_claims_before_reclaiming_task(
         fallback_comment = next(item for item in events if item.event_type == "comment_added")
         assert fallback_comment.message == "Completed: analysis complete"
         assert len(observed_calls) == 1
-        assert observed_calls[0].session_id == f"taskflow:{task.id}"
+        assert observed_calls[0].session_id == task_session_id(
+            task_id=task.id,
+            executor_type="employee",
+            executor_ref="papercliper",
+        )
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -1307,11 +1389,6 @@ async def test_taskflow_runtime_sweep_can_be_scoped_to_owner_ref(tmp_path: Path)
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on stale review work.",
     )
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1667,11 +1744,6 @@ async def test_taskflow_runtime_owner_ref_filter_matches_specific_employee(
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on review work.",
     )
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1743,11 +1815,6 @@ async def test_taskflow_runtime_executes_employee_task_with_subagent_overlay(
         subagent_name="researcher",
         markdown="# Researcher\nSubagent marker: deep-brief.",
     )
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1807,11 +1874,6 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
         subagent_name="reviewer",
         markdown="# Reviewer\nSubagent marker: review-queue.",
     )
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
-    )
     engine, factory = await build_repository_factory(
         tmp_path,
         db_name=db_name,
@@ -1863,6 +1925,100 @@ async def test_taskflow_runtime_executes_review_task_with_employee_reviewer(
             runs = await repo.list_task_runs(task_id=task.id, limit=1)
         assert runs[0].owner_type == "employee"
         assert runs[0].owner_ref == "reviewer"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_sweep_restores_review_claim_event_status(
+    tmp_path: Path,
+) -> None:
+    """Expired review claims should record recovery back to review, not todo."""
+
+    db_name = "taskflow_runtime_review_claim_event_status.db"
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name=db_name,
+        profile_ids=("default",),
+    )
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / db_name}",
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=[],
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Review claim",
+            description="Expired review claims should return to review.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="researcher",
+            reviewer_type="employee",
+            reviewer_ref="reviewer",
+        )
+        await service.update_task(profile_id="default", task_id=task.id, status="review")
+
+        stale_now = datetime.now(timezone.utc) - timedelta(minutes=30)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            claimed = await repo.claim_next_runnable_task(
+                now_utc=stale_now,
+                lease_until=stale_now - timedelta(minutes=5),
+                claim_token="stale-review-claim",
+                claimed_by="taskflow-runtime:stale-review",
+            )
+            assert claimed is not None
+            run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=claimed.current_attempt + 1,
+                owner_type=claimed.owner_type,
+                owner_ref=claimed.owner_ref,
+                execution_mode="detached",
+                status="running",
+                session_id=task_session_id(
+                    task_id=task.id,
+                    executor_type="employee",
+                    executor_ref="reviewer",
+                ),
+                run_id=None,
+                worker_id="taskflow-runtime:stale-review",
+                started_at=stale_now,
+            )
+            assert await repo.attach_task_run(
+                task_id=task.id,
+                claim_token="stale-review-claim",
+                task_run_id=run.id,
+                session_id=run.session_id,
+            )
+            assert await repo.mark_task_started(
+                task_id=task.id,
+                claim_token="stale-review-claim",
+                started_at=stale_now,
+            )
+
+        assert await runtime.sweep_expired_claims(worker_id="worker-review-sweep") == 1
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "review"
+        assert updated.ready_at is None
+
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        lease_expired = next(item for item in events if item.event_type == "lease_expired")
+        recovery = next(item for item in events if item.event_type == "recovery_action_created")
+        assert lease_expired.from_status == "running"
+        assert lease_expired.to_status == "review"
+        assert recovery.details["next_status"] == "review"
+        assert recovery.details["ready_at"] is None
     finally:
         await runtime.shutdown()
         await engine.dispose()
@@ -2075,11 +2231,6 @@ async def test_taskflow_runtime_claims_only_one_active_task_per_employee(
         profile_id="analyst",
         subagent_name="reviewer",
         markdown="# Reviewer\nFocus on review tasks.",
-    )
-    _write_team_runtime_config(
-        settings=settings,
-        profile_id="default",
-        team_profile_ids=("analyst",),
     )
     engine, factory = await build_repository_factory(
         tmp_path,
@@ -2584,6 +2735,196 @@ async def test_taskflow_runtime_keeps_dependency_wait_tasks_out_of_timer_retries
         await engine.dispose()
 
 
+async def test_taskflow_runtime_blocks_task_before_exceeding_attempt_budget(
+    tmp_path: Path,
+) -> None:
+    """Over-budget tasks should stop before launching another LLM-backed attempt."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_attempt_budget.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_attempt_budget.db'}",
+        taskflow_task_max_attempts=2,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="complete",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Stop runaway attempt",
+            description="This task already spent its runtime attempt budget.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+        )
+        async with session_scope(factory) as session:
+            await session.execute(
+                text("UPDATE task SET current_attempt = 2 WHERE id = :task_id"),
+                {"task_id": task.id},
+            )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-budget")
+
+        assert processed is True
+        assert observed_calls == []
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "blocked"
+        assert updated.current_attempt == 2
+        assert updated.ready_at is None
+        assert updated.blocked_reason_code == "task_attempt_budget_exceeded"
+        events = await service.list_task_events(profile_id="default", task_id=task.id)
+        budget_event = next(event for event in events if event.event_type == "budget_exceeded")
+        assert budget_event.details["attempt"] == 3
+        assert budget_event.details["max_attempts"] == 2
+
+        await service.add_task_comment(
+            profile_id="default",
+            task_id=task.id,
+            actor_type="human",
+            actor_ref="cli",
+            message="I reviewed the blocker. Retry once now.",
+        )
+        retry_ready = await service.get_task(profile_id="default", task_id=task.id)
+        assert retry_ready.status == "blocked"
+        assert retry_ready.current_attempt == 0
+        assert retry_ready.blocked_reason_code == "human_retry_requested"
+
+        processed_retry = await runtime.execute_next_claimable_task(worker_id="worker-budget-retry")
+
+        assert processed_retry is True
+        assert len(observed_calls) == 1
+        completed = await service.get_task(profile_id="default", task_id=task.id)
+        assert completed.status == "completed"
+        assert completed.current_attempt == 1
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
+async def test_taskflow_runtime_breaks_repeated_blocker_loop(
+    tmp_path: Path,
+) -> None:
+    """The same blocker repeated too many times should require operator attention."""
+
+    engine, factory = await build_repository_factory(
+        tmp_path,
+        db_name="taskflow_runtime_repeated_blocker.db",
+        profile_ids=("default", "analyst"),
+    )
+    observed_calls: list[_ObservedCall] = []
+    settings = Settings(
+        root_dir=tmp_path,
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'taskflow_runtime_repeated_blocker.db'}",
+        taskflow_repeated_blocker_max_count=3,
+    )
+    runtime = TaskFlowRuntimeService(
+        settings=settings,
+        session_factory=factory,
+        session_runner_factory=lambda session, _profile_id: _FakeSessionRunner(
+            session,
+            behavior="external_poll",
+            observed_calls=observed_calls,
+        ),
+    )
+    service = TaskFlowService(factory)
+    try:
+        task = await service.create_task(
+            profile_id="default",
+            title="Stop repeated blocker",
+            description="This task keeps reporting the same external blocker.",
+            created_by_type="human",
+            created_by_ref="cli",
+            owner_type="employee",
+            owner_ref="papercliper",
+        )
+        now = datetime.now(timezone.utc)
+        async with session_scope(factory) as session:
+            repo = TaskFlowRepository(session)
+            first_run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=1,
+                owner_type="employee",
+                owner_ref="papercliper",
+                execution_mode="detached",
+                status="blocked",
+                session_id=task_session_id(
+                    task_id=task.id,
+                    executor_type="employee",
+                    executor_ref="papercliper",
+                ),
+                run_id=None,
+                worker_id="taskflow-runtime:previous-1",
+                started_at=now - timedelta(hours=2),
+            )
+            await repo.update_task_run(
+                task_run_id=first_run.id,
+                status="blocked",
+                finished_at=now - timedelta(hours=2),
+                summary="External system is still pending.",
+                error_code="external_poll",
+                error_text="External system is still pending.",
+            )
+            second_run = await repo.create_task_run(
+                task_id=task.id,
+                attempt=2,
+                owner_type="employee",
+                owner_ref="papercliper",
+                execution_mode="detached",
+                status="blocked",
+                session_id=task_session_id(
+                    task_id=task.id,
+                    executor_type="employee",
+                    executor_ref="papercliper",
+                ),
+                run_id=None,
+                worker_id="taskflow-runtime:previous-2",
+                started_at=now - timedelta(hours=1),
+            )
+            await repo.update_task_run(
+                task_run_id=second_run.id,
+                status="blocked",
+                finished_at=now - timedelta(hours=1),
+                summary="External system is still pending.",
+                error_code="external_poll",
+                error_text="External system is still pending.",
+            )
+            await session.execute(
+                text("UPDATE task SET current_attempt = 2 WHERE id = :task_id"),
+                {"task_id": task.id},
+            )
+
+        processed = await runtime.execute_next_claimable_task(worker_id="worker-repeated")
+
+        assert processed is True
+        assert len(observed_calls) == 1
+        updated = await service.get_task(profile_id="default", task_id=task.id)
+        assert updated.status == "blocked"
+        assert updated.ready_at is None
+        assert updated.blocked_reason_code == "operator_attention_required"
+        assert "Repeated blocker `external_poll`" in (updated.blocked_reason_text or "")
+        task_runs = await service.list_task_runs(profile_id="default", task_id=task.id)
+        latest = task_runs[0]
+        assert latest.status == "blocked"
+        assert latest.error_code == "operator_attention_required"
+    finally:
+        await runtime.shutdown()
+        await engine.dispose()
+
+
 async def test_taskflow_runtime_skips_plan_tasks_when_claiming_work(
     tmp_path: Path,
 ) -> None:
@@ -2769,7 +3110,7 @@ def test_taskflow_context_overrides_include_runtime_task_guidance() -> None:
 
 
 def test_taskflow_work_mode_resolver_routes_manager_intake() -> None:
-    """Manager and explicitly labeled intake tasks should route to orchestration mode."""
+    """Managers and explicitly labeled intake tasks should route to orchestration mode."""
 
     assert (
         resolve_task_work_mode(
@@ -2859,7 +3200,8 @@ def test_taskflow_context_overrides_include_orchestrator_guidance_for_managers()
     assert "Manager intake work mode." in overrides.prompt_overlay
     assert "Team Orchestrator protocol." in overrides.prompt_overlay
     assert "Task Flow worker protocol." not in overrides.prompt_overlay
-    assert "Decompose large work" in overrides.prompt_overlay
+    assert "Decompose large/project work" in overrides.prompt_overlay
+    assert "Do not create duplicate sibling tasks" in overrides.prompt_overlay
     assert "Do not run implementation" in overrides.prompt_overlay
 
 

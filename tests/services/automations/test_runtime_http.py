@@ -15,6 +15,7 @@ from afkbot.services.automations.runtime_http import (
     HttpRequest,
     WebhookIngressTarget,
     match_webhook_path,
+    parse_webhook_payload,
 )
 from afkbot.services.automations.service import AutomationsService
 from tests.services.automations._runtime_harness import (
@@ -35,6 +36,46 @@ def test_match_webhook_path_contract() -> None:
     )
     assert match_webhook_path("/v1/automations/webhook") is None
     assert match_webhook_path("/v1/automations/github/webhook") is None
+
+
+def test_parse_webhook_payload_attaches_only_idempotency_headers() -> None:
+    """Webhook parser should preserve provider delivery ids without exposing all headers."""
+
+    payload = parse_webhook_payload(
+        b'{"body":{"ok":true}}',
+        headers={
+            "X-GitHub-Delivery": "delivery-1",
+            "Webhook-Id": "delivery-2",
+            "X-Gitlab-Event-UUID": "delivery-3",
+            "Authorization": "Bearer secret",
+        },
+    )
+
+    assert payload == {
+        "body": {"ok": True},
+        "headers": {
+            "x-github-delivery": "delivery-1",
+            "webhook-id": "delivery-2",
+            "x-gitlab-event-uuid": "delivery-3",
+        },
+    }
+
+
+def test_parse_webhook_payload_merges_idempotency_headers_into_existing_payload_headers() -> None:
+    """Payload-provided headers must not shadow provider delivery ids used for dedupe."""
+
+    payload = parse_webhook_payload(
+        b'{"event": "ok", "headers": {"x-github-delivery": "body-id", "other": "kept"}}',
+        headers={"X-GitHub-Delivery": "provider-id", "Authorization": "secret"},
+    )
+
+    assert payload == {
+        "event": "ok",
+        "headers": {
+            "x-github-delivery": "provider-id",
+            "other": "kept",
+        },
+    }
 
 
 async def test_runtime_http_returns_queue_full_when_enqueue_rejects(tmp_path: Path) -> None:

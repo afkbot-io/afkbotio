@@ -12,6 +12,7 @@ from typing import Any
 from afkbot.services.agent_loop.turn_context import merge_turn_context_overrides
 from afkbot.services.channel_routing.runtime_target import (
     RoutingSelectors,
+    build_channel_default_session_id,
     build_routing_context_overrides,
 )
 from afkbot.services.channel_routing.service import ChannelBindingServiceError
@@ -245,7 +246,7 @@ class TelegramPollingRuntimeMixin:
         try:
             target = await self._resolve_runtime_target(
                 selectors=selectors,
-                default_session_id=f"telegram:{batch.peer_id}",
+                default_session_id=build_channel_default_session_id(selectors=selectors),
             )
         except ChannelBindingServiceError as exc:
             if exc.error_code != "channel_binding_no_match":

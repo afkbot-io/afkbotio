@@ -94,6 +94,24 @@ class TaskExecutionOutcome:
     run_id: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _HandledTaskClaim:
+    """Marker for a claimed task resolved by runtime guards without LLM execution."""
+
+
+_HANDLED_TASK_CLAIM = _HandledTaskClaim()
+
+
+class TaskFlowContextBundleError(RuntimeError):
+    """Raised when detached runtime cannot build the required task context bundle."""
+
+    error_code = "task_context_bundle_failed"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class TaskFlowRuntimeService:
     """Claim, execute, and finalize background Task Flow work items."""
 
@@ -150,6 +168,8 @@ class TaskFlowRuntimeService:
         claimed = await self._claim_next_task(worker_id=worker_id)
         if claimed is None:
             return False
+        if isinstance(claimed, _HandledTaskClaim):
+            return True
         await self._execute_claimed_task(claimed)
         return True
 
@@ -179,12 +199,13 @@ class TaskFlowRuntimeService:
                 claim_token = str(row.claim_token or "").strip()
                 if not claim_token:
                     continue
+                next_status = _claim_release_status(row)
                 released = await repo.release_expired_task_claim(
                     task_id=row.id,
                     claim_token=claim_token,
                     now_utc=now_utc,
-                    ready_at=None if _claim_release_status(row) == "review" else now_utc,
-                    status=_claim_release_status(row),
+                    ready_at=None if next_status == "review" else now_utc,
+                    status=next_status,
                     error_code=_LEASE_EXPIRED_ERROR_CODE,
                     error_text=_LEASE_EXPIRED_ERROR_TEXT,
                 )
@@ -207,7 +228,7 @@ class TaskFlowRuntimeService:
                     actor_ref=worker_id,
                     message=_LEASE_EXPIRED_ERROR_TEXT,
                     from_status=row.status,
-                    to_status="todo",
+                    to_status=next_status,
                     details={"error_code": _LEASE_EXPIRED_ERROR_CODE},
                 )
                 await record_task_event(
@@ -222,10 +243,8 @@ class TaskFlowRuntimeService:
                         "reason_code": _LEASE_EXPIRED_ERROR_CODE,
                         "owner_type": row.claim_owner_type or row.owner_type,
                         "owner_ref": row.claim_owner_ref or row.owner_ref,
-                        "next_status": _claim_release_status(row),
-                        "ready_at": None
-                        if _claim_release_status(row) == "review"
-                        else now_utc.isoformat(),
+                        "next_status": next_status,
+                        "ready_at": None if next_status == "review" else now_utc.isoformat(),
                     },
                 )
                 released_count += 1
@@ -361,7 +380,9 @@ class TaskFlowRuntimeService:
                 result.runlog_event_count,
             )
 
-    async def _claim_next_task(self, *, worker_id: str) -> ClaimedTaskExecution | None:
+    async def _claim_next_task(
+        self, *, worker_id: str
+    ) -> ClaimedTaskExecution | _HandledTaskClaim | None:
         session_factory = self._require_session_factory()
         claim_ttl = _claim_ttl(self._settings)
         profile_id = _runtime_profile_id(self._settings)
@@ -392,8 +413,23 @@ class TaskFlowRuntimeService:
                         executor_ref=executor_ref,
                     ):
                         continue
-                    session_id = task_session_id(task_id=row.id)
                     next_attempt = row.current_attempt + 1
+                    max_attempts = _task_max_attempts(self._settings)
+                    if next_attempt > max_attempts:
+                        if await self._block_attempt_budget_claim(
+                            repo=repo,
+                            row=row,
+                            worker_id=worker_id,
+                            attempt=next_attempt,
+                            max_attempts=max_attempts,
+                        ):
+                            return _HANDLED_TASK_CLAIM
+                        continue
+                    session_id = task_session_id(
+                        task_id=row.id,
+                        executor_type=executor_type,
+                        executor_ref=executor_ref,
+                    )
                     execution_profile_id = _resolve_execution_profile_id(row)
                     source_status = str(row.claim_source_status or row.status or "").strip()
                     task_run = await repo.create_task_run(
@@ -489,17 +525,14 @@ class TaskFlowRuntimeService:
             reason_code = "task_employee_inactive"
             reason_text = f"Employee {employee.id} is {employee.status} and cannot run tasks."
         task_id = str(getattr(row, "id", "") or "")
-        profile_id = str(getattr(row, "profile_id", "") or "")
         previous_status = str(getattr(row, "claim_source_status", None) or "todo")
-        updated = await repo.update_task(
-            profile_id=profile_id,
+        updated = await repo.block_task_claim(
             task_id=task_id,
-            status="blocked",
-            ready_at=None,
-            blocked_reason_code=reason_code,
-            blocked_reason_text=reason_text,
+            claim_token=str(getattr(row, "claim_token", "") or ""),
+            reason_code=reason_code,
+            reason_text=reason_text,
         )
-        if updated is None:
+        if not updated:
             return True
         await record_task_event(
             repo=repo,
@@ -533,6 +566,53 @@ class TaskFlowRuntimeService:
         )
         return True
 
+    async def _block_attempt_budget_claim(
+        self,
+        *,
+        repo: TaskFlowRepository,
+        row: object,
+        worker_id: str,
+        attempt: int,
+        max_attempts: int,
+    ) -> bool:
+        """Stop a claimed task before launching an over-budget runtime attempt."""
+
+        task_id = str(getattr(row, "id", "") or "")
+        claim_token = str(getattr(row, "claim_token", "") or "")
+        previous_status = str(getattr(row, "claim_source_status", None) or "todo")
+        reason_code = "task_attempt_budget_exceeded"
+        reason_text = (
+            f"Task reached the runtime attempt budget ({max_attempts}); "
+            "operator attention is required before retry."
+        )
+        blocked = await repo.finalize_task_claim(
+            task_id=task_id,
+            claim_token=claim_token,
+            status="blocked",
+            finished_at=datetime.now(timezone.utc),
+            ready_at=None,
+            blocked_reason_code=reason_code,
+            blocked_reason_text=reason_text,
+        )
+        if not blocked:
+            return False
+        await record_task_event(
+            repo=repo,
+            task_id=task_id,
+            event_type="budget_exceeded",
+            actor_type="runtime",
+            actor_ref=worker_id,
+            message=reason_text,
+            from_status=previous_status,
+            to_status="blocked",
+            details={
+                "reason_code": reason_code,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+            },
+        )
+        return True
+
     async def _execute_claimed_task(self, claimed: ClaimedTaskExecution) -> None:
         started = await self._mark_started(claimed=claimed)
         if not started:
@@ -542,13 +622,22 @@ class TaskFlowRuntimeService:
                 error_text="Failed to transition claimed task into running state",
             )
             return
-        runtime_target = await self._build_runtime_target(claimed)
-        context_summary = await self._render_task_context_summary(claimed)
-        message = compose_task_message(
-            claimed.description,
-            attachments=claimed.attachments,
-            context_summary=context_summary,
-        )
+        try:
+            runtime_target = await self._build_runtime_target(claimed)
+            context_summary = await self._render_task_context_summary(claimed)
+            message = compose_task_message(
+                claimed.description,
+                attachments=claimed.attachments,
+                context_summary=context_summary,
+            )
+        except Exception as exc:
+            error_code, error_text = _format_runtime_exception(exc)
+            await self._persist_failure(
+                claimed=claimed,
+                error_code=error_code,
+                error_text=error_text,
+            )
+            return
         claim_ttl = _claim_ttl(self._settings)
 
         async def _run() -> TurnResult:
@@ -647,7 +736,7 @@ class TaskFlowRuntimeService:
             ),
         )
 
-    async def _render_task_context_summary(self, claimed: ClaimedTaskExecution) -> str | None:
+    async def _render_task_context_summary(self, claimed: ClaimedTaskExecution) -> str:
         """Render a compact context bundle for the detached task prompt."""
 
         service = TaskFlowService(self._require_session_factory(), settings=self._settings)
@@ -664,7 +753,9 @@ class TaskFlowRuntimeService:
                 claimed.task_id,
                 exc,
             )
-            return None
+            raise TaskFlowContextBundleError(
+                f"Task Flow context bundle failed before execution: {exc}"
+            ) from exc
         lines = ["Task Flow Context Bundle:"]
         if context.flow is not None:
             lines.append(f"- flow: {context.flow.title} ({context.flow.id})")
@@ -802,6 +893,12 @@ class TaskFlowRuntimeService:
                         blocked_reason_text=exc.reason,
                         run_id=outcome.run_id,
                     )
+            if outcome.status == "blocked":
+                outcome = await self._apply_repeated_blocker_breaker(
+                    repo=repo,
+                    claimed=claimed,
+                    outcome=outcome,
+                )
             blocked_ready_at = (
                 _blocked_revisit_ready_at(
                     settings=self._settings,
@@ -886,6 +983,47 @@ class TaskFlowRuntimeService:
                 profile_id=claimed.task_profile_id,
                 task_id=claimed.task_id,
             )
+
+    async def _apply_repeated_blocker_breaker(
+        self,
+        *,
+        repo: TaskFlowRepository,
+        claimed: ClaimedTaskExecution,
+        outcome: TaskExecutionOutcome,
+    ) -> TaskExecutionOutcome:
+        """Convert repeated identical blockers into an operator-attention stop."""
+
+        blocker_code = str(outcome.blocked_reason_code or "").strip()
+        if not blocker_code:
+            return outcome
+        max_count = _repeated_blocker_max_count(self._settings)
+        previous_runs = await repo.list_task_runs(task_id=claimed.task_id, limit=max_count)
+        repeated_count = 1
+        for run in previous_runs:
+            if run.id == claimed.task_run_id:
+                continue
+            if str(run.status or "").strip().lower() != "blocked":
+                break
+            if str(run.error_code or "").strip() != blocker_code:
+                break
+            repeated_count += 1
+            if repeated_count >= max_count:
+                break
+        if repeated_count < max_count:
+            return outcome
+        reason_text = (
+            f"Repeated blocker `{blocker_code}` reached {repeated_count} consecutive "
+            "attempts; operator attention is required before retry."
+        )
+        return TaskExecutionOutcome(
+            status="blocked",
+            summary=reason_text,
+            error_code="operator_attention_required",
+            error_text=reason_text,
+            blocked_reason_code="operator_attention_required",
+            blocked_reason_text=reason_text,
+            run_id=outcome.run_id,
+        )
 
     async def _persist_failure(
         self,
@@ -1223,6 +1361,14 @@ def _runtime_history_prune_interval_sec() -> float:
 
 def _runtime_history_retention() -> timedelta:
     return timedelta(days=30)
+
+
+def _task_max_attempts(settings: Settings) -> int:
+    return max(1, int(settings.taskflow_task_max_attempts))
+
+
+def _repeated_blocker_max_count(settings: Settings) -> int:
+    return max(2, int(settings.taskflow_repeated_blocker_max_count))
 
 
 def _should_schedule_blocked_revisit(blocked_reason_code: str | None) -> bool:

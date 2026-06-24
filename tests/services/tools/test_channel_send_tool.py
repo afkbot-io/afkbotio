@@ -212,6 +212,51 @@ async def test_channel_send_tool_defaults_to_active_channel_target(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_channel_send_tool_rejects_cross_peer_override_in_active_channel(
+    tmp_path: Path,
+) -> None:
+    """Active channel turns must stay scoped to the inbound peer unless explicitly allowed."""
+
+    delivery = _FakeDeliveryService()
+    endpoint = TelegramPollingEndpointConfig(
+        endpoint_id="owner-bot",
+        profile_id="default",
+        credential_profile_key="bot-main",
+        account_id="bot-main",
+    )
+    tool = ChannelSendTool(
+        Settings(
+            root_dir=tmp_path,
+            db_url=f"sqlite+aiosqlite:///{tmp_path / 'channel_send_active_peer.db'}",
+        ),
+        delivery_service=delivery,  # type: ignore[arg-type]
+        endpoint_service=_FakeEndpointService(endpoint),  # type: ignore[arg-type]
+    )
+    overrides = build_active_channel_context_overrides(
+        endpoint=endpoint,
+        peer_id="12345",
+        thread_id=None,
+        user_id="42",
+    )
+    assert overrides is not None
+    ctx = ToolContext(
+        profile_id="default",
+        session_id="main",
+        run_id=7,
+        trusted_runtime_context=overrides.trusted_runtime_context,
+    )
+
+    result = await tool.execute(
+        ctx,
+        ChannelSendParams(chat_id="67890", text="hello another chat"),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "channel_send_target_not_active"
+    assert delivery.calls == []
+
+
+@pytest.mark.asyncio
 async def test_channel_send_tool_rejects_foreign_endpoint_in_active_channel(
     tmp_path: Path,
 ) -> None:

@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, ValidationError
 
 from afkbot.services.agent_loop.channel_tool_policy import blocked_tool_result_for_runtime
+from afkbot.services.employees.tool_policy import employee_tool_policy_result
 from afkbot.services.policy import PolicyViolationError
 from afkbot.services.subagents import get_subagent_service
 from afkbot.services.subagents.contracts import SubagentResultResponse, SubagentRunAccepted
@@ -170,6 +171,27 @@ class SessionJobRunTool(ToolBase):
                 kind="bash",
                 error_code=blocked.error_code or "tool_blocked_by_channel_profile",
                 reason=blocked.reason or "Nested bash job is blocked by channel policy",
+            )
+        employee_blocked = await employee_tool_policy_result(
+            settings=self._settings,
+            profile_id=ctx.profile_id,
+            trusted_runtime_context=ctx.trusted_runtime_context,
+            tool_name="bash.exec",
+            params={
+                "cmd": job.cmd,
+                "cwd": job.cwd,
+                "env": job.env,
+                "shell": job.shell,
+                "login": job.login,
+                **({"timeout_sec": job.timeout_sec} if job.timeout_sec is not None else {}),
+            },
+        )
+        if employee_blocked is not None:
+            return self._error_result(
+                index=index,
+                kind="bash",
+                error_code=employee_blocked.error_code or "employee_tool_forbidden",
+                reason=employee_blocked.reason or "Nested bash job is blocked by employee policy",
             )
         if not str(job.cmd or "").strip():
             return self._error_result(

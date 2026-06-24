@@ -40,6 +40,7 @@ def test_connect_json_output(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -48,6 +49,7 @@ def test_connect_json_output(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
         assert base_url == "http://127.0.0.1:8081"
         assert ttl_sec == 120
         assert allow_diagnostics is False
+        assert allow_operator_workspace is False
         assert claim_pin is None
         assert context_overrides is None
         return ConnectIssueResult(
@@ -97,6 +99,7 @@ def test_connect_uses_runtime_default_host(monkeypatch: MonkeyPatch, tmp_path: P
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -107,6 +110,7 @@ def test_connect_uses_runtime_default_host(monkeypatch: MonkeyPatch, tmp_path: P
                 "base_url": base_url,
                 "ttl_sec": ttl_sec,
                 "allow_diagnostics": allow_diagnostics,
+                "allow_operator_workspace": allow_operator_workspace,
                 "claim_pin": claim_pin,
                 "context_overrides": context_overrides,
             }
@@ -130,6 +134,7 @@ def test_connect_uses_runtime_default_host(monkeypatch: MonkeyPatch, tmp_path: P
         "base_url": "http://127.0.0.9:19081",
         "ttl_sec": 120,
         "allow_diagnostics": False,
+        "allow_operator_workspace": False,
         "claim_pin": None,
         "context_overrides": None,
     }
@@ -149,6 +154,7 @@ def test_connect_plain_output_warns_for_loopback_base_url(
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -199,6 +205,7 @@ def test_connect_prefers_saved_public_chat_api_url(
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -209,6 +216,7 @@ def test_connect_prefers_saved_public_chat_api_url(
                 "base_url": base_url,
                 "ttl_sec": ttl_sec,
                 "allow_diagnostics": allow_diagnostics,
+                "allow_operator_workspace": allow_operator_workspace,
                 "claim_pin": claim_pin,
                 "context_overrides": context_overrides,
             }
@@ -232,6 +240,7 @@ def test_connect_prefers_saved_public_chat_api_url(
         "base_url": "https://chat.example.com",
         "ttl_sec": 120,
         "allow_diagnostics": False,
+        "allow_operator_workspace": False,
         "claim_pin": None,
         "context_overrides": None,
     }
@@ -289,6 +298,7 @@ def test_connect_resolves_binding_target(monkeypatch: MonkeyPatch, tmp_path: Pat
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -299,6 +309,7 @@ def test_connect_resolves_binding_target(monkeypatch: MonkeyPatch, tmp_path: Pat
                 "base_url": base_url,
                 "ttl_sec": ttl_sec,
                 "allow_diagnostics": allow_diagnostics,
+                "allow_operator_workspace": allow_operator_workspace,
                 "claim_pin": claim_pin,
                 "context_overrides": context_overrides,
             }
@@ -327,7 +338,7 @@ def test_connect_resolves_binding_target(monkeypatch: MonkeyPatch, tmp_path: Pat
 
     assert result.exit_code == 0
     assert captured["profile_id"] == "sales"
-    assert captured["session_id"] == "profile:sales:chat:workspace-7"
+    assert captured["session_id"] == "profile:sales:channel:desktop:chat:workspace-7"
     assert captured["claim_pin"] is None
     assert captured["context_overrides"] is not None
     assert captured["context_overrides"].runtime_metadata == {
@@ -392,6 +403,7 @@ def test_connect_can_generate_claim_pin(monkeypatch: MonkeyPatch, tmp_path: Path
         base_url: str,
         ttl_sec: int | None = None,
         allow_diagnostics: bool = False,
+        allow_operator_workspace: bool = False,
         claim_pin: str | None = None,
         context_overrides: TurnContextOverrides | None = None,
     ) -> ConnectIssueResult:
@@ -402,6 +414,7 @@ def test_connect_can_generate_claim_pin(monkeypatch: MonkeyPatch, tmp_path: Path
                 "base_url": base_url,
                 "ttl_sec": ttl_sec,
                 "allow_diagnostics": allow_diagnostics,
+                "allow_operator_workspace": allow_operator_workspace,
                 "claim_pin": claim_pin,
                 "context_overrides": context_overrides,
             }

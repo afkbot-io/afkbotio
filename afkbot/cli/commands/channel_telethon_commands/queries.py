@@ -15,6 +15,7 @@ from afkbot.cli.commands.inspection_shared import (
     render_tool_access_brief,
 )
 from afkbot.cli.commands.channel_shared import (
+    delete_endpoint_owned_bindings,
     render_ingress_batch_summary,
     render_reply_humanization_summary,
 )
@@ -325,26 +326,38 @@ def register_telethon_query_commands(telethon_app: typer.Typer) -> None:
                 lambda service: service.delete(endpoint_id=channel_id),
             )
             binding_removed = False
+            removed_binding_count = 0
             if not keep_binding:
                 try:
-                    run_channel_binding_service_sync(
+                    removed_binding_count = run_channel_binding_service_sync(
                         settings,
-                        lambda service: service.delete(binding_id=channel_id),
+                        lambda service: delete_endpoint_owned_bindings(
+                            service=service,
+                            endpoint_id=channel_id,
+                            transport="telegram_user",
+                        ),
                     )
-                    binding_removed = True
+                    binding_removed = removed_binding_count > 0
                 except ChannelBindingServiceError:
                     binding_removed = False
         except Exception as exc:
             raise_legacy_telethon_channel_error(exc)
         if json_output:
             typer.echo(
-                json.dumps({"ok": True, "binding_removed": binding_removed}, ensure_ascii=True)
+                json.dumps(
+                    {
+                        "ok": True,
+                        "binding_removed": binding_removed,
+                        "removed_binding_count": removed_binding_count,
+                    },
+                    ensure_ascii=True,
+                )
             )
             reload_legacy_managed_runtime_notice(settings)
             return
         typer.echo(f"Telethon channel `{channel_id}` deleted.")
         if binding_removed:
-            typer.echo(f"Matching binding `{channel_id}` deleted.")
+            typer.echo(f"Removed {removed_binding_count} routing binding(s) for `{channel_id}`.")
         reload_legacy_managed_runtime_notice(settings)
 
     @telethon_app.command("status")

@@ -8,6 +8,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
+from afkbot.services.task_flow.message_factory import task_session_id
 from afkbot.services.task_flow.runtime_daemon import TaskFlowRuntimeDaemon
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
@@ -279,7 +280,11 @@ async def test_taskflow_runtime_daemon_executes_claimable_tasks_end_to_end(
 
         completed = await service.get_task(profile_id="default", task_id=task.id)
         assert completed.status == "completed"
-        assert completed.last_session_id == f"taskflow:{task.id}"
+        assert completed.last_session_id == task_session_id(
+            task_id=task.id,
+            executor_type="employee",
+            executor_ref="worker",
+        )
         assert completed.last_run_id is not None
     finally:
         await engine.dispose()

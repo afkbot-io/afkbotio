@@ -667,6 +667,391 @@ async def test_browser_control_full_action_flow(tmp_path: Path, monkeypatch: Mon
     assert close_result.payload["closed"] is True
 
 
+async def test_browser_control_blocks_disallowed_click_navigation(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Browser request/navigation guards should enforce profile allowlist after open."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+    blocked_urls: list[str] = []
+
+    class _FakeRequest:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    class _FakeRoute:
+        def __init__(self, url: str) -> None:
+            self.request = _FakeRequest(url)
+
+        async def continue_(self) -> None:
+            return None
+
+        async def abort(self) -> None:
+            blocked_urls.append(self.request.url)
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+            self._route_handler = None
+
+        async def goto(self, url: str, *, timeout: int, wait_until: str) -> None:
+            _ = timeout, wait_until
+            if self._route_handler is not None:
+                await self._route_handler(_FakeRoute(url))
+            self.url = url
+
+        async def click(self, selector: str, *, timeout: int) -> None:
+            _ = selector, timeout
+            blocked_url = "https://evil.test/private"
+            if self._route_handler is not None:
+                await self._route_handler(_FakeRoute(blocked_url))
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeContext:
+        def __init__(self) -> None:
+            self.page = _FakePage()
+
+        async def new_page(self) -> _FakePage:
+            return self.page
+
+        async def route(self, pattern: str, handler) -> None:
+            assert pattern == "**/*"
+            self.page._route_handler = handler
+
+        async def unroute(self, pattern: str, handler=None) -> None:
+            _ = pattern, handler
+            self.page._route_handler = None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeBrowser:
+        def __init__(self) -> None:
+            self.context = _FakeContext()
+
+        async def new_context(self) -> _FakeContext:
+            return self.context
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeChromium:
+        async def launch(self, *, headless: bool) -> _FakeBrowser:
+            _ = headless
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    async def _fake_start_playwright() -> _FakePlaywright:
+        return _FakePlaywright()
+
+    monkeypatch.setattr(tool, "_start_playwright", _fake_start_playwright)
+    ctx = ToolContext(
+        profile_id="default",
+        session_id="s-browser-policy",
+        run_id=1,
+        policy_network_allowlist_json='["example.com"]',
+    )
+    open_result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "open",
+                "url": "https://example.com",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert open_result.ok is True
+
+    click_result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "click",
+                "selector": "#external",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert click_result.ok is False
+    assert click_result.error_code == "profile_policy_violation"
+    assert click_result.reason == "Network host is not allowed by policy: evil.test"
+    assert blocked_urls == ["https://evil.test/private"]
+
+
+async def test_browser_control_fails_closed_when_allowlist_guard_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Network allowlists should not silently degrade when request routing is unavailable."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+
+    class _FakePage:
+        url = "about:blank"
+
+        async def goto(self, url: str, *, timeout: int, wait_until: str) -> None:
+            _ = url, timeout, wait_until
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeContext:
+        async def new_page(self) -> _FakePage:
+            return _FakePage()
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeBrowser:
+        async def new_context(self) -> _FakeContext:
+            return _FakeContext()
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeChromium:
+        async def launch(self, *, headless: bool) -> _FakeBrowser:
+            _ = headless
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    async def _fake_start_playwright() -> _FakePlaywright:
+        return _FakePlaywright()
+
+    monkeypatch.setattr(tool, "_start_playwright", _fake_start_playwright)
+    result = await tool.execute(
+        ToolContext(
+            profile_id="default",
+            session_id="s-browser-no-route",
+            run_id=1,
+            policy_network_allowlist_json='["example.com"]',
+        ),
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "open",
+                "url": "https://example.com",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "profile_policy_violation"
+    assert "requires request interception" in result.reason
+
+
+def test_browser_control_allowlist_rejects_loopback_ip() -> None:
+    """Host allowlists must not allow browser access to non-public network targets."""
+
+    assert (
+        browser_control_plugin.BrowserControlTool._browser_url_allowed(
+            url="http://127.0.0.1:8000/admin",
+            allowlist={"*"},
+        )
+        is False
+    )
+
+
+def test_browser_control_allowlist_rejects_file_urls() -> None:
+    """Host allowlists must not silently allow local file URLs."""
+
+    assert (
+        browser_control_plugin.BrowserControlTool._browser_url_allowed(
+            url="file:///etc/hosts",
+            allowlist={"*"},
+        )
+        is False
+    )
+
+
+async def test_browser_control_open_rejects_loopback_without_allowlist(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Browser navigation should fail closed for private targets even without an allowlist."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+
+    class _FakePage:
+        url = "about:blank"
+
+        async def goto(self, url: str, *, timeout: int, wait_until: str) -> None:
+            _ = url, timeout, wait_until
+            raise AssertionError("private browser target should be rejected before page.goto")
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeContext:
+        async def new_page(self) -> _FakePage:
+            return _FakePage()
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeBrowser:
+        async def new_context(self) -> _FakeContext:
+            return _FakeContext()
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeChromium:
+        async def launch(self, *, headless: bool) -> _FakeBrowser:
+            _ = headless
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    async def _fake_start_playwright() -> _FakePlaywright:
+        return _FakePlaywright()
+
+    monkeypatch.setattr(tool, "_start_playwright", _fake_start_playwright)
+    result = await tool.execute(
+        ToolContext(profile_id="default", session_id="s-browser-private", run_id=1),
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "open",
+                "url": "http://127.0.0.1:8000/admin",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error_code == "profile_policy_violation"
+    assert "non-public network address" in result.reason or "localhost" in result.reason
+
+
+async def test_browser_control_blocks_private_click_navigation_without_allowlist(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Post-click navigation should remain public-network safe without an allowlist."""
+
+    settings = Settings(root_dir=tmp_path)
+    registry = _registry(settings)
+    tool = registry.get("browser.control")
+    assert tool is not None
+
+    class _FakePage:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+
+        async def click(self, selector: str, *, timeout: int) -> None:
+            _ = selector, timeout
+            self.url = "http://127.0.0.1:8000/admin"
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeContext:
+        def __init__(self) -> None:
+            self.page = _FakePage()
+
+        async def new_page(self) -> _FakePage:
+            return self.page
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeBrowser:
+        def __init__(self) -> None:
+            self.context = _FakeContext()
+
+        async def new_context(self) -> _FakeContext:
+            return self.context
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeChromium:
+        async def launch(self, *, headless: bool) -> _FakeBrowser:
+            _ = headless
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+
+        async def stop(self) -> None:
+            return None
+
+    async def _fake_start_playwright() -> _FakePlaywright:
+        return _FakePlaywright()
+
+    monkeypatch.setattr(tool, "_start_playwright", _fake_start_playwright)
+    ctx = ToolContext(profile_id="default", session_id="s-browser-private-click", run_id=1)
+    open_result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "open",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+    assert open_result.ok is True
+
+    click_result = await tool.execute(
+        ctx,
+        tool.parse_params(
+            {
+                "profile_key": "default",
+                "action": "click",
+                "selector": "#internal",
+            },
+            default_timeout_sec=settings.tool_timeout_default_sec,
+            max_timeout_sec=settings.tool_timeout_max_sec,
+        ),
+    )
+
+    assert click_result.ok is False
+    assert click_result.error_code == "profile_policy_violation"
+    assert "non-public network address" in click_result.reason
+
+
 async def test_browser_control_supports_semantic_targets_and_extended_actions(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

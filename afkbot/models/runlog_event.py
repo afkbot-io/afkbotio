@@ -15,6 +15,8 @@ class RunlogEvent(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_runlog_event_created_at", "created_at", "id"),
         Index("ix_runlog_event_run_id_id", "run_id", "id"),
+        Index("ix_runlog_event_session_id_id", "session_id", "id"),
+        Index("ix_runlog_event_session_type_id", "session_id", "event_type", "id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

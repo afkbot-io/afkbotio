@@ -19,6 +19,9 @@ from afkbot.browser_backends import LIGHTPANDA_CDP, LIGHTPANDA_DEFAULT_CDP_URL
 from afkbot.services.lightpanda_runtime import lightpanda_runtime_hint
 from afkbot.services.browser_snapshot import capture_browser_page_snapshot
 from afkbot.services.browser_sessions import get_browser_session_manager
+from afkbot.services.policy.contracts import PolicyViolationError
+from afkbot.services.policy.evaluation_helpers import host_matches, parse_string_set
+from afkbot.services.tools.network.http_guard import ensure_public_network_target
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import RoutedToolParameters, ToolParameters, build_tool_parameters
 from afkbot.settings import Settings
@@ -134,6 +137,7 @@ class BrowserControlParams(RoutedToolParameters):
 class _BrowserSession:
     playwright: Any
     browser: Any
+    context: Any | None
     page: Any
 
 
@@ -214,6 +218,11 @@ def _browser_error_metadata(*, error_code: str, reason: str) -> dict[str, object
     }
 
 
+def _url_host(url: object) -> str:
+    parsed = urlparse(str(url or "").strip())
+    return parsed.hostname or str(url or "").strip() or "<unknown>"
+
+
 class BrowserControlTool(ToolBase):
     """Control one Playwright browser page for the current runtime session."""
 
@@ -276,6 +285,8 @@ class BrowserControlTool(ToolBase):
 
         try:
             result_payload = await self._execute_action(ctx=ctx, payload=payload)
+            await self._ensure_no_blocked_network_request(ctx=ctx)
+            self._ensure_result_url_allowed(ctx=ctx, result_payload=result_payload)
             if self._should_persist_session_state(payload.action):
                 result_payload = await self._persist_session_state_after_action(
                     ctx=ctx,
@@ -299,6 +310,12 @@ class BrowserControlTool(ToolBase):
                 ctx=ctx,
                 error_code="browser_invalid",
                 reason=str(exc),
+            )
+        except PolicyViolationError as exc:
+            return await self._build_error_result(
+                ctx=ctx,
+                error_code="profile_policy_violation",
+                reason=exc.reason,
             )
         except PlaywrightTimeoutError:
             return await self._build_error_result(
@@ -436,8 +453,10 @@ class BrowserControlTool(ToolBase):
                 f"Failed to launch browser: {exc.__class__.__name__}. {_browser_install_hint(self._settings)}"
             ) from exc
 
+        await self._install_network_allowlist_guard(ctx=ctx, session=session)
         if payload.url is not None:
             await self._goto_page(
+                ctx=ctx,
                 page=session.page,
                 url=payload.url,
                 timeout_ms=payload.timeout_ms,
@@ -460,6 +479,7 @@ class BrowserControlTool(ToolBase):
             raise ValueError("url is required for navigate action")
         session = await self._require_session(ctx)
         await self._goto_page(
+            ctx=ctx,
             page=session.page,
             url=payload.url,
             timeout_ms=payload.timeout_ms,
@@ -755,6 +775,7 @@ class BrowserControlTool(ToolBase):
     async def _goto_page(
         self,
         *,
+        ctx: ToolContext,
         page: Any,
         url: str,
         timeout_ms: int,
@@ -763,6 +784,7 @@ class BrowserControlTool(ToolBase):
         parsed = urlparse(url.strip())
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
             raise ValueError("Only http/https URLs are allowed")
+        self._ensure_initial_navigation_allowed(ctx=ctx, url=url)
         await page.goto(url, timeout=timeout_ms, wait_until=wait_until)
 
     async def _start_playwright(self) -> Any:
@@ -850,11 +872,157 @@ class BrowserControlTool(ToolBase):
             raise _BrowserSessionNotOpenError(
                 "Browser session is not open; call action='open' first"
             )
+        await self._install_network_allowlist_guard(ctx=ctx, session=session)
         return _BrowserSession(
             playwright=session.playwright,
             browser=session.browser,
+            context=session.context,
             page=session.page,
         )
+
+    async def _install_network_allowlist_guard(self, *, ctx: ToolContext, session: Any) -> None:
+        raw_allowlist = ctx.policy_network_allowlist_json
+        if raw_allowlist is None:
+            return
+        context = getattr(session, "context", None) or getattr(session.page, "context", None)
+        route = getattr(context, "route", None)
+        if not callable(route):
+            raise PolicyViolationError(
+                reason=(
+                    "Browser network policy requires request interception, "
+                    "but the active browser backend does not support it"
+                )
+            )
+        if getattr(session, "network_guard_allowlist_json", None) == raw_allowlist:
+            return
+        if getattr(session, "network_guard_allowlist_json", None) is not None:
+            unroute = getattr(context, "unroute", None)
+            if callable(unroute):
+                try:
+                    await unroute("**/*")
+                except TypeError:
+                    await unroute("**/*", handler=None)
+
+        allowlist = parse_string_set(
+            raw=raw_allowlist,
+            field_name="network_allowlist_json",
+        )
+
+        async def _guarded_route(route_obj: Any) -> None:
+            request = getattr(route_obj, "request", None)
+            raw_url = getattr(request, "url", "") if request is not None else ""
+            if self._browser_url_allowed(url=str(raw_url or ""), allowlist=allowlist):
+                continue_request = getattr(route_obj, "continue_", None)
+                if callable(continue_request):
+                    await continue_request()
+                return
+            abort_request = getattr(route_obj, "abort", None)
+            if callable(abort_request):
+                await abort_request()
+                try:
+                    session.network_guard_blocked_url = str(raw_url or "")
+                except AttributeError:
+                    pass
+                return
+            raise PolicyViolationError(
+                reason=f"Network host is not allowed by policy: {_url_host(raw_url)}"
+            )
+
+        try:
+            await route("**/*", _guarded_route)
+        except TypeError:
+            await route("**/*", handler=_guarded_route)
+        try:
+            session.network_guard_allowlist_json = raw_allowlist
+        except AttributeError:
+            pass
+
+    async def _ensure_no_blocked_network_request(self, *, ctx: ToolContext) -> None:
+        """Fail the action if the network guard aborted any request during it."""
+
+        session = await self._sessions.get(
+            root_dir=self._settings.root_dir,
+            profile_id=ctx.profile_id,
+            session_id=ctx.session_id,
+            idle_ttl_sec=self._settings.browser_session_idle_ttl_sec,
+            touch=False,
+        )
+        if session is None:
+            return
+        blocked_url = str(getattr(session, "network_guard_blocked_url", "") or "")
+        if not blocked_url:
+            return
+        session.network_guard_blocked_url = None
+        raise PolicyViolationError(
+            reason=f"Network host is not allowed by policy: {_url_host(blocked_url)}"
+        )
+
+    def _ensure_result_url_allowed(
+        self,
+        *,
+        ctx: ToolContext,
+        result_payload: dict[str, object],
+    ) -> None:
+        raw_url = result_payload.get("url")
+        if not isinstance(raw_url, str) or not raw_url:
+            return
+        if self._is_browser_internal_url(raw_url):
+            return
+        raw_allowlist = ctx.policy_network_allowlist_json
+        if raw_allowlist is None:
+            try:
+                ensure_public_network_target(raw_url)
+            except ValueError as exc:
+                raise PolicyViolationError(reason=str(exc)) from exc
+            return
+        allowlist = parse_string_set(
+            raw=raw_allowlist,
+            field_name="network_allowlist_json",
+        )
+        if self._browser_url_allowed(url=raw_url, allowlist=allowlist):
+            return
+        raise PolicyViolationError(
+            reason=f"Network host is not allowed by policy: {_url_host(raw_url)}"
+        )
+
+    def _ensure_initial_navigation_allowed(self, *, ctx: ToolContext, url: str) -> None:
+        raw_allowlist = ctx.policy_network_allowlist_json
+        if raw_allowlist is not None:
+            allowlist = parse_string_set(
+                raw=raw_allowlist,
+                field_name="network_allowlist_json",
+            )
+            if self._browser_url_allowed(url=url, allowlist=allowlist):
+                return
+            raise PolicyViolationError(
+                reason=f"Network host is not allowed by policy: {_url_host(url)}"
+            )
+        try:
+            ensure_public_network_target(url)
+        except ValueError as exc:
+            raise PolicyViolationError(reason=str(exc)) from exc
+
+    @staticmethod
+    def _browser_url_allowed(*, url: str, allowlist: set[str]) -> bool:
+        parsed = urlparse(url.strip())
+        scheme = parsed.scheme.lower()
+        if scheme and scheme not in {"http", "https"}:
+            return BrowserControlTool._is_browser_internal_url(url)
+        host = parsed.hostname
+        if host is None:
+            return BrowserControlTool._is_browser_internal_url(url)
+        if not any(host_matches(host=host, allowed=allowed_host) for allowed_host in allowlist):
+            return False
+        try:
+            ensure_public_network_target(url)
+        except ValueError:
+            return False
+        return True
+
+    @staticmethod
+    def _is_browser_internal_url(url: str) -> bool:
+        parsed = urlparse(url.strip())
+        return parsed.scheme.lower() == "about" and parsed.path.lower() == "blank"
 
     def _browser_backend_identity(self) -> str:
         backend = self._settings.browser_backend

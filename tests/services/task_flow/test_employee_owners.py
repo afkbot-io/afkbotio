@@ -20,6 +20,7 @@ from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.agent_loop.action_contracts import ActionEnvelope, TurnResult
 from afkbot.services.agent_loop.turn_context import TurnContextOverrides
 from afkbot.services.task_flow import TaskFlowServiceError
+from afkbot.services.task_flow.message_factory import task_session_id
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.task_flow.service import TaskFlowService
 from afkbot.settings import Settings
@@ -347,6 +348,98 @@ async def test_task_comment_wakes_responsible_employee_feed(tmp_path: Path) -> N
     assert feed.recent_events[0].details["reason_code"] == "comment_added"
 
 
+async def test_task_comment_resumes_non_dependency_blocked_employee_task(
+    tmp_path: Path,
+) -> None:
+    service = await _service(tmp_path, "employee_comment_resume_blocked.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="cto")
+    task = await service.create_task(
+        profile_id="default",
+        title="Blocked comment wake",
+        description="Human comment should make a non-dependency blocked task runnable.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="cto",
+    )
+    future_ready_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    blocked = await service.update_task(
+        profile_id="default",
+        task_id=task.id,
+        status="blocked",
+        blocked_reason_code="operator_answer_needed",
+        blocked_reason_text="Waiting for operator answer.",
+        ready_at=future_ready_at,
+    )
+    assert blocked.ready_at == future_ready_at.replace(tzinfo=None)
+
+    before_comment = datetime.now(timezone.utc)
+    await service.add_task_comment(
+        profile_id="default",
+        task_id=task.id,
+        actor_type="human",
+        actor_ref="cli",
+        message="Here is the answer. Continue.",
+    )
+
+    resumed = await service.get_task(profile_id="default", task_id=task.id)
+    assert resumed.status == "blocked"
+    assert resumed.blocked_reason_code == "operator_answer_needed"
+    assert resumed.ready_at is not None
+    resumed_ready_at = (
+        resumed.ready_at.replace(tzinfo=timezone.utc)
+        if resumed.ready_at.tzinfo is None
+        else resumed.ready_at
+    )
+    assert resumed_ready_at >= before_comment
+    assert resumed_ready_at < future_ready_at
+    events = await service.list_task_events(profile_id="default", task_id=task.id)
+    wake = next(event for event in events if event.event_type == "wake_requested")
+    assert wake.details["reason_code"] == "comment_added"
+
+
+async def test_task_comment_does_not_wake_dependency_wait_task(tmp_path: Path) -> None:
+    service = await _service(tmp_path, "employee_comment_dependency_wait.db")
+    _write_employee(tmp_path, profile_id="default", employee_id="cto")
+    prerequisite = await service.create_task(
+        profile_id="default",
+        title="Prerequisite",
+        description="Must complete before dependent task can run.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="cto",
+    )
+    dependent = await service.create_task(
+        profile_id="default",
+        title="Dependent",
+        description="Should remain blocked on dependency despite comments.",
+        created_by_type="human",
+        created_by_ref="cli",
+        owner_type="employee",
+        owner_ref="cto",
+        depends_on_task_ids=(prerequisite.id,),
+    )
+    assert dependent.status == "blocked"
+    assert dependent.blocked_reason_code == "dependency_wait"
+    assert dependent.ready_at is None
+
+    await service.add_task_comment(
+        profile_id="default",
+        task_id=dependent.id,
+        actor_type="human",
+        actor_ref="cli",
+        message="Can you continue?",
+    )
+
+    unchanged = await service.get_task(profile_id="default", task_id=dependent.id)
+    assert unchanged.status == "blocked"
+    assert unchanged.blocked_reason_code == "dependency_wait"
+    assert unchanged.ready_at is None
+    events = await service.list_task_events(profile_id="default", task_id=dependent.id)
+    assert all(event.event_type != "wake_requested" for event in events)
+
+
 async def test_manager_employee_can_comment_on_direct_report_task(tmp_path: Path) -> None:
     service = await _service(tmp_path, "employee_manager_comment.db")
     _write_employee(tmp_path, profile_id="default", employee_id="cto", reports=("developer",))
@@ -630,15 +723,16 @@ async def test_manager_handoff_update_clears_existing_ready_at(tmp_path: Path) -
         owner_ref="qa-reviewer",
     )
     stale_ready_at = datetime.now(timezone.utc) - timedelta(minutes=5)
-    await service.block_task(
-        profile_id="default",
-        task_id=task.id,
-        reason_code="review_changes_requested",
-        reason_text="Retry later.",
-        actor_type="employee",
-        actor_ref="qa-reviewer",
-        ready_at=stale_ready_at,
-    )
+    async with session_scope(factory) as session:
+        legacy_row = await TaskFlowRepository(session).update_task(
+            profile_id="default",
+            task_id=task.id,
+            status="blocked",
+            blocked_reason_code="review_changes_requested",
+            blocked_reason_text="Retry later.",
+            ready_at=stale_ready_at,
+        )
+        assert legacy_row is not None
 
     updated = await service.update_task(
         profile_id="default",
@@ -962,7 +1056,11 @@ async def test_taskflow_runtime_executes_employee_with_employee_overlay(
         assert len(observed) == 1
         call = observed[0]
         assert call["profile_id"] == "default"
-        assert call["session_id"] == f"taskflow:{task.id}"
+        assert call["session_id"] == task_session_id(
+            task_id=task.id,
+            executor_type="employee",
+            executor_ref="cto",
+        )
         assert call["source"] == "taskflow"
         metadata = call["metadata"]
         assert isinstance(metadata, dict)

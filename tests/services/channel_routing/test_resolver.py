@@ -40,7 +40,7 @@ def test_resolve_channel_binding_prefers_more_specific_rule() -> None:
     assert decision is not None
     assert decision.binding_id == "peer-42"
     assert decision.profile_id == "sales"
-    assert decision.session_id == "profile:sales:chat:42:thread:9001"
+    assert decision.session_id == "profile:sales:channel:telegram:chat:42:thread:9001"
 
 
 def test_resolve_channel_binding_namespaces_session_id_by_profile() -> None:
@@ -81,9 +81,56 @@ def test_resolve_channel_binding_namespaces_session_id_by_profile() -> None:
 
     assert default_decision is not None
     assert sales_decision is not None
-    assert default_decision.session_id == "profile:default:chat:42"
-    assert sales_decision.session_id == "profile:sales:chat:42"
+    assert default_decision.session_id == "profile:default:channel:telegram_user:chat:42"
+    assert sales_decision.session_id == "profile:sales:channel:telegram_user:chat:42"
     assert default_decision.session_id != sales_decision.session_id
+
+
+def test_resolve_channel_binding_namespaces_session_id_by_account() -> None:
+    """The same chat id on different channel accounts must not share session state."""
+
+    first_decision = resolve_channel_binding(
+        bindings=[
+            ChannelBindingRule(
+                binding_id="account-a",
+                transport="telegram",
+                account_id="bot-a",
+                profile_id="default",
+                session_policy="per-chat",
+                peer_id="42",
+            ),
+        ],
+        routing_input=ChannelRoutingInput(
+            transport="telegram",
+            account_id="bot-a",
+            peer_id="42",
+            default_session_id="telegram:42",
+        ),
+    )
+    second_decision = resolve_channel_binding(
+        bindings=[
+            ChannelBindingRule(
+                binding_id="account-b",
+                transport="telegram",
+                account_id="bot-b",
+                profile_id="default",
+                session_policy="per-chat",
+                peer_id="42",
+            ),
+        ],
+        routing_input=ChannelRoutingInput(
+            transport="telegram",
+            account_id="bot-b",
+            peer_id="42",
+            default_session_id="telegram:42",
+        ),
+    )
+
+    assert first_decision is not None
+    assert second_decision is not None
+    assert first_decision.session_id == "profile:default:channel:telegram:account:bot-a:chat:42"
+    assert second_decision.session_id == "profile:default:channel:telegram:account:bot-b:chat:42"
+    assert first_decision.session_id != second_decision.session_id
 
 
 def test_resolve_channel_binding_namespaces_main_session_policy_by_profile() -> None:
@@ -120,8 +167,8 @@ def test_resolve_channel_binding_namespaces_main_session_policy_by_profile() -> 
 
     assert default_decision is not None
     assert sales_decision is not None
-    assert default_decision.session_id == "profile:default:telegram_user:42"
-    assert sales_decision.session_id == "profile:sales:telegram_user:42"
+    assert default_decision.session_id == "profile:default:channel:telegram_user:telegram_user:42"
+    assert sales_decision.session_id == "profile:sales:channel:telegram_user:telegram_user:42"
     assert default_decision.session_id != sales_decision.session_id
 
 

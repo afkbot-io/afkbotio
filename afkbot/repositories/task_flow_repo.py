@@ -43,6 +43,60 @@ _NO_FLOW_BUCKET = "__taskflow_no_flow__"
 _MANAGER_ESCALATION_BLOCKER_CODES = frozenset(
     {"manager_reassignment_required", "orchestrator_handoff_required"}
 )
+_NON_CLAIMABLE_BLOCKER_CODES = frozenset({"dependency_wait", "review_changes_requested"})
+
+
+def _employee_inbox_candidate_filter(
+    *,
+    owner_type: str,
+    owner_ref: str,
+    now_utc: datetime,
+) -> ColumnElement[bool]:
+    """Build the shared visibility predicate for one employee inbox."""
+
+    review_owner_type_expr = func.coalesce(func.nullif(Task.reviewer_type, ""), Task.owner_type)
+    review_owner_ref_expr = func.coalesce(func.nullif(Task.reviewer_ref, ""), Task.owner_ref)
+    active_claim_owner_type_expr = func.coalesce(
+        func.nullif(Task.claim_owner_type, ""),
+        Task.owner_type,
+    )
+    active_claim_owner_ref_expr = func.coalesce(
+        func.nullif(Task.claim_owner_ref, ""),
+        Task.owner_ref,
+    )
+    assigned_owner_candidate = and_(
+        Task.owner_type == owner_type,
+        Task.owner_ref == owner_ref,
+        or_(
+            Task.status == "todo",
+            and_(
+                Task.status.in_(("claimed", "running")),
+                or_(
+                    Task.claim_source_status.is_(None),
+                    Task.claim_source_status != "review",
+                ),
+            ),
+            and_(
+                Task.status == "blocked",
+                or_(Task.ready_at.is_(None), Task.ready_at <= now_utc),
+                or_(
+                    Task.blocked_reason_code.is_(None),
+                    Task.blocked_reason_code.not_in(tuple(_MANAGER_ESCALATION_BLOCKER_CODES)),
+                ),
+            ),
+        ),
+    )
+    review_candidate = and_(
+        Task.status == "review",
+        review_owner_type_expr == owner_type,
+        review_owner_ref_expr == owner_ref,
+    )
+    active_claim_candidate = and_(
+        Task.status.in_(("claimed", "running")),
+        active_claim_owner_type_expr == owner_type,
+        active_claim_owner_ref_expr == owner_ref,
+    )
+    return or_(assigned_owner_candidate, review_candidate, active_claim_candidate)
 
 
 class TaskFlowRepository:
@@ -258,6 +312,8 @@ class TaskFlowRepository:
         document_key: str | None = None,
         confirmation_status: str | None = None,
         query: str | None = None,
+        allowed_flow_document_keys: Sequence[str] = (),
+        allowed_task_document_keys: Sequence[str] = (),
         limit: int = 100,
         offset: int = 0,
     ) -> list[TaskDocument]:
@@ -272,6 +328,29 @@ class TaskFlowRepository:
             conditions.append(TaskDocument.document_key == document_key)
         if confirmation_status is not None:
             conditions.append(TaskDocument.confirmation_status == confirmation_status)
+        normalized_flow_keys = tuple(
+            str(key).strip() for key in allowed_flow_document_keys if str(key).strip()
+        )
+        normalized_task_keys = tuple(
+            str(key).strip() for key in allowed_task_document_keys if str(key).strip()
+        )
+        if normalized_flow_keys or normalized_task_keys:
+            key_conditions: list[ColumnElement[bool]] = []
+            if normalized_flow_keys:
+                key_conditions.append(
+                    and_(
+                        TaskDocument.scope_type == "flow",
+                        TaskDocument.document_key.in_(normalized_flow_keys),
+                    )
+                )
+            if normalized_task_keys:
+                key_conditions.append(
+                    and_(
+                        TaskDocument.scope_type == "task",
+                        TaskDocument.document_key.in_(normalized_task_keys),
+                    )
+                )
+            conditions.append(or_(*key_conditions))
         if query is not None:
             pattern = f"%{query.lower()}%"
             conditions.append(
@@ -301,29 +380,51 @@ class TaskFlowRepository:
         body: str,
         updated_by_type: str,
         updated_by_ref: str,
-    ) -> TaskDocument:
+        expected_revision: int | None = None,
+    ) -> TaskDocument | None:
         """Update latest document body and append a new revision."""
 
-        document.revision = int(document.revision or 0) + 1
-        document.title = title
-        document.body = body
-        document.confirmation_status = "draft"
-        document.confirmed_revision = None
-        document.confirmed_by_type = None
-        document.confirmed_by_ref = None
-        document.confirmed_at = None
-        document.updated_by_type = updated_by_type
-        document.updated_by_ref = updated_by_ref
+        revision = int(expected_revision if expected_revision is not None else document.revision)
+        next_revision = revision + 1
+        statement = (
+            update(TaskDocument)
+            .where(
+                TaskDocument.id == document.id,
+                TaskDocument.revision == revision,
+            )
+            .values(
+                revision=next_revision,
+                title=title,
+                body=body,
+                confirmation_status="draft",
+                confirmed_revision=None,
+                confirmed_by_type=None,
+                confirmed_by_ref=None,
+                confirmed_at=None,
+                updated_by_type=updated_by_type,
+                updated_by_ref=updated_by_ref,
+            )
+        )
+        result = await self._session.execute(statement)
         await self._session.flush()
-        revision = await self.create_task_document_revision(
+        if not _result_succeeded(result):
+            return None
+        revision_row = await self.create_task_document_revision(
             document_id=document.id,
-            revision=document.revision,
-            title=document.title,
-            body=document.body,
+            revision=next_revision,
+            title=title,
+            body=body,
             created_by_type=updated_by_type,
             created_by_ref=updated_by_ref,
         )
-        document.latest_revision_id = revision.id
+        await self._session.execute(
+            update(TaskDocument)
+            .where(
+                TaskDocument.id == document.id,
+                TaskDocument.revision == next_revision,
+            )
+            .values(latest_revision_id=revision_row.id)
+        )
         await self._session.flush()
         await self._session.refresh(document)
         return document
@@ -335,17 +436,31 @@ class TaskFlowRepository:
         confirmed_by_type: str,
         confirmed_by_ref: str,
         confirmed_at: datetime,
-    ) -> TaskDocument:
+        expected_revision: int | None = None,
+    ) -> TaskDocument | None:
         """Mark the current document revision as confirmed."""
 
-        document.confirmation_status = "confirmed"
-        document.confirmed_revision = document.revision
-        document.confirmed_by_type = confirmed_by_type
-        document.confirmed_by_ref = confirmed_by_ref
-        document.confirmed_at = confirmed_at
-        document.updated_by_type = confirmed_by_type
-        document.updated_by_ref = confirmed_by_ref
+        revision = int(expected_revision if expected_revision is not None else document.revision)
+        statement = (
+            update(TaskDocument)
+            .where(
+                TaskDocument.id == document.id,
+                TaskDocument.revision == revision,
+            )
+            .values(
+                confirmation_status="confirmed",
+                confirmed_revision=revision,
+                confirmed_by_type=confirmed_by_type,
+                confirmed_by_ref=confirmed_by_ref,
+                confirmed_at=confirmed_at,
+                updated_by_type=confirmed_by_type,
+                updated_by_ref=confirmed_by_ref,
+            )
+        )
+        result = await self._session.execute(statement)
         await self._session.flush()
+        if not _result_succeeded(result):
+            return None
         await self._session.refresh(document)
         return document
 
@@ -390,17 +505,89 @@ class TaskFlowRepository:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().all())
 
-    async def delete_task_document(self, *, document: TaskDocument) -> bool:
+    async def list_task_comment_events(
+        self,
+        *,
+        task_id: str,
+        limit: int | None = None,
+    ) -> list[TaskEvent]:
+        """Return task comment events ordered from newest to oldest."""
+
+        statement: Select[tuple[TaskEvent]] = (
+            select(TaskEvent)
+            .where(
+                TaskEvent.task_id == task_id,
+                TaskEvent.event_type == "comment_added",
+            )
+            .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        return list((await self._session.execute(statement)).scalars().all())
+
+    async def delete_task_document(
+        self,
+        *,
+        document: TaskDocument,
+        expected_revision: int | None = None,
+    ) -> bool:
         """Delete one document and its immutable revisions."""
 
-        document.latest_revision_id = None
+        revision = int(expected_revision if expected_revision is not None else document.revision)
+        guard = await self._session.execute(
+            update(TaskDocument)
+            .where(
+                TaskDocument.id == document.id,
+                TaskDocument.revision == revision,
+            )
+            .values(latest_revision_id=None)
+        )
         await self._session.flush()
+        if not _result_succeeded(guard):
+            return False
         await self._session.execute(
             delete(TaskDocumentRevision).where(TaskDocumentRevision.document_id == document.id)
         )
-        await self._session.delete(document)
+        result = await self._session.execute(
+            delete(TaskDocument).where(
+                TaskDocument.id == document.id,
+                TaskDocument.revision == revision,
+            )
+        )
         await self._session.flush()
-        return True
+        return _result_succeeded(result)
+
+    async def delete_task_documents_for_scope(
+        self,
+        *,
+        profile_id: str,
+        scope_type: str,
+        scope_id: str,
+    ) -> int:
+        """Delete all documents and revisions linked to one Task Flow scope."""
+
+        rows = await self.list_task_documents(
+            profile_id=profile_id,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        if not rows:
+            return 0
+        document_ids = [row.id for row in rows]
+        await self._session.execute(
+            update(TaskDocument)
+            .where(TaskDocument.id.in_(document_ids))
+            .values(latest_revision_id=None)
+        )
+        await self._session.flush()
+        await self._session.execute(
+            delete(TaskDocumentRevision).where(TaskDocumentRevision.document_id.in_(document_ids))
+        )
+        result = await self._session.execute(
+            delete(TaskDocument).where(TaskDocument.id.in_(document_ids))
+        )
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def create_task(
         self,
@@ -607,45 +794,16 @@ class TaskFlowRepository:
         belongs to the persisted claim owner.
         """
 
-        review_owner_type_expr = func.coalesce(func.nullif(Task.reviewer_type, ""), Task.owner_type)
-        review_owner_ref_expr = func.coalesce(func.nullif(Task.reviewer_ref, ""), Task.owner_ref)
-        active_claim_owner_type_expr = func.coalesce(
-            func.nullif(Task.claim_owner_type, ""),
-            Task.owner_type,
-        )
-        active_claim_owner_ref_expr = func.coalesce(
-            func.nullif(Task.claim_owner_ref, ""),
-            Task.owner_ref,
-        )
-        assigned_owner_candidate = and_(
-            Task.owner_type == owner_type,
-            Task.owner_ref == owner_ref,
-            or_(
-                Task.status.in_(("todo", "review", "claimed", "running")),
-                and_(
-                    Task.status == "blocked",
-                    or_(
-                        Task.blocked_reason_code.is_(None),
-                        Task.blocked_reason_code.not_in(tuple(_MANAGER_ESCALATION_BLOCKER_CODES)),
-                    ),
-                ),
-            ),
-        )
-        review_candidate = and_(
-            Task.status == "review",
-            review_owner_type_expr == owner_type,
-            review_owner_ref_expr == owner_ref,
-        )
-        active_claim_candidate = and_(
-            Task.status.in_(("claimed", "running")),
-            active_claim_owner_type_expr == owner_type,
-            active_claim_owner_ref_expr == owner_ref,
+        candidate_filter = _employee_inbox_candidate_filter(
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            now_utc=datetime.now(timezone.utc),
         )
         statement: Select[tuple[Task]] = (
             select(Task)
             .where(
                 Task.profile_id == profile_id,
-                or_(assigned_owner_candidate, review_candidate, active_claim_candidate),
+                candidate_filter,
             )
             .order_by(
                 Task.priority.desc(),
@@ -657,6 +815,28 @@ class TaskFlowRepository:
         if limit is not None:
             statement = statement.limit(limit)
         return list((await self._session.execute(statement)).scalars().unique().all())
+
+    async def count_employee_inbox_tasks_by_status(
+        self,
+        *,
+        profile_id: str,
+        owner_type: str,
+        owner_ref: str,
+    ) -> dict[str, int]:
+        """Return full employee inbox task counts grouped by current task status."""
+
+        candidate_filter = _employee_inbox_candidate_filter(
+            owner_type=owner_type,
+            owner_ref=owner_ref,
+            now_utc=datetime.now(timezone.utc),
+        )
+        statement = (
+            select(Task.status, func.count(Task.id))
+            .where(Task.profile_id == profile_id, candidate_filter)
+            .group_by(Task.status)
+        )
+        rows = (await self._session.execute(statement)).all()
+        return {str(status): int(count) for status, count in rows}
 
     async def list_tasks_by_source(
         self,
@@ -761,6 +941,7 @@ class TaskFlowRepository:
         last_session_profile_id: str | None | object = _UNSET,
         blocked_reason_code: str | None | object = _UNSET,
         blocked_reason_text: str | None | object = _UNSET,
+        current_attempt: int | object = _UNSET,
     ) -> Task | None:
         """Update mutable task fields and return the row when found."""
 
@@ -795,6 +976,8 @@ class TaskFlowRepository:
             row.last_session_id = cast(str | None, last_session_id)
         if last_session_profile_id is not _UNSET:
             row.last_session_profile_id = cast(str | None, last_session_profile_id)
+        if current_attempt is not _UNSET:
+            row.current_attempt = max(0, int(cast(int, current_attempt)))
         should_update_blocked_reason = (
             blocked_reason_code is not _UNSET
             or blocked_reason_text is not _UNSET
@@ -1409,13 +1592,10 @@ class TaskFlowRepository:
         )
         blocked_candidate = and_(
             Task.status == "blocked",
-            or_(
-                and_(Task.ready_at.is_not(None), Task.ready_at <= now_utc),
-                Task.blocked_reason_code == "review_changes_requested",
-            ),
+            and_(Task.ready_at.is_not(None), Task.ready_at <= now_utc),
             or_(
                 Task.blocked_reason_code.is_(None),
-                Task.blocked_reason_code != "dependency_wait",
+                Task.blocked_reason_code.not_in(tuple(_NON_CLAIMABLE_BLOCKER_CODES)),
             ),
         )
         owner_work_candidate = and_(
@@ -1540,13 +1720,12 @@ class TaskFlowRepository:
                             Task.owner_type == candidate_claim_owner_type,
                             Task.owner_ref == candidate_claim_owner_ref,
                             Task.status == "blocked",
-                            or_(
-                                and_(Task.ready_at.is_not(None), Task.ready_at <= now_utc),
-                                Task.blocked_reason_code == "review_changes_requested",
-                            ),
+                            and_(Task.ready_at.is_not(None), Task.ready_at <= now_utc),
                             or_(
                                 Task.blocked_reason_code.is_(None),
-                                Task.blocked_reason_code != "dependency_wait",
+                                Task.blocked_reason_code.not_in(
+                                    tuple(_NON_CLAIMABLE_BLOCKER_CODES)
+                                ),
                             ),
                         ),
                         and_(
@@ -1833,6 +2012,43 @@ class TaskFlowRepository:
                 blocked_reason_text=None,
                 last_error_code=error_code,
                 last_error_text=error_text,
+                finished_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        result = await self._session.execute(statement)
+        await self._session.flush()
+        return _result_succeeded(result)
+
+    async def block_task_claim(
+        self,
+        *,
+        task_id: str,
+        claim_token: str,
+        reason_code: str,
+        reason_text: str,
+    ) -> bool:
+        """Move the currently claimed task to blocked only when the lease token still matches."""
+
+        statement = (
+            update(Task)
+            .where(
+                Task.id == task_id,
+                Task.claim_token == claim_token,
+                Task.status.in_(("claimed", "running")),
+            )
+            .values(
+                status="blocked",
+                claim_token=None,
+                claim_owner_type=None,
+                claim_owner_ref=None,
+                claim_source_status=None,
+                claimed_by=None,
+                lease_until=None,
+                ready_at=None,
+                started_at=None,
+                blocked_reason_code=reason_code,
+                blocked_reason_text=reason_text,
                 finished_at=None,
             )
             .execution_options(synchronize_session=False)

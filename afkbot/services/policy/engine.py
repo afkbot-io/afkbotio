@@ -94,6 +94,11 @@ class PolicyEngine:
         denied = parse_string_set(raw=policy.denied_tools_json, field_name="denied_tools_json")
         return any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in denied)
 
+    def is_tool_allowed_by_profile(self, *, policy: ProfilePolicy, tool_name: str) -> bool:
+        """Return whether one tool is inside the profile allowlist/denylist boundary."""
+
+        return tool_name in self.allowed_tool_names(policy=policy, available_names=(tool_name,))
+
     def ensure_tool_call_allowed(
         self,
         *,
@@ -102,6 +107,7 @@ class PolicyEngine:
         params: dict[str, object],
         approved_tool_names: set[str] | None = None,
         approved_network_hosts: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
     ) -> None:
         """Validate one tool invocation against profile policy fields."""
 
@@ -111,6 +117,7 @@ class PolicyEngine:
             policy=policy,
             tool_name=tool_name,
             approved_tool_names=approved_tool_names,
+            profile_allowlist_exempt_tool_names=profile_allowlist_exempt_tool_names,
         )
         if tool_name == "session.job.run":
             self._enforce_session_job_nested_tools(policy=policy, params=params)
@@ -135,6 +142,7 @@ class PolicyEngine:
         policy: ProfilePolicy,
         tool_name: str,
         approved_tool_names: set[str] | None = None,
+        profile_allowlist_exempt_tool_names: set[str] | None = None,
     ) -> None:
         denied = parse_string_set(raw=policy.denied_tools_json, field_name="denied_tools_json")
         if any(_tool_rule_matches(rule=rule, tool_name=tool_name) for rule in denied):
@@ -144,7 +152,7 @@ class PolicyEngine:
             raw=policy.allowed_tools_json,
             field_name="allowed_tools_json",
         )
-        if approved_tool_names and tool_name in approved_tool_names:
+        if profile_allowlist_exempt_tool_names and tool_name in profile_allowlist_exempt_tool_names:
             return
         if allowed and not any(
             _tool_rule_matches(rule=rule, tool_name=tool_name) for rule in allowed

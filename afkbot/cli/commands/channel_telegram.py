@@ -8,6 +8,7 @@ from typing import TypeVar
 
 import typer
 
+from afkbot.cli.commands.channel_shared import delete_endpoint_owned_bindings
 from afkbot.cli.commands.channel_telegram_commands import (
     TelegramCommandRuntime,
     register_telegram_command_tree,
@@ -135,16 +136,20 @@ def _delete_endpoint(settings: Settings, channel_id: str) -> bool:
 
 
 def _delete_binding(settings: Settings, channel_id: str) -> bool:
-    """Delete one matching binding when it exists."""
+    """Delete all matching bindings owned by one endpoint."""
 
     try:
-        run_channel_binding_service_sync(
+        removed_count = run_channel_binding_service_sync(
             settings,
-            lambda service: service.delete(binding_id=channel_id),
+            lambda service: delete_endpoint_owned_bindings(
+                service=service,
+                endpoint_id=channel_id,
+                transport="telegram",
+            ),
         )
     except ChannelBindingServiceError:
         return False
-    return True
+    return removed_count > 0
 
 
 def _load_profile(settings: Settings, profile_id: str) -> ProfileDetails:

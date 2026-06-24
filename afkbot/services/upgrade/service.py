@@ -113,12 +113,6 @@ class UpgradeService:
                     apply_changes=apply_changes,
                 )
             )
-            steps.append(
-                await self._upgrade_taskflow_team_rosters(
-                    session,
-                    apply_changes=apply_changes,
-                )
-            )
         return UpgradeApplyReport(
             changed=any(item.changed for item in steps),
             steps=tuple(steps),
@@ -412,37 +406,6 @@ class UpgradeService:
                     f"{changed} profile runtime secrets file(s) need canonical rewrite"
                     if changed
                     else "already canonical"
-                )
-            ),
-        )
-
-    async def _upgrade_taskflow_team_rosters(
-        self,
-        session: AsyncSession,
-        *,
-        apply_changes: bool,
-    ) -> UpgradeStepReport:
-        """Remove obsolete Task Flow profile-team rosters from legacy runtimes."""
-
-        del session
-        roster_paths = sorted(
-            self._settings.profiles_dir.glob("*/.system/taskflow_team.json")
-        )
-        changed = len(roster_paths)
-        if apply_changes:
-            for path in roster_paths:
-                path.unlink(missing_ok=True)
-
-        return UpgradeStepReport(
-            name="taskflow_employee_cutover",
-            changed=changed > 0,
-            details=(
-                f"removed {len(roster_paths)} obsolete Task Flow roster file(s)"
-                if apply_changes and changed
-                else (
-                    f"{changed} obsolete Task Flow roster file(s) need removal"
-                    if changed
-                    else "no obsolete Task Flow profile-team rosters"
                 )
             ),
         )

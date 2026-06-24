@@ -27,33 +27,32 @@ def _cleanup_cached_services() -> None:
     asyncio.run(reset_profile_services_async())
 
 
-async def test_runtime_target_allows_internal_transport_fallback_without_binding_match(
+async def test_runtime_target_requires_binding_match_for_api_transport_by_default(
     tmp_path,
 ) -> None:
-    """Internal transports should preserve fallback behavior when no binding matches."""
+    """API transports should fail closed by default when no binding matches."""
 
     settings = Settings(
         root_dir=tmp_path, db_url=f"sqlite+aiosqlite:///{tmp_path / 'runtime_target.db'}"
     )
 
-    target = await resolve_runtime_target(
-        settings=settings,
-        explicit_profile_id="default",
-        explicit_session_id="api-session",
-        resolve_binding=True,
-        transport="api",
-        default_profile_id="default",
-        default_session_id="api-session",
-    )
+    with pytest.raises(ChannelBindingServiceError) as exc_info:
+        await resolve_runtime_target(
+            settings=settings,
+            explicit_profile_id="default",
+            explicit_session_id="api-session",
+            resolve_binding=True,
+            transport="api",
+            default_profile_id="default",
+            default_session_id="api-session",
+        )
 
-    assert target.profile_id == "default"
-    assert target.session_id == "api-session"
-    assert target.routing is None
+    assert exc_info.value.error_code == "channel_binding_no_match"
 
     diagnostics = await get_channel_binding_service(settings).diagnostics()
     assert diagnostics.total == 1
-    assert diagnostics.fallback_used == 1
-    assert diagnostics.strict_no_match == 0
+    assert diagnostics.fallback_used == 0
+    assert diagnostics.strict_no_match == 1
 
 
 async def test_runtime_target_requires_binding_match_for_external_transport_by_default(
@@ -126,7 +125,7 @@ async def test_runtime_target_normalizes_transport_case_for_binding_match(tmp_pa
         )
 
         assert target.profile_id == "default"
-        assert target.session_id == "profile:default:chat:42:thread:9001"
+        assert target.session_id == "profile:default:channel:telegram:chat:42:thread:9001"
         assert target.routing is not None
 
         diagnostics = await get_channel_binding_service(settings).diagnostics()

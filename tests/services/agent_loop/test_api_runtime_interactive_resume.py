@@ -20,7 +20,10 @@ from afkbot.services.agent_loop.api_runtime import (
     resume_chat_interaction,
 )
 from afkbot.services.agent_loop.loop_sanitizer import sanitize_value
-from afkbot.services.agent_loop.pending_envelopes import PROFILE_SELECTION_QUESTION_KIND
+from afkbot.services.agent_loop.pending_envelopes import (
+    PROFILE_SELECTION_QUESTION_KIND,
+    TOOL_NOT_ALLOWED_QUESTION_KIND,
+)
 from afkbot.services.agent_loop.safety_policy import CONFIRM_ACK_PARAM, CONFIRM_QID_PARAM
 from afkbot.services.agent_loop.turn_finalizer import TurnFinalizer
 from afkbot.services.session_transcripts import DatabaseChatTranscriptStore
@@ -134,6 +137,63 @@ async def test_resume_chat_interaction_profile_selection_applies_profile_name(mo
     assert isinstance(planned_tool_calls, list)
     assert planned_tool_calls[0].call_id == "call_app_run_1"
     assert planned_tool_calls[0].params["profile_name"] == "work"
+
+
+async def test_resume_chat_interaction_tool_access_approval_adds_runtime_approval(
+    monkeypatch,
+) -> None:
+    """API approval for tool_not_allowed_in_turn should unblock the tool surface like CLI."""
+
+    captured: dict[str, object] = {}
+
+    async def _fake_run_chat_turn(**kwargs: object) -> TurnResult:
+        captured.update(kwargs)
+        return TurnResult(
+            run_id=2,
+            session_id="api-s",
+            profile_id="default",
+            envelope=ActionEnvelope(action="finalize", message="done"),
+        )
+
+    envelope = ActionEnvelope(
+        action="ask_question",
+        message="tool access",
+        question_id="tool_not_allowed-1",
+        spec_patch={
+            "question_kind": TOOL_NOT_ALLOWED_QUESTION_KIND,
+            "tool_name": "bash.exec",
+            "tool_params": {"cmd": "printf ok"},
+            "tool_call_id": "call_bash_1",
+            "tool_not_allowed_reason": "Tool not available in current turn: bash.exec",
+            "error_code": TOOL_NOT_ALLOWED_QUESTION_KIND,
+        },
+    )
+
+    async def _resolve_trusted(**_: object) -> ActionEnvelope:
+        return envelope
+
+    monkeypatch.setattr("afkbot.services.agent_loop.api_runtime.run_chat_turn", _fake_run_chat_turn)
+    monkeypatch.setattr(
+        "afkbot.services.agent_loop.api_runtime.resolve_pending_question_envelope",
+        _resolve_trusted,
+    )
+
+    result = await resume_chat_interaction(
+        envelope=envelope,
+        profile_id="default",
+        session_id="api-s",
+        approved=True,
+    )
+
+    assert result.envelope.action == "finalize"
+    assert captured["message"] == "tool_access_resume:bash.exec"
+    planned_tool_calls = captured["planned_tool_calls"]
+    assert isinstance(planned_tool_calls, list)
+    assert planned_tool_calls[0].name == "bash.exec"
+    assert CONFIRM_ACK_PARAM not in planned_tool_calls[0].params
+    context_overrides = captured["context_overrides"]
+    assert context_overrides is not None
+    assert context_overrides.approved_tool_names == ("bash.exec",)
 
 
 async def test_resume_chat_interaction_denied_confirmation_returns_finalize(monkeypatch) -> None:

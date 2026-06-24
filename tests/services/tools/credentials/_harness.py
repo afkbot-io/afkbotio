@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from afkbot.db.bootstrap import create_schema
 from afkbot.db.engine import create_engine
 from afkbot.db.session import create_session_factory, session_scope
+from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
 from afkbot.services.credentials import reset_credentials_services_async
 from afkbot.services.tools.base import ToolContext
@@ -42,6 +44,9 @@ async def prepare_credentials_tools(
 
     async with session_scope(factory) as session:
         await ProfileRepository(session).get_or_create_default("default")
+        policy = await ProfilePolicyRepository(session).get_or_create_default("default")
+        policy.allowed_directories_json = json.dumps(["/"], ensure_ascii=True)
+        policy.shell_sandbox_mode = "disabled"
 
     plugin_names = tuple(dict.fromkeys((*settings.enabled_tool_plugins, *extra_plugins)))
     return settings, engine, factory, ToolRegistry.from_plugins(plugin_names, settings=settings)

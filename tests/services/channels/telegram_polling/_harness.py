@@ -274,7 +274,8 @@ def endpoint(
         account_id=account_id,
         enabled=enabled,
         group_trigger_mode=group_trigger_mode,
-        access_policy=access_policy or ChannelAccessPolicy(),
+        access_policy=access_policy
+        or ChannelAccessPolicy(private_policy="open", group_policy="open"),
         ingress_batch=ingress_batch or ChannelIngressBatchConfig(),
         reply_humanization=reply_humanization or ChannelReplyHumanizationConfig(),
     )

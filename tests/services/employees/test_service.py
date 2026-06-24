@@ -198,6 +198,57 @@ async def test_employee_org_chart_derives_reports_from_manager_ids(tmp_path: Pat
     assert chart.validation.valid is True
 
 
+async def test_employee_service_blocks_delete_when_org_chart_references_employee(
+    tmp_path: Path,
+) -> None:
+    """Deleting an employee must not orphan manager/report/delegate relationships."""
+
+    service = EmployeeService(Settings(root_dir=tmp_path))
+    await service.upsert_employee(
+        profile_id="default",
+        employee_id="cto",
+        content="\n".join(
+            [
+                "---",
+                "id: cto",
+                "name: CTO",
+                "title: CTO",
+                "role: cto",
+                "status: active",
+                "reports:",
+                "  - backend-lead",
+                "---",
+                "# CTO",
+            ]
+        ),
+    )
+    await service.upsert_employee(
+        profile_id="default",
+        employee_id="backend-lead",
+        content="\n".join(
+            [
+                "---",
+                "id: backend-lead",
+                "name: Backend Lead",
+                "title: Team Lead Backend",
+                "role: team_lead",
+                "status: active",
+                "manager_id: cto",
+                "---",
+                "# Backend Lead",
+            ]
+        ),
+    )
+
+    with pytest.raises(EmployeeServiceError) as exc_info:
+        await service.delete_employee(profile_id="default", employee_id="cto")
+
+    assert exc_info.value.error_code == "employee_in_use"
+    assert "manager_of:backend-lead" in exc_info.value.reason
+    assert "report:backend-lead" in exc_info.value.reason
+    assert (tmp_path / "profiles" / "default" / "employees" / "cto.md").is_file()
+
+
 async def test_employee_service_hides_out_of_scope_symlink(tmp_path: Path) -> None:
     """Employee discovery must not follow symlinks outside a profile employee directory."""
 

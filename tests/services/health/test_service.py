@@ -405,6 +405,7 @@ async def test_channel_routing_diagnostics_report_recent_outcomes(tmp_path: Path
     settings = Settings(
         root_dir=tmp_path,
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'routing_health.db'}",
+        channel_routing_fallback_transports=("api", "automation", "cli"),
     )
 
     await resolve_runtime_target(
@@ -438,7 +439,7 @@ async def test_channel_health_diagnostics_report_telegram_polling_status(
     try:
         await bindings.put(
             ChannelBindingRule(
-                binding_id="telegram-main",
+                binding_id="support-bot",
                 transport="telegram",
                 account_id="telegram-bot",
                 profile_id="default",
@@ -500,7 +501,7 @@ async def test_channel_health_diagnostics_report_telethon_status(
     try:
         await bindings.put(
             ChannelBindingRule(
-                binding_id="telethon-main",
+                binding_id="personal-user",
                 transport="telegram_user",
                 account_id="tg-user",
                 profile_id="default",

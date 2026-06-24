@@ -223,17 +223,17 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 claim_token="w-6",
                 session_id="session-6",
             )
-            assert first_mark is True
+            assert first_mark == "accepted"
             assert started is True
-            assert duplicate_mark is False
-            assert parallel_other_mark is False
+            assert duplicate_mark == "duplicate"
+            assert parallel_other_mark == "busy"
             assert wrong_complete is False
             assert released is True
-            assert retried_mark is True
+            assert retried_mark == "accepted"
             assert completed is True
-            assert second_mark is True
+            assert second_mark == "accepted"
             assert completed_second is True
-            assert replay_first is False
+            assert replay_first == "duplicate"
             webhook_row_after = await repo.get_by_id(
                 profile_id="default",
                 automation_id=webhook_automation.id,
@@ -320,7 +320,7 @@ async def test_repository_webhook_lookup_and_due_cron(tmp_path: Path) -> None:
                 session_id="deleted-session",
             )
             assert deleted_cron_claim is False
-            assert deleted_webhook_claim is False
+            assert deleted_webhook_claim == "missing"
     finally:
         await engine.dispose()
 
@@ -358,7 +358,7 @@ async def test_repository_update_automation_and_trigger_rows(tmp_path: Path) -> 
                 claim_token="repo-claim",
                 session_id="repo-session",
             )
-            assert claimed is True
+            assert claimed == "accepted"
             started = await repo.mark_webhook_started(
                 automation_id=webhook_automation.id,
                 event_hash=event_hash,

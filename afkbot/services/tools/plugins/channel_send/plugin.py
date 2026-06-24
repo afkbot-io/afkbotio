@@ -257,6 +257,21 @@ class ChannelSendTool(ToolBase):
                     "active_endpoint_id": active_context.endpoint_id,
                 },
             )
+        target_mismatch = _active_channel_target_mismatch(
+            payload=payload,
+            active_context=active_context,
+        )
+        if target_mismatch is not None:
+            field_name, requested_value, active_value = target_mismatch
+            return ToolResult.error(
+                error_code="channel_send_target_not_active",
+                reason="channel.send may only target the active inbound channel conversation in this turn.",
+                metadata={
+                    "field": field_name,
+                    "requested": requested_value,
+                    "active": active_value or "",
+                },
+            )
         payload.transport = payload.transport or active_context.transport
         payload.endpoint_id = payload.endpoint_id or active_context.endpoint_id
         payload.account_id = payload.account_id or active_context.account_id
@@ -542,6 +557,28 @@ def _is_plain_text_message(message: ChannelOutboundMessage) -> bool:
         and not message.attachments
         and not message.stream_draft
     )
+
+
+def _active_channel_target_mismatch(
+    *,
+    payload: ChannelSendParams,
+    active_context: ActiveChannelContext,
+) -> tuple[str, str, str | None] | None:
+    checks: tuple[tuple[str, str | None, str | None], ...] = (
+        ("transport", payload.transport, active_context.transport),
+        ("account_id", payload.account_id, active_context.account_id),
+        ("peer_id", payload.peer_id, active_context.peer_id),
+        ("address", payload.address, active_context.peer_id),
+        ("thread_id", payload.thread_id, active_context.thread_id),
+        ("user_id", payload.user_id, active_context.user_id),
+    )
+    for field_name, requested_value, active_value in checks:
+        requested = (requested_value or "").strip()
+        if requested and requested != (active_value or "").strip():
+            return field_name, requested, active_value
+    if payload.binding_id is not None:
+        return "binding_id", payload.binding_id, None
+    return None
 
 
 def _binding_matches_endpoint_id(

@@ -152,7 +152,8 @@ def _endpoint(
         trigger_mode=trigger_mode,
         trigger_keywords=trigger_keywords,
         ingress_batch=ingress_batch or ChannelIngressBatchConfig(),
-        access_policy=access_policy or ChannelAccessPolicy(),
+        access_policy=access_policy
+        or ChannelAccessPolicy(private_policy="open", group_policy="open"),
     )
 
 

@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from afkbot.db.session import session_scope
 from afkbot.repositories.profile_policy_repo import ProfilePolicyRepository
 from afkbot.repositories.profile_repo import ProfileRepository
-from afkbot.services.automations import AutomationsServiceError
+from afkbot.services.automations import AutomationsService, AutomationsServiceError
 from afkbot.services.automations.graph import executor as graph_executor_module
 from afkbot.services.automations.graph.contracts import (
     AutomationGraphNodeSpec,
@@ -26,6 +27,8 @@ from afkbot.services.subagents.contracts import (
 )
 from afkbot.services.subagents.runner import SubagentExecutionResult, SubagentRunner
 from afkbot.services.subagents.service import SubagentService
+from afkbot.services.task_flow import TaskFlowService
+from afkbot.services.task_flow.human_ref import resolve_local_human_ref
 from afkbot.services.tools.base import ToolContext, ToolResult
 from afkbot.settings import Settings
 from tests.services.automations._harness import FakeLoop, prepare_service
@@ -43,13 +46,21 @@ def _prepare_profile_subagent(root_dir: Path, *, profile_id: str, subagent_name:
     path.write_text(f"# {subagent_name}", encoding="utf-8")
 
 
-def _write_team_runtime_config(
+async def _create_task_flow_for_graph(
+    service: AutomationsService,
+    factory: async_sessionmaker[AsyncSession],
     *,
-    settings: Settings,
-    profile_id: str,
-    team_profile_ids: tuple[str, ...],
-) -> None:
-    _ = (settings, profile_id, team_profile_ids)
+    title: str = "Graph task flow",
+) -> str:
+    task_flow = TaskFlowService(factory, settings=service._settings)
+    flow = await task_flow.create_flow(
+        profile_id="default",
+        title=title,
+        description="Project flow used by automation graph task.create tests.",
+        created_by_type="human",
+        created_by_ref=resolve_local_human_ref(service._settings),
+    )
+    return flow.id
 
 
 class _GraphPersistingRunner(SubagentRunner):
@@ -1244,8 +1255,9 @@ async def test_graph_executor_code_node_enforces_stdio_budget(tmp_path: Path) ->
 async def test_graph_executor_task_create_node_creates_task(tmp_path: Path) -> None:
     """Graph runtime should create Task Flow items through explicit task nodes."""
 
-    engine, _, service = await prepare_service(tmp_path)
+    engine, factory, service = await prepare_service(tmp_path)
     try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
         created = await service.create_webhook(
             profile_id="default",
             name="graph-task-create",
@@ -1272,6 +1284,7 @@ async def test_graph_executor_task_create_node_creates_task(tmp_path: Path) -> N
                         config={
                             "title": "Process webhook",
                             "description_path": "default.event_id",
+                            "flow_id": flow_id,
                             "labels": ["automation", "graph"],
                         },
                     ),
@@ -1297,7 +1310,7 @@ async def test_graph_executor_task_create_node_creates_task(tmp_path: Path) -> N
         task_payload = create_task.output["default"]["task"]
         assert task_payload["title"] == "Process webhook"
         assert task_payload["description"] == "evt-task-create"
-        assert set(task_payload["labels"]) == {"automation", "graph"}
+        assert set(task_payload["labels"]) == {"automation", "graph", "manager-intake"}
         assert create_task.effects[0].effect_kind == "task.create"
         assert create_task.effects[0].metadata["task_id"] == task_payload["id"]
     finally:
@@ -1312,14 +1325,9 @@ async def test_graph_executor_task_create_node_supports_employee_assignment(
     _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
     engine, factory, service = await prepare_service(tmp_path)
     try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
-        _write_team_runtime_config(
-            settings=service._settings,
-            profile_id="default",
-            team_profile_ids=("analyst",),
-        )
-
         created = await service.create_webhook(
             profile_id="default",
             name="graph-task-create-subagent",
@@ -1346,6 +1354,7 @@ async def test_graph_executor_task_create_node_supports_employee_assignment(
                         config={
                             "title": "Process researcher webhook",
                             "description_path": "default.event_id",
+                            "flow_id": flow_id,
                             "owner_type": "employee",
                             "owner_ref": "researcher",
                             "labels": ["automation", "subagent"],
@@ -1388,14 +1397,9 @@ async def test_graph_executor_task_create_node_supports_structured_employee_assi
     _prepare_profile_subagent(tmp_path, profile_id="analyst", subagent_name="researcher")
     engine, factory, service = await prepare_service(tmp_path)
     try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
         async with session_scope(factory) as session:
             await ProfileRepository(session).get_or_create_default("analyst")
-        _write_team_runtime_config(
-            settings=service._settings,
-            profile_id="default",
-            team_profile_ids=("analyst",),
-        )
-
         created = await service.create_webhook(
             profile_id="default",
             name="graph-task-create-structured-subagent",
@@ -1422,6 +1426,7 @@ async def test_graph_executor_task_create_node_supports_structured_employee_assi
                         config={
                             "title": "Process structured researcher webhook",
                             "description_path": "default.event_id",
+                            "flow_id": flow_id,
                             "owner_type": "employee",
                             "owner_ref": "researcher",
                             "labels": ["automation", "subagent"],
@@ -1465,8 +1470,9 @@ async def test_graph_executor_task_create_uses_automation_principal_when_public_
         root_dir=tmp_path,
         taskflow_public_principal_required=True,
     )
-    engine, _, service = await prepare_service(tmp_path, settings_override=settings)
+    engine, factory, service = await prepare_service(tmp_path, settings_override=settings)
     try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
         created = await service.create_webhook(
             profile_id="default",
             name="graph-task-create-strict-session",
@@ -1494,6 +1500,7 @@ async def test_graph_executor_task_create_uses_automation_principal_when_public_
                         config={
                             "title": "Process webhook",
                             "description_path": "default.event_id",
+                            "flow_id": flow_id,
                         },
                     ),
                 ],
@@ -1744,21 +1751,65 @@ async def test_graph_executor_action_tool_run_respects_profile_policy(
         await engine.dispose()
 
 
-async def test_graph_executor_action_tool_run_supports_task_tools_under_automation_principal(
+async def test_graph_executor_action_tool_run_rejects_review_finalization_tools(
     tmp_path: Path,
 ) -> None:
-    """Generic tool nodes should keep task tools working from strict webhook/cron graph runs."""
+    """Graph automations may route review work but must not complete review decisions."""
 
-    settings = Settings(
-        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
-        root_dir=tmp_path,
-        taskflow_public_principal_required=True,
-    )
-    engine, _, service = await prepare_service(tmp_path, settings_override=settings)
+    engine, _, service = await prepare_service(tmp_path)
     try:
         created = await service.create_webhook(
             profile_id="default",
-            name="graph-tool-run-task-comment",
+            name="graph-tool-run-review-finalization",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.apply_graph(
+                profile_id="default",
+                automation_id=created.id,
+                spec=AutomationGraphSpec(
+                    name="tool-run-review-finalization-flow",
+                    nodes=[
+                        AutomationGraphNodeSpec(
+                            key="trigger",
+                            name="Trigger",
+                            node_kind="builtin",
+                            node_type="trigger.input",
+                        ),
+                        AutomationGraphNodeSpec(
+                            key="call_tool",
+                            name="Call Tool",
+                            node_kind="action",
+                            node_type="tool.run",
+                            config={
+                                "tool_name": "task.review.approve",
+                                "params": {"task_id": "task_demo"},
+                            },
+                        ),
+                    ],
+                    edges=[{"source_key": "trigger", "target_key": "call_tool"}],
+                ),
+            )
+
+        assert exc_info.value.error_code == "invalid_graph_spec"
+        assert "task.review.approve" in exc_info.value.reason
+    finally:
+        await engine.dispose()
+
+
+async def test_graph_executor_action_tool_run_allows_task_context_tools(
+    tmp_path: Path,
+) -> None:
+    """Graph automations should be able to inspect Task Flow context without review finalization."""
+
+    engine, factory, service = await prepare_service(tmp_path)
+    try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-tool-run-task-context",
             prompt="fallback prompt",
             execution_mode="graph",
         )
@@ -1766,7 +1817,7 @@ async def test_graph_executor_action_tool_run_supports_task_tools_under_automati
             profile_id="default",
             automation_id=created.id,
             spec=AutomationGraphSpec(
-                name="tool-run-task-comment-flow",
+                name="tool-run-task-context-flow",
                 nodes=[
                     AutomationGraphNodeSpec(
                         key="trigger",
@@ -1780,28 +1831,27 @@ async def test_graph_executor_action_tool_run_supports_task_tools_under_automati
                         node_kind="task",
                         node_type="task.create",
                         config={
-                            "title": "Process webhook",
+                            "title": "Inspect project context",
                             "description_path": "default.event_id",
+                            "flow_id": flow_id,
                         },
                     ),
                     AutomationGraphNodeSpec(
-                        key="add_comment",
-                        name="Add Comment",
+                        key="load_context",
+                        name="Load Context",
                         node_kind="action",
                         node_type="tool.run",
                         config={
-                            "tool_name": "task.comment.add",
+                            "tool_name": "task.context.get",
                             "params": {
                                 "task_id": {"$path": "default.task.id"},
-                                "message": "Automation note",
-                                "comment_type": "note",
                             },
                         },
                     ),
                 ],
                 edges=[
                     {"source_key": "trigger", "target_key": "create_task"},
-                    {"source_key": "create_task", "target_key": "add_comment"},
+                    {"source_key": "create_task", "target_key": "load_context"},
                 ],
             ),
         )
@@ -1811,102 +1861,149 @@ async def test_graph_executor_action_tool_run_supports_task_tools_under_automati
         await service.trigger_webhook(
             profile_id="default",
             token=created.webhook.webhook_token,
-            payload={"event_id": "evt-tool-run-task-comment"},
+            payload={"event_id": "evt-tool-run-task-context"},
         )
 
         run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
         trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
-        create_task = next(item for item in trace.nodes if item.node_key == "create_task")
-        add_comment = next(item for item in trace.nodes if item.node_key == "add_comment")
+        load_context = next(item for item in trace.nodes if item.node_key == "load_context")
         assert run.status == "succeeded"
-        assert create_task.status == "succeeded"
-        assert add_comment.status == "succeeded"
-        assert create_task.output is not None
-        assert add_comment.output is not None
-        task_payload = create_task.output["default"]["task"]
-        comment_payload = add_comment.output["default"]["task_comment"]
-        assert task_payload["created_by_type"] == "automation"
-        assert task_payload["created_by_ref"] == f"automation:default:{created.id}"
-        assert comment_payload["actor_type"] == "automation"
-        assert comment_payload["actor_ref"] == f"automation:default:{created.id}"
-        assert comment_payload["task_id"] == task_payload["id"]
+        assert load_context.status == "succeeded"
+        assert load_context.effects[0].safety_class == "safe"
+        assert load_context.output is not None
+        assert "task_context" in load_context.output["default"]
     finally:
         await engine.dispose()
 
 
-async def test_graph_executor_action_tool_run_task_create_ignores_null_session_binding(
+async def test_graph_executor_action_tool_run_rejects_task_mutation_tools(
     tmp_path: Path,
 ) -> None:
-    """Generic task.create tool nodes should tolerate optional null session fields."""
+    """Automation graph tool.run should not mutate Task Flow items outside employees."""
 
     settings = Settings(
         db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
         root_dir=tmp_path,
         taskflow_public_principal_required=True,
     )
-    engine, _, service = await prepare_service(tmp_path, settings_override=settings)
+    engine, factory, service = await prepare_service(tmp_path, settings_override=settings)
     try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-tool-run-task-comment",
+            prompt="fallback prompt",
+            execution_mode="graph",
+        )
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.apply_graph(
+                profile_id="default",
+                automation_id=created.id,
+                spec=AutomationGraphSpec(
+                    name="tool-run-task-comment-flow",
+                    nodes=[
+                        AutomationGraphNodeSpec(
+                            key="trigger",
+                            name="Trigger",
+                            node_kind="builtin",
+                            node_type="trigger.input",
+                        ),
+                        AutomationGraphNodeSpec(
+                            key="create_task",
+                            name="Create Task",
+                            node_kind="task",
+                            node_type="task.create",
+                            config={
+                                "title": "Process webhook",
+                                "description_path": "default.event_id",
+                                "flow_id": flow_id,
+                            },
+                        ),
+                        AutomationGraphNodeSpec(
+                            key="add_comment",
+                            name="Add Comment",
+                            node_kind="action",
+                            node_type="tool.run",
+                            config={
+                                "tool_name": "task.comment.add",
+                                "params": {
+                                    "task_id": {"$path": "default.task.id"},
+                                    "message": "Automation note",
+                                    "comment_type": "note",
+                                },
+                            },
+                        ),
+                    ],
+                    edges=[
+                        {"source_key": "trigger", "target_key": "create_task"},
+                        {"source_key": "create_task", "target_key": "add_comment"},
+                    ],
+                ),
+            )
+
+        assert exc_info.value.error_code == "invalid_graph_spec"
+        assert "task.comment.add" in exc_info.value.reason
+    finally:
+        await engine.dispose()
+
+
+async def test_graph_executor_action_tool_run_rejects_task_create_tool(
+    tmp_path: Path,
+) -> None:
+    """Generic tool.run must not bypass the dedicated idempotent task.create node."""
+
+    settings = Settings(
+        db_url=f"sqlite+aiosqlite:///{tmp_path / 'automations_service.db'}",
+        root_dir=tmp_path,
+        taskflow_public_principal_required=True,
+    )
+    engine, factory, service = await prepare_service(tmp_path, settings_override=settings)
+    try:
+        flow_id = await _create_task_flow_for_graph(service, factory)
         created = await service.create_webhook(
             profile_id="default",
             name="graph-tool-run-task-create-null-session",
             prompt="fallback prompt",
             execution_mode="graph",
         )
-        await service.apply_graph(
-            profile_id="default",
-            automation_id=created.id,
-            spec=AutomationGraphSpec(
-                name="tool-run-task-create-null-session-flow",
-                nodes=[
-                    AutomationGraphNodeSpec(
-                        key="trigger",
-                        name="Trigger",
-                        node_kind="builtin",
-                        node_type="trigger.input",
-                    ),
-                    AutomationGraphNodeSpec(
-                        key="call_tool",
-                        name="Call Tool",
-                        node_kind="action",
-                        node_type="tool.run",
-                        config={
-                            "tool_name": "task.create",
-                            "params": {
-                                "title": "Webhook MR review",
-                                "description": "Create review task from webhook",
-                                "owner_type": "employee",
-                                "owner_ref": "default",
-                                "session_id": None,
-                                "session_profile_id": None,
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.apply_graph(
+                profile_id="default",
+                automation_id=created.id,
+                spec=AutomationGraphSpec(
+                    name="tool-run-task-create-null-session-flow",
+                    nodes=[
+                        AutomationGraphNodeSpec(
+                            key="trigger",
+                            name="Trigger",
+                            node_kind="builtin",
+                            node_type="trigger.input",
+                        ),
+                        AutomationGraphNodeSpec(
+                            key="call_tool",
+                            name="Call Tool",
+                            node_kind="action",
+                            node_type="tool.run",
+                            config={
+                                "tool_name": "task.create",
+                                "params": {
+                                    "title": "Webhook MR review",
+                                    "description": "Create review task from webhook",
+                                    "flow_id": flow_id,
+                                    "owner_type": "employee",
+                                    "owner_ref": "default",
+                                    "session_id": None,
+                                    "session_profile_id": None,
+                                },
                             },
-                        },
-                    ),
-                ],
-                edges=[{"source_key": "trigger", "target_key": "call_tool"}],
-            ),
-        )
+                        ),
+                    ],
+                    edges=[{"source_key": "trigger", "target_key": "call_tool"}],
+                ),
+            )
 
-        assert created.webhook is not None
-        assert created.webhook.webhook_token is not None
-        await service.trigger_webhook(
-            profile_id="default",
-            token=created.webhook.webhook_token,
-            payload={"event_id": "evt-tool-run-task-create-null-session"},
-        )
-
-        run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
-        trace = await service.get_graph_trace(profile_id="default", run_id=run.id)
-        call_tool = next(item for item in trace.nodes if item.node_key == "call_tool")
-        assert run.status == "succeeded"
-        assert call_tool.status == "succeeded"
-        assert call_tool.output is not None
-        task_payload = call_tool.output["default"]["task"]
-        assert task_payload["created_by_type"] == "automation"
-        assert task_payload["created_by_ref"] == f"automation:default:{created.id}"
-        assert task_payload["owner_type"] == "employee"
-        assert task_payload["owner_ref"] == "default"
-        assert task_payload["last_session_id"] is None
-        assert task_payload["last_session_profile_id"] is None
+        assert exc_info.value.error_code == "invalid_graph_spec"
+        assert "task.create" in exc_info.value.reason
     finally:
         await engine.dispose()
 
@@ -2368,7 +2465,7 @@ async def test_graph_executor_agent_timeout_cancels_child_task(tmp_path: Path) -
                 token=created.webhook.webhook_token,
                 payload={"event_id": "evt-agent-timeout"},
             )
-        assert exc_info.value.error_code == "automation_graph_failed"
+        assert exc_info.value.error_code == "automation_graph_failed_after_unsafe_effect"
 
         assert len(fake_service.cancel_calls) == 1
         assert fake_service.cancel_calls[0]["task_id"] == "task-timeout"
@@ -2675,7 +2772,7 @@ async def test_graph_executor_resume_with_ai_if_safe_skips_after_unsafe_side_eff
                 payload={"event_id": "evt-unsafe"},
                 session_runner_factory=session_runner_factory,
             )
-        assert exc_info.value.error_code == "automation_graph_failed"
+        assert exc_info.value.error_code == "automation_graph_failed_after_unsafe_effect"
         assert len(fake_loop.calls) == 1
 
         run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
@@ -2743,7 +2840,7 @@ async def test_graph_executor_resume_with_ai_if_safe_skips_after_committed_agent
                 payload={"event_id": "evt-agent-unsafe"},
                 session_runner_factory=session_runner_factory,
             )
-        assert exc_info.value.error_code == "automation_graph_failed"
+        assert exc_info.value.error_code == "automation_graph_failed_after_unsafe_effect"
         assert len(fake_loop.calls) == 0
 
         run = (await service.list_graph_runs(profile_id="default", automation_id=created.id))[0]
@@ -3091,5 +3188,114 @@ async def test_graph_executor_marks_fallback_failure_terminal(tmp_path: Path) ->
         assert run.status == "fallback_failed"
         assert run.fallback_status == "failed"
         assert run.error_code == "automation_graph_fallback_failed"
+    finally:
+        await engine.dispose()
+
+
+async def test_graph_executor_unsafe_fallback_failure_deduplicates_webhook_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsafe graph side effects must not be replayed after fallback failure."""
+
+    failing_loop = _FailingFallbackLoop()
+    app_calls: list[dict[str, object]] = []
+
+    class _FakeAppRunTool:
+        def parse_params(
+            self,
+            raw_params: dict[str, object],
+            *,
+            default_timeout_sec: int,
+            max_timeout_sec: int,
+        ) -> dict[str, object]:
+            _ = default_timeout_sec, max_timeout_sec
+            return raw_params
+
+        async def execute(self, ctx, params: dict[str, object]) -> ToolResult:
+            _ = ctx
+            app_calls.append(dict(params))
+            return ToolResult(ok=True, payload={"request_id": f"req-{len(app_calls)}"})
+
+    monkeypatch.setattr(
+        graph_executor_module,
+        "_build_app_run_tool",
+        lambda _settings: _FakeAppRunTool(),
+    )
+
+    def session_runner_factory(_session_factory, _profile_id: str) -> _FailingFallbackLoop:
+        return failing_loop
+
+    engine, _, service = await prepare_service(tmp_path)
+    try:
+        created = await service.create_webhook(
+            profile_id="default",
+            name="graph-unsafe-fallback-terminal",
+            prompt="fallback prompt",
+            execution_mode="graph",
+            graph_fallback_mode="resume_with_ai",
+        )
+        await service.apply_graph(
+            profile_id="default",
+            automation_id=created.id,
+            spec=AutomationGraphSpec(
+                name="unsafe-fallback-terminal",
+                nodes=[
+                    AutomationGraphNodeSpec(
+                        key="trigger",
+                        name="Trigger",
+                        node_kind="builtin",
+                        node_type="trigger.input",
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="call_app",
+                        name="Call App",
+                        node_kind="action",
+                        node_type="app.run",
+                        config={"app_name": "demo", "action": "send", "params_path": "default"},
+                    ),
+                    AutomationGraphNodeSpec(
+                        key="explode",
+                        name="Explode",
+                        node_kind="builtin",
+                        node_type="error.raise",
+                        config={"reason": "boom"},
+                    ),
+                ],
+                edges=[
+                    {"source_key": "trigger", "target_key": "call_app"},
+                    {"source_key": "call_app", "target_key": "explode"},
+                ],
+            ),
+        )
+
+        assert created.webhook is not None
+        assert created.webhook.webhook_token is not None
+        payload = {"event_id": "evt-unsafe-fallback-terminal"}
+        with pytest.raises(AutomationsServiceError) as exc_info:
+            await service.trigger_webhook(
+                profile_id="default",
+                token=created.webhook.webhook_token,
+                payload=payload,
+                session_runner_factory=session_runner_factory,
+            )
+        assert exc_info.value.error_code == "automation_graph_fallback_failed_after_unsafe_effect"
+        assert len(app_calls) == 1
+        assert len(failing_loop.calls) == 1
+
+        retry = await service.trigger_webhook(
+            profile_id="default",
+            token=created.webhook.webhook_token,
+            payload=payload,
+            session_runner_factory=session_runner_factory,
+        )
+        assert retry.deduplicated is True
+        assert len(app_calls) == 1
+        assert len(failing_loop.calls) == 1
+
+        runs = await service.list_graph_runs(profile_id="default", automation_id=created.id)
+        assert len(runs) == 1
+        assert runs[0].status == "fallback_failed"
+        assert runs[0].error_code == "automation_graph_fallback_failed_after_unsafe_effect"
     finally:
         await engine.dispose()

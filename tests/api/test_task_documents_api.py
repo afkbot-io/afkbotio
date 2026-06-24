@@ -62,7 +62,7 @@ def _revision(**overrides: object) -> TaskDocumentRevisionMetadata:
 def test_task_documents_route_lists_documents_with_filters(monkeypatch: MonkeyPatch) -> None:
     """GET /v1/task-documents should expose searchable profile-scoped document metadata."""
 
-    patch_valid_chat_access_token(monkeypatch)
+    patch_valid_chat_access_token(monkeypatch, allow_operator_workspace=True)
     calls: dict[str, object] = {}
 
     class _Service:
@@ -97,7 +97,11 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
 
     monkeypatch.setenv("AFKBOT_CHAT_HUMAN_OWNER_REF", "web-user")
     get_settings.cache_clear()
-    patch_valid_chat_access_token(monkeypatch, session_id="ui-session")
+    patch_valid_chat_access_token(
+        monkeypatch,
+        session_id="ui-session",
+        allow_operator_workspace=True,
+    )
     calls: dict[str, object] = {}
 
     class _Service:
@@ -144,17 +148,17 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
     assert calls["get"] == {"document_id": "doc_1", "profile_id": "default"}
     assert calls["revisions"] == {"document_id": "doc_1", "limit": 3, "profile_id": "default"}
     assert calls["confirm"] == {
-        "actor_ref": "web-user",
+        "actor_ref": "connect:default:ui-session",
         "actor_session_id": "ui-session",
-        "actor_type": "human",
+        "actor_type": "operator",
         "document_id": "doc_1",
         "expected_revision": 2,
         "profile_id": "default",
     }
     assert calls["delete"] == {
-        "actor_ref": "web-user",
+        "actor_ref": "connect:default:ui-session",
         "actor_session_id": "ui-session",
-        "actor_type": "human",
+        "actor_type": "operator",
         "document_id": "doc_1",
         "expected_revision": 2,
         "profile_id": "default",
@@ -162,10 +166,90 @@ def test_task_documents_route_reads_detail_revisions_and_confirms(monkeypatch: M
     get_settings.cache_clear()
 
 
+def test_task_documents_routes_require_operator_scope(monkeypatch: MonkeyPatch) -> None:
+    """Ordinary chat-scoped connect tokens must not access the operator document workspace."""
+
+    patch_valid_chat_access_token(monkeypatch, allow_diagnostics=False)
+
+    class _Service:
+        async def list_documents(self, **_kwargs: object) -> list[TaskDocumentMetadata]:
+            return [_document()]
+
+        async def get_document(self, **_kwargs: object) -> TaskDocumentMetadata:
+            return _document()
+
+        async def list_document_revisions(self, **_kwargs: object) -> list[TaskDocumentRevisionMetadata]:
+            return [_revision()]
+
+        async def confirm_document(self, **_kwargs: object) -> TaskDocumentMetadata:
+            return _document(confirmation_status="confirmed", confirmed_revision=2)
+
+        async def delete_document(self, **_kwargs: object) -> TaskDocumentMetadata:
+            return _document()
+
+    monkeypatch.setattr("afkbot.api.routes_task_documents.get_task_flow_service", lambda _settings: _Service())
+    client = TestClient(create_app())
+
+    responses = [
+        client.get("/v1/task-documents", headers=auth_headers()),
+        client.get("/v1/task-documents/doc_1", headers=auth_headers()),
+        client.get("/v1/task-documents/doc_1/revisions", headers=auth_headers()),
+        client.post(
+            "/v1/task-documents/doc_1/confirm",
+            json={"expected_revision": 2},
+            headers=auth_headers(),
+        ),
+        client.request(
+            "DELETE",
+            "/v1/task-documents/doc_1",
+            json={"expected_revision": 2},
+            headers=auth_headers(),
+        ),
+    ]
+
+    for response in responses:
+        assert response.status_code == 403
+        assert response.json() == {
+            "detail": {
+                "ok": False,
+                "error_code": "connect_operator_scope_required",
+                "reason": "Access token is not allowed to use operator Task Flow document workspace.",
+            }
+        }
+
+
+def test_task_documents_routes_reject_diagnostics_only_scope(monkeypatch: MonkeyPatch) -> None:
+    """Diagnostics access must not imply Task Flow document workspace authority."""
+
+    patch_valid_chat_access_token(
+        monkeypatch,
+        allow_diagnostics=True,
+        allow_operator_workspace=False,
+    )
+
+    class _Service:
+        async def list_documents(self, **_kwargs: object) -> list[TaskDocumentMetadata]:
+            return [_document()]
+
+    monkeypatch.setattr("afkbot.api.routes_task_documents.get_task_flow_service", lambda _settings: _Service())
+    client = TestClient(create_app())
+
+    response = client.get("/v1/task-documents", headers=auth_headers())
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": {
+            "ok": False,
+            "error_code": "connect_operator_scope_required",
+            "reason": "Access token is not allowed to use operator Task Flow document workspace.",
+        }
+    }
+
+
 def test_task_documents_route_maps_service_errors(monkeypatch: MonkeyPatch) -> None:
     """Task document service errors should become deterministic HTTP payloads."""
 
-    patch_valid_chat_access_token(monkeypatch)
+    patch_valid_chat_access_token(monkeypatch, allow_operator_workspace=True)
 
     class _Service:
         async def get_document(self, **_kwargs: object) -> TaskDocumentMetadata:

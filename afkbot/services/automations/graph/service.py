@@ -358,19 +358,22 @@ class AutomationGraphService:
             return await self.get_run(profile_id=profile_id, run_id=run_id)
 
         fallback_mode = _runtime_fallback_mode(graph.automation.graph_fallback_mode)
+        failure_error_code = outcome.error_code or "automation_graph_failed"
+        if outcome.unsafe_side_effects:
+            failure_error_code = "automation_graph_failed_after_unsafe_effect"
         if fallback_mode == "fail_closed":
             await self._with_repo(
                 lambda repo: repo.fail_run(
                     run_id=run_id,
                     status="failed",
-                    error_code=outcome.error_code or "automation_graph_failed",
+                    error_code=failure_error_code,
                     reason=outcome.reason or "Automation graph execution failed",
                     fallback_status="not_attempted",
                     completed_at=datetime.now(timezone.utc),
                 )
             )
             raise AutomationsServiceError(
-                error_code=outcome.error_code or "automation_graph_failed",
+                error_code=failure_error_code,
                 reason=outcome.reason or "Automation graph execution failed",
             )
         if fallback_mode == "resume_with_ai_if_safe" and outcome.unsafe_side_effects:
@@ -378,14 +381,14 @@ class AutomationGraphService:
                 lambda repo: repo.fail_run(
                     run_id=run_id,
                     status="failed",
-                    error_code=outcome.error_code or "automation_graph_failed",
+                    error_code=failure_error_code,
                     reason=outcome.reason or "Automation graph execution failed",
                     fallback_status="skipped_unsafe",
                     completed_at=datetime.now(timezone.utc),
                 )
             )
             raise AutomationsServiceError(
-                error_code=outcome.error_code or "automation_graph_failed",
+                error_code=failure_error_code,
                 reason=outcome.reason or "Automation graph execution failed",
             )
         try:
@@ -401,18 +404,23 @@ class AutomationGraphService:
             )
         except Exception as exc:
             fallback_reason = _format_fallback_error(exc)
+            fallback_error_code = (
+                "automation_graph_fallback_failed_after_unsafe_effect"
+                if outcome.unsafe_side_effects
+                else "automation_graph_fallback_failed"
+            )
             await self._with_repo(
                 lambda repo: repo.fail_run(
                     run_id=run_id,
                     status="fallback_failed",
-                    error_code="automation_graph_fallback_failed",
+                    error_code=fallback_error_code,
                     reason=fallback_reason,
                     fallback_status="failed",
                     completed_at=datetime.now(timezone.utc),
                 )
             )
             raise AutomationsServiceError(
-                error_code="automation_graph_fallback_failed",
+                error_code=fallback_error_code,
                 reason=fallback_reason,
             ) from exc
         await self._with_repo(

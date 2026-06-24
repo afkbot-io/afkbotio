@@ -15,6 +15,7 @@ from afkbot.services.task_flow.owner_inputs import TaskOwnerInputError, resolve_
 from afkbot.services.task_flow.runtime_service import TaskFlowRuntimeService
 from afkbot.services.tools.base import ToolBase, ToolContext, ToolResult
 from afkbot.services.tools.params import ToolParameters
+from afkbot.services.tools.plugins.task_actor import restrict_employee_read_owner_scope
 from afkbot.services.tools.plugins.task_scope import (
     ensure_task_target_scope,
     resolve_task_target_profile,
@@ -60,11 +61,20 @@ class TaskMaintenanceSweepTool(ToolBase):
             else self._settings.taskflow_runtime_maintenance_batch_size
         )
         try:
-            _, resolved_owner_ref = resolve_task_owner_inputs(
+            resolved_owner_type, resolved_owner_ref = resolve_task_owner_inputs(
                 field_prefix="owner",
                 owner_type=None,
                 owner_ref=payload.owner_ref,
             )
+            _, resolved_owner_ref, read_scope_error = await restrict_employee_read_owner_scope(
+                ctx=ctx,
+                settings=self._settings,
+                target_profile_id=target_profile_id,
+                owner_type=resolved_owner_type,
+                owner_ref=resolved_owner_ref,
+            )
+            if read_scope_error is not None:
+                return read_scope_error
             released_count = await runtime.sweep_expired_claims(
                 worker_id=f"taskflow-tool-maintenance:{ctx.profile_id}",
                 profile_id=target_profile_id,

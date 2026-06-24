@@ -18,6 +18,7 @@ from afkbot.services.employees.errors import EmployeeServiceError
 from afkbot.services.employees.ids import validate_employee_id
 from afkbot.services.employees.markdown_store import EmployeeMarkdownStore
 from afkbot.services.employees.org_chart import build_org_chart, validate_employees
+from afkbot.services.naming import normalize_runtime_name
 from afkbot.services.skills.markdown import FrontmatterValue, parse_frontmatter, split_frontmatter
 from afkbot.settings import Settings
 
@@ -93,6 +94,19 @@ class EmployeeService:
         """Delete one employee descriptor and return its previous metadata."""
 
         normalized_employee_id = _validate_employee_id(employee_id)
+        org_reference_blockers = await self._employee_org_reference_blockers(
+            profile_id=profile_id,
+            employee_id=normalized_employee_id,
+        )
+        if org_reference_blockers:
+            blockers = ", ".join(org_reference_blockers[:8])
+            raise EmployeeServiceError(
+                error_code="employee_in_use",
+                reason=(
+                    f"Employee {normalized_employee_id} is referenced by the organization "
+                    f"chart: {blockers}. Reassign those relationships before deleting it."
+                ),
+            )
         if await self._has_taskflow_references(
             profile_id=profile_id,
             employee_id=normalized_employee_id,
@@ -113,6 +127,31 @@ class EmployeeService:
             employee_id=normalized_employee_id,
             content=content,
         )
+
+    async def _employee_org_reference_blockers(
+        self,
+        *,
+        profile_id: str,
+        employee_id: str,
+    ) -> list[str]:
+        employees = await self.list_employees(profile_id=profile_id)
+        blockers: list[str] = []
+        for employee in employees:
+            if employee.id == employee_id:
+                if employee.reports:
+                    blockers.extend(f"report:{report_id}" for report_id in employee.reports)
+                if employee.can_delegate_to:
+                    blockers.extend(
+                        f"delegate:{delegate_id}" for delegate_id in employee.can_delegate_to
+                    )
+                continue
+            if employee.manager_id == employee_id:
+                blockers.append(f"manager_of:{employee.id}")
+            if employee_id in employee.reports:
+                blockers.append(f"listed_report_by:{employee.id}")
+            if employee_id in employee.can_delegate_to:
+                blockers.append(f"delegate_of:{employee.id}")
+        return sorted(dict.fromkeys(blockers))
 
     async def validate_org_chart(self, *, profile_id: str) -> EmployeeValidationReport:
         """Validate all employee descriptors for one profile."""
@@ -224,15 +263,26 @@ def _employee_id_tuple(metadata: dict[str, FrontmatterValue], key: str) -> tuple
 
 def _subagent_name_tuple(metadata: dict[str, FrontmatterValue], key: str) -> tuple[str, ...]:
     names = _string_tuple(metadata, key)
+    normalized_names: list[str] = []
+    seen: set[str] = set()
     for name in names:
-        if any(separator in name for separator in ("/", "\\")) or any(
-            character.isspace() for character in name
-        ):
+        if any(separator in name for separator in ("/", "\\")):
             raise EmployeeServiceError(
                 error_code="employee_descriptor_invalid",
                 reason=f"Employee descriptor field {key} contains an invalid subagent name.",
             )
-    return names
+        try:
+            normalized_name = normalize_runtime_name(name)
+        except ValueError as exc:
+            raise EmployeeServiceError(
+                error_code="employee_descriptor_invalid",
+                reason=f"Employee descriptor field {key} contains an invalid subagent name.",
+            ) from exc
+        if normalized_name in seen:
+            continue
+        seen.add(normalized_name)
+        normalized_names.append(normalized_name)
+    return tuple(normalized_names)
 
 
 def _string_tuple(metadata: dict[str, FrontmatterValue], key: str) -> tuple[str, ...]:
