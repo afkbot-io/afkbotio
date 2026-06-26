@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.27] - 2026-06-26
+
+### Fixed
+
+- Profile CLI surface tests now inspect Typer command metadata instead of
+  terminal-formatted help output, avoiding CI-only failures from Rich help
+  wrapping while still verifying profile add/update secret options stay aligned.
+
 ## [1.9.26] - 2026-06-26
 
 ### Fixed

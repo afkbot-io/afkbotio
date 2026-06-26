@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from pytest import MonkeyPatch
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from afkbot.cli.main import app
@@ -14,6 +15,12 @@ from afkbot.services.channels.endpoint_contracts import TelegramPollingEndpointC
 from afkbot.services.channels.endpoint_service import run_channel_endpoint_service_sync
 from afkbot.settings import get_settings
 from tests.cli.profile_cli._harness import _prepare_env
+
+
+def _profile_command_option_names(command_name: str) -> set[str]:
+    profile_group = get_command(app).commands["profile"]
+    command = profile_group.commands[command_name]
+    return {option for param in command.params for option in getattr(param, "opts", ())}
 
 
 def test_profile_add_show_and_list(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -168,16 +175,11 @@ def test_profile_add_and_update_expose_same_secret_update_options(
     """Create/edit profile surfaces should not diverge for profile-scoped secrets."""
 
     _prepare_env(tmp_path, monkeypatch)
-    runner = CliRunner()
-
-    add_help = runner.invoke(app, ["profile", "add", "--help"])
-    update_help = runner.invoke(app, ["profile", "update", "--help"])
-
-    assert add_help.exit_code == 0
-    assert update_help.exit_code == 0
+    add_options = _profile_command_option_names("add")
+    update_options = _profile_command_option_names("update")
     for option in ("--provider-api-key", "--llm-api-key", "--llm-api-key-file", "--brave-api-key"):
-        assert option in add_help.stdout
-        assert option in update_help.stdout
+        assert option in add_options
+        assert option in update_options
 
 
 def test_profile_show_includes_linked_channels(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
