@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [1.9.26] - 2026-06-26
+
+### Fixed
+
+- Release CI no longer imports AFKBOT UI from a local ignored plugin install;
+  plugin-specific Task Flow attachment route coverage remains in the UI plugin
+  repository where the router source is available in clean checkouts.
+
 ## [1.9.25] - 2026-06-25
 
 ### Added
